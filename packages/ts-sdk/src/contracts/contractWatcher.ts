@@ -15,22 +15,14 @@ import { isEventSourceError } from "../providers/utils";
 import { isEventSourceUnavailableError } from "../providers/eventSource";
 import { getVtxosForContract } from "./vtxoOwnership";
 
-/**
- * Exponential reconnect backoff: `baseMs * 2^(attempt-1)`, capped at `maxMs`.
- * The cap is kept low (see {@link DEFAULT_CONTRACT_WATCHER_CONFIG}) so the
- * wallet re-tracks state promptly after a brief server restart — e.g. an
- * operator signer rotation momentarily drops the SSE subscription.
- */
+/** Exponential reconnect backoff: `baseMs * 2^(attempt-1)`, capped at `maxMs`. */
 export function computeReconnectDelay(attempt: number, baseMs: number, maxMs: number): number {
     return Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
 }
 
 /**
- * Default tunables for {@link ContractWatcher}. Recovery-oriented: the reconnect
- * backoff caps at 5s and the failsafe re-poll runs every 20s, so a wallet
- * re-syncs quickly after its subscription is disrupted (a server restart),
- * rather than sitting idle for the tens of seconds the previous 30s/60s
- * defaults allowed.
+ * Default tunables for {@link ContractWatcher}. Kept low so a wallet re-syncs promptly after its
+ * subscription drops (e.g. a server restart for an operator signer rotation).
  */
 export const DEFAULT_CONTRACT_WATCHER_CONFIG = {
     failsafePollIntervalMs: 20_000,
@@ -60,16 +52,14 @@ export interface ContractWatcherConfig {
     walletRepository: WalletRepository;
 
     /**
-     * Interval for failsafe polling (ms).
-     * Polls even when subscription is active to catch missed events.
+     * Failsafe polling interval (ms); polls even while subscribed, to catch missed events.
      *
-     * @defaultValue `60_000` (1 minute)
+     * @defaultValue `20_000` (20 seconds)
      */
     failsafePollIntervalMs?: number;
 
     /**
-     * Initial reconnection delay (ms).
-     * Uses exponential backoff on repeated failures.
+     * Initial reconnection delay (ms), backed off exponentially on repeated failures.
      *
      * @defaultValue `1_000` (1 second)
      */
@@ -78,22 +68,18 @@ export interface ContractWatcherConfig {
     /**
      * Maximum reconnection delay (ms).
      *
-     * @defaultValue `30_000` (30 seconds)
+     * @defaultValue `5_000` (5 seconds)
      */
     maxReconnectDelayMs?: number;
 
     /**
-     * Maximum reconnection attempts before giving up.
-     * Set to 0 for unlimited attempts.
+     * Maximum reconnection attempts before giving up; 0 for unlimited.
      *
      * @defaultValue `0` (unlimited)
      */
     maxReconnectAttempts?: number;
 }
 
-/**
- * Internal state for tracking contracts.
- */
 interface ContractState {
     contract: Contract;
 
@@ -107,19 +93,14 @@ interface WatchedScriptState {
     lastKnownVtxos: Map<string, VirtualCoin>;
 }
 
-/**
- * Connection state for the watcher.
- */
 type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 
 /**
- * Watches multiple contracts for virtual output state changes with resilient connection handling.
+ * Watches contracts for virtual output changes: subscription with exponential-backoff reconnect,
+ * a poll after every (re)connect, and failsafe polling for missed events.
  *
- * Features:
- * - Automatic reconnection with exponential backoff
- * - Failsafe polling to catch missed events
- * - Polls immediately after (re)connection to sync state
- * - Graceful handling of subscription failures
+ * Event-only: it reads the wallet repository for baselines but never writes it;
+ * `ContractManager` owns persistence.
  *
  * @example
  * ```typescript
@@ -162,12 +143,7 @@ export class ContractWatcher {
     /** See {@link reportEventSourceUnavailable} — said once, not per attempt. */
     private eventSourceReported = false;
 
-    /**
-     * Create a contract watcher with the given providers and polling settings.
-     *
-     * @param config - Contract watcher configuration
-     * @see ContractWatcherConfig
-     */
+    /** @see ContractWatcherConfig */
     constructor(config: ContractWatcherConfig) {
         this.config = {
             ...DEFAULT_CONTRACT_WATCHER_CONFIG,
@@ -176,11 +152,8 @@ export class ContractWatcher {
     }
 
     /**
-     * Add a contract to be watched.
-     *
-     * Once watching, every contract is subscribed and polled whatever
-     * its {@link ContractState} — a `retained` one is held for reads
-     * only, and never enters a background channel.
+     * Add a contract to be watched. Every contract is subscribed and polled whatever its
+     * {@link ContractState}, except a `retained` one, which is held for reads only.
      *
      * @see getWatchedContracts
      */
@@ -192,33 +165,21 @@ export class ContractWatcher {
 
         this.contracts.set(contract.script, state);
 
-        // Seed the baseline from the repository BEFORE any poll or event
-        // emits. Without this, the first poll after (re)start treats every
-        // persisted vtxo as "new" and emits `vtxo_received` for each —
-        // which downstream triggers a redundant per-vtxo sync on every
-        // app launch and can confuse consumers that react to the event.
+        // Seed BEFORE any poll, or every persisted vtxo is re-announced as `vtxo_received` on
+        // each launch.
         await this.seedLastKnownVtxos(state);
 
-        // If we're already watching, poll to seed virtual outputs and fold
-        // this script into the subscription.
         if (this.isWatching && isWatchedContract(contract)) {
             await this.pollContracts([contract.script]);
             await this.tryUpdateSubscription();
         }
     }
 
-    /**
-     * Pre-populate `lastKnownVtxos` from the wallet repository.
-     *
-     * Runs on add (and can be re-run after reconnect) so polling always
-     * compares the indexer's view against what is already persisted,
-     * emitting only genuine deltas.
-     */
+    /** Pre-populate `lastKnownVtxos` from the wallet repository so polls emit only real deltas. */
     private async seedLastKnownVtxos(state: ContractState): Promise<void> {
         try {
-            // Apply the same script gate used by getContractVtxos so a legacy
-            // wrong-script row in the address bucket can't seed the baseline
-            // and then look "spent" on the first poll.
+            // Script-gated, so a legacy wrong-script row in the address bucket can't seed the
+            // baseline and then look "spent" on the first poll.
             const cached = await getVtxosForContract(this.config.walletRepository, state.contract);
             for (const vtxo of cached) {
                 if (vtxo.isSpent) continue;
@@ -226,10 +187,7 @@ export class ContractWatcher {
                 state.lastKnownVtxos.set(key, vtxo);
             }
         } catch (error) {
-            // Don't throw — the watcher can still recover via poll and
-            // subscription events. A failed seed just means the first poll
-            // may emit some redundant `vtxo_received` events for already
-            // known vtxos.
+            // Non-fatal: at worst the first poll re-emits some `vtxo_received`.
             console.error(
                 `ContractWatcher: failed to seed lastKnownVtxos for ${state.contract.script}`,
                 error,
@@ -237,9 +195,6 @@ export class ContractWatcher {
         }
     }
 
-    /**
-     * Update an existing contract.
-     */
     async updateContract(contract: Contract): Promise<void> {
         const existing = this.contracts.get(contract.script);
         if (!existing) {
@@ -253,9 +208,6 @@ export class ContractWatcher {
         }
     }
 
-    /**
-     * Remove a contract from watching.
-     */
     async removeContract(contractScript: string): Promise<void> {
         const state = this.contracts.get(contractScript);
         if (state) {
@@ -267,39 +219,24 @@ export class ContractWatcher {
         }
     }
 
-    /**
-     * Get all in-memory contracts.
-     */
+    /** All in-memory contracts. */
     getAllContracts(): Contract[] {
         return Array.from(this.contracts.values()).map((s) => s.contract);
     }
 
     /**
-     * Every registered contract except the `retained` ones, retired
-     * (`inactive`) receive addresses included.
+     * Every registered contract except `retained` ones, retired (`inactive`) addresses included.
      *
-     * Feeds both the subscription and the indexer sweep scope, so
-     * narrowing it drops a contract from every background channel at
-     * once. `state` may never narrow it: an Ark receive address can be
-     * paid again after the wallet has rotated past it, and a payment
-     * that lands outside every background channel is invisible until
-     * some foreground read happens to sweep it. Retirement therefore
-     * governs receive-address selection, not coverage.
-     *
-     * {@link ContractWatchState} is the one thing that does narrow it,
-     * and only when an owner has explicitly said the script is done —
-     * a settled swap lockup, a funded one-shot destination. The row
-     * stays in {@link getAllContracts} so reads, annotation and history
-     * are unaffected.
+     * Feeds both the subscription and the sweep scope. `state` must never narrow it: an Ark
+     * receive address can be paid again after the wallet rotated past it, and such a payment
+     * would stay invisible. Only an owner's explicit {@link ContractWatchState} narrows it; the
+     * row stays in {@link getAllContracts} for reads, annotation and history.
      */
     getWatchedContracts(): Contract[] {
         return this.getAllContracts().filter(isWatchedContract);
     }
 
-    /**
-     * Every script the subscription must carry. Wider than
-     * {@link getWatchedContracts}, which stays the sync scope.
-     */
+    /** Scripts the subscription carries; wider than the sync scope {@link getWatchedContracts}. */
     private getSubscribedScripts(): string[] {
         const scripts = new Set(this.getWatchedContracts().map((c) => c.script));
         for (const script of this.watchedScripts.keys()) {
@@ -314,8 +251,7 @@ export class ContractWatcher {
         for (const one of Array.isArray(script) ? script : [script]) {
             const existing = this.watchedScripts.get(one);
             if (existing) {
-                // Idempotent: a caller that re-derives its whole watched set on
-                // a timer would otherwise re-announce on every sweep.
+                // Idempotent, so callers can re-derive their whole set on a timer.
                 if (options?.label !== undefined) existing.label = options.label;
                 continue;
             }
@@ -330,14 +266,10 @@ export class ContractWatcher {
         if (added.length === 0 || !this.isWatching) return;
 
         await this.withCoalescedSubscription(async () => {
-            // The catch-up a coalesced scope demands of its callers. Watch-only
-            // polling reads the indexer for these scripts rather than diffing a
-            // repository, so an output already sitting at one is reported here
-            // rather than lost to the window the deferred flush opens.
+            // The catch-up a coalesced scope demands (see withCoalescedSubscription): reports
+            // outputs already sitting at these scripts before the deferred flush.
             await this.pollWatchedScripts(added);
-            // Requested inside the scope, not after it: the scope only flushes
-            // an update something asked for, and polling asks for none. One
-            // request for the whole batch becomes one update at the flush.
+            // Inside the scope: it only flushes an update something requested.
             await this.tryUpdateSubscription();
         });
     }
@@ -350,9 +282,6 @@ export class ContractWatcher {
         }
         if (!removed) return;
 
-        // One update for the whole set, for the same reason the add path
-        // coalesces: the subscription is rebuilt from what remains, not per
-        // script dropped.
         if (this.isWatching) {
             await this.tryUpdateSubscription();
         }
@@ -366,10 +295,7 @@ export class ContractWatcher {
         }));
     }
 
-    /**
-     * Get virtual outputs for contracts, grouped by contract script.
-     * @see WalletRepository for `repo`
-     */
+    /** Repository virtual outputs for contracts, grouped by contract script. */
     private async getContractVtxos(options: {
         includeSpent?: boolean;
         contractScripts?: string[];
@@ -385,12 +311,9 @@ export class ContractWatcher {
                 return true;
             })
             .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
-                // Use contract address as cache key. Legacy address buckets
-                // can contain rows from other contracts; gate by script before
-                // converting so a wrong-script row never reaches the watcher.
+                // Script-gated: legacy address buckets can hold other contracts' rows.
                 const cached = await getVtxosForContract(repo, state.contract);
                 if (cached.length > 0) {
-                    // Convert to ContractVtxo with contractScript
                     const contractVtxos: ContractVtxo[] = cached.map((v) => ({
                         ...v,
                         contractScript: state.contract.script,
@@ -407,9 +330,7 @@ export class ContractWatcher {
         return new Map(results.flat(1));
     }
 
-    /**
-     * Start watching for virtual output events across all watched contracts.
-     */
+    /** Start watching for virtual output events across all watched contracts. */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
         if (this.isWatching) {
             throw new Error("Already watching");
@@ -420,24 +341,18 @@ export class ContractWatcher {
         this.abortController = new AbortController();
         this.reconnectAttempts = 0;
 
-        // Start connection
         await this.connect();
 
-        // Start failsafe polling
         this.startFailsafePolling();
 
         return () => this.stopWatching();
     }
 
-    /**
-     * Stop watching for events.
-     */
     async stopWatching(): Promise<void> {
         this.isWatching = false;
         this.connectionState = "disconnected";
         this.abortController?.abort();
 
-        // Clear timers
         if (this.reconnectTimeoutId) {
             clearTimeout(this.reconnectTimeoutId);
             this.reconnectTimeoutId = undefined;
@@ -447,7 +362,6 @@ export class ContractWatcher {
             this.failsafePollIntervalId = undefined;
         }
 
-        // Unsubscribe
         if (this.subscriptionId) {
             try {
                 await this.config.indexerProvider.unsubscribeForScripts(this.subscriptionId);
@@ -460,35 +374,21 @@ export class ContractWatcher {
         this.eventCallback = undefined;
     }
 
-    /**
-     * Check if currently watching.
-     */
     isCurrentlyWatching(): boolean {
         return this.isWatching;
     }
 
-    /**
-     * Get current connection state.
-     */
     getConnectionState(): ConnectionState {
         return this.connectionState;
     }
 
-    /**
-     * Force a poll of all watched contracts.
-     * Useful for manual refresh or after app resume.
-     */
+    /** Force a poll of all watched contracts (manual refresh, app resume). */
     async forcePoll(): Promise<void> {
         if (!this.isWatching) return;
         await this.pollAllContracts();
     }
 
-    /**
-     * Connect to the subscription.
-     *
-     * @param skipUpdate - Skip the leading `updateSubscription` call when
-     *   the caller has already established `subscriptionId`.
-     */
+    /** @param skipUpdate - The caller already established `subscriptionId`. */
     private async connect(skipUpdate = false): Promise<void> {
         if (!this.isWatching) return;
 
@@ -499,18 +399,13 @@ export class ContractWatcher {
                 await this.updateSubscription();
             }
 
-            // Poll immediately after connection to sync state
             await this.pollAllContracts();
 
             this.connectionState = "connected";
             this.reconnectAttempts = 0;
 
-            // Start listening
+            // Not awaited, or `connect()` would never return; errors here must still reconnect.
             this.listenLoop().catch((e) => {
-                // This is handled asynchronously otherwise `connect()` would hang
-                // indefinitely and block the caller.
-                // Error management must be implemented to ensure the connection
-                // is restored and events are fired.
                 if (isEventSourceError(e)) {
                     console.debug("ContractWatcher subscription disconnected; reconnecting");
                 } else if (!isEventSourceUnavailableError(e)) {
@@ -539,17 +434,10 @@ export class ContractWatcher {
     }
 
     /**
-     * Handle "this environment has no `EventSource`": say so once, loudly and
-     * actionably, and answer whether the caller should skip reconnecting.
-     *
-     * Reconnecting is pointless here — a missing global is not a dropped
-     * connection, and the default backoff (unlimited attempts, capped at 5s)
-     * would otherwise retry it forever, logging each failure and firing a
-     * `connection_reset` every few seconds for the life of the wallet. Not even
-     * one goes out: subscribers read that event as "the stream dropped, resync
-     * and expect it back", and here it never opened and never will.
-     * Failsafe polling keeps running, so the watcher stays correct and merely
-     * slower; what it loses is push latency.
+     * Handle "this environment has no `EventSource`": warn once and return true so the caller
+     * skips reconnecting. A missing global is not a dropped connection; unlimited backoff would
+     * retry forever and fire a `connection_reset` (read as "resync, stream coming back") every
+     * few seconds. Failsafe polling keeps the watcher correct, just slower.
      */
     private reportEventSourceUnavailable(error: unknown): boolean {
         if (!isEventSourceUnavailableError(error)) return false;
@@ -564,13 +452,9 @@ export class ContractWatcher {
         return true;
     }
 
-    /**
-     * Schedule a reconnection attempt.
-     */
     private scheduleReconnect(): void {
         if (!this.isWatching) return;
 
-        // Check max attempts
         if (
             this.config.maxReconnectAttempts > 0 &&
             this.reconnectAttempts >= this.config.maxReconnectAttempts
@@ -584,7 +468,6 @@ export class ContractWatcher {
         this.connectionState = "reconnecting";
         this.reconnectAttempts++;
 
-        // Calculate delay with exponential backoff (capped low for prompt recovery)
         const delay = computeReconnectDelay(
             this.reconnectAttempts,
             this.config.reconnectDelayMs,
@@ -597,9 +480,6 @@ export class ContractWatcher {
         }, delay);
     }
 
-    /**
-     * Start the failsafe polling interval.
-     */
     private startFailsafePolling(): void {
         if (this.failsafePollIntervalId) {
             clearInterval(this.failsafePollIntervalId);
@@ -623,18 +503,14 @@ export class ContractWatcher {
     }
 
     /**
-     * Poll watch-only scripts against the indexer and emit the delta.
-     *
-     * Separate from {@link pollContracts} because that one diffs the wallet
-     * repository, which is permanently empty for a script this wallet does not
-     * own — reusing it would report every live output as spent on every tick.
-     * Not a second poll loop: same timer and callers, different source.
+     * Poll watch-only scripts against the indexer and emit the delta. Not {@link pollContracts}:
+     * that diffs the wallet repository, permanently empty for a script the wallet doesn't own, so
+     * every live output would read as spent.
      */
     private async pollWatchedScripts(candidates: string[]): Promise<void> {
         if (!this.eventCallback) return;
 
-        // Same precedence as processSubscriptionVtxos: an actively-watched
-        // contract is polled above, a `retained` one by neither, so it stays ours.
+        // Same precedence as processSubscriptionVtxos: a `retained` contract is polled here.
         const scripts = candidates.filter((s) => {
             const state = this.contracts.get(s);
             return (
@@ -652,9 +528,7 @@ export class ContractWatcher {
                 spendableOnly: true,
             });
         } catch (error) {
-            // Fail closed: an empty result is indistinguishable from "every
-            // output was spent", so reading a rejection as one would emit
-            // `vtxo_spent` for every live script on one flaky request.
+            // Fail closed: treating a rejection as empty would emit `vtxo_spent` for everything.
             console.error("ContractWatcher watch-only poll failed:", error);
             return;
         }
@@ -703,18 +577,15 @@ export class ContractWatcher {
         }
     }
 
-    /**
-     * Poll specific contracts and emit events for changes.
-     */
+    /** Poll specific contracts' repository state and emit events for changes. */
     private async pollContracts(contractScripts: string[]): Promise<void> {
         if (!this.eventCallback) return;
 
         const now = Date.now();
 
         try {
-            // spent rows too: `includeSpent` post-filters one repository read,
-            // so a spend can be reported with the row that records it. The row
-            // this diffs against was unspent when cached (#864).
+            // Spent rows too, so a spend is reported with the row that records it; the cached
+            // baseline row was unspent (#864).
             const vtxosMap = await this.getContractVtxos({
                 contractScripts,
                 includeSpent: true,
@@ -730,7 +601,6 @@ export class ContractWatcher {
                 const currentVtxos = known.filter((v) => !v.isSpent);
                 const currentKeys = new Set(currentVtxos.map((v) => `${v.txid}:${v.vout}`));
 
-                // Find new virtual outputs and add them to the contract's state
                 const newVtxos: VirtualCoin[] = [];
                 for (const vtxo of currentVtxos) {
                     const key = `${vtxo.txid}:${vtxo.vout}`;
@@ -740,7 +610,6 @@ export class ContractWatcher {
                     }
                 }
 
-                // Find spent virtual outputs and remove them from the contract's state
                 const spentVtxos: VirtualCoin[] = [];
                 for (const [key, vtxo] of state.lastKnownVtxos) {
                     if (!currentKeys.has(key)) {
@@ -750,39 +619,28 @@ export class ContractWatcher {
                     }
                 }
 
-                // Emit events
                 if (newVtxos.length > 0) {
                     this.emitVtxoEvent(contractScript, newVtxos, "vtxo_received", now);
                 }
 
                 if (spentVtxos.length > 0) {
-                    // Note: We can't distinguish spent vs swept from polling alone
-                    // The subscription provides more accurate event types
+                    // Polling can't tell spent from swept; the subscription can.
                     this.emitVtxoEvent(contractScript, spentVtxos, "vtxo_spent", now);
                 }
             }
         } catch (error) {
             console.error("ContractWatcher poll failed:", error);
-            // Don't throw - polling failures shouldn't crash the watcher
         }
     }
 
     /**
-     * Run `fn` with subscription updates coalesced into a single
-     * `subscribeForScripts` on the way out.
+     * Run `fn` with subscription updates coalesced into one `subscribeForScripts` on the way out
+     * (success or error). Each subscribe posts the *whole* script list, so N eager updates would
+     * be quadratic.
      *
-     * {@link addContract} re-subscribes eagerly (the watcher may already be
-     * running), and every subscribe posts the *whole* accumulated script list —
-     * so a restore scan that discovers N contracts sends N growing POSTs,
-     * quadratic in script-slots. Inside this scope those updates are only
-     * marked dirty, flushed once on the way out (success and error path alike).
-     *
-     * A contract added inside the scope is therefore not streaming until the
-     * flush. Nothing in the watcher closes that window — the failsafe poll
-     * replays repository state and cannot see VTXOs no one has fetched yet. The
-     * one caller, `scanContracts`, is covered because `Wallet.restore` follows
-     * it with a bulk `refreshVtxos`. A new caller must provide its own
-     * equivalent catch-up, or keep the scope short enough not to need one.
+     * A contract added inside the scope isn't streaming until the flush, and the failsafe poll
+     * only replays repository state. Callers must supply their own catch-up (`Wallet.restore`
+     * follows `scanContracts` with a bulk `refreshVtxos`) or keep the scope short.
      */
     async withCoalescedSubscription<T>(fn: () => Promise<T>): Promise<T> {
         this.subscriptionBatchDepth++;
@@ -792,8 +650,7 @@ export class ContractWatcher {
             this.subscriptionBatchDepth--;
             if (this.subscriptionBatchDepth === 0 && this.subscriptionUpdateDeferred) {
                 this.subscriptionUpdateDeferred = false;
-                // Never throws (see tryUpdateSubscription), so a flush cannot
-                // mask an error `fn` was already rejecting with.
+                // Never throws, so a flush cannot mask an error `fn` is rejecting with.
                 if (this.isWatching) await this.tryUpdateSubscription();
             }
         }
@@ -812,10 +669,8 @@ export class ContractWatcher {
             return;
         }
 
-        // Cold start: `startWatching` may have run with zero scripts,
-        // leaving `listenLoop` parked behind the reconnect timer. Kick
-        // `connect` now so streaming resumes without waiting on the
-        // backoff. `skipUpdate` avoids re-issuing `subscribeForScripts`.
+        // Cold start: `startWatching` may have run with zero scripts, parking `listenLoop` behind
+        // the reconnect timer; connect now instead of waiting on the backoff.
         const justGotSubscription = !hadSubscription && this.subscriptionId !== undefined;
         const listenerParked =
             this.connectionState === "disconnected" || this.connectionState === "reconnecting";
@@ -831,11 +686,7 @@ export class ContractWatcher {
         }
     }
 
-    /**
-     * Update the subscription with scripts that should be watched.
-     *
-     * @see getSubscribedScripts
-     */
+    /** @see getSubscribedScripts */
     private async updateSubscription(): Promise<void> {
         const scriptsToWatch = this.getSubscribedScripts();
 
@@ -857,11 +708,8 @@ export class ContractWatcher {
                 this.subscriptionId,
             );
         } catch (error) {
-            // If we sent a stale subscription ID that the server no longer
-            // recognises, clear it and retry to create a fresh subscription.
-            // Match both server phrasings: "subscription <uuid> not found" and
-            // "subscription not found: <uuid>".
-            // All other errors (network failures, parse errors, etc.) are rethrown.
+            // A stale subscription id: retry fresh. Matches both server phrasings,
+            // "subscription <uuid> not found" and "subscription not found: <uuid>".
             const isStale =
                 error instanceof Error && /subscription\b.*\bnot\s+found/i.test(error.message);
             if (this.subscriptionId && isStale) {
@@ -874,9 +722,6 @@ export class ContractWatcher {
         }
     }
 
-    /**
-     * Main listening loop for subscription events.
-     */
     private async listenLoop(): Promise<void> {
         if (!this.subscriptionId || !this.abortController || !this.isWatching) {
             if (this.isWatching) {
@@ -896,7 +741,6 @@ export class ContractWatcher {
             this.handleSubscriptionUpdate(update);
         }
 
-        // Stream ended normally - reconnect if still watching
         if (this.isWatching) {
             this.connectionState = "disconnected";
             this.scheduleReconnect();
@@ -904,11 +748,8 @@ export class ContractWatcher {
     }
 
     /**
-     * Handle a subscription update.
-     *
-     * Normalization boundary: `getSubscription` is part of the public `IndexerProvider` interface,
-     * so a consumer implementation may yield legacy-shaped VTXOs. Normalizing on ingest also fixes
-     * the shape of the payloads emitted to external event consumers.
+     * Normalization boundary: a consumer `IndexerProvider` may yield legacy-shaped VTXOs, and the
+     * normalized shape is what external event consumers receive.
      */
     private handleSubscriptionUpdate(update: SubscriptionResponse): void {
         if (!this.eventCallback) return;
@@ -933,11 +774,8 @@ export class ContractWatcher {
     }
 
     /**
-     * Process virtual outputs from subscription and route each VTXO to the
-     * single contract that actually locks it via `vtxo.script`. If the script
-     * doesn't match any watched contract, skip the VTXO rather than fan it
-     * out to every matching contract — fan-out produced phantom state in
-     * non-owning contracts that then never reconciled.
+     * Route each subscription VTXO to the single contract locking it via `vtxo.script`, skipping
+     * unknown scripts: fan-out produced phantom state in non-owning contracts.
      */
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
@@ -951,9 +789,8 @@ export class ContractWatcher {
         for (const vtxo of vtxos) {
             const state = this.contracts.get(vtxo.script);
             const watchOnly = this.watchedScripts.has(vtxo.script);
-            // A registered contract wins, unless it is `retained`: routing
-            // that as a contract event answers it with syncContracts and
-            // undoes the owner's opt-out from background channels.
+            // A registered contract wins unless `retained`: a contract event would trigger
+            // syncContracts and undo the owner's opt-out.
             const preferContract =
                 state !== undefined && (!watchOnly || isWatchedContract(state.contract));
             const target = preferContract ? byContract : watchOnly ? byWatchedScript : undefined;
@@ -977,9 +814,7 @@ export class ContractWatcher {
         }
 
         if (unknownScript > 0) {
-            // The failsafe poll is the backstop for these; log at debug so we
-            // can correlate "VTXO state drift" reports with subscription
-            // drops rather than chase phantom bugs.
+            // The failsafe poll is the backstop; logged to correlate state-drift reports.
             console.debug(
                 `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`,
             );
@@ -1031,9 +866,6 @@ export class ContractWatcher {
         this.eventCallback({ type: "vtxo_spent", contractScript: script, vtxos, timestamp });
     }
 
-    /**
-     * Emit a virtual output event for a contract.
-     */
     private emitVtxoEvent(
         contractScript: string,
         vtxos: VirtualCoin[],

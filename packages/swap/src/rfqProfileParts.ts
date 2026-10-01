@@ -1,30 +1,10 @@
 /**
- * The two profile keys a corridor writes about its own leg's keys, and the
- * readers that hand them back.
+ * The profile keys a corridor writes about its leg's keys — `profile.signer` and `profile.hashlock`
+ * — and their readers. Not on {@link RfqSwapRecord} itself: a hashlock is a CORRIDOR property, and a
+ * preimage-less corridor would otherwise store a fake `paymentHash`.
  *
- * None of this is on {@link RfqSwapRecord} itself, deliberately. A hashlock is a
- * property of a CORRIDOR, not of RFQ: today's three legs all lock to a preimage,
- * but a banco-style corridor settles with none, and a record shape that required
- * `paymentHash` would force it to store a fake — a value nothing can check.
- *
- * Three concerns, two stored keys:
- *
- * - `profile.signer` — which wallet key signs this leg. Survives the hashlock
- *   entirely: it feeds `senderIdentityForSwapRecord` on the refund side, and a
- *   corridor with no preimage anywhere still has a leg to sign.
- * - `profile.hashlock` — the lock's identity, plus the preimage material only on
- *   legs WE claim. `lightning_send` carries a payment hash and can never open
- *   it: P belongs to the payee.
- *
- * A corridor writes both with {@link rfqSecretsProfile} and never by hand — the
- * salt is what hand-mapping drops, and a static wallet's swap is unclaimable
- * without it.
- *
- * One reader here is about no key at all — {@link rfqClaimDestinationOf}, where a
- * leg's claim pays. It sits beside {@link rfqClaimSecretOf} because the claim
- * path reads the two in one breath, and because both are answered the same way:
- * by the corridor's own handler, never by a cast or a `kind` switch at the call
- * site.
+ * Write both with {@link rfqSecretsProfile}, never by hand: hand-mapping drops the salt, and a
+ * static wallet's swap is unclaimable without it. Readers ask the corridor's handler, never a cast.
  */
 import { rfqCorridorHandlers } from "./rfqCorridor";
 import {
@@ -35,14 +15,8 @@ import {
 import type { RfqSwapRecord } from "./rfqRecord";
 import type { ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 
-/**
- * Which wallet key signs this leg. Stored at `profile.signer`.
- *
- * Independent of any hashlock: it feeds `senderIdentityForSwapRecord` on the
- * refund side, and a corridor that settles with no preimage at all still needs
- * it. A corridor whose leg this wallet never signs omits the key entirely — as
- * with everything else here, absent rather than blank.
- */
+/** Which wallet key signs this leg, at `profile.signer`. Omitted entirely (not blank) by a corridor
+ * whose leg this wallet never signs. */
 export interface RfqSignerProjection {
     /** Public. The wallet re-derives the signer from it; no key material is at
      * rest. */
@@ -50,13 +24,9 @@ export interface RfqSignerProjection {
 }
 
 /**
- * What a leg locked to a preimage records about the LOCK. Stored at
- * `profile.hashlock`, and absent entirely from a corridor that has none.
- *
- * `paymentHash` is identity, not capability — `lightning_send` carries one and
- * can never open it. The preimage fields are the capability, and only a corridor
- * where WE claim ever writes them: `provisionClaimSecret` produces that arm,
- * `provisionRefundKey` does not.
+ * What a preimage-locked leg records about the LOCK, at `profile.hashlock`. `paymentHash` is
+ * identity, not capability; the preimage fields are the capability, written only where WE claim
+ * (`provisionClaimSecret` produces that arm, `provisionRefundKey` does not).
  */
 export type RfqHashlockProjection = Omit<SwapSecretsProjection, "signingDescriptor"> & {
     /** `sha256(P)`, hex. Not recoverable from the covenant, which binds
@@ -64,35 +34,20 @@ export type RfqHashlockProjection = Omit<SwapSecretsProjection, "signingDescript
     paymentHash: string;
 };
 
-/**
- * The composed view `preimageForSwapRecord` reads — the signer's descriptor plus
- * the hashlock's. **Never a stored shape**: nothing writes this object,
- * {@link rfqClaimSecretOf} assembles it from the two keys above, which is what
- * keeps the descriptor stored once.
- *
- * Structurally `SwapSecretsProjection & { paymentHash }`, which is exactly that
- * helper's parameter.
- */
+/** The composed view `preimageForSwapRecord` reads. **Never a stored shape**: assembled by
+ * {@link rfqClaimSecretOf} from the two keys, so the descriptor is stored once. */
 export type RfqClaimSecretProjection = RfqSignerProjection & RfqHashlockProjection;
 
 /**
- * The corridor-owned counterpart of `onchainSendProfile`: the one supported way
- * to turn a provisioned secret into stored profile keys.
- *
- * Writes what the provisioning result actually has. Omit `paymentHash` and you
- * get `signer` alone — which is what a non-hashlock corridor calls, and why it
- * never has to reach for `hashlock`.
+ * The one supported way to turn a provisioned secret into stored profile keys (the corridor-owned
+ * counterpart of `onchainSendProfile`). Without `paymentHash` it writes `signer` alone.
  */
 export const rfqSecretsProfile = (
     secrets: ProvisionedKey | ProvisionedClaimSecret,
     paymentHash?: string,
 ): { signer: RfqSignerProjection; hashlock?: RfqHashlockProjection } => {
-    // Split whole, never field-picked: `signingDescriptor` is named because it
-    // is the one field that is NOT preimage material, and everything else
-    // `swapSecretsToRecord` emits rides into `hashlock` on the rest. That is
-    // what carries `preimageSaltHex`, and hand-listing is how it was lost.
-    // The rule to keep: a field added to `SwapSecretsProjection` that is not
-    // preimage material must be named here too, or it lands in the wrong key.
+    // Split whole, never field-picked: hand-listing is how `preimageSaltHex` was lost. A field added
+    // to `SwapSecretsProjection` that is not preimage material must be named here too.
     const { signingDescriptor, ...preimage } = swapSecretsToRecord(secrets);
     return {
         signer: { signingDescriptor },
@@ -100,9 +55,8 @@ export const rfqSecretsProfile = (
     };
 };
 
-/** 64 characters of hex, case-folded to what `hex.encode` emits — a backend that
- * normalises hex to upper case round-trips a correct value, and rejecting it
- * here would fail the record for the backend's habit. */
+/** 64 hex chars, case-folded: a backend that uppercases hex round-trips a correct value, and
+ * rejecting it would fail the record for the backend's habit. */
 const parseHex32 = (value: unknown, field: string): string => {
     if (typeof value !== "string" || !/^[0-9a-fA-F]{64}$/.test(value)) {
         throw new Error(`${field} must be 32 bytes of hex, got ${JSON.stringify(value)}`);
@@ -110,12 +64,8 @@ const parseHex32 = (value: unknown, field: string): string => {
     return value.toLowerCase();
 };
 
-/**
- * Validate a stored `profile.signer`.
- *
- * THROWS on a present-but-unusable object; never normalises one away. See
- * {@link rfqSignerOf} for why the difference matters.
- */
+/** Validate a stored `profile.signer`. THROWS on a present-but-unusable object (see
+ * {@link rfqSignerOf} for why). */
 const parseSigner = (value: unknown): RfqSignerProjection => {
     const signingDescriptor = (value as { signingDescriptor?: unknown } | undefined)
         ?.signingDescriptor;
@@ -127,15 +77,8 @@ const parseSigner = (value: unknown): RfqSignerProjection => {
     return { signingDescriptor };
 };
 
-/**
- * Validate a stored claim destination.
- *
- * THROWS on a present-but-unusable value, the rule every parser here follows.
- * The alternative is what this replaced: a cast to `{ payoutAddress?: string }`
- * over a `Record<string, unknown>`, which typechecks against a shape nothing
- * verified and lets a row carrying a number reach `ArkAddress.decode` as one —
- * failing with the decoder's error, naming neither the record nor the field.
- */
+/** Validate a stored claim destination. THROWS on a present-but-unusable value, so a row carrying a
+ * non-string never reaches `ArkAddress.decode` and fails naming neither record nor field. */
 const parsePayoutAddress = (value: unknown, kind: string): string => {
     if (typeof value !== "string" || value.length === 0) {
         throw new Error(
@@ -147,18 +90,11 @@ const parsePayoutAddress = (value: unknown, kind: string): string => {
 };
 
 /**
- * Validate a stored `profile.hashlock`. The single source for that check —
- * {@link hydrateHashlock} calls it at restore, {@link rfqClaimSecretOf} at read,
- * so the two cannot drift into disagreeing about what a usable hashlock is.
- *
- * THROWS on a present-but-unusable object; never normalises one away. The
- * asymmetry that makes `paymentHash` the field to guard: the preimage fields are
- * validated downstream by `preimageForSwapRecord`, while `paymentHash` has no
- * check anywhere — and `preimageForSwapRecord` verifies only `if
- * (record.paymentHash …)`, so a projection missing it claims with an unverified
- * preimage instead of failing.
+ * Validate a stored `profile.hashlock` — the one check restore and read share. `paymentHash` is the
+ * field to guard: `preimageForSwapRecord` verifies only when it is present, so a projection missing
+ * it would claim with an unverified preimage.
  */
-export const parseHashlock = (value: unknown): RfqHashlockProjection => {
+const parseHashlock = (value: unknown): RfqHashlockProjection => {
     const raw = (value ?? {}) as {
         paymentHash?: unknown;
         preimageHex?: unknown;
@@ -167,9 +103,7 @@ export const parseHashlock = (value: unknown): RfqHashlockProjection => {
     const hashlock: RfqHashlockProjection = {
         paymentHash: parseHex32(raw.paymentHash, "rfq profile.hashlock.paymentHash"),
     };
-    // Checked here as well as downstream so a restore and a claim-secret read
-    // agree: `preimageForSwapRecord` would reject these too, but only once the
-    // claim is being attempted.
+    // also checked here so restore and claim-secret read agree, not only at claim time
     if (raw.preimageHex !== undefined) {
         hashlock.preimageHex = parseHex32(raw.preimageHex, "rfq profile.hashlock.preimageHex");
     }
@@ -182,19 +116,8 @@ export const parseHashlock = (value: unknown): RfqHashlockProjection => {
     return hashlock;
 };
 
-/**
- * The hashlock a corridor's `hydrate` merges onto the live swap, or a refusal to
- * restore.
- *
- * Every hashlock handler calls this first. Same rule as the receive leg's
- * `expectedAmount` and the onchain leg's L1 keys: refuse to restore rather than
- * restore half-armed. A swap rebuilt without its payment hash cannot verify a
- * derived preimage, and on the onchain leg cannot rebuild the L1 HTLC at all.
- *
- * A plain `Error`, matching the corridor's other refusals — same validator as
- * the claim-path reader, different wrapper, because a restore failure is read by
- * the manager and a claim-read failure by the claim path.
- */
+/** The hashlock a corridor's `hydrate` merges onto the live swap, or a refusal to restore rather
+ * than restore half-armed (no preimage check, and no L1 HTLC rebuild on the onchain leg). */
 export const hydrateHashlock = (profile: {
     hashlock?: RfqHashlockProjection;
 }): { paymentHash: string } => {
@@ -211,13 +134,9 @@ export const hydrateHashlock = (profile: {
 /**
  * The stored signer projection, for `senderIdentityForSwapRecord`.
  *
- * `undefined` ONLY when the profile carries no `signer` key — a corridor whose
- * leg this wallet does not sign. A `signer` that is present and unusable throws:
- * "this corridor has no local signer" and "this record came back corrupt" are
- * different answers, and `senderIdentityForSwapRecord` turns the first into a
- * permanent `RefundNotLocallyPossibleError("no-secrets")` the manager acts on.
- * Handing it a silently-emptied projection would report "no local refund is
- * possible" for a storage bug.
+ * `undefined` ONLY when no `signer` key exists (a leg this wallet does not sign). A present but
+ * unusable one throws: the caller turns "no local signer" into a permanent
+ * `RefundNotLocallyPossibleError("no-secrets")`, which must not be reported for a storage bug.
  */
 export const rfqSignerOf = (record: RfqSwapRecord): RfqSignerProjection | undefined => {
     const signer = record.profile.signer;
@@ -226,16 +145,10 @@ export const rfqSignerOf = (record: RfqSwapRecord): RfqSignerProjection | undefi
 };
 
 /**
- * The claim inputs, or `undefined` when this record's corridor cannot produce P
- * — no hashlock, or a leg we refund rather than claim.
- *
- * Answered by the corridor's handler (`claimSecret`), not by a kind list here:
- * whether a leg claims is the corridor's fact.
- *
- * When the handler DOES claim, this validates and throws
- * `PreimageNotRecoverableError("malformed-record")` rather than returning a
- * partial projection — which `preimageForSwapRecord` would claim with, its hash
- * check being conditional on the very field that went missing.
+ * The claim inputs, or `undefined` when the corridor's handler has no `claimSecret` (no hashlock, or
+ * a leg we refund). When it does claim, a malformed projection throws
+ * `PreimageNotRecoverableError("malformed-record")` rather than returning a partial one that
+ * `preimageForSwapRecord` would claim with unverified.
  */
 export const rfqClaimSecretOf = (record: RfqSwapRecord): RfqClaimSecretProjection | undefined => {
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
@@ -252,15 +165,8 @@ export const rfqClaimSecretOf = (record: RfqSwapRecord): RfqClaimSecretProjectio
     }
 };
 
-/**
- * Where this record's claim pays, or `undefined` when its corridor claims
- * nothing — the same two answers, for the same reason, as {@link rfqClaimSecretOf},
- * and a present-but-unusable value throws rather than reading as absent.
- *
- * Asked of the corridor's handler, not of a `kind` narrowing here: whether a leg
- * claims is the corridor's fact, and so is the key it wrote the destination
- * under. A corridor added later contributes both without touching this file.
- */
+/** Where this record's claim pays, or `undefined` when its corridor claims nothing — same rules as
+ * {@link rfqClaimSecretOf}; the handler owns both the fact and the profile key. */
 export const rfqClaimDestinationOf = (record: RfqSwapRecord): string | undefined => {
     const handler = rfqCorridorHandlers.getOrThrow(record.kind);
     if (!handler.claimDestination) return undefined;

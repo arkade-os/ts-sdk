@@ -5,7 +5,7 @@ import { AssetRef } from "./assetRef";
 import { AssetInput, AssetInputs } from "./assetInput";
 import { AssetOutput, AssetOutputs } from "./assetOutput";
 import { Metadata, MetadataList } from "./metadata";
-import { BufferReader, BufferWriter } from "../utils";
+import { BufferReader, BufferWriter, hexOrThrow } from "../utils";
 
 /**
  * An asset group contains inputs, outputs, and all data related to a given asset id.
@@ -72,13 +72,7 @@ export class AssetGroup {
      * @see toString
      */
     static fromString(s: string): AssetGroup {
-        let buf: Uint8Array;
-        try {
-            buf = hex.decode(s);
-        } catch {
-            throw new Error("invalid format, must be hex");
-        }
-        return AssetGroup.fromBytes(buf);
+        return AssetGroup.fromBytes(hexOrThrow(s, "invalid format, must be hex"));
     }
 
     /**

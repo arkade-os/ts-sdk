@@ -74,19 +74,6 @@ function isSettledBoardingReceive(tx: ArkTransaction): boolean {
     return tx.type === TxType.TxReceived && tx.settled && tx.key.boardingTxid !== "";
 }
 
-function collectAssets(vtxos: VirtualCoin[]): Asset[] | undefined {
-    const map = new Map<string, bigint>();
-    for (const vtxo of vtxos) {
-        if (vtxo.assets) {
-            for (const a of vtxo.assets) {
-                map.set(a.assetId, (map.get(a.assetId) ?? 0n) + a.amount);
-            }
-        }
-    }
-    if (map.size === 0) return undefined;
-    return Array.from(map, ([assetId, amount]) => ({ assetId, amount }));
-}
-
 function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | undefined {
     const map = new Map<string, bigint>();
     for (const vtxo of change) {
@@ -226,7 +213,7 @@ export async function buildTransactionHistory(
                 );
 
                 if (!duplicateBoardingReceive) {
-                    const assets = collectAssets([vtxo]);
+                    const assets = subtractAssets([], [vtxo]);
                     received.push({
                         key: {
                             ...txKey,
@@ -244,7 +231,7 @@ export async function buildTransactionHistory(
         } else if (ownVtxos.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
             // If this virtual output is preconfirmed and does not spend any other virtual outputs,
             // it's translated into a received offchain transaction
-            const assets = collectAssets([vtxo]);
+            const assets = subtractAssets([], [vtxo]);
             received.push({
                 key: { ...txKey, arkTxid: vtxo.txid! },
                 // The escrow paying out: a swap fill or a cancel spends the

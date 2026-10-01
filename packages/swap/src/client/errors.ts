@@ -1,24 +1,12 @@
 /**
- * The §7 taxonomy, as typed errors.
+ * The §7 taxonomy, as typed errors. Every member is thrown before value moves, or not at all;
+ * anything after funding is an outcome of the drive loop, not an exception. Each class names
+ * the boundary it fires at.
  *
- * The contract every member shares: it is thrown before value moves, or not at
- * all. Anything that can go wrong after funding is an outcome, not an exception,
- * and belongs to the drive loop instead. Each class names the boundary it fires
- * at, because that is the part a caller cannot infer from the name.
- *
- * Naming rule, and it cuts both ways. A member of this taxonomy is a bare
- * condition noun — `QuoteExpired`, `NotCancellable` — because `SwapRefusal` is
- * one and §8 keeps it unchanged, so a module holding all sixteen is bare or it
- * is the first mixed-convention module in the package. An error class that is
- * *not* a member keeps the `Error` suffix: `AssetIdError` and
- * `AmountFormatError` are codec faults on caller input, and the suffix is what
- * says so at the catch site.
- *
- * v1's `AddressMismatch` (`rfq.ts:163`) is deliberately not a seventeenth
- * member: M3 folds it into {@link QuoteVerificationFailed}'s `lockup_address`
- * check, and M8 gives it the `/protocol` re-export and the `@deprecated`
- * pointer. Tagging it here would deprecate a live behaviour against a
- * replacement that does not exist yet.
+ * Members are bare condition nouns (`QuoteExpired`), matching `SwapRefusal`. Non-members keep the
+ * `Error` suffix (`AssetIdError`, `AmountFormatError`: codec faults on caller input). v1's
+ * `AddressMismatch` is not a member: it is the `lockup_address` case of
+ * {@link QuoteVerificationFailed}.
  */
 import type { NetworkName } from "@arkade-os/sdk";
 import { SwapRefusal } from "../rfq";
@@ -26,43 +14,27 @@ import type { AssetId } from "./assetId";
 import type { CorridorId } from "./corridor";
 
 /**
- * A solver declined, with its closed-set reason. The protocol's own class,
- * reused rather than shadowed or wrapped: §8 keeps it on the v2 surface
- * unchanged, and a second class would give two `SwapRefusal`s that fail
- * `instanceof` against each other across the v1/v2 seam.
+ * A solver declined, with its closed-set reason. The protocol's own class, reused rather than
+ * wrapped, so `instanceof` works across the v1/v2 seam.
  *
  * Boundary: the RFQ response, before anything is funded.
  */
 export { SwapRefusal };
 
 /**
- * The checks §3.1 runs on every quote, before it is returned.
- *
- * Four of them are the spec's, and the fifth is M3's answer to G2. §3.1 states
- * that "who answered is a transport property, not one of those four checks",
- * and the two dev transports authenticate nobody — so leaving attestation at
- * the transport makes verification skippable by configuration, which is the one
- * thing verification may not be. `responder` is therefore *delivered* as a
- * transport property and *run* as a check, and §3.1's sentence narrows to
- * addressed mode with it: published RFQ (§10) attributes each bid by its own
- * signature and inherits no transport attestation at all.
+ * The checks §3.1 runs on every quote, before it is returned. `responder` is delivered by the
+ * transport but *run* as a check, so verification cannot be skipped by configuring a dev
+ * transport that authenticates nobody. Published RFQ (§10) attributes bids by signature instead.
  */
 export type QuoteCheck = "pair" | "lockup_address" | "invoice" | "refund_window" | "responder";
 
 /**
- * `to` is underdetermined — it parses as nothing, as more than one thing, or as
- * one thing the corridor that owns it refuses.
+ * `to` is underdetermined — it parses as nothing, as more than one thing, or as one thing the
+ * corridor that owns it refuses (a `tb1…` on mainnet, another operator's Arkade address, a
+ * bolt11 the decoder rejects). The refusal rides on `detail`.
  *
- * The third arm is the one a name reading only "ambiguous" would hide. A
- * corridor module answers *mine, and wrong* for a `tb1…` on a mainnet wallet,
- * another operator's Arkade address, or a bolt11 the shape-only classifier
- * admits and the decoder then rejects; collapsing that into *not mine* would
- * hand a well-formed destination to {@link UnsupportedRoute}, which names the
- * wrong fault. The refusal rides on `detail`, so the taxonomy stays at sixteen.
- *
- * A destination core classifies but no module claims — an LNURL today — is NOT
- * this: it is left unclaimed at the parse and becomes {@link UnsupportedRoute}
- * at route resolution.
+ * A destination core classifies but no module claims (an LNURL today) is NOT this: it becomes
+ * {@link UnsupportedRoute}.
  *
  * Boundary: `resolve()`/`quote()`, the single place `to` is parsed.
  */
@@ -80,12 +52,9 @@ export class AmbiguousDestination extends Error {
  * The corridor pair is not in the implemented route union — `onchain -> arkade`
  * included, until the manager owns the trader's L1 refund path end to end.
  *
- * Boundary: route resolution, before RFQ disclosure, artifact creation,
- * persistence or funding. Also the alias layer, for a rail no corridor serves,
- * and `quote()` for a pair no discovered market serves on the active snapshot —
- * a resolved route with an empty eligible set, which is an absence of a
- * market-shaped thing rather than a wrong pairing, and so this member rather
- * than a seventeenth.
+ * Boundary: route resolution, before RFQ disclosure, artifact creation, persistence or funding.
+ * Also the alias layer (a rail no corridor serves), and `quote()` when no discovered market
+ * serves the pair on the active snapshot.
  */
 export class UnsupportedRoute extends Error {
     override readonly name = "UnsupportedRoute";
@@ -99,16 +68,11 @@ export class UnsupportedRoute extends Error {
 }
 
 /**
- * `resolve()` needs market data and has neither an injected nor a cached
- * snapshot. Deliberately not a third, half-resolved route state: the type system
- * excludes one, and a caller that needs offline resolution warms or injects a
- * snapshot.
+ * No market data: neither an injected nor a cached snapshot. For offline resolution, warm or
+ * inject a snapshot.
  *
- * Boundary: `resolve()`, and `quote()` when the fetch it is allowed to make
- * leaves it with nothing either — no registry configured, an unindexed network,
- * or an unreachable registry with no cache behind it. Fetching is what `quote()`
- * may do that `resolve()` may not; having no market data at all is the same
- * condition on both.
+ * Boundary: `resolve()`, and `quote()` when its permitted fetch also yields nothing (no registry
+ * configured, an unindexed network, or an unreachable registry with no cache).
  */
 export class DiscoverySnapshotUnavailable extends Error {
     override readonly name = "DiscoverySnapshotUnavailable";
@@ -138,7 +102,7 @@ export class AmountMismatch extends Error {
  * field arriving as a JSON number past 2^53, a non-canonical decimal string, or
  * a `bigint` too large for a foreign `number` amount.
  *
- * Boundary: the RFQ adapter, both directions; from M7, core's payment rails.
+ * Boundary: the RFQ adapter, both directions; core's payment rails.
  */
 export class AmountEncodingUnsupported extends Error {
     override readonly name = "AmountEncodingUnsupported";
@@ -153,9 +117,8 @@ export class AmountEncodingUnsupported extends Error {
 }
 
 /**
- * A solver response failed a local check. v1 documented the pair check as the
- * caller's job, in bold; here it is an invariant. v1's `AddressMismatch` is the
- * `lockup_address` case of this and folds into it at M3.
+ * A solver response failed a local check (see {@link QuoteCheck}); v1's `AddressMismatch` is the
+ * `lockup_address` case.
  *
  * Boundary: `quote()`, before the quote is returned and so before funding.
  */
@@ -167,9 +130,7 @@ export class QuoteVerificationFailed extends Error {
         readonly check: QuoteCheck,
         expected?: string,
         actual?: string,
-        /** The gate or derivation this folds in, kept as the `cause` chain:
-         * `expected`/`actual` say what disagreed, and the cause says which
-         * check said so. */
+        /** The gate or derivation this folds in, kept as the `cause` chain. */
         options?: ErrorOptions,
     ) {
         super(`quote failed the ${check} check — refusing to fund`, options);
@@ -179,13 +140,10 @@ export class QuoteVerificationFailed extends Error {
 }
 
 /**
- * A quote past its TTL, or so close to it that acting on it is the same thing.
- *
- * Two boundaries, one condition. At `accept()` it is the spec's: the client
- * never silently re-quotes, because the price the caller saw is not the price
- * they would get. At `quote()` it is `policy.quoteTtlFloorSeconds` — a quote arriving
- * with less validity left than the caller can use is expired on arrival, and
- * saying so beats handing back terms that die between the return and the accept.
+ * A quote past its TTL, or so close to it that acting on it is the same thing. At `accept()` the
+ * client never silently re-quotes, since the price seen is not the price one would get. At
+ * `quote()` a quote arriving with less than `policy.quoteTtlFloorSeconds` left is expired on
+ * arrival.
  *
  * Boundary: `quote()`, against the policy floor; `accept()`, before persistence.
  */
@@ -201,11 +159,8 @@ export class QuoteExpired extends Error {
 }
 
 /**
- * The quote's fee is over the verb's ceiling.
- *
- * Carries the terms rather than the quote: a `Quote` field would make this
- * module depend on M3, and an app re-presenting the terms calls `quote()` again
- * anyway.
+ * The quote's fee is over the verb's ceiling. Carries the terms rather than the `Quote`; to
+ * re-present them, call `quote()` again.
  *
  * Boundary: the verbs layer, between `quote` and `accept` — before funding.
  */
@@ -222,8 +177,7 @@ export class MaxFeeExceeded extends Error {
 }
 
 /**
- * The wallet cannot fund the give leg. v1 left this to `validatePlan` and the
- * caller, and `validatePlan` returned rather than threw.
+ * The wallet cannot fund the give leg.
  *
  * Boundary: `accept()`, before persistence and funding.
  */
@@ -276,16 +230,9 @@ export class ClientDisposed extends Error {
 }
 
 /**
- * `cancel()` on a swap this client cannot cancel. The asymmetry is structural:
- * an offer covenant has no expiry, so cancellation is an unfilled offer's only
- * exit, where an HTLC has phases and its exits are a claim or a refund.
- *
- * Three ways of refusing, one condition. A corridor-tagged id is refused on the
- * parse of its prefix, with no repository read; an `offer:` id no record backs
- * is refused after the one read cancel needed anyway; and an untagged id from
- * `/protocol`'s readers takes that same read. The taxonomy stays at sixteen —
- * a "no such swap" member would split one condition across two classes by
- * which call noticed it.
+ * `cancel()` on a swap this client cannot cancel. Only an unfilled offer is cancellable (an offer
+ * covenant never expires); an HTLC's exits are a claim or a refund. Also thrown for an `offer:`
+ * or untagged id no record backs — "no such swap" is the same condition.
  *
  * Boundary: `cancel()`.
  */
@@ -297,14 +244,8 @@ export class NotCancellable extends Error {
 }
 
 /**
- * A destination disagrees with its asset's chain.
- *
- * Inert by ruling. §9's EVM corridor is the only place two chain identities can
- * disagree, and it is deferred, so nothing throws this yet. Declared anyway so
- * the taxonomy has no unowned member, and so M6's coverage pass can assert that
- * exactly one declared error has no throwing site — this one. Its fields are
- * pinned now for the same reason: nothing throws it, so this is the moment to
- * say what the evidence is.
+ * A destination disagrees with its asset's chain. Inert: only §9's deferred EVM corridor could
+ * throw it, so it is the one declared error with no throwing site today.
  */
 export class InconsistentRoute extends Error {
     override readonly name = "InconsistentRoute";
@@ -331,19 +272,12 @@ export class OperatorUnreachable extends Error {
 }
 
 /**
- * A corridor's dependency was explicitly overridden to nothing, or is required
- * on this network and absent.
+ * A corridor's dependency was explicitly overridden to nothing (`null`; `undefined` takes the
+ * default), or is required on this network and absent — e.g. the arkade co-signer key on
+ * `testnet`/`signet`, which `EMULATOR_PUBKEYS` does not pin.
  *
- * Four overridable deps, not three: the arkade repository, the lightning
- * decoder, the lightning covclaimd deployment key, and the onchain chain
- * source. `undefined` takes the default; `null` is the refusal this names. The
- * arkade module's co-signer key reaches it by the second door — it is not a
- * `CorridorOverrides` key, but `EMULATOR_PUBKEYS` pins three of the five
- * networks, so on `testnet` and `signet` the override is required and its
- * absence is this rather than a bare `Error`.
- *
- * Boundary: dep resolution, when a route first touches that corridor. Never
- * construction: a missing dep for a corridor nobody uses is not an error.
+ * Boundary: dep resolution, when a route first touches that corridor. Never construction: a
+ * missing dep for a corridor nobody uses is not an error.
  */
 export class MissingCorridorDep extends Error {
     override readonly name = "MissingCorridorDep";
@@ -378,12 +312,8 @@ export type SwapError =
 export type SwapErrorName = SwapError["name"];
 
 /**
- * Name to class.
- *
- * The `satisfies` is what makes drift a compile error rather than a review
- * catch: a member missing here fails the `Record`, an extra key fails the
- * excess-property check, and a class whose `name` disagrees with its identifier
- * fails both at once.
+ * Name to class. The `satisfies` makes drift a compile error: a missing member fails the
+ * `Record`, an extra key the excess-property check, a mismatched `name` both.
  */
 const SWAP_ERRORS = {
     AmbiguousDestination,
@@ -408,11 +338,8 @@ const SWAP_ERRORS = {
 export const SWAP_ERROR_NAMES = Object.keys(SWAP_ERRORS) as readonly SwapErrorName[];
 
 /**
- * Whether `e` belongs to the taxonomy, optionally narrowed to one member.
- *
- * Catalog-driven rather than a chain of `instanceof`, so it stays total as
- * members are added, and it rejects an impostor: a foreign error that happens to
- * be named `QuoteExpired` fails the constructor check.
+ * Whether `e` belongs to the taxonomy, optionally narrowed to one member. Catalog-driven, and
+ * rejects an impostor: a foreign error merely named `QuoteExpired` fails the constructor check.
  */
 export function isSwapError(e: unknown): e is SwapError;
 export function isSwapError<N extends SwapErrorName>(

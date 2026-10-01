@@ -138,6 +138,7 @@
         "@scure/bip39": "2.0.1",
         "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4",
+        "micro-packed": "0.8.0",
         "ws-electrumx-client": "1.0.5"
     },
     "devDependencies": {

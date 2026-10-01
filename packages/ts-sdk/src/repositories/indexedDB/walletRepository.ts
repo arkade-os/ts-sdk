@@ -16,24 +16,27 @@ import {
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
-    STORE_VTXOS,
-    STORE_UTXOS,
-    STORE_TRANSACTIONS,
-    STORE_WALLET_STATE,
     serializeVtxo,
     serializeUtxo,
     deserializeVtxo,
     deserializeUtxo,
     SerializedVtxo,
-    DB_VERSION,
-} from "./db";
+} from "../serialization";
 import { awaitTransaction, deleteByIndex, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { initDatabase, unspentFlag } from "./schema";
+import {
+    DB_VERSION,
+    initDatabase,
+    STORE_TRANSACTIONS,
+    STORE_UTXOS,
+    STORE_VTXOS,
+    STORE_WALLET_STATE,
+    unspentFlag,
+} from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyFactsOfRow } from "../legacyVtxoFacts";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
-import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -167,17 +170,10 @@ export class IndexedDBWalletRepository implements WalletRepository {
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
-        if (!key.address) {
-            throw new Error("IndexedDBWalletRepository requires an address");
-        }
-        for (const vtxo of vtxos) {
-            if (!isVtxoForScript(vtxo, key.script)) {
-                throw new Error(
-                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
-                );
-            }
-        }
-        return this.saveVtxos(key.address, vtxos);
+        return this.saveVtxos(
+            checkSaveVtxosForScript("IndexedDBWalletRepository", key, vtxos),
+            vtxos,
+        );
     }
 
     async deleteVtxosForScript(script: string): Promise<void> {

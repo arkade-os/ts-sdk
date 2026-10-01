@@ -1,21 +1,9 @@
 /**
- * The three product-facing verbs, and the one thing they add.
+ * The three product-facing verbs: `pay`, `receive` and `exchange` each compile a
+ * {@link QuoteInput}, `quote`, enforce a fee ceiling, and `accept`.
  *
- * `pay`, `receive` and `exchange` compile a {@link QuoteInput}, call `quote`,
- * check `quote.fee` against a ceiling and call `accept`. Everything they call
- * was built in M3–M6; what they add is the ceiling — and what they subtract is
- * vocabulary. A product integrating payments never sees the words route,
- * corridor, market or quote.
- *
- * The verbs are deliberately thin, and one asymmetry is the reason they exist
- * at all: `receive` is what makes the artifact's exposure order unlosable. It
- * returns only after `accept()` has persisted, so a caller cannot show a payer
- * an invoice whose claim secret is still in memory — the ordering M4 bought,
- * stated in a signature.
- *
- * §5's fourth row — `pay` to a plain Arkade address — is not a swap and must
- * not become one. It delegates: same asset, same rail, rate 1, nothing swapped.
- * See {@link PayResult}.
+ * `receive` returns only after `accept()` has persisted, so a caller cannot show a payer
+ * an invoice whose claim secret exists only in memory.
  */
 import type { IWallet } from "@arkade-os/sdk";
 import { arkTarget, resolveSendAmount } from "@arkade-os/sdk";
@@ -31,44 +19,26 @@ import { satsOf } from "./sats";
 /**
  * A fee ceiling: an amount, and the asset it is denominated in.
  *
- * The asset is not ceremony. M3/D denominates the fee on the give leg on
- * corridor routes and on the take leg on asset swaps, so a bare `bigint` names
- * no asset — and on `exchange` the caller cannot know which leg carries it
- * before quoting. A ceiling whose asset is not the fee's is a refusal rather
- * than a conversion: the SDK holds no rate, and inventing one to compare two
- * numbers is how a ceiling silently stops being one.
- *
- * The same shape on every verb and on {@link SwapPolicy.maxFee}, so the call
- * ceiling and the policy ceiling it is taken against are comparable without a
- * translation.
+ * The fee is on the give leg for corridor routes and the take leg for asset swaps, so a
+ * bare `bigint` names no asset. A ceiling in another asset than the fee's is refused,
+ * never converted: the SDK holds no rate. Same shape as {@link SwapPolicy.maxFee}.
  */
 export interface FeeCeiling {
     readonly amount: bigint;
     readonly asset: AssetId;
 }
 
-/**
- * What `pay` takes beside the destination.
- *
- * `amount` is what the *recipient* gets, and it is omitted exactly when the
- * destination pins it — an amount-bearing bolt11 does, and passing one beside
- * it is `AmountMismatch`. §9.5's EVM destinations grow a required `take` here;
- * they are deferred, so it is not declared yet.
- */
+/** What `pay` takes beside the destination. */
 export interface PayOptions {
-    /** Atomic units delivered to the recipient. Omitted when an invoice pins it. */
+    /** Atomic units delivered to the recipient. Omitted when the destination pins it;
+     * passing one beside an amount-bearing invoice is `AmountMismatch`. */
     readonly amount?: bigint;
     readonly maxFee?: FeeCeiling;
 }
 
 /**
- * What `receive` takes.
- *
- * `via` names the corridor because a receive has no instrument to parse — the
- * instrument *is* the artifact the solver mints, and it does not exist until
- * the quote comes back. `asset` is reserved for §9.5's EVM form: on the
- * implemented corridors the corridor carries BTC and nothing else, so naming
- * one would be a fact with nothing to disagree with.
+ * What `receive` takes. `via` names the corridor because a receive has no instrument to
+ * parse: the instrument is the artifact the solver mints in the quote.
  */
 export interface ReceiveOptions {
     /** Atomic units the trader receives. */
@@ -79,13 +49,7 @@ export interface ReceiveOptions {
     readonly maxFee?: FeeCeiling;
 }
 
-/**
- * What `exchange` takes: {@link QuoteInput} minus `to` and `via`, plus the
- * ceiling.
- *
- * Thin because `exchange` hides the two-step, not the vocabulary — an asset
- * swap names both assets by construction, and there is nothing left to infer.
- */
+/** What `exchange` takes: {@link QuoteInput} minus `to` and `via`, plus the ceiling. */
 export interface ExchangeOptions {
     readonly give?: AssetRef;
     readonly take?: AssetRef;
@@ -95,20 +59,9 @@ export interface ExchangeOptions {
 }
 
 /**
- * The artifact a receive over corridor `C` comes back with.
- *
- * Corridor determines kind, not just shape: only `lightning` mints an invoice —
- * that corridor is the hand-off of a bolt11 the solver created, so the artifact
- * *is* the request's payload — and every other implemented receive is a deposit
- * the payer sends to. Without the conditional the return is the full
- * `Artifact` union, and `receive({ via: "lightning" }).artifact.bolt11` — the
- * exact thing the quickstart does — does not compile without a manual `kind`
- * check. Typed here, beside the verb, because the invoice choice is `receive`'s
- * promise rather than a fact about `Artifact` itself.
- *
- * Distributed over `C` for the reason {@link DepositArtifact} is: the default
- * `CorridorId` lands on the full union rather than on one member's fields
- * widened over every corridor's.
+ * The artifact a receive over corridor `C` comes back with: an invoice on `lightning`,
+ * a deposit otherwise. The conditional lets `receive({ via: "lightning" }).artifact.bolt11`
+ * compile without a manual `kind` check; distributed over `C` like {@link DepositArtifact}.
  */
 export type ReceiveArtifact<C extends CorridorId = CorridorId> = C extends CorridorId
     ? C extends "lightning"
@@ -116,29 +69,15 @@ export type ReceiveArtifact<C extends CorridorId = CorridorId> = C extends Corri
         : DepositArtifact<C>
     : never;
 
-/**
- * What `receive` answers with: a {@link Swap} whose artifact is a guarantee
- * rather than a maybe.
- *
- * An intersection rather than a parallel record, because that is where the
- * guarantee gets *stated*: `Quote.artifact` and `Swap.artifact` are optional —
- * three of the four routes have nothing a counterparty must see — and a receive
- * always has one. Narrowing the field on the base type is not open to an
- * intersection, so this is the shape that says it.
- */
+/** What `receive` answers with: a {@link Swap} whose (otherwise optional) artifact is
+ * guaranteed. */
 export type ReceiveRequest<C extends CorridorId = CorridorId> = Swap & {
     readonly artifact: ReceiveArtifact<C>;
 };
 
 /**
- * What `pay` answers with.
- *
- * Two arms, because §5's four destination rows are not four swaps. A bolt11 and
- * a `bc1…` cross a corridor and produce a {@link Swap}; a plain Arkade address
- * is a plain Arkade payment and produces a txid and no swap id. Manufacturing a
- * `Swap` for the second would be a swap record for something nothing swapped —
- * same asset, same rail, rate 1 — and rejecting it instead would put a branch in
- * every product's one pay box rather than once here.
+ * What `pay` answers with. A bolt11 or `bc1…` crosses a corridor and yields a
+ * {@link Swap}; a plain Arkade address is a plain payment and yields only a txid.
  */
 export type PayResult =
     | { readonly kind: "swap"; readonly swap: Swap }
@@ -154,19 +93,11 @@ export interface VerbDeps {
 }
 
 /**
- * The effective ceiling, and the refusal when the quote is over it.
+ * Enforce the effective ceiling: the **minimum** of the call's and the policy's, so
+ * neither can raise the other. Both absent means no ceiling.
  *
- * The effective ceiling is the **minimum** of the call's and the policy's: a
- * policy ceiling a call could raise would be decorative, and a call ceiling a
- * policy could raise would make the tighter of two explicit instructions lose.
- * Either may be absent; both absent means no ceiling, which is the documented
- * default and not a zero.
- *
- * A ceiling denominated in another asset is refused as caller input rather than
- * as a member of §7's taxonomy: the taxonomy's members are conditions of the
- * swap, and this is a field naming the wrong unit — the same rule that keeps
- * "amount needs amountOn" a plain `Error`.
- *
+ * @throws {Error} when a ceiling is in another asset than the fee (caller input, not a
+ *   swap condition).
  * @throws {MaxFeeExceeded} when `quote.fee` is over the effective ceiling —
  *   between `quote` and `accept`, so nothing was funded.
  */
@@ -208,11 +139,8 @@ const settle = async (
 /**
  * Pay a destination: a bolt11, a `bc1…`, or a plain Arkade address.
  *
- * The Arkade arm is checked first and against core's own parse, so a bare
- * address and a BIP21 `ark=` param behave identically here and in the `ark`
- * rail — one classification, not two that can drift. It settles through
- * `wallet.send`, which is what the `ark` rail settles through: fee 0 and
- * receiver-exact for free, with nothing to quote and nothing to persist.
+ * The Arkade arm uses core's own parse (so it classifies exactly as the `ark` rail does)
+ * and settles through `wallet.send`: fee 0, nothing quoted or persisted.
  */
 export const pay = async (
     deps: VerbDeps,
@@ -221,8 +149,7 @@ export const pay = async (
 ): Promise<PayResult> => {
     const arkade = arkTarget(destination);
     if (arkade !== undefined) {
-        // Core's own amount law, so an amountless `ark:` URI is refused in the
-        // same words the `ark` rail refuses it in.
+        // Core's own amount law, so refusals match the `ark` rail's.
         const amount = resolveSendAmount(
             "ark",
             destination,
@@ -234,9 +161,7 @@ export const pay = async (
         deps,
         {
             to: destination,
-            // `amountOn: "take"` because the number a caller writes beside a
-            // destination is what the recipient gets. An invoice pins the same
-            // leg by existing, which is why passing both is `AmountMismatch`.
+            // The amount beside a destination is what the recipient gets.
             ...(options.amount === undefined ? {} : { amount: options.amount, amountOn: "take" }),
         },
         options.maxFee,
@@ -247,9 +172,7 @@ export const pay = async (
 /**
  * Ask for an incoming payment over `via`, and get back the artifact to show.
  *
- * The artifact is non-optional on the return type and the assertion behind it
- * is real: a receive route has one by construction, and a client that answered
- * without one has failed rather than answered.
+ * @throws {Error} if the accepted swap carries no artifact.
  */
 export const receive = async <C extends CorridorId = CorridorId>(
     deps: VerbDeps,
@@ -261,8 +184,7 @@ export const receive = async <C extends CorridorId = CorridorId>(
             via: options.via,
             ...(options.asset === undefined ? {} : { take: options.asset }),
             amount: options.amount,
-            // The trader's side is the take leg: `receive({ amount })` is
-            // "credit me this much", not "let the payer send this much".
+            // "Credit me this much", not "let the payer send this much".
             amountOn: "take",
         },
         options.maxFee,
@@ -272,10 +194,8 @@ export const receive = async <C extends CorridorId = CorridorId>(
             `receive over ${options.via} returned no artifact — there is nothing to show a payer`,
         );
     }
-    // Widening rather than checking: the artifact's kind is pinned by
-    // `options.via` four layers down (the route the corridor resolves to is
-    // what mints it), a correspondence the quote pipeline has no type to say
-    // it in — `Quote.artifact` is the untied `Artifact`. The cast states it.
+    // `options.via` pins the artifact's kind via the route, which `Quote.artifact`'s type
+    // cannot express; the cast states it.
     return swap as ReceiveRequest<C>;
 };
 

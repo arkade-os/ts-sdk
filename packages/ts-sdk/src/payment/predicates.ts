@@ -6,7 +6,7 @@
  */
 
 /** True if the string decodes as an Arkade address (canonical SDK check). */
-export { isValidArkAddress } from "../wallet/utils";
+export { isValidArkAddress } from "../utils/arkTransaction";
 
 /** True for a BOLT11 invoice (with or without a `lightning:` prefix). HRPs:
  *  mainnet, testnet, signet, regtest, simnet. The amount rides inside the HRP

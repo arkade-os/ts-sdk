@@ -1,23 +1,14 @@
 /**
  * Realm object schemas for the asset-swap repository.
  *
- * The names land in the **consuming application's** schema namespace, next to
- * its own models and the SDK's `Ark*`, so they are prefixed with
- * `ArkadeAssetSwap`. Unlike the SQLite backend there is no
- * prefix option: a Realm schema name is baked into the schema objects the
- * consumer registers and into every `realm.objects(…)` call here.
+ * Prefixed `ArkadeAssetSwap` because the names land in the consuming app's schema namespace; unlike
+ * SQLite there is no prefix option, since the name is baked into the schema objects and every
+ * `realm.objects(…)` call. Plain objects in Realm's ObjectSchema shape (`realm` is not a dependency);
+ * no migration helper ships, so consumers bump their own `schemaVersion` when schemas are added.
  *
- * Since `realm` is not a dependency of this package, schemas are plain JS
- * objects conforming to Realm's ObjectSchema shape. They are new, so a consumer
- * adds them to its Realm config and bumps its own `schemaVersion`; no migration
- * helper ships here.
- *
- * `ArkadeRfqSwap` arrived after the first three, and `ArkadeSwapRecord` after
- * that. A consumer already shipping the earlier set has to add the new one and
- * bump `schemaVersion` again — Realm creates schemas on open, so a config that
- * lists four while the code reads five fails on the fifth `realm.objects(…)`
- * rather than at open. Export {@link AssetSwapRealmSchemas} into the config
- * rather than listing names by hand and the mismatch cannot happen.
+ * Realm creates schemas on open, so a config missing a newer schema (`ArkadeRfqSwap`,
+ * `ArkadeSwapRecord`) fails on the first `realm.objects(…)` for it, not at open. Register
+ * {@link AssetSwapRealmSchemas} rather than listing names by hand.
  */
 
 export const ArkadeAssetSwapSchema = {
@@ -62,13 +53,9 @@ export const ArkadeRfqSwapSchema = {
     },
 };
 
-/**
- * The v2 client's accept records, keyed by the client-minted quote id.
- *
- * `family` and `updatedAt` are mapped out for querying; the record itself goes
- * in whole, which is what keeps a nested corridor `profile` from being lost the
- * way a field-mapped schema could lose it.
- */
+/** The v2 client's accept records, keyed by the client-minted quote id. `family` and `updatedAt` are
+ * mapped out for querying; the record goes in whole so a nested corridor `profile` cannot be lost
+ * the way a field-mapped schema could lose it. */
 export const ArkadeSwapRecordSchema = {
     name: "ArkadeSwapRecord",
     primaryKey: "id",

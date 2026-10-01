@@ -10,6 +10,7 @@ import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import { assertNoAssets, assetsOf, invoiceTarget, makeHandle } from "@arkade-os/sdk";
 import { assertFundable, requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
+import { fundSolverSend } from "./solverOnchain";
 
 /** @deprecated A v1 RFQ rail; use `lightningRail` / `onchainSwapRail` with `createSwapPaymentRouter`. Moved off the package root to `@arkade-os/swap/protocol`. */
 export const SOLVER_LIGHTNING_RAIL = "solver-lightning";
@@ -141,31 +142,14 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
                             invoiceExpiresAt: facts.expiresAt,
                             now: Math.floor(Date.now() / 1000),
                         });
-                        // Persist FIRST — see `solverOnchain`.
-                        await deps.persist(swap);
-                        await ctx.wallet.send({
-                            address: swap.address,
-                            amount: swap.fundAmount,
-                        });
-                        // Not "settled": the invoice is unpaid until the solver\'s claim
-                        // witness reveals the preimage.
-                        emit({ status: "sent" });
-                        const result = { railId: SOLVER_LIGHTNING_RAIL, swapId: swap.rfqId };
-                        if (!deps.awaitSettlement) return result;
-                        // Not a payment failure — see `solverOnchain`.
-                        let preimage: string | undefined;
-                        try {
-                            ({ preimage } = await deps.awaitSettlement(swap));
-                        } catch (e) {
-                            console.warn(
-                                `${SOLVER_LIGHTNING_RAIL}: settlement watch failed; the payment is sent`,
-                                e,
-                            );
-                            return result;
-                        }
-                        const settled = { ...result, ...(preimage !== undefined && { preimage }) };
-                        emit({ status: "settled", result: settled });
-                        return settled;
+                        return fundSolverSend(
+                            SOLVER_LIGHTNING_RAIL,
+                            ctx,
+                            emit,
+                            deps,
+                            swap,
+                            ({ preimage }) => ({ ...(preimage !== undefined && { preimage }) }),
+                        );
                     }),
             };
         },

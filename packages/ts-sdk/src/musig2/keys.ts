@@ -33,7 +33,7 @@ export function aggregateKeys(
     const tweakBytes = schnorr.utils.taggedHash(
         "TapTweak",
         preTweakedKey.toBytes(true).subarray(1),
-        options.taprootTweak ?? new Uint8Array(0),
+        options.taprootTweak,
     );
 
     const { aggPublicKey: finalKey } = musig.keyAggregate(publicKeys, [tweakBytes], [true]);

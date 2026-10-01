@@ -1,16 +1,9 @@
 /**
- * Rebuild swap records after a wallet restore.
+ * Rebuild swap records after a wallet restore, from chain data: the funding tx carries
+ * the offer packet (type 0x03) in its extension, the covenant vtxo at the offer's script
+ * holds the deposit, and that vtxo's spender is the fill or cancel tx.
  *
- * The swap store dies with its storage backend, but everything a consumer
- * needs is recomputable from chain data: the funding tx we sent carries the
- * offer packet (type 0x03) in its extension, the covenant vtxo at the offer's
- * script holds the deposit, and that vtxo's spender is the completion (or
- * cancel) tx. Scan the sent virtual txs, decode the offers, and bind each
- * funding vtxo to its spend.
- *
- * The scan is incremental: txids checked with an authoritative answer are
- * remembered, so late-synced history is picked up by later scans and nothing
- * is ever fetched twice.
+ * Incremental: txids with an authoritative answer are remembered and never refetched.
  */
 import { base64, hex } from "@scure/base";
 import {
@@ -26,13 +19,8 @@ import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
 const TXS_PER_REQUEST = 50;
 
 /**
- * The subset of a wallet transaction record the swap scan reads.
- *
- * No `assets`: a spend is classified from the covenant leaf it took, read off
- * the spending transaction itself (see {@link classifySpend}). A wallet
- * record's asset field is a net delta — an asset offer's cancel moves the asset
- * out and back, netting to nothing — so it cannot answer the question.
- *
+ * The subset of a wallet transaction record the swap scan reads. No `assets`: see
+ * {@link classifySpend} for why a net asset delta cannot classify a spend.
  */
 export interface Tx {
     type: string;
@@ -44,9 +32,7 @@ export interface Tx {
     createdAt?: number;
 }
 
-/** The indexer surface the restore scan needs — narrower than a full provider.
- *
- */
+/** The indexer surface the restore scan needs — narrower than a full provider. */
 export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;
 
 type Found = {
@@ -57,11 +43,9 @@ type Found = {
 };
 
 /**
- * Fetch and parse virtual txs, keyed by the psbt's own unsigned txid rather
- * than by response order. Chunks are independent requests and are issued
- * concurrently; a chunk that fails or a txid that does not come back is simply
- * absent from the result, which every caller reads as "unanswered, retry later"
- * — the property that keeps a partial response from orphaning a txid forever.
+ * Fetch and parse virtual txs, keyed by the psbt's own txid rather than response order.
+ * A failed chunk or missing txid is simply absent, which callers read as "unanswered,
+ * retry later", so a partial response never orphans a txid.
  */
 async function fetchParsedTxs(
     indexer: RestoreIndexer,
@@ -82,7 +66,6 @@ async function fetchParsedTxs(
         if (result.status !== "fulfilled") continue;
         for (const psbt of result.value) {
             try {
-                // the SDK's Transaction.fromPSBT already allows unknown fields/outputs
                 const parsed = Transaction.fromPSBT(base64.decode(psbt));
                 parsedByTxid.set(parsed.id, parsed);
             } catch {
@@ -93,10 +76,7 @@ async function fetchParsedTxs(
     return parsedByTxid;
 }
 
-/** The candidate txs a scan would fetch: sent virtual txs with no stored swap
- * record and no previous authoritative answer. Module-local: `restoreAssetSwaps`
- * is the only caller, and exporting it would freeze this three-set signature
- * into the package's public API. */
+/** Sent virtual txs with no stored swap record and no previous authoritative answer. */
 const unscannedSwapCandidates = (
     txs: Tx[],
     existingIds: ReadonlySet<string>,
@@ -111,54 +91,26 @@ const unscannedSwapCandidates = (
     );
 
 /**
- * What became of a deposit, as the spending transaction reports it.
- *
- * `indeterminate` is not a third outcome — it is the absence of one, and the
- * caller decides whether to retry or accept a default.
- *
+ * What became of a deposit, as the spending transaction reports it. `indeterminate` is
+ * the absence of an answer; the caller decides whether to retry.
  */
 export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
 
 /**
- * Classify a spend by the covenant leaf it took.
+ * Classify a spend by the covenant leaf it took (a submitted ark tx keeps each input's
+ * `tapLeafScript`). `fulfill` is the solver paying; every other leaf returns the deposit.
+ * Not by asset movement: once registered, the deposit is the wallet's own coin, so an
+ * asset offer's cancel nets to zero exactly like its fill. Leaves also survive batching.
  *
- * The vocabulary is what became of the deposit, not which key moved it:
- * `fulfill` is the solver paying for it, and everything else returns it to the
- * user. A submitted ark tx keeps each input's `tapLeafScript`, so the spend
- * *states* which one it used — this reads an answer rather than inferring one.
+ * **`exit` reports `cancelled`, like `cancel`.** Reporting it `indeterminate` would leave
+ * the swap `pending` forever: re-queued every scan, and never retired.
  *
- * **`exit` reports `cancelled`, like `cancel` does.** The two differ in who had
- * to agree — `cancel` is cooperative with the signer, `exit` is the maker alone
- * after a delay — but not in outcome: the deposit went back unfilled either
- * way, which is the question this answers. Reporting the exit leaf as
- * `indeterminate` instead would be worse than imprecise: no status is written,
- * so the swap stays `pending`, `restoreAssetSwaps` re-queues it on every scan,
- * and `retireOfferContract` never runs — leaving a dead script in the
- * subscription and the failsafe poll for the life of the wallet.
+ * **Pass the checkpoint (`vtxo.spentBy`), not the ark tx.** Only the checkpoint spends the
+ * deposit outpoint; the ark tx spends the checkpoint's output, so it always yields
+ * `indeterminate`. {@link classifyDepositSpend} tries both.
  *
- * **Hand it the transaction that actually spends the deposit outpoint, which is
- * the checkpoint, not the ark tx.** A spend is two linked transactions: the
- * checkpoint (`vtxo.spentBy`) takes the deposit outpoint and carries the
- * covenant leaf, and the ark tx (`vtxo.arkTxId`) spends the checkpoint's output
- * — carrying the same leaf, but over an outpoint that is not the deposit's. A
- * caller that offers only the ark tx gets `indeterminate` for every real spend,
- * which is exactly what the first version of this function did.
- * {@link classifyDepositSpend} takes both and picks whichever answers.
- *
- * What it replaces, and why: the previous test asked what the transaction
- * moved. That works only while the deposit is invisible to the wallet. Once the
- * covenant is a registered contract the deposit joins the wallet's own coins,
- * every wallet-level asset figure becomes a *net* delta, and an asset offer's
- * cancel — asset out of the covenant, same asset back to the user — nets to
- * zero and reads exactly like its fill. Leaves do not have that failure mode,
- * and they also survive batching: a solver filling several offers in one tx
- * gives each input its own leaf.
- *
- * `operatorPubkey` must be the key the covenant was *funded* against. If it has
- * rotated since, the rebuilt script will not match the offer's own
- * `swapPkScript` and this returns `indeterminate` rather than guessing —
- * `cancelOffer` diagnoses the same mismatch the same way.
- *
+ * @param operatorPubkey - The key the covenant was *funded* against. A rotated key fails
+ *   the script match and yields `indeterminate` rather than a guess.
  */
 export function classifySpend(
     offer: Offer,
@@ -171,8 +123,7 @@ export function classifySpend(
         const script = offerContract(offer, operatorPubkey);
         if (hex.encode(script.pkScript) !== hex.encode(offer.swapPkScript)) return "indeterminate";
         leaves = {
-            // both routes that hand the deposit back; `exit` is absent on an
-            // offer that carries no exit closure, and drops out here
+            // `exit` is absent on an offer with no exit closure, and drops out here
             returned: ["cancel", "exit"]
                 .map((name) => script.functionByName(name)?.leafScript)
                 .filter((leaf): leaf is Uint8Array => leaf !== undefined),
@@ -194,28 +145,17 @@ export function classifySpend(
             if (leaves.fulfill && spent === hex.encode(leaves.fulfill)) return "fulfilled";
         }
     }
-    // the deposit left the covenant by none of its leaves (a batch forfeit,
-    // say), the spend carries no tapleaf, or this is the wrong half of the spend
+    // None of its leaves (e.g. a batch forfeit), no tapleaf, or the wrong half of the spend.
     return "indeterminate";
 }
 
-/**
- * The txids that may hold a deposit's spend, in the order worth trying: the
- * checkpoint first, since it is the one carrying the deposit outpoint.
- *
- */
+/** The txids that may hold a deposit's spend, checkpoint first (it carries the outpoint). */
 export const spendTxidsOf = (vtxo: { spentBy?: string; arkTxId?: string }): string[] =>
     [vtxo.spentBy, vtxo.arkTxId].filter((id): id is string => Boolean(id));
 
 /**
- * Classify a deposit's spend across both halves of it.
- *
- * A caller holds two txids for one spend — `spentBy` (the checkpoint, which
- * takes the deposit outpoint) and `arkTxId` (the ark tx built on it) — and
- * cannot tell from the outside which shape a given deployment produced: for a
- * settlement they may be the same id. Try each and take the first definite
- * answer, so the classification does not depend on that distinction.
- *
+ * Classify a deposit's spend across both halves of it (`spentBy` and `arkTxId`, which
+ * may be the same id for a settlement), taking the first definite answer.
  */
 export function classifyDepositSpend(
     offer: Offer,
@@ -231,34 +171,16 @@ export function classifyDepositSpend(
 }
 
 /**
- * Scan the given candidates for offer packets and rebuild the AssetSwap
- * records the store lost. Returns the rebuilt swaps plus the txids that got
- * an authoritative answer (fetched fine, vtxo lookup fine) — the caller
- * persists those so they are never fetched again.
+ * Scan the given candidates for offer packets and rebuild the AssetSwap records the store
+ * lost. Returns the rebuilt swaps plus the txids that got an authoritative answer, which
+ * the caller persists so they are never fetched again.
  *
- * ## A spent deposit is classified or left alone — never guessed
+ * A spent deposit is classified from its spending tx's covenant leaf
+ * ({@link classifySpend}), fetched from the indexer. An unclassifiable spend leaves the
+ * funding txid unanswered for a later scan: nothing sticky is written on a guess.
  *
- * Whether a spent deposit was filled or cancelled is read from the spending
- * transaction's covenant leaf ({@link classifySpend}), fetched from the same
- * indexer as everything else rather than from the `txs` you pass. A spend that
- * cannot be classified — not fetchable yet, or gone by neither leaf — leaves
- * the funding txid unanswered, so nothing is persisted and a later scan decides
- * it. Nothing sticky is written on a guess.
- *
- * That is a deliberate reversal: this used to restore an unclassifiable spend
- * as `fulfilled`, which a persisted record then made permanent, because the
- * spending tx came from the caller's possibly-lagging history. It no longer
- * does, so the `existingIds` escape hatch is no longer a correction mechanism
- * for a wrong label — it is only a skip list.
- *
- * `operatorPubkey` must be the operator key the covenants were funded against; a
- * key that has rotated since makes every affected swap unclassifiable rather
- * than misclassified, and a newly rebuilt record is left unresolved rather than
- * persisted with that key's address.
- *
- * `client.ready` runs this scan for the v2 store (`restoreOfferDeposits`); the
- * root export remains for a consumer running it on their own schedule.
- *
+ * @param opts.operatorPubkey - The key the covenants were funded against. A rotated key
+ *   leaves affected swaps unresolved rather than misclassified.
  */
 export async function restoreAssetSwaps(
     indexer: RestoreIndexer,
@@ -292,7 +214,6 @@ export async function restoreAssetSwaps(
         return { restored: [], scannedTxids: [] };
     }
 
-    // fetch the raw txs and pick out the ones carrying an offer packet
     const byTxid = new Map(candidates.map((tx) => [tx.redeemTxid, tx]));
     const parsedByTxid = await fetchParsedTxs(
         indexer,
@@ -304,9 +225,8 @@ export async function restoreAssetSwaps(
     for (const [txid, parsed] of parsedByTxid) {
         const fundingTx = byTxid.get(txid);
         if (!fundingTx) continue;
-        // only a txid whose psbt actually came back is answered — a chunk may
-        // return fewer than requested, and blanket-marking the request would
-        // orphan the missing ones forever (scans skip answered txids)
+        // Only a txid whose psbt came back is answered; blanket-marking the request would
+        // orphan missing ones forever.
         fetchedTxids.push(txid);
         try {
             const packet = Extension.fromTx(parsed).getPacketByType(OFFER_PACKET_TYPE);
@@ -323,18 +243,13 @@ export async function restoreAssetSwaps(
     }
     if (found.length === 0) return { restored: [], scannedTxids: fetchedTxids };
 
-    // one vtxo lookup binds every funding deposit to its (possible) spend; if
-    // it fails, nothing is marked scanned and the whole batch retries later
+    // If this lookup throws, nothing is marked scanned and the whole batch retries later.
     const scripts = [...new Set(found.map((f) => hex.encode(f.offer.swapPkScript)))];
     const { vtxos } = await indexer.getVtxos({ scripts });
 
-    // index the deposits the same way txs are indexed below: one pass, O(1)
-    // lookups per restored swap instead of a scan over every returned vtxo
     const vtxoByScriptAndTxid = new Map(vtxos.map((v) => [`${v.script}:${v.txid}`, v]));
 
-    // one O(txs) pass so each restored swap's spend lookup below is O(1). The
-    // caller's records are consulted for the completion *time* only — the
-    // classification comes from the spending psbt fetched below
+    // The caller's records supply the completion *time* only, never the classification.
     const txByAnyId = new Map<string, Tx>();
     for (const tx of txs) {
         for (const id of [tx.boardingTxid, tx.redeemTxid, tx.roundTxid]) {
@@ -342,9 +257,7 @@ export async function restoreAssetSwaps(
         }
     }
 
-    // every deposit that has been spent, so its spender can be fetched once for
-    // the whole batch rather than per swap. Both halves: the checkpoint carries
-    // the deposit outpoint, the ark tx is what the record and history name
+    // Both halves of every spent deposit, fetched once for the whole batch.
     const spendTxids = new Set<string>();
     for (const { fundingTx, offer } of found) {
         const vtxo = vtxoByScriptAndTxid.get(
@@ -361,18 +274,13 @@ export async function restoreAssetSwaps(
         const swapPkScript = hex.encode(offer.swapPkScript);
         const vtxo = vtxoByScriptAndTxid.get(`${swapPkScript}:${fundingTx.redeemTxid}`);
         if (!vtxo) {
-            // the funding tx carries an offer but its deposit isn't listed yet
-            // (indexer sync lag): leave the txid unscanned so a later scan retries
-            // — the deposit vtxo must exist for a tx the wallet itself funded
+            // Indexer sync lag: the deposit must exist for a tx the wallet funded, so retry.
             unresolved.add(fundingTx.redeemTxid);
             continue;
         }
 
-        // the TLV names the deposit only for want-BTC offers; otherwise the
-        // funding vtxo's own rider identifies it (asset↔asset swaps deposit an
-        // asset under a want-asset offer, plain BTC deposits carry no rider).
-        // Only an unambiguous single rider is authoritative — anything else
-        // (out-of-spec extra riders) falls back to the BTC reading.
+        // The TLV names the deposit asset only for want-BTC offers; otherwise the vtxo's
+        // rider does. Only a single rider is authoritative; anything else reads as BTC.
         const depositRider =
             vtxo.assets?.length === 1 && vtxo.assets[0].amount > BigInt(0)
                 ? vtxo.assets[0]
@@ -384,8 +292,7 @@ export async function restoreAssetSwaps(
                 ? BigInt(vtxo.value)
                 : vtxo.assets?.find((a) => a.assetId === fromAsset)?.amount;
         if (depositAmount === undefined) {
-            // the TLV declares a deposit asset the indexer hasn't attached to the
-            // vtxo yet: retry later rather than persisting a zero-amount record
+            // Asset not yet attached by the indexer: retry, never persist a zero amount.
             unresolved.add(fundingTx.redeemTxid);
             continue;
         }
@@ -405,10 +312,7 @@ export async function restoreAssetSwaps(
                 vout: vtxo.vout,
             });
             if (kind === "indeterminate") {
-                // the spender is not fetchable yet, or took none of the
-                // covenant's leaves: retry rather than persist a label that
-                // later scans skip. Both are transient or foreign — every leaf
-                // the covenant itself offers, exit included, classifies.
+                // Retry rather than persist a label that later scans would skip.
                 unresolved.add(fundingTx.redeemTxid);
                 continue;
             }
@@ -458,8 +362,6 @@ export async function restoreAssetSwaps(
             spentTxid,
             status,
             createdAt: fundingTx.createdAt ? fundingTx.createdAt * 1000 : vtxo.createdAt.getTime(),
-            // the completion time is the caller's record of the spend, if it
-            // has one — the psbt that classified it carries no timestamp
             ...completion,
         });
     }

@@ -1,15 +1,8 @@
 /**
- * The one narrowing between P3's `bigint` law and core's `number` sats.
- *
- * Core's payment surface is `number` throughout — `RouteQuote.amount`, `.fee`,
- * `.total`, `PaymentRequest.amount`, `Wallet.send` — and converting it is the
- * router's own work, next to the asset-aware routing ts-sdk #586 already
- * assigns it. Until then the crossing happens here, checked, at the boundary
- * where both sides are sats: a sat count past 2^53 is not a payment, so the
- * narrowing is sound and its failure is a refusal rather than a rounded amount.
- *
- * Core already crosses the same boundary itself, unchecked, at
- * `payment/rails/onchain.ts`'s `BigInt(amt)`. This side refuses instead.
+ * The one narrowing between the client's `bigint` amounts and core's `number` sats
+ * (core's payment surface is `number` throughout until ts-sdk #586). A sat count past
+ * 2^53 is not a payment, so the narrowing is sound and its failure is a refusal, never
+ * a rounded amount.
  */
 import { AmountEncodingUnsupported } from "./errors";
 

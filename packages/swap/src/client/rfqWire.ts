@@ -1,23 +1,14 @@
 /**
- * The RFQ wire adapter: the pair string, the amount encoding, and the parse
- * that turns a solver's reply into values the rest of the client can compare.
+ * The RFQ wire adapter: the pair string, the amount encoding, and the reply parse.
  *
- * **The pair string is wire, and it is owned here.** Two different fields are
- * called `pair`. The registry's is a display label (`BTC/lightning:BTC`); the
- * wire's is `<from-leg>-><to-leg>` over legs of `<corridor>:<asset>`, where the
- * asset is a registered ticker or, on arkade only, the 68-hex asset id. Solvers
- * compare it byte for byte and cap it at 158 characters, so a CAIP-19 id cannot
- * go on it — it would fail the comparison and overrun the cap. The public alias
- * layer therefore stops one level above this, at a corridor and a discovery
- * asset id, and the string is built here, one layer below anything public.
+ * **The pair string is wire, owned here.** Not the registry's display `pair` (`BTC/lightning:BTC`):
+ * the wire's is `<from-leg>-><to-leg>` over `<corridor>:<asset>` legs, the asset a registered ticker
+ * or, on arkade only, the 68-hex id. Solvers compare it byte for byte and cap it at 158 chars, so a
+ * CAIP-19 id cannot go on it; the public alias layer stops one level above.
  *
- * **Amounts go out as canonical decimal strings, unconditionally.** The solver
- * accepts them on all four corridor request schemas today, and emitting a string
- * is never a narrowing — where a JSON number past 2^53 has already lost the
- * amount before anyone can check it. The receipt side takes either form through
- * M1's adapter, a number only while it is a non-negative safe integer, which is
- * why `AmountEncodingUnsupported` is a receipt-side error here: it fires on the
- * way in, before verification, never on the way out.
+ * **Amounts go out as canonical decimal strings, unconditionally** — accepted on all four corridor
+ * request schemas, and a JSON number past 2^53 would lose the amount. Replies may carry either form
+ * (a number only while a non-negative safe integer), so `AmountEncodingUnsupported` fires on receipt.
  */
 import {
     ARKADE_BTC,
@@ -41,38 +32,23 @@ const BTC_LEG = {
 } as const satisfies Record<Corridor, string>;
 
 /**
- * One leg, as the wire spells it.
- *
- * The BTC legs come from `rfq.ts`'s own constants rather than being rebuilt out
- * of the corridor name and a ticker: the solver compares these byte for byte,
- * and a second construction of `arkade:BTC` is a second thing that can drift.
- * An arkade-issued asset is the id verbatim, lowercase — which is what makes the
- * discovery leg the right input, since the alias layer already lowercased it.
+ * One leg, as the wire spells it. BTC legs use `rfq.ts`'s constants, never rebuilt from name and
+ * ticker (a second construction can drift from a byte-compared string). An arkade asset is the id
+ * verbatim, already lowercased by the alias layer.
  */
 export const rfqLeg = (leg: DiscoveryLeg): string =>
     leg.assetId === BTC_ASSET_ID ? BTC_LEG[leg.corridor] : `${leg.corridor}:${leg.assetId}`;
 
-/**
- * The directional pair for a route, checked against the wire's length cap.
- *
- * Direction is give-to-take and never the card's base/quote order: the card
- * describes a market, the pair describes this trade.
- */
+/** The directional pair, length-checked. Give-to-take, never the card's base/quote order: the card
+ * describes a market, the pair this trade. */
 export const rfqPairFor = (give: DiscoveryLeg, take: DiscoveryLeg): string => {
     const pair = rfqPair(rfqLeg(give), rfqLeg(take));
     assertPairLength(pair);
     return pair;
 };
 
-/**
- * A request payload with its amount in the wire's canonical string encoding.
- *
- * The payload itself is built by `rfq.ts`'s own request builders — they are the
- * schema, and a second copy of the profile field names is a second thing to keep
- * in step with a `.strict()` remote schema. What this adds is the one field
- * whose encoding M3 decided: `amount`, out as a decimal string on every corridor
- * that carries one.
- */
+/** A request payload (built by `rfq.ts`'s builders, which are the schema) with `amount` in the
+ * wire's canonical string encoding. */
 export const withCanonicalAmount = (
     payload: Record<string, unknown>,
     amount: bigint,
@@ -82,13 +58,9 @@ export const withCanonicalAmount = (
 });
 
 /**
- * A solver's quote, with the fields the client compares against pulled out and
- * decoded once.
- *
- * The amounts are the point: `RfqQuote` declares them `number`, the migration
- * has them arriving as either, and every check downstream is a comparison. One
- * decode at the boundary is what keeps a string amount from failing a `!==`
- * against a bigint three layers down and reading as a solver mismatch.
+ * A solver's quote, with the compared fields decoded once. `RfqQuote` types amounts as `number` but
+ * they arrive as either form; decoding at the boundary keeps a string amount from failing a `!==`
+ * against a bigint downstream and reading as a solver mismatch.
  */
 export interface ParsedRfqQuote {
     /** The reply verbatim, for the record and for anything not decoded here. */

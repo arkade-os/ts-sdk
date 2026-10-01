@@ -206,36 +206,21 @@ export class Extension {
      * getAssetPacket returns the embedded Packet, or null if not present.
      */
     getAssetPacket(): Packet | null {
-        for (const p of this.packets) {
-            if (p instanceof Packet) {
-                return p;
-            }
-        }
-        return null;
+        return this.packets.find((p): p is Packet => p instanceof Packet) ?? null;
     }
 
     /**
      * getEmulatorPacket returns the embedded EmulatorPacket, or null if not present.
      */
     getEmulatorPacket(): EmulatorPacket | null {
-        for (const p of this.packets) {
-            if (p instanceof EmulatorPacket) {
-                return p;
-            }
-        }
-        return null;
+        return this.packets.find((p): p is EmulatorPacket => p instanceof EmulatorPacket) ?? null;
     }
 
     /**
      * getPacketByType returns the first packet matching the given type tag, or null.
      */
     getPacketByType(packetType: number): ExtensionPacket | null {
-        for (const p of this.packets) {
-            if (p.type() === packetType) {
-                return p;
-            }
-        }
-        return null;
+        return this.packets.find((p) => p.type() === packetType) ?? null;
     }
 
     /**

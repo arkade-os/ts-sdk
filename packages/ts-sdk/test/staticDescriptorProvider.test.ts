@@ -19,12 +19,6 @@ describe("StaticDescriptorProvider", () => {
         pubKeyHex = hex.encode(pubKey);
     });
 
-    describe("create", () => {
-        it("should create from Identity", () => {
-            expect(provider).toBeInstanceOf(StaticDescriptorProvider);
-        });
-    });
-
     describe("getNextSigningDescriptor", () => {
         it("should return tr(<pubkey>) format", async () => {
             const descriptor = await provider.getNextSigningDescriptor();

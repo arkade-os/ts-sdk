@@ -1,7 +1,11 @@
 import { collectScriptVtxos, collectVtxos } from "../repositories/walletRepository";
 import type { ExtendedVirtualCoin, NormalizedExtendedVirtualCoin, VirtualCoin } from "../wallet";
 import { isVtxoSpent, normalizeVtxo } from "../wallet/vtxo";
-import type { ScriptVtxoPageOptions, WalletRepository } from "../repositories/walletRepository";
+import type {
+    ScriptVtxoPageOptions,
+    VtxoRepositoryKey,
+    WalletRepository,
+} from "../repositories/walletRepository";
 import type { Contract } from "./types";
 
 /**
@@ -70,6 +74,25 @@ export function validateVtxosForScript(
     throw new Error(
         `${context}: refusing to persist ${mismatches.length} VTXO(s) whose script does not match ${script}: ${detail}`,
     );
+}
+
+/** The shared precondition of every backend's `saveVtxosForScript`; returns the address to save under. */
+export function checkSaveVtxosForScript(
+    backend: string,
+    key: VtxoRepositoryKey,
+    vtxos: Array<Pick<VirtualCoin, "txid" | "vout" | "script">>,
+): string {
+    if (!key.address) {
+        throw new Error(`${backend} requires an address`);
+    }
+    for (const vtxo of vtxos) {
+        if (!isVtxoForScript(vtxo, key.script)) {
+            throw new Error(
+                `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`,
+            );
+        }
+    }
+    return key.address;
 }
 
 /**

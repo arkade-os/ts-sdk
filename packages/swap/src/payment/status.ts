@@ -1,52 +1,24 @@
 /**
- * Fourteen outcomes onto four payment statuses — the only artefact M7 mints.
+ * Fourteen outcomes onto four payment statuses.
  *
- * Declared **total** even though a send rail cannot reach every member, because
- * a partial map is where the collapse hides: an outcome with no row does not
- * fail loudly, it renders as whatever the lookup happens to return.
+ * Total even where a send rail cannot reach a member: a partial map fails silently, rendering a
+ * missing outcome as whatever the lookup returns. `refunded` and `lapsed` both become `failed`;
+ * the difference survives on the update's `error`, not a fifth status.
  *
- * The projection is lossy by construction and the loss is recoverable, which is
- * the whole design. `refunded` and `lapsed` both land on `failed` — P6 exists so
- * those two never become one word, and the difference survives on the update's
- * `error`, which core's `PaymentHandle` docblock already reserves for it. No
- * fifth `PaymentStatus` is proposed: a status is what a payment UI branches on,
- * and "the trader's value came back" versus "the incoming payment never arrived"
- * is a sentence, not a branch.
- *
- * **Where the rail goes terminal is a decision, not a rounding.** It goes
- * terminal at `refunding`, not at `refunded`: `makeHandle` clears its subscriber
- * set on a terminal update and replays-without-registering afterwards, so the
- * `refunded` that follows could not reach that handle anyway — and holding
- * terminality back until the refund resolves would hang every
- * `settled({ timeoutMs })` caller for a whole refund window. The refund is
- * observed through `client.onUpdate` and `swaps()`, keyed by the tagged
- * `RouteResult.swapId`.
- *
- * The same rule answers the `unblock` backslide. `needs_recovery -> funded` is
- * a legal re-entry that crosses the terminality boundary the rail just drew; it
- * is emitted rather than swallowed, because the drive's idempotence key is the
- * DERIVED outcome and the second `funded` is a new key — delivered on
- * `client.onUpdate`, never through the handle, which stays terminal. A handle
- * observes a payment up to and including its first terminal outcome; every
- * recovery past that point is observed on the client's update stream.
+ * The rail goes terminal at `refunding`, not `refunded`: `makeHandle` drops subscribers on a
+ * terminal update, so `refunded` could not reach the handle anyway, and waiting would hang
+ * `settled({ timeoutMs })` for a whole refund window. Later updates (the refund, or an `unblock`
+ * `needs_recovery -> funded` re-entry) arrive on `client.onUpdate`, keyed by `RouteResult.swapId`.
  */
 import type { PaymentStatus } from "@arkade-os/sdk";
 import type { Outcome } from "../client/outcome";
 
-/**
- * The projection, total over {@link Outcome}.
- *
- * The `on the rail` column of M7's table is not encoded here: a send rail
- * cannot reach `open`, `filled`, `cancelling`, `cancelled` or `lapsed`, but a
- * map that refused them would be a map with holes, and the point of totality is
- * that there are none.
- */
+/** The projection, total over {@link Outcome}. */
 export const PAYMENT_STATUS = {
     /** Persisted, funding not broadcast. */
     accepted: "pending",
     funding: "pending",
-    /** The lockup is funded. Nothing has emitted `"sent"` in core since the
-     *  `onchain-swap` rail left with `packages/boltz-swap`. */
+    /** The lockup is funded. */
     funded: "sent",
     /** Asset swaps only: an unfilled offer. */
     open: "pending",

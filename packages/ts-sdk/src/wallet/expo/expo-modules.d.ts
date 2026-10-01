@@ -8,10 +8,9 @@
  * Covers:
  *   - expo-task-manager      (src/wallet/expo/background.ts)
  *   - expo-background-task   (src/wallet/expo/background.ts)
- *   - expo-sqlite            (src/repositories/indexedDB/websqlAdapter.ts)
  *
  * Consumers install these in their own Expo app:
- *   npx expo install expo-task-manager expo-background-task expo-sqlite
+ *   npx expo install expo-task-manager expo-background-task
  */
 
 declare module "expo-task-manager" {
@@ -32,14 +31,4 @@ declare module "expo-background-task" {
         options?: { minimumInterval?: number },
     ): Promise<void>;
     export function unregisterTaskAsync(taskName: string): Promise<void>;
-}
-
-declare module "expo-sqlite" {
-    export function openDatabaseSync(name: string): SQLiteDatabase;
-
-    export interface SQLiteDatabase {
-        getAllSync<T = unknown>(sql: string, params?: unknown[]): T[];
-        runSync(sql: string, params?: unknown[]): { lastInsertRowId: number; changes: number };
-        withTransactionSync(task: () => void): void;
-    }
 }

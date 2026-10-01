@@ -1,15 +1,11 @@
 /**
- * The RFQ wire's amount encoding, and the one place the wire's side vocabulary
- * is translated.
+ * The RFQ wire's amount encoding, and the one place the wire's side vocabulary is
+ * translated.
  *
- * The target contract is canonical decimal strings in both directions, and the
- * solver already landed them; ts-sdk is the lagging side and still emits and
- * reads JSON numbers (`rfq.ts`'s `amount`, `from_amount`, `to_amount`). So this
- * adapter emits strings unconditionally — emitting one is never a narrowing —
- * and accepts either on the way in, a number only while it is a non-negative
- * safe integer. Past 2^53 a JSON number has already lost the amount and there is
- * nothing to narrow: {@link AmountEncodingUnsupported}, refused rather than
- * rounded.
+ * The wire contract is canonical decimal strings; this emits strings unconditionally and
+ * accepts either on the way in, a JSON number only while it is a non-negative safe
+ * integer. Past 2^53 a JSON number has already lost the amount, so it is refused
+ * ({@link AmountEncodingUnsupported}), never rounded.
  */
 import { isAmount } from "@arkade-os/solver-discovery";
 import { type AtomicDecimal, toAtomicDecimal } from "./amount";
@@ -31,8 +27,7 @@ export const fromRfqAmountSide = (side: RfqAmountSide): AmountOn =>
 /**
  * An amount out to the wire, as the canonical decimal string.
  *
- * `field` has no default: every throw on a quote would otherwise say `"amount"`,
- * and telling `from_amount` from `to_amount` is the only thing it is for.
+ * @param field - Named in the error, to tell `from_amount` from `to_amount`.
  */
 export const encodeRfqAmount = (value: bigint, field: string): AtomicDecimal => {
     try {
@@ -48,13 +43,11 @@ export const encodeRfqAmount = (value: bigint, field: string): AtomicDecimal => 
 };
 
 /**
- * An amount in from the wire.
+ * An amount in from the wire: the canonical string, or a JSON number inside the
+ * safe-integer window (the only place v2 tolerates a number).
  *
- * Accepts the canonical string, or a JSON number inside the safe-integer window
- * — the migration's compatibility arm, and the only place a number is tolerated
- * anywhere in v2. A non-canonical string is this error too, not a verification
- * failure: verification is the four semantic checks over a well-formed quote,
- * and this fires before them.
+ * @throws {@link AmountEncodingUnsupported} for a non-canonical string too; this fires
+ * before verification's semantic checks, not as one of them.
  */
 export const decodeRfqAmount = (raw: unknown, field: string): bigint => {
     if (typeof raw === "string") {
@@ -72,8 +65,6 @@ export const decodeRfqAmount = (raw: unknown, field: string): bigint => {
             throw new AmountEncodingUnsupported(
                 field,
                 `${raw}`,
-                // Past 2^53 the number arrived already rounded — there is no
-                // "narrow carefully" branch, only a wrong amount.
                 "a JSON number amount is only readable as a non-negative safe integer",
             );
         }
@@ -87,13 +78,8 @@ export const decodeRfqAmount = (raw: unknown, field: string): bigint => {
 };
 
 /**
- * A `bigint` amount into a foreign `number` one, checked.
- *
- * Core's payment router types its amounts as `number` sats and M7's swap-backed
- * rail narrows at that boundary rather than changing a published core type. The
- * narrowing is sound because both sides are sats and a sat count past 2^53 is
- * not a payment — but it has to be checked, which is why it lives here beside
- * the error rather than as a bare `Number()` at the call site.
+ * A `bigint` amount into a foreign `number` one, checked rather than a bare `Number()`
+ * (a sat count past 2^53 is not a payment, so refusing it is sound).
  */
 export const toSafeNumber = (value: bigint, field: string): number => {
     if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {

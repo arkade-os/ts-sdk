@@ -31,31 +31,17 @@ export class TxWeightEstimator {
     static readonly WITNESS_SCALE_FACTOR = 4;
     static readonly P2TR_OUTPUT_SIZE = 1 + 1 + 32;
 
-    public hasWitness: boolean;
-    public inputCount: number;
-    public outputCount: number;
-    public inputSize: number;
-    public inputWitnessSize: number;
-    public outputSize: number;
+    public hasWitness = false;
+    public inputCount = 0;
+    public outputCount = 0;
+    public inputSize = 0;
+    public inputWitnessSize = 0;
+    public outputSize = 0;
 
-    private constructor(
-        hasWitness: boolean,
-        inputCount: number,
-        outputCount: number,
-        inputSize: number,
-        inputWitnessSize: number,
-        outputSize: number,
-    ) {
-        this.hasWitness = hasWitness;
-        this.inputCount = inputCount;
-        this.outputCount = outputCount;
-        this.inputSize = inputSize;
-        this.inputWitnessSize = inputWitnessSize;
-        this.outputSize = outputSize;
-    }
+    private constructor() {}
 
     static create(): TxWeightEstimator {
-        return new TxWeightEstimator(false, 0, 0, 0, 0, 0);
+        return new TxWeightEstimator();
     }
 
     addP2AInput(): TxWeightEstimator {

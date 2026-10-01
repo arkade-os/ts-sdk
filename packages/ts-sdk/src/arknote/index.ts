@@ -63,7 +63,6 @@ export class ArkNote implements ExtendedCoin {
         this.tapTree = this.vtxoScript.encode();
         this.forfeitTapLeafScript = leaf;
         this.intentTapLeafScript = leaf;
-        this.value = value;
         this.status = { confirmed: true };
         this.extraWitness = [this.preimage];
     }

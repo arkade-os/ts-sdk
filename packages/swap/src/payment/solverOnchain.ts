@@ -6,7 +6,13 @@
  * `onchain` wins by ranking.
  */
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
-import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
+import type {
+    PaymentRail,
+    PaymentStatus,
+    RouteQuote,
+    RouteResult,
+    RouterContext,
+} from "@arkade-os/sdk";
 import {
     assertNoAssets,
     assetsOf,
@@ -62,18 +68,51 @@ export const solverOnchainRendezvous = (
 ): SolverRendezvous | undefined =>
     solverRendezvous(markets, "onchain", amountSats, fallbackEmulatorPubkey);
 
+/**
+ * Both solver rails' send, after their own funding gate. Persist FIRST: a funded
+ * lockup with no record cannot be refunded. A failed settlement watch is not a
+ * failed payment — the lockup is funded, and `handle.ts` reads a rejection as
+ * `failed`, inviting a retry that funds a SECOND.
+ */
+export async function fundSolverSend<
+    S extends { rfqId: string; address: string; fundAmount: number },
+    R,
+>(
+    railId: string,
+    ctx: RouterContext,
+    emit: (update: { status: PaymentStatus; result?: RouteResult }) => void,
+    deps: { persist(swap: S): Promise<void>; awaitSettlement?(swap: S): Promise<R> },
+    swap: S,
+    settledFields: (settlement: R) => Pick<RouteResult, "txid" | "preimage">,
+): Promise<RouteResult> {
+    await deps.persist(swap);
+    await ctx.wallet.send({
+        address: swap.address,
+        amount: swap.fundAmount,
+    });
+    // Not "settled": the payee has nothing until the solver completes its side.
+    emit({ status: "sent" });
+    const result = { railId, swapId: swap.rfqId };
+    if (!deps.awaitSettlement) return result;
+    let fields: Pick<RouteResult, "txid" | "preimage">;
+    try {
+        fields = settledFields(await deps.awaitSettlement(swap));
+    } catch (e) {
+        console.warn(`${railId}: settlement watch failed; the payment is sent`, e);
+        return result;
+    }
+    const settled = { ...result, ...fields };
+    emit({ status: "settled", result: settled });
+    return settled;
+}
+
 /** Register alongside the core `onchain` rail, ranked first:
  *  `priority: ["ark", "solver-onchain", "onchain"]`. Both stay registered.
  *
  */
 export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
-    const rendezvousFor = async (
-        amount: number | undefined,
-    ): Promise<SolverRendezvous | undefined> => {
-        if (amount === undefined) return undefined;
-        const markets = await deps.discover();
-        return solverOnchainRendezvous(markets, amount, deps.fallbackEmulatorPubkey);
-    };
+    const rendezvousFor = async (amount: number): Promise<SolverRendezvous | undefined> =>
+        solverOnchainRendezvous(await deps.discover(), amount, deps.fallbackEmulatorPubkey);
 
     return {
         id: SOLVER_ONCHAIN_RAIL,
@@ -163,33 +202,14 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
                                 direction: "send",
                             },
                         });
-                        // Persist FIRST: a funded lockup with no record cannot
-                        // be refunded.
-                        await deps.persist(swap);
-                        await ctx.wallet.send({
-                            address: swap.address,
-                            amount: swap.fundAmount,
-                        });
-                        // Not "settled": the recipient has nothing until the
-                        // solver fills the HTLC and this wallet claims it.
-                        emit({ status: "sent" });
-                        const result = { railId: SOLVER_ONCHAIN_RAIL, swapId: swap.rfqId };
-                        if (!deps.awaitSettlement) return result;
-                        // The lockup is funded; `handle.ts` reads a rejection
-                        // as `failed`, inviting a retry that funds a SECOND.
-                        let txid: string;
-                        try {
-                            ({ txid } = await deps.awaitSettlement(swap));
-                        } catch (e) {
-                            console.warn(
-                                `${SOLVER_ONCHAIN_RAIL}: settlement watch failed; the payment is sent`,
-                                e,
-                            );
-                            return result;
-                        }
-                        const settled = { ...result, txid };
-                        emit({ status: "settled", result: settled });
-                        return settled;
+                        return fundSolverSend(
+                            SOLVER_ONCHAIN_RAIL,
+                            ctx,
+                            emit,
+                            deps,
+                            swap,
+                            ({ txid }) => ({ txid }),
+                        );
                     }),
             };
         },

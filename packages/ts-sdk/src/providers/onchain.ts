@@ -4,13 +4,8 @@ import { hex } from "@scure/base";
 import { baseFetch } from "../utils/fetch";
 
 /**
- * The default base URLs for esplora API providers.
- *
- * Mainnet, mutinynet, and signet point at Ark Labs–operated
- * mempool deployments (mempool.space-compatible esplora API).
- * Testnet falls back to the public mempool.space deployment
- * because Ark doesn't host it. Regtest assumes a local arkade-regtest
- * stack exposing mempool's esplora API on the standard port.
+ * The default base URLs for esplora API providers: Ark Labs–operated mempool deployments, except
+ * testnet (public mempool.space; Ark doesn't host it) and regtest (a local arkade-regtest stack).
  */
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.arkade.sh/api",
@@ -23,11 +18,8 @@ export const ESPLORA_URL: Record<NetworkName, string> = {
 export type ExplorerTransaction = {
     txid: string;
     /**
-     * Inputs as returned by Esplora's `/address/:addr/txs`, each carrying the
-     * outpoint it spends (`txid:vout`). Optional: not every provider populates
-     * it (the electrum provider omits inputs), so consumers that correlate
-     * spenders must tolerate its absence. Used to recover a boarding output's
-     * spending (commitment) tx when `/outspends` omits the spender txid.
+     * Spent outpoints, as returned by Esplora's `/address/:addr/txs`; the electrum provider omits
+     * them. Used to recover a boarding output's commitment tx when `/outspends` omits the spender.
      */
     vin?: {
         txid: string;
@@ -45,17 +37,13 @@ export type ExplorerTransaction = {
     };
 };
 
-/** One half of {@link AddressStats}: confirmed or mempool activity. */
 type AddressActivity = {
     tx_count: number;
     funded_txo_count: number;
     spent_txo_count: number;
 };
 
-/**
- * Esplora's per-address summary (`GET /address/{addr}`) — how much activity an
- * address has seen, without any of the transactions themselves.
- */
+/** Esplora's per-address summary (`GET /address/{addr}`). */
 type AddressStats = {
     chain_stats: AddressActivity;
     mempool_stats: AddressActivity;
@@ -137,12 +125,9 @@ export interface OnchainProvider {
      *
      * @returns Current chain height, median-time-past, and block hash
      * @remarks
-     * `time` is the tip's **median-time-past**, not the header's own `nTime`.
-     * BIP-113 evaluates seconds-typed `OP_CHECKLOCKTIMEVERIFY` /
-     * `OP_CHECKSEQUENCEVERIFY` against MTP, which lags the tip by roughly an
-     * hour; the header time may sit two hours ahead of it. An implementation
-     * returning the header time calls a timelock mature before the network
-     * does — surfacing as a broadcast the node rejects, not as a bug here.
+     * `time` is the tip's **median-time-past**, not the header's `nTime`: BIP-113 evaluates
+     * seconds-typed CLTV/CSV against MTP (~1h behind the tip; header time may be 2h ahead).
+     * Returning header time would call a timelock mature early, and the node rejects the broadcast.
      */
     getChainTip(): Promise<{
         height: number;
@@ -181,13 +166,9 @@ export class EsploraProvider implements OnchainProvider {
     readonly forcePolling: boolean;
 
     /**
-     * Live {@link watchAddresses} subscriptions, keyed by their address set.
-     *
-     * Concurrent watchers over the same addresses share one transport, so a
-     * caller that opens watchers in a loop — or leaks them by abandoning
-     * {@link waitForIncomingFunds} — costs one entry in a `Set` rather than
-     * another WebSocket plus another full-history polling loop. Entries are
-     * dropped once their last subscriber stops.
+     * Live {@link watchAddresses} subscriptions, keyed by address set. Sharing means a leaked
+     * watcher (e.g. an abandoned {@link waitForIncomingFunds}) costs a `Set` entry, not another
+     * WebSocket plus full-history polling loop.
      */
     private readonly addressWatches = new Map<string, SharedAddressWatch>();
 
@@ -215,11 +196,8 @@ export class EsploraProvider implements OnchainProvider {
 
     async getFeeRate(): Promise<number | undefined> {
         const response = await baseFetch(`${this.baseUrl}/fee-estimates`);
-        // Not every Esplora backend serves /fee-estimates — mempool returns 404
-        // on regtest, where it has no fee history. Every caller falls back to
-        // MIN_FEE_RATE when this is undefined, so degrade gracefully on a missing
-        // endpoint rather than throwing and defeating those fallbacks. Other
-        // (e.g. 5xx) failures still surface.
+        // mempool 404s /fee-estimates on regtest (no fee history); callers fall back to
+        // MIN_FEE_RATE on undefined, so don't throw. Other failures still surface.
         if (response.status === 404) {
             return undefined;
         }
@@ -261,11 +239,7 @@ export class EsploraProvider implements OnchainProvider {
         return response.json();
     }
 
-    /**
-     * Activity counts for an address, without its transactions — orders of
-     * magnitude smaller than `/address/{addr}/txs`, which is what makes it
-     * usable as a change probe for the polling fallback.
-     */
+    /** Orders of magnitude smaller than `/address/{addr}/txs`: the polling fallback's probe. */
     private async getAddressStats(address: string): Promise<AddressStats> {
         const response = await baseFetch(`${this.baseUrl}/address/${address}`);
         if (!response.ok) {
@@ -323,31 +297,26 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     /**
-     * Watch a set of addresses over the explorer's WebSocket, degrading to HTTP
-     * polling whenever the socket is unavailable and returning to the socket as
-     * soon as it can be re-established.
+     * Watch a set of addresses over the explorer's WebSocket, degrading to HTTP polling while the
+     * socket is unavailable and returning to it once re-established.
      *
-     * Concurrent calls covering the same address set share one transport. The
-     * returned function releases **this** subscription only; the transport is
-     * torn down when the last subscriber releases it. Calling it more than once
-     * is a no-op.
+     * Concurrent calls covering the same address set share one transport. The returned function
+     * releases **this** subscription only (idempotent); the last release tears the transport down.
      *
      * @param addresses - Addresses to monitor; order is not significant
      * @param callback - Invoked with transactions seen after the watch started
      * @returns A function releasing this subscription
      * @remarks
-     * The HTTP fallback fetches full address history per address per cycle,
-     * which is dramatically more expensive than the socket — so callers should
-     * release watches they no longer need rather than relying on sharing.
+     * The HTTP fallback fetches full history per address per cycle, far costlier than the socket,
+     * so release watches you no longer need rather than relying on sharing.
      * @see {@link waitForIncomingFunds} for the cancellation-aware wallet-level helper
      */
     async watchAddresses(
         addresses: string[],
         callback: (txs: ExplorerTransaction[]) => void,
     ): Promise<() => void> {
-        // Address order is not significant to the subscription, so normalise it
-        // before keying — otherwise ["a","b"] and ["b","a"] open two watchers
-        // over identical data. NUL-joined so an address can't forge a boundary.
+        // Sorted so ["a","b"] and ["b","a"] share a watch; NUL-joined so an address can't forge a
+        // boundary.
         const key = [...addresses].sort().join("\u0000");
 
         let watch = this.addressWatches.get(key);
@@ -356,8 +325,7 @@ export class EsploraProvider implements OnchainProvider {
             this.addressWatches.set(key, watch);
         }
 
-        // Register before awaiting startup: the refcount must never read zero
-        // while the transport is still coming up, or a concurrent stop would
+        // Register before awaiting startup, else a concurrent stop could see zero subscribers and
         // tear down a watch this caller is about to depend on.
         const subscriber: AddressWatchSubscriber = { callback };
         watch.subscribers.add(subscriber);
@@ -367,8 +335,6 @@ export class EsploraProvider implements OnchainProvider {
 
         let released = false;
         return () => {
-            // Idempotent per subscriber: a caller that stops twice must not
-            // decrement the refcount twice and strand the other subscribers.
             if (released) return;
             released = true;
 
@@ -377,13 +343,7 @@ export class EsploraProvider implements OnchainProvider {
         };
     }
 
-    /**
-     * Bring up one shared address watch: a WebSocket subscription where the
-     * explorer supports it, degrading to HTTP polling when it doesn't.
-     *
-     * @param addresses - Addresses this watch covers
-     * @param onTeardown - Invoked when the watch retires, to drop the registry entry
-     */
+    /** @param onTeardown - Invoked when the watch retires, to drop the registry entry */
     private createAddressWatch(addresses: string[], onTeardown: () => void): SharedAddressWatch {
         const subscribers = new Set<AddressWatchSubscriber>();
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
@@ -394,8 +354,7 @@ export class EsploraProvider implements OnchainProvider {
         let ws: WebSocket | null = null;
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
         let reconnectFailures = 0;
-        // Bumped whenever a poll loop is retired, so a cycle suspended across
-        // its fetch can tell that the loop it belongs to is no longer wanted.
+        // Bumped when a poll loop is retired, so a cycle suspended on its fetch knows it's stale.
         let pollSession = 0;
 
         const emit = (txs: ExplorerTransaction[]) => {
@@ -420,17 +379,12 @@ export class EsploraProvider implements OnchainProvider {
         };
 
         /**
-         * Everything already reported (or predating the watch), shared by both
-         * transports and held for the watch's whole life — not rebuilt per poll
-         * session. That is what lets a deposit which landed while the socket was
-         * down still be reported: it is absent from this set, so the first poll
-         * pass after the failure sees it as new.
+         * Everything reported (or predating the watch), shared by both transports for the watch's
+         * whole life — not rebuilt per poll session — so a deposit that landed while the socket was
+         * down still reads as new to the first poll pass.
          *
-         * Grows with the watched addresses' transaction count and is never
-         * compacted. Bounded in practice by how many transactions touch one
-         * address set, but a watch left open on a high-volume address will
-         * accumulate: retaining only recent blocks would cap it, deferred until
-         * something actually needs it.
+         * ponytail: never compacted, so a watch left open on a high-volume address accumulates;
+         * retain only recent blocks if that ever matters.
          */
         const seen = new Set<string>();
         let baselined = false;
@@ -439,17 +393,9 @@ export class EsploraProvider implements OnchainProvider {
         let anchorHeight: number | undefined;
 
         /**
-         * Establish what predates the watch, so the first poll pass has
-         * something to compare against other than "everything is new".
-         *
-         * Seeded additively rather than by replacing the set: the socket may
-         * report a transaction while this fetch is still in flight, and that
-         * report must not be undone (nor duplicated) when the fetch lands.
-         *
-         * The tip is fetched alongside the history so an anchor — if needed —
-         * is the height at watch start, not at the moment the history fetch
-         * later gives up. A deposit confirmed while that fetch is still
-         * failing must still read as new.
+         * Establish what predates the watch. Seeded additively: the socket may report a tx while
+         * this fetch is in flight, which must not be undone or duplicated. The tip is fetched
+         * alongside so the anchor is the height at watch start, not when history gives up.
          */
         const baseline = (async () => {
             const [history, tip] = await Promise.allSettled([getAllTxs(), this.getChainTip()]);
@@ -467,15 +413,9 @@ export class EsploraProvider implements OnchainProvider {
         })();
 
         /**
-         * Deliver only what hasn't been reported yet, from either transport.
-         *
-         * Marks each key as it goes rather than filtering and then marking: a
-         * batch can contain the same transaction twice — history is fetched per
-         * address and flattened, and a socket message lists a transaction under
-         * every address it pays — so one payment to two watched addresses would
-         * otherwise be delivered twice and counted twice downstream. Boarding
-         * makes that ordinary rather than exotic: the watch covers the current
-         * and historical rotated addresses together.
+         * Deliver only what hasn't been reported yet. Marks as it goes, not filter-then-mark: a
+         * batch can hold the same tx twice (one payment to two watched addresses — ordinary with
+         * rotated boarding addresses), which would otherwise be counted twice downstream.
          */
         const report = (txs: ExplorerTransaction[]) => {
             const fresh: ExplorerTransaction[] = [];
@@ -490,15 +430,11 @@ export class EsploraProvider implements OnchainProvider {
         };
 
         const startPolling = async () => {
-            // `pollStarted` makes this idempotent: a WebSocket can emit `error`
-            // more than once, and each call used to install another interval
-            // over the top of the previous handle, orphaning it.
+            // Idempotent: a WebSocket can emit `error` more than once.
             if (stopped || pollStarted) return;
             pollStarted = true;
 
-            // Worth surfacing: address history (`/address/{a}/txs`) is far more
-            // expensive than the socket it replaces, and a silent fallback is
-            // what turns an explorer blip into sustained polling traffic.
+            // Surfaced because polling history is far costlier than the socket it replaces.
             console.warn(
                 `Esplora websocket unavailable (${wsUrl}); falling back to HTTP polling every ${this.pollingInterval}ms for ${addresses.length} address(es) while retrying the socket`,
             );
@@ -506,22 +442,12 @@ export class EsploraProvider implements OnchainProvider {
             let failures = 0;
 
             /**
-             * Cheap stand-in for "has anything changed at these addresses".
-             * `undefined` means "cannot answer" — never something mistakable for
-             * "unchanged", which would hold a deposit back until it recovered.
+             * Cheap "has anything changed" probe; `undefined` = cannot answer, never "unchanged".
              *
-             * Counts, not the UTXO set: `/utxo` shows only what is still
-             * unspent, so a transaction confirming after its output was spent
-             * moves nothing there — while `txKey` changes with `block_time`,
-             * making that confirmation a report the probe would swallow.
-             *
-             * Pending activity answers "cannot answer" outright: a replacement
-             * can leave every count identical while the txid — and so the
-             * reportable key — changes. The idle watchers this exists for are
-             * the ones with an empty mempool.
-             *
-             * Residual: a reorg re-mining a transaction at a new `block_time`
-             * moves no count, so that re-report waits for the next real change.
+             * Counts, not `/utxo`: a tx confirming after its output was spent moves nothing there,
+             * yet changes `txKey`. Any mempool activity is "cannot answer": a replacement can keep
+             * every count while changing the txid. Residual: a reorg re-mining a tx at a new
+             * `block_time` moves no count, so its re-report waits for the next real change.
              */
             const activityFingerprint = async (): Promise<string | undefined> => {
                 try {
@@ -529,8 +455,6 @@ export class EsploraProvider implements OnchainProvider {
                         addresses.map((address) => this.getAddressStats(address)),
                     );
 
-                    // An unrecognised shape can't be summarised; treat it as
-                    // "cannot answer" rather than guess.
                     const counted = (activity?: AddressActivity) =>
                         typeof activity?.tx_count === "number" &&
                         typeof activity.funded_txo_count === "number" &&
@@ -542,8 +466,6 @@ export class EsploraProvider implements OnchainProvider {
 
                     if (stats.some((s) => s.mempool_stats.tx_count > 0)) return undefined;
 
-                    // Address order is fixed for this loop's life, so the
-                    // per-address counts need no sorting to line up.
                     return stats
                         .map(
                             ({ chain_stats: chain }) =>
@@ -557,26 +479,20 @@ export class EsploraProvider implements OnchainProvider {
 
             let lastFingerprint: string | undefined;
 
-            // This loop's identity. `stopped` alone is not enough: the watch can
-            // stay alive while *this* loop is retired, which is what happens when
-            // the socket comes back.
+            // `stopped` alone isn't enough: the watch outlives this loop when the socket returns.
             const session = pollSession;
             const isCurrentLoop = () => !stopped && session === pollSession;
 
             const schedule = () => {
                 if (!isCurrentLoop()) return;
-                // Self-rescheduling rather than setInterval: a fixed interval
-                // stacks overlapping full-history fetches when the explorer is
-                // slower than pollingInterval, and offers nowhere to back off
-                // when it starts failing or rate-limiting.
+                // Not setInterval: that stacks overlapping fetches on a slow explorer and can't
+                // back off.
                 timer = setTimeout(tick, this.pollingInterval * 2 ** failures);
             };
 
             const tick = async () => {
                 try {
-                    // History is the expensive request and returns the same thing
-                    // every cycle in the steady state, so only pay for it once
-                    // the activity counts say something moved.
+                    // Only pay for the expensive history once the counts say something moved.
                     const fingerprint = await activityFingerprint();
                     if (!isCurrentLoop()) return;
 
@@ -588,25 +504,18 @@ export class EsploraProvider implements OnchainProvider {
 
                     const currentTxs = await getAllTxs();
 
-                    // teardown may have run while that fetch was in flight, or
-                    // the socket may have come back and retired this loop.
-                    // Returning before `schedule()` is what keeps both honest:
-                    // otherwise a timer is installed after the loop was retired,
-                    // and the explorer keeps getting hit — either with no handle
-                    // left to clear it, or alongside a perfectly healthy socket.
+                    // Teardown or a returning socket may have retired this loop mid-fetch; bail
+                    // before `schedule()` or an orphaned timer keeps hitting the explorer.
                     if (!isCurrentLoop()) return;
 
-                    // Only commit the fingerprint once the history fetch has
-                    // succeeded: otherwise a transient failure in history
-                    // would mask the deposit until a *second* change.
+                    // Committed only after history succeeds, else a transient failure would mask
+                    // the deposit until a *second* change.
                     lastFingerprint = fingerprint;
 
                     if (baselined) {
                         report(currentTxs);
                     } else if (anchorHeight !== undefined) {
-                        // Anything confirmed above the anchor arrived after we
-                        // started. Unconfirmed counts as new too: a duplicate
-                        // notification is cheaper than a missed deposit.
+                        // Unconfirmed counts as new: a duplicate notification beats a missed deposit.
                         const arrivedAfterStart = (tx: ExplorerTransaction) =>
                             !tx.status.confirmed ||
                             tx.status.block_height === undefined ||
@@ -618,9 +527,8 @@ export class EsploraProvider implements OnchainProvider {
                         baselined = true;
                         report(currentTxs);
                     } else {
-                        // No reference at all: anything arriving before now is
-                        // indistinguishable from history, so adopt rather than
-                        // announce one. Warn — a silent miss is unexplainable later.
+                        // No reference: adopt current history rather than announce it, and warn —
+                        // a silent miss is unexplainable later.
                         console.warn(
                             `Esplora address watch established its baseline late for ${addresses.length} address(es); deposits arriving before now may not have been reported`,
                         );
@@ -629,8 +537,6 @@ export class EsploraProvider implements OnchainProvider {
                     }
                     failures = 0;
                 } catch (error) {
-                    // A transient explorer failure backs off and retries rather
-                    // than leaving a watch that is registered but blind.
                     failures = Math.min(failures + 1, MAX_POLL_BACKOFF_EXPONENT);
                     console.error("Error polling watched addresses:", error);
                 }
@@ -638,23 +544,16 @@ export class EsploraProvider implements OnchainProvider {
                 schedule();
             };
 
-            // Don't compare against a half-built `seen`: if the creation-time
-            // baseline is still in flight, everything predating the watch would
-            // look new.
+            // A half-built `seen` would make everything predating the watch look new.
             await baseline;
             if (!isCurrentLoop()) return;
 
-            // Poll straight away rather than waiting a full interval — this is
-            // standing in for a dead socket, so the gap matters.
+            // Straight away: this stands in for a dead socket, so the gap matters.
             await tick();
         };
 
-        // Retire the HTTP safety net once the socket carries events again, and
-        // allow a later failure to bring it back.
         const stopPolling = () => {
-            // Retire the current loop first. Clearing `timer` is not enough: a
-            // cycle suspended on its fetch has no timer yet, and would re-arm
-            // itself the moment that fetch resolved.
+            // Clearing `timer` isn't enough: a cycle suspended on its fetch has no timer yet.
             pollSession++;
             if (timer) {
                 clearTimeout(timer);
@@ -663,10 +562,6 @@ export class EsploraProvider implements OnchainProvider {
             pollStarted = false;
         };
 
-        /**
-         * React to a dead socket: cover the gap with HTTP polling straight
-         * away, then try to win the cheap transport back.
-         */
         const handleSocketFailure = (): Promise<void> => {
             if (stopped) return Promise.resolve();
             scheduleReconnect();
@@ -674,8 +569,7 @@ export class EsploraProvider implements OnchainProvider {
         };
 
         const scheduleReconnect = () => {
-            // One pending attempt at a time: `error` and `close` both fire for
-            // the same dead socket, and each used to be a separate trigger.
+            // One pending attempt: `error` and `close` both fire for the same dead socket.
             if (stopped || reconnectTimer !== null) return;
 
             const delay =
@@ -692,10 +586,8 @@ export class EsploraProvider implements OnchainProvider {
         const connect = (): Promise<void> => {
             if (stopped) return Promise.resolve();
 
-            // Drop the outgoing socket before wiring the new one. Clearing `ws`
-            // first means the retired socket's own `close`/`error` events fail
-            // the `isCurrent` check below, so its teardown can't drive a second
-            // reconnect on top of the live one.
+            // Clear `ws` first so the retired socket's `close`/`error` fail `isCurrent` and can't
+            // drive a second reconnect.
             const previous = ws;
             ws = null;
             if (previous) {
@@ -710,17 +602,11 @@ export class EsploraProvider implements OnchainProvider {
             try {
                 socket = new WebSocket(wsUrl);
             } catch {
-                // A synchronous throw (e.g. SecurityError in a sandboxed
-                // context) counts as a socket failure: fall back to polling and
-                // schedule a retry. That retry increments `reconnectFailures`,
-                // which a later successful `open` resets — so a transient throw
-                // can't leave the backoff permanently inflated.
+                // Synchronous throw (e.g. SecurityError in a sandbox) counts as a socket failure.
                 return handleSocketFailure();
             }
             ws = socket;
 
-            // Guards every listener: only the socket this provider currently
-            // considers live may act on its events.
             const isCurrent = () => !stopped && ws === socket;
 
             socket.addEventListener("open", () => {
@@ -732,8 +618,6 @@ export class EsploraProvider implements OnchainProvider {
                 };
                 socket.send(JSON.stringify(subscribeMsg));
 
-                // Events are flowing over the socket again; retire the
-                // expensive full-history loop that was standing in for it.
                 stopPolling();
             });
 
@@ -763,10 +647,7 @@ export class EsploraProvider implements OnchainProvider {
                 if (isCurrent()) void handleSocketFailure();
             });
 
-            // A clean close fires `close` and never `error` — a server restart,
-            // an idle timeout, a load balancer cycling the connection. Handling
-            // only `error` left the watch silently dead: no fallback, no retry,
-            // and no log to say so.
+            // A clean close (server restart, idle timeout, LB cycling) fires `close`, never `error`.
             socket.addEventListener("close", () => {
                 if (isCurrent()) void handleSocketFailure();
             });
@@ -776,8 +657,7 @@ export class EsploraProvider implements OnchainProvider {
 
         const teardown = () => {
             if (stopped) return;
-            // Flag first: closing the socket can itself surface `error`/`close`,
-            // and neither may revive the fallback we are retiring here.
+            // Flag first: closing the socket can itself surface `error`/`close`.
             stopped = true;
             onTeardown();
 
@@ -800,9 +680,7 @@ export class EsploraProvider implements OnchainProvider {
             subscribers.clear();
         };
 
-        // `startPolling` already waits for the baseline; on the socket path,
-        // connect first (so the subscription is in place immediately) and then
-        // let callers await the baseline, so the watch is armed on return.
+        // Socket path: connect first so the subscription is live, then await the baseline.
         const started: Promise<void> = this.forcePolling
             ? startPolling()
             : connect().then(() => baseline);
@@ -815,18 +693,11 @@ export class EsploraProvider implements OnchainProvider {
         time: number;
         hash: string;
     }> {
-        // Use the standard Esplora `/blocks` route (newest-first array of recent
-        // blocks) rather than `/blocks/tip`: the latter is not part of the Esplora
-        // spec — electrs happens to serve it as an alias for `/blocks`, but a
-        // strict backend like mempool returns an empty array, which surfaced here
-        // as "No chain tip found". `/blocks` works across every Esplora backend.
+        // Not `/blocks/tip`: outside the Esplora spec — electrs aliases it, but mempool returns [].
         let tipBlocks = await baseFetch(`${this.baseUrl}/blocks`);
         if (tipBlocks.status === 404) {
-            // Instances backed only by the mempool backend (no electrs REST
-            // passthrough) — e.g. the default mutinynet deployment at
-            // mempool.mutinynet.arkade.sh — don't serve `/blocks` at all. They
-            // expose the same newest-first array at `/v1/blocks`, which
-            // mempool.space serves too.
+            // mempool-only instances (no electrs passthrough, e.g. the default mutinynet one)
+            // serve the same newest-first array only at `/v1/blocks`.
             tipBlocks = await baseFetch(`${this.baseUrl}/v1/blocks`);
         }
         if (!tipBlocks.ok) {
@@ -845,8 +716,7 @@ export class EsploraProvider implements OnchainProvider {
         const hash = tip[0].id;
         return {
             height: tip[0].height,
-            // `mediantime`, never `timestamp`: the latter is the header's own
-            // `nTime`, and this field is specified as MTP.
+            // `mediantime`, never `timestamp` (header `nTime`): this field is specified as MTP.
             time: tip[0].mediantime,
             hash,
         };
@@ -866,18 +736,10 @@ export class EsploraProvider implements OnchainProvider {
             throw new Error(`Failed to broadcast package: ${error}`);
         }
 
-        // `/txs/package` proxies Bitcoin Core's `submitpackage`, which reports
-        // per-transaction results in the body. A package whose transactions
-        // were all rejected still answers 200, so the HTTP status alone cannot
-        // tell acceptance from refusal:
-        //
-        //   200 {"package_msg":"transaction failed",
-        //        "tx-results":{"<wtxid>":{"txid":"...",
-        //                                 "error":"bad-txns-inputs-missingorspent"}}}
-        //
-        // Returning that as success is worse than failing: the caller believes
-        // the transaction is in flight and waits for a confirmation that cannot
-        // come, while the node already said exactly why it will not.
+        // `/txs/package` proxies Core's `submitpackage`, which answers 200 even when every tx was
+        // rejected, e.g. {"package_msg":"transaction failed","tx-results":{"<wtxid>":{"txid":"…",
+        // "error":"bad-txns-inputs-missingorspent"}}}. Treating that as success would leave the
+        // caller waiting on a confirmation that cannot come.
         const result = await response.json();
         assertPackageAccepted(result);
         return result;
@@ -902,12 +764,8 @@ export class EsploraProvider implements OnchainProvider {
 }
 
 /**
- * Throw when a 200 response describes a rejected package.
- *
- * Deliberately permissive: only a body that carries Core's own verdict is
- * judged. Not every Esplora deployment proxies that shape, and treating an
- * unrecognised body as failure would break broadcasting against the ones that
- * do not.
+ * Throw when a 200 response describes a rejected package. Deliberately permissive: only a body
+ * carrying Core's own verdict is judged, since not every Esplora deployment proxies that shape.
  */
 function assertPackageAccepted(result: unknown): void {
     if (!result || typeof result !== "object") return;
@@ -972,38 +830,26 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
 };
 
 /**
- * Ceiling on the HTTP-poll backoff exponent, so a persistently failing or
- * rate-limiting explorer is retried at `pollingInterval * 2^4` (4 minutes at
- * the 15s default) rather than escalating without bound.
- *
- * The cap is a latency/relief trade, not just a relief knob: this is a payments
- * SDK, and the backoff bounds how late an incoming deposit can be noticed while
- * the socket is down. 2^4 still cuts a failing explorer's load by 16x, which is
- * ample once watchers are shared per address set, without pushing worst-case
- * notification delay into the tens of minutes.
+ * HTTP-poll backoff exponent cap: `pollingInterval * 2^4` (4 min at the 15s default). A
+ * latency/relief trade — it bounds how late a deposit is noticed while the socket is down,
+ * while still cutting a failing explorer's load 16x.
  */
 const MAX_POLL_BACKOFF_EXPONENT = 4;
 
 /**
- * First delay before retrying a failed address-watch WebSocket. Short on
- * purpose: the socket is far cheaper than the HTTP polling that stands in for
- * it, so it is worth reaching for again quickly. Doubles per consecutive
- * failure, capped by {@link MAX_RECONNECT_BACKOFF_EXPONENT}.
+ * First socket reconnect delay; short because the socket is far cheaper than the polling that
+ * stands in for it. Doubles per failure up to {@link MAX_RECONNECT_BACKOFF_EXPONENT}.
  */
 const RECONNECT_BASE_DELAY_MS = 1_000;
 
 /** Ceiling on the reconnect backoff exponent (32s at the 1s base). */
 const MAX_RECONNECT_BACKOFF_EXPONENT = 5;
 
-/** One caller's registration against a {@link SharedAddressWatch}. */
 interface AddressWatchSubscriber {
     callback: (txs: ExplorerTransaction[]) => void;
 }
 
-/**
- * One transport (WebSocket, or its HTTP-polling fallback) serving every
- * concurrent watcher of the same address set.
- */
+/** One transport (socket or polling fallback) serving every watcher of an address set. */
 interface SharedAddressWatch {
     /** Live registrations; the watch retires when this empties. */
     subscribers: Set<AddressWatchSubscriber>;

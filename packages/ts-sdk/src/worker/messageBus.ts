@@ -46,6 +46,11 @@ export type ResponseEnvelope = {
     errorName?: string;
     broadcast?: boolean;
 };
+type MessageBusServices = {
+    arkProvider: ArkProvider;
+    wallet?: Wallet;
+    readonlyWallet: ReadonlyWallet;
+};
 export interface MessageHandler<
     REQ extends RequestEnvelope = RequestEnvelope,
     RES extends ResponseEnvelope = ResponseEnvelope,
@@ -67,11 +72,7 @@ export interface MessageHandler<
      * `stop()` cannot post.
      **/
     start(
-        services: {
-            arkProvider: ArkProvider;
-            wallet?: Wallet;
-            readonlyWallet: ReadonlyWallet;
-        },
+        services: MessageBusServices,
         repositories: {
             walletRepository: WalletRepository;
         },
@@ -131,11 +132,7 @@ type Options = {
      */
     intentRepository?: IntentRepository;
     debug?: boolean;
-    buildServices?: (config: Initialize["config"]) => Promise<{
-        arkProvider: ArkProvider;
-        wallet?: Wallet;
-        readonlyWallet: ReadonlyWallet;
-    }>;
+    buildServices?: (config: Initialize["config"]) => Promise<MessageBusServices>;
 };
 
 /**
@@ -208,11 +205,7 @@ export class MessageBus {
      * bus refuses ordinary wallet messages while this is > 0.
      */
     private pendingInitCount = 0;
-    private readonly buildServicesFn: (config: Initialize["config"]) => Promise<{
-        arkProvider: ArkProvider;
-        wallet?: Wallet;
-        readonlyWallet: ReadonlyWallet;
-    }>;
+    private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: IntentRepository;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
@@ -510,11 +503,7 @@ export class MessageBus {
         this.initialized = true;
     }
 
-    private async buildServices(config: Initialize["config"]): Promise<{
-        arkProvider: ArkProvider;
-        wallet?: Wallet;
-        readonlyWallet: ReadonlyWallet;
-    }> {
+    private async buildServices(config: Initialize["config"]): Promise<MessageBusServices> {
         const arkProvider = new RestArkProvider(config.arkServer.url);
         const storage = {
             walletRepository: this.walletRepository,
@@ -774,13 +763,10 @@ export class MessageBus {
      * (`messageTimeoutMs`) as the final fallback.
      */
     private resolveTimeoutMs(messageType: string | undefined, handlerTag: string): number {
-        if (
-            messageType &&
-            Object.prototype.hasOwnProperty.call(this.messageTimeoutOverrides, messageType)
-        ) {
+        if (messageType && Object.hasOwn(this.messageTimeoutOverrides, messageType)) {
             return this.messageTimeoutOverrides[messageType];
         }
-        if (Object.prototype.hasOwnProperty.call(this.messageTimeoutOverrides, handlerTag)) {
+        if (Object.hasOwn(this.messageTimeoutOverrides, handlerTag)) {
             return this.messageTimeoutOverrides[handlerTag];
         }
         return this.messageTimeoutMs;
@@ -843,42 +829,32 @@ export class MessageBus {
         messageType: string | undefined,
     ): void {
         const context = { id, tag, messageType };
+        const settle = (response: ResponseEnvelope) => {
+            if (record.settled) return;
+            record.settled = true;
+            self.clearTimeout(record.deadline);
+            this.lateDeliveries.delete(record);
+            this.deliverResponse(source, response, context);
+        };
         const record: LateDelivery = {
             settled: false,
-            deadline: self.setTimeout(() => {
-                if (record.settled) return;
-                record.settled = true;
-                this.lateDeliveries.delete(record);
-                this.deliverResponse(
-                    source,
-                    {
+            deadline: self.setTimeout(
+                () =>
+                    settle({
                         id,
                         tag,
                         error: new Error(
                             `Operation abandoned: handler did not complete within ${LATE_DELIVERY_GRACE_MS}ms after timeout (${this.labelFor(messageType, tag)})`,
                         ),
-                    },
-                    context,
-                );
-            }, LATE_DELIVERY_GRACE_MS),
+                    }),
+                LATE_DELIVERY_GRACE_MS,
+            ),
         };
         this.lateDeliveries.add(record);
 
         handlerPromise.then(
-            (response) => {
-                if (record.settled) return;
-                record.settled = true;
-                self.clearTimeout(record.deadline);
-                this.lateDeliveries.delete(record);
-                this.deliverResponse(source, response ?? { id, tag }, context);
-            },
-            (err) => {
-                if (record.settled) return;
-                record.settled = true;
-                self.clearTimeout(record.deadline);
-                this.lateDeliveries.delete(record);
-                this.deliverResponse(source, { id, tag, error: toError(err) }, context);
-            },
+            (response) => settle(response ?? { id, tag }),
+            (err) => settle({ id, tag, error: toError(err) }),
         );
     }
 

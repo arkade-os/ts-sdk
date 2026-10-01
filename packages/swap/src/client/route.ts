@@ -1,14 +1,9 @@
 /**
- * A route is two endpoints, each an asset on a corridor, plus the instrument
- * that settles it.
+ * A route is two endpoints, each an asset on a corridor, plus the instrument that settles it.
  *
- * Two invariants live in the types rather than in a check. An endpoint's
- * corridor and its asset cannot disagree, because {@link Endpoint} is a union
- * with one member per corridor and each member types its asset as
- * {@link AssetOn} of that one corridor. And `onchain -> arkade` is not in
- * {@link Route} at all, so once a route has been resolved the misroute is a
- * compile error; before resolution it is `UnsupportedRoute`, thrown ahead of
- * RFQ disclosure, artifact creation, persistence and funding.
+ * Two invariants live in the types: an {@link Endpoint}'s corridor and asset cannot disagree, and
+ * `onchain -> arkade` is not in {@link Route}, so a resolved misroute is a compile error (before
+ * resolution it is `UnsupportedRoute`, thrown ahead of RFQ disclosure, persistence and funding).
  */
 import type { AssetId, AssetPart } from "./assetId";
 import type { Corridor, CorridorId, RailOf } from "./corridor";
@@ -18,16 +13,10 @@ import type { Hex } from "./primitives";
  * A leg's concrete settlement locus. Direction comes from give versus take,
  * never from the instrument.
  *
- * `{ kind: "wallet" }` is the only instrument the SDK holds signing authority
- * over, which is why it is the only one nobody passes: `accept()` spends the
- * balance and lands the claim on wallet legs and merely watches the others. The
- * supply law is that the caller provides non-wallet take instruments (that is
- * what `to` is), the quote provides non-wallet give instruments (that is
- * exactly what the artifact is), and every remaining slot resolves to `wallet`.
- *
- * `wallet` is an explicit variant rather than an absent field because absence
- * would mean two unrelated things — wallet-by-default and not-yet-resolved —
- * and a receive leg lives in the second state until the quote returns.
+ * `{ kind: "wallet" }` is the only instrument the SDK can sign for, so nobody passes it: the
+ * caller provides non-wallet take instruments (`to`), the quote provides non-wallet give
+ * instruments (the artifact), and every remaining slot resolves to `wallet`. It is an explicit
+ * variant because an absent field would conflate wallet-by-default with not-yet-resolved.
  */
 export type Instrument =
     | { kind: "wallet" }
@@ -35,14 +24,8 @@ export type Instrument =
           kind: "address";
           address: string;
           /**
-           * The amount a BIP21 URI pinned beside the address, when one did.
-           *
-           * An address on its own pins no amount, but `bitcoin:…?amount=` does —
-           * and that number is the destination's own statement of what the
-           * recipient expects, the same way an amount-bearing bolt11 is. It is
-           * carried here rather than folded into the route resolution so a
-           * caller passing `amount` beside it trips `AmountMismatch` on the
-           * destination's pin, exactly as it would on an invoice's.
+           * The amount a BIP21 URI pinned beside the address, when one did. Carried here so a
+           * caller passing a different `amount` trips `AmountMismatch`, as with a bolt11 amount.
            */
           amount?: bigint;
       }
@@ -57,31 +40,20 @@ export type Instrument =
 /**
  * The asset ids corridor `C` can carry.
  *
- * On the three bitcoin-family corridors the corridor names no network, so the
- * tie is the rail alone. On an EVM corridor it is more than that: `eip155:8453`
- * *is* the CAIP-2 chain part its assets are spelled with, so the asset id has to
- * start with the corridor id verbatim. Enforcing only the rail there would admit
- * `eip155:1/erc20:…` on a Base corridor — the same near-miss `sameAsset` refuses
- * one layer up, an address being a chain's fact and not a token's.
+ * On bitcoin-family corridors the tie is the rail alone. On EVM, `eip155:8453` is the CAIP-2 chain
+ * part, so the asset id must start with the corridor id verbatim; a rail-only check would admit
+ * `eip155:1/erc20:…` on a Base corridor.
  */
 export type AssetOn<C extends CorridorId> = C extends Corridor
     ? AssetId<RailOf<C>>
     : `${C}/${AssetPart}`;
 
 /**
- * An asset on a corridor, with the instrument that settles it.
+ * An asset on a corridor, with the instrument that settles it. `corridor` is a cross-check (the id
+ * already carries its rail), typed so the two cannot disagree.
  *
- * `corridor` is a cross-check rather than an input: every id already carries
- * its rail. Typing `asset` against that rail is what makes the cross-check free
- * — there is no value in which the two disagree.
- *
- * Distributed over `C` rather than written as one object whose two fields both
- * mention it: `{ corridor: C; asset: AssetOn<C> }` at `C = CorridorId` widens
- * *each field independently* to its own union, and correlates nothing —
- * `{ corridor: "arkade", asset: "bitcoin:…" }` satisfies it. The conditional
- * makes `Endpoint` the union of the four single-corridor shapes instead, so the
- * pairing survives the default type argument, which is the case every unwitnessed
- * `Endpoint` in a signature lands on.
+ * Distributive over `C` on purpose: `{ corridor: C; asset: AssetOn<C> }` at `C = CorridorId`
+ * widens each field independently and would admit `{ corridor: "arkade", asset: "bitcoin:…" }`.
  */
 export type Endpoint<C extends CorridorId = CorridorId> = C extends CorridorId
     ? {
@@ -110,18 +82,14 @@ export type Route =
 /**
  * The one thing a counterparty must see, when a route has one.
  *
- * The deposit variant carries no `chain` field. §3.4 reserved one and Q12 made
- * it redundant: the chain part lives inside `asset`, and a second, untyped
- * spelling of it is a fact two fields can disagree about with nothing checking.
- * `corridor` stays because it is the typed axis `route.ts` already ties to the
- * asset's rail — a cross-check, where `chain?: string | number` was a copy.
+ * No `chain` field on the deposit: the chain part lives inside `asset`, and a second spelling
+ * would be a fact two fields can disagree about.
  */
 export type Artifact = { kind: "invoice"; bolt11: string } | DepositArtifact;
 
 /**
- * The deposit half of {@link Artifact}, distributed over the corridor for the
- * reason {@link Endpoint} is: `corridor` is only a cross-check if a value cannot
- * spell it against an asset from another corridor.
+ * The deposit half of {@link Artifact}, distributed over the corridor for the same reason as
+ * {@link Endpoint}.
  */
 export type DepositArtifact<C extends CorridorId = CorridorId> = C extends CorridorId
     ? {

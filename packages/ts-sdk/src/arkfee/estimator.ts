@@ -2,19 +2,14 @@ import { Environment, ParseResult } from "@marcbachmann/cel-js";
 import { IntentOffchainInputEnv, IntentOnchainInputEnv, IntentOutputEnv } from "./celenv.js";
 import { IntentFeeConfig, OffchainInput, OnchainInput, FeeOutput, FeeAmount } from "./types.js";
 
-interface Program {
-    program: ParseResult;
-    text: string;
-}
-
 /**
  * Estimator evaluates CEL expressions to calculate fees for Arkade intents
  */
 export class Estimator {
-    private intentOffchainInput?: Program;
-    private intentOnchainInput?: Program;
-    private intentOffchainOutput?: Program;
-    private intentOnchainOutput?: Program;
+    private intentOffchainInput?: ParseResult;
+    private intentOnchainInput?: ParseResult;
+    private intentOffchainOutput?: ParseResult;
+    private intentOnchainOutput?: ParseResult;
 
     /**
      * Creates a new Estimator with the given config
@@ -43,12 +38,7 @@ export class Estimator {
      * @returns The fee amount for this input
      */
     evalOffchainInput(input: OffchainInput): FeeAmount {
-        if (!this.intentOffchainInput) {
-            return FeeAmount.ZERO;
-        }
-
-        const args = inputToArgs(input);
-        return new FeeAmount(this.intentOffchainInput.program(args));
+        return evalProgram(this.intentOffchainInput, () => inputToArgs(input));
     }
 
     /**
@@ -57,14 +47,7 @@ export class Estimator {
      * @returns The fee amount for this input
      */
     evalOnchainInput(input: OnchainInput): FeeAmount {
-        if (!this.intentOnchainInput) {
-            return FeeAmount.ZERO;
-        }
-
-        const args = {
-            amount: Number(input.amount),
-        };
-        return new FeeAmount(this.intentOnchainInput.program(args));
+        return evalProgram(this.intentOnchainInput, () => ({ amount: Number(input.amount) }));
     }
 
     /**
@@ -73,12 +56,7 @@ export class Estimator {
      * @returns The fee amount for this output
      */
     evalOffchainOutput(output: FeeOutput): FeeAmount {
-        if (!this.intentOffchainOutput) {
-            return FeeAmount.ZERO;
-        }
-
-        const args = outputToArgs(output);
-        return new FeeAmount(this.intentOffchainOutput.program(args));
+        return evalProgram(this.intentOffchainOutput, () => outputToArgs(output));
     }
 
     /**
@@ -87,12 +65,7 @@ export class Estimator {
      * @returns The fee amount for this output
      */
     evalOnchainOutput(output: FeeOutput): FeeAmount {
-        if (!this.intentOnchainOutput) {
-            return FeeAmount.ZERO;
-        }
-
-        const args = outputToArgs(output);
-        return new FeeAmount(this.intentOnchainOutput.program(args));
+        return evalProgram(this.intentOnchainOutput, () => outputToArgs(output));
     }
 
     /**
@@ -131,6 +104,13 @@ export class Estimator {
     }
 }
 
+function evalProgram(
+    program: ParseResult | undefined,
+    toArgs: () => Record<string, any>,
+): FeeAmount {
+    return program ? new FeeAmount(program(toArgs())) : FeeAmount.ZERO;
+}
+
 function inputToArgs(input: OffchainInput): Record<string, any> {
     const args: Record<string, any> = {
         amount: Number(input.amount),
@@ -162,7 +142,7 @@ function outputToArgs(output: FeeOutput): Record<string, any> {
  * @param env - The CEL environment to use
  * @returns parsed and validated program
  */
-function parseProgram(text: string, env: Environment): Program {
+function parseProgram(text: string, env: Environment): ParseResult {
     const program = env.parse(text);
 
     // Type check the program
@@ -176,5 +156,5 @@ function parseProgram(text: string, env: Environment): Program {
         throw new Error(`expected return type double, got ${checkResult.type}`);
     }
 
-    return { program, text };
+    return program;
 }
