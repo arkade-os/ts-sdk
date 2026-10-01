@@ -286,12 +286,18 @@ describe.each(backends)("prepared funding repository (%s)", (_, create) => {
     it("keeps abandoned rows terminal", async () => {
         await using repository = create();
         await repository.insertPreparedSwap(prepared("operation-a"));
+        const stale = (await repository.getSwap("operation-a"))!;
         expect(
             await repository.advanceFundingState("operation-a", "prepared", { state: "abandoned" }),
         ).toBe(true);
         expect(
             await repository.advanceFundingState("operation-a", "prepared", { state: "submitted" }),
         ).toBe(false);
+        await repository.saveSwap({ ...stale, quote: { feeBps: 45 } } as AssetSwap);
+        const stored = await repository.getSwap("operation-a");
+        expect(stored?.status).toBe("cancelled");
+        expect(stored?.fundingIntent?.state).toBe("abandoned");
+        expect((stored as AssetSwap & { quote: unknown }).quote).toEqual({ feeBps: 45 });
     });
 
     it("rejects generic preparation and legacy retrofit bypasses", async () => {

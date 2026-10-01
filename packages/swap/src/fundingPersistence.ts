@@ -307,6 +307,7 @@ export function mergeFundingProtectedSwap(
     }
     return {
         ...mergeDefined(existing, incoming),
+        ...(existing.fundingIntent.state === "abandoned" ? { status: "cancelled" as const } : {}),
         fundingIntent: existing.fundingIntent,
         fundingTxid: existing.fundingTxid,
     };
