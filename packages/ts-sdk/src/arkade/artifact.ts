@@ -5,6 +5,7 @@
 
 import { hex } from "@scure/base";
 
+import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
@@ -237,6 +238,17 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     }) as ArtifactWitnessElement[];
 }
 
+/** A literal CSV operand is an encoded BIP68 sequence; a `$param` is bound later as blocks. */
+function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegment["csv"] {
+    if (typeof operand === "string") return { type: "blocks", value: operand };
+    const timelock =
+        operand >= 0n && operand < 0x80000000n ? sequenceToTimelock(Number(operand)) : undefined;
+    if (!timelock || BigInt(timelockToSequence(timelock)) !== operand) {
+        fail(`leaf '${leafName}': CSV literal ${operand} is not a canonical BIP68 sequence`);
+    }
+    return timelock;
+}
+
 /** `condition? · timelock? · N-of-N`. Anything else is refused. */
 function parseLeaf(
     leaf: ArtifactLeaf,
@@ -263,7 +275,7 @@ function parseLeaf(
             asm[index].startsWith("<") && asm[index].endsWith(">")
                 ? `$${asm[index].slice(1, -1)}`
                 : BigInt(asm[index]);
-        if (asm[index + 1] === "OP_CHECKSEQUENCEVERIFY") csv = { type: "blocks", value: operand };
+        if (asm[index + 1] === "OP_CHECKSEQUENCEVERIFY") csv = csvTimelock(leaf.name, operand);
         else if (asm[index + 1] === "OP_CHECKLOCKTIMEVERIFY") cltv = operand;
         else fail(`leaf '${leaf.name}': unexpected timelock opcode ${asm[index + 1]}`);
         index += 3;
