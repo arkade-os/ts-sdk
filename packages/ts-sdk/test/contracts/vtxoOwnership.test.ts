@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
     filterVtxosForScript,
+    hasVtxosForContract,
     isVtxoForScript,
     validateVtxosForScript,
     vtxoOutpoint,
     warnAndFilterVtxosForScript,
 } from "../../src/contracts/vtxoOwnership";
+import type { WalletRepository } from "../../src/repositories/walletRepository";
 
 const row = (script: string, txid = "aa".repeat(32), vout = 0) => ({
     txid,
@@ -24,6 +26,39 @@ describe("vtxoOwnership", () => {
         });
         it("rejects empty script", () => {
             expect(isVtxoForScript({ script: "" }, "")).toBe(false);
+        });
+    });
+
+    describe("hasVtxosForContract", () => {
+        const contract = { script: "a", address: "address-a" };
+
+        it("reads one bounded page rather than the contract's history", async () => {
+            const getVtxosForScriptPage = vi
+                .fn()
+                .mockResolvedValue({ items: [{ address: "address-a", vtxo: row("a") }] });
+            const repo = { getVtxosForScriptPage } as unknown as WalletRepository;
+            await expect(hasVtxosForContract(repo, contract)).resolves.toBe(true);
+            expect(getVtxosForScriptPage).toHaveBeenCalledTimes(1);
+            expect(getVtxosForScriptPage).toHaveBeenCalledWith("a", { limit: 1 });
+        });
+
+        it("is false on an empty script page", async () => {
+            const repo = {
+                getVtxosForScriptPage: vi.fn().mockResolvedValue({ items: [] }),
+            } as unknown as WalletRepository;
+            await expect(hasVtxosForContract(repo, contract)).resolves.toBe(false);
+        });
+
+        it("falls back to the address read and ignores wrong-script rows", async () => {
+            const getVtxosPage = vi.fn().mockResolvedValue({ items: [row("b")] });
+            const repo = { getVtxosPage } as unknown as WalletRepository;
+            await expect(hasVtxosForContract(repo, contract)).resolves.toBe(false);
+            expect(getVtxosPage).toHaveBeenCalledWith("address-a", expect.objectContaining({}));
+
+            const withMatch = {
+                getVtxosPage: vi.fn().mockResolvedValue({ items: [row("a")] }),
+            } as unknown as WalletRepository;
+            await expect(hasVtxosForContract(withMatch, contract)).resolves.toBe(true);
         });
     });
 

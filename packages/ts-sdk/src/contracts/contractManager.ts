@@ -54,6 +54,7 @@ import {
 import {
     applyRecordedSpends,
     getVtxosForContract,
+    hasVtxosForContract,
     inVtxoWriteOrder,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
@@ -1902,8 +1903,7 @@ export class ContractManager implements IContractManager {
 
         for (const contract of awaiting) {
             try {
-                const vtxos = await getVtxosForContract(this.config.walletRepository, contract);
-                if (vtxos.length === 0) continue;
+                if (!(await hasVtxosForContract(this.config.walletRepository, contract))) continue;
                 await this.setContractWatchState(contract.script, "retained");
             } catch (err) {
                 console.warn(

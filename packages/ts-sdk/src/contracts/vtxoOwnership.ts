@@ -117,6 +117,20 @@ export async function getVtxosForContract(
     return options?.unspentOnly ? normalized.filter((vtxo) => !isVtxoSpent(vtxo)) : normalized;
 }
 
+/** Whether the contract has any recorded VTXO, spent included, without collecting its history. */
+export async function hasVtxosForContract(
+    repo: WalletRepository,
+    contract: Pick<Contract, "script" | "address">,
+): Promise<boolean> {
+    if (repo.getVtxosForScriptPage) {
+        const page = await repo.getVtxosForScriptPage(contract.script, { limit: 1 });
+        return page.items.length > 0;
+    }
+    return (
+        filterVtxosForScript(await collectVtxos(repo, contract.address), contract.script).length > 0
+    );
+}
+
 /** Provenance is required, so a bare `isSpent: true` records nothing and stays
  * correctable. Every local write sets `arkTxId` (send) or `settledBy` (settle). */
 function hasRecordedSpend(
