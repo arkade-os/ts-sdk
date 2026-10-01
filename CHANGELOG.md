@@ -18,7 +18,7 @@ style and have not been backfilled.
   should sort the collected result explicitly. `IntentFilter.skip` and `take`
   are replaced by `PageRequest` cursors.
 
-- **The shared IndexedDB wallet schema upgrades from v3 to v4.** The upgrade
+- **The shared IndexedDB wallet schema upgrades from v4 to v5.** The upgrade
   adds an `(address, createdAt)` transaction-history index without rewriting
   history rows or activating the separate experimental intent stores.
 
