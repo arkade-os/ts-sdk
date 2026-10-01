@@ -486,7 +486,7 @@ describe("VHTLCV2ContractHandler", () => {
         const contextAt = (over: Partial<PathContext> = {}): PathContext => ({
             collaborative: true,
             currentTime: Date.now(),
-            walletPubKey: SENDER,
+            walletDescriptor: `tr(${SENDER})`,
             ...over,
         });
 
@@ -523,14 +523,20 @@ describe("VHTLCV2ContractHandler", () => {
 
         it("says nothing to the receiver, whose claim turns on a preimage", () => {
             expect(() =>
-                check(fullParams(), contextAt({ walletPubKey: RECEIVER, blockHeight: 799_999 })),
+                check(
+                    fullParams(),
+                    contextAt({ walletDescriptor: `tr(${RECEIVER})`, blockHeight: 799_999 }),
+                ),
             ).not.toThrow();
         });
 
         it("says nothing to a wallet that is neither party", () => {
             const stranger = "0".repeat(64);
             expect(() =>
-                check(fullParams(), contextAt({ walletPubKey: stranger, blockHeight: 799_999 })),
+                check(
+                    fullParams(),
+                    contextAt({ walletDescriptor: `tr(${stranger})`, blockHeight: 799_999 }),
+                ),
             ).not.toThrow();
         });
 
@@ -623,7 +629,7 @@ describe("VHTLCV2ContractHandler", () => {
             const paths = await manager.getSpendablePaths({
                 contractScript: contract.script,
                 collaborative: true,
-                walletPubKey: SENDER,
+                walletDescriptor: `tr(${SENDER})`,
             });
             return paths.map(leafHex).includes(script.refundWithoutReceiverScript!);
         };
@@ -656,7 +662,7 @@ describe("VHTLCV2ContractHandler", () => {
                 manager.getSpendablePaths({
                     contractScript: contract.script,
                     collaborative: true,
-                    walletPubKey: SENDER,
+                    walletDescriptor: `tr(${SENDER})`,
                 });
             const results = await Promise.all([query(), query(), query()]);
 
@@ -845,7 +851,7 @@ describe("VHTLCV2ContractHandler", () => {
                 return manager.getSpendablePaths({
                     contractScript: contract.script,
                     collaborative: true,
-                    walletPubKey: SENDER,
+                    walletDescriptor: `tr(${SENDER})`,
                 });
             })();
             // Resolved, not rejected — and the height-gated leaf stays out.
@@ -873,7 +879,7 @@ describe("VHTLCV2ContractHandler", () => {
                 manager.getSpendablePaths({
                     contractScript: contract.script,
                     collaborative: true,
-                    walletPubKey: SENDER,
+                    walletDescriptor: `tr(${SENDER})`,
                 });
 
             vi.useFakeTimers();
@@ -909,7 +915,7 @@ describe("VHTLCV2ContractHandler", () => {
                 manager.getSpendablePaths({
                     contractScript: contract.script,
                     collaborative: true,
-                    walletPubKey: SENDER,
+                    walletDescriptor: `tr(${SENDER})`,
                 });
 
             expect((await query()).map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
@@ -930,7 +936,7 @@ describe("VHTLCV2ContractHandler", () => {
             await manager.getAllSpendingPaths({
                 contractScript: contract.script,
                 collaborative: true,
-                walletPubKey: SENDER,
+                walletDescriptor: `tr(${SENDER})`,
             });
 
             expect(reads).toBe(0);
@@ -946,7 +952,7 @@ describe("VHTLCV2ContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 799_999,
-                walletPubKey: SENDER,
+                walletDescriptor: `tr(${SENDER})`,
             });
             expect(before).toBeNull();
 
@@ -954,7 +960,7 @@ describe("VHTLCV2ContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 800_000,
-                walletPubKey: SENDER,
+                walletDescriptor: `tr(${SENDER})`,
             });
             expect(after).not.toBeNull();
             expect(leafHex(after!)).toBe(script.refundWithoutReceiverScript);
@@ -967,7 +973,7 @@ describe("VHTLCV2ContractHandler", () => {
             const selected = VHTLCV2ContractHandler.selectPath(script, contract, {
                 collaborative: true,
                 currentTime: Date.now(),
-                walletPubKey: RECEIVER,
+                walletDescriptor: `tr(${RECEIVER})`,
             });
             expect(selected).not.toBeNull();
             expect(leafHex(selected!)).toBe(script.claimScript);
@@ -986,7 +992,7 @@ describe("VHTLCV2ContractHandler", () => {
                     collaborative: false,
                     currentTime: Date.now(),
                     blockHeight: 105,
-                    walletPubKey: SENDER,
+                    walletDescriptor: `tr(${SENDER})`,
                     vtxo,
                 }),
             ).toHaveLength(0);
@@ -995,7 +1001,7 @@ describe("VHTLCV2ContractHandler", () => {
                 collaborative: false,
                 currentTime: Date.now(),
                 blockHeight: 200,
-                walletPubKey: SENDER,
+                walletDescriptor: `tr(${SENDER})`,
                 vtxo,
             });
             expect(mature).toHaveLength(1);
@@ -1010,7 +1016,7 @@ describe("VHTLCV2ContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 900_000,
-                walletPubKey: EMULATOR,
+                walletDescriptor: `tr(${EMULATOR})`,
             };
             expect(VHTLCV2ContractHandler.selectPath(script, contract, context)).toBeNull();
             expect(VHTLCV2ContractHandler.getAllSpendingPaths(script, contract, context)).toEqual(

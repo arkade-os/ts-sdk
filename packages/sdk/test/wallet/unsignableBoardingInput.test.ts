@@ -5,7 +5,9 @@ import {
     MnemonicIdentity,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestArkProvider,
 } from "../../src";
+import { jsonResponse } from "../helpers/response";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -43,8 +45,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
@@ -69,7 +70,7 @@ describe("unsignable boarding input diagnostic", () => {
         const wallet = await Wallet.create({
             identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
             walletMode: "hd",
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),
@@ -95,7 +96,7 @@ describe("unsignable boarding input diagnostic", () => {
         const wallet = await Wallet.create({
             identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
             walletMode: "hd",
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),

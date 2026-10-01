@@ -3,18 +3,12 @@ import { Contract } from "./types";
 import { contractHandlers } from "./handlers";
 import { DEFAULT_NETWORK } from "../networks";
 
-/**
- * Prefix for arkcontract strings.
- */
 const ARKCONTRACT_PREFIX = "arkcontract";
 
 /**
- * Encode a contract to the arkcontract string format.
- *
- * Format: arkcontract={type}&{key1}={value1}&{key2}={value2}...
- *
- * This format is compatible with NArk and allows contracts to be
- * shared/imported across different Arkade SDKs.
+ * Encode a contract to the arkcontract string format:
+ * `arkcontract={type}&{key1}={value1}&...`. NArk-compatible, so contracts can be shared
+ * across Arkade SDKs.
  *
  * @example
  * ```typescript
@@ -31,10 +25,9 @@ const ARKCONTRACT_PREFIX = "arkcontract";
 export function encodeArkContract(contract: Contract): string {
     const params = new URLSearchParams();
 
-    // Add contract type first
+    // First, so the string starts with `arkcontract=` (what `isArkContract` tests).
     params.set(ARKCONTRACT_PREFIX, contract.type);
 
-    // Add all params
     for (const [key, value] of Object.entries(contract.params)) {
         params.set(key, value);
     }
@@ -43,29 +36,20 @@ export function encodeArkContract(contract: Contract): string {
 }
 
 /**
- * Parsed result from decoding an arkcontract string.
- *
- * This is a low-level representation. For type-safe contract creation,
- * use `contractFromArkContract` or `contractFromArkContractWithAddress`
- * which validate params through the handler system.
+ * Raw (unvalidated) result of decoding an arkcontract string. For typed contracts use
+ * `contractFromArkContract` / `contractFromArkContractWithAddress`, which validate via handlers.
  */
 export interface ParsedArkContract {
     /** Contract type (e.g., "vhtlc", "default") */
     type: string;
 
-    /** All key-value pairs from the string */
+    /** All other key-value pairs from the string */
     data: Record<string, string>;
 }
 
 /**
- * Decode an arkcontract string into raw type and data.
+ * Decode an arkcontract string into raw type and data (low-level; see {@link ParsedArkContract}).
  *
- * This is a low-level function that parses the URL-encoded format.
- * For creating typed Contract objects, use `contractFromArkContract`
- * or `contractFromArkContractWithAddress` instead.
- *
- * @param encoded - The arkcontract string
- * @returns Parsed type and key-value data
  * @throws If the string is not a valid arkcontract
  *
  * @example
@@ -77,13 +61,11 @@ export interface ParsedArkContract {
 export function decodeArkContract(encoded: string): ParsedArkContract {
     const params = new URLSearchParams(encoded);
 
-    // Extract type from the arkcontract key
     const type = params.get(ARKCONTRACT_PREFIX);
     if (!type) {
         throw new Error(`Invalid arkcontract string: missing '${ARKCONTRACT_PREFIX}' key`);
     }
 
-    // Build data object from all other params
     const data: Record<string, string> = {};
     for (const [key, value] of params.entries()) {
         if (key !== ARKCONTRACT_PREFIX) {
@@ -95,14 +77,9 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
 }
 
 /**
- * Create a Contract from an arkcontract string.
+ * Create a Contract (without script/address) from an arkcontract string.
  *
- * This requires a handler to be registered for the contract type.
- *
- * @param encoded - The arkcontract string
- * @param options - Additional options for the contract
- * @returns A Contract object
- * @throws If the string is invalid or no handler exists for the type
+ * @throws If the string is invalid or no handler is registered for the type
  *
  * @example
  * ```typescript
@@ -132,9 +109,7 @@ export function contractFromArkContract(
         throw new Error(`No handler registered for contract type '${parsed.type}'`);
     }
 
-    // Separate params from runtime data
-    // This is type-specific - the handler knows which keys are params
-    // For now, we treat all data as params
+    // All data is treated as params; splitting out type-specific runtime keys isn't done yet.
     const params = parsed.data;
 
     return {
@@ -150,11 +125,8 @@ export function contractFromArkContract(
 /**
  * Create a full Contract with derived script and address.
  *
- * @param encoded - The arkcontract string
  * @param serverPubKey - Server public key (for address derivation)
  * @param addressPrefix - Address prefix (e.g., "tark" for testnet)
- * @param options - Additional options
- * @returns A complete Contract object
  */
 export function contractFromArkContractWithAddress(
     encoded: string,
@@ -184,9 +156,7 @@ export function contractFromArkContractWithAddress(
     };
 }
 
-/**
- * Check if a string is an arkcontract.
- */
+/** Check if a string is an arkcontract. */
 export function isArkContract(str: string): boolean {
     return str.startsWith(ARKCONTRACT_PREFIX + "=");
 }

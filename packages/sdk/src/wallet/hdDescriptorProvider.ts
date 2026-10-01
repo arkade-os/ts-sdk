@@ -17,47 +17,27 @@ import {
  * @internal
  */
 interface HDWalletSettings {
-    /**
-     * Account descriptor (ends in `/*)`). Used as a strong identity guard:
-     * a repo populated by a different seed will have a different descriptor
-     * and must not be reused.
-     */
+    /** Account descriptor (ends in `/*)`); identity guard against a repo from a different seed. */
     descriptor: string;
 
-    /**
-     * The most recently allocated descriptor index. `undefined` means no
-     * descriptor has ever been allocated; the next allocation will return
-     * index 0.
-     */
+    /** Most recently allocated index; `undefined` means the next allocation is index 0. */
     lastIndexUsed?: number;
 }
 
 /** Settings key under {@link WalletState.settings} where HD state lives. */
 const HD_SETTINGS_KEY = "hd";
 
-/**
- * First hardened BIP32 index (2^31). Non-hardened child indices — the only
- * kind an xpub-based account template can derive — must stay below it.
- */
+/** First hardened BIP32 index (2^31); xpub-derivable (non-hardened) indices stay below it. */
 const HARDENED_INDEX_OFFSET = 0x80000000;
 
 /**
- * HD-wallet {@link DescriptorProvider} that allocates a fresh signing
- * descriptor on every call. The provider holds no notion of "current" — it
- * is a pure rotating allocator. The question of "which descriptor is the
- * wallet currently bound to?" is answered by querying the contract
- * repository for active contracts, not by asking this provider.
+ * HD-wallet {@link DescriptorProvider} that allocates a fresh signing descriptor on every call.
+ * A pure rotating allocator: which descriptor the wallet is bound to is answered by the contract
+ * repository, not this provider.
  *
- * State is persisted under `WalletRepository.getWalletState().settings.hd` so
- * that no storage-schema migration is required when switching a wallet from
- * single-key to HD. The provider is backed by an {@link HDCapableIdentity},
- * which carries the wildcard account descriptor template (for derivation)
- * and the signing primitives.
- *
- * The read-modify-write of the persisted index runs inside the shared per-
- * repo `updateWalletState` mutex, so two `getNextSigningDescriptor` callers
- * — including those driving separate `HDDescriptorProvider` instances on
- * the same repo — can never observe the same index.
+ * State lives in `settings.hd` of the wallet state, so switching single-key → HD needs no schema
+ * migration. Allocation runs inside the shared per-repo `updateWalletState` mutex, so callers
+ * (even on separate instances over one repo) never observe the same index.
  *
  * @example
  * ```ts
@@ -75,10 +55,8 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
     ) {}
 
     /**
-     * Construct an HDDescriptorProvider. No I/O is performed here;
-     * persisted state is read lazily on the first call to
-     * `getNextSigningDescriptor`. A descriptor-mismatch error surfaces on
-     * first use rather than at boot.
+     * Construct an HDDescriptorProvider. No I/O: state is read lazily, so a descriptor-mismatch
+     * error surfaces on first use rather than here.
      */
     static async create(
         identity: HDCapableIdentity,
@@ -87,13 +65,7 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         return new HDDescriptorProvider(identity, walletRepository);
     }
 
-    /**
-     * Allocate the next descriptor and return it. The first call on a fresh
-     * wallet returns descriptor at index 0; subsequent calls return 1, 2, 3,
-     * ... in order. Each call is atomic with respect to other rotations on
-     * the same repo: two concurrent callers can never observe the same
-     * index.
-     */
+    /** Allocate and return the next descriptor (index 0, 1, 2, …), atomically per repo. */
     async getNextSigningDescriptor(): Promise<string> {
         return this.mutate((settings) => {
             const next = settings.lastIndexUsed === undefined ? 0 : settings.lastIndexUsed + 1;
@@ -103,16 +75,9 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
     }
 
     /**
-     * Re-derive the descriptor at the most recently allocated index
-     * WITHOUT advancing — i.e. read the same descriptor
-     * `getNextSigningDescriptor` last returned. Returns `undefined`
-     * when no descriptor has ever been allocated on this repo.
-     *
-     * Used by the boot path to keep the wallet's display address
-     * stable across restarts: when no tagged display contract exists
-     * (e.g. a fresh wallet that hasn't rotated yet, or a wallet whose
-     * baseline-only repo carries no rotation history), the boot should
-     * re-derive the existing index rather than burn a new one.
+     * Re-derive the descriptor `getNextSigningDescriptor` last returned, WITHOUT advancing;
+     * `undefined` if none was ever allocated. Lets boot keep the display address stable across
+     * restarts when no tagged display contract exists, instead of burning a new index.
      */
     async getCurrentSigningDescriptor(): Promise<string | undefined> {
         const state = await this.walletRepository.getWalletState();
@@ -121,28 +86,17 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         return this.materializeDescriptorAt(settings.lastIndexUsed);
     }
 
-    /**
-     * The most recently allocated index, or `undefined` when nothing has ever
-     * been allocated on this repo. Read-only peek at the watermark that
-     * {@link getNextSigningDescriptor} advances.
-     */
+    /** Read-only peek at the allocation watermark; `undefined` if nothing was ever allocated. */
     async getLastIndexUsed(): Promise<number | undefined> {
         const state = await this.walletRepository.getWalletState();
         return this.parseSettings(state ?? ({} as WalletState)).lastIndexUsed;
     }
 
     /**
-     * Monotonically advance the allocation watermark so the next
-     * `getNextSigningDescriptor()` skips indices discovered by a restore
-     * scan. Never rewinds: a lower or equal `index` is a no-op.
-     *
-     * An invalid `index` (non-integer / negative / past the BIP32
-     * non-hardened ceiling) is ignored (no-op): persisting it would corrupt
-     * `lastIndexUsed` and make the next `parseSettings()` throw, mirroring
-     * the validation parseSettings already enforces. The upper bound matters
-     * because the damage outlives the call — `materializeDescriptorAt` cannot
-     * derive at or above 2^31, so a watermark parked there would fail every
-     * subsequent allocation for the life of the repo.
+     * Monotonically advance the watermark past indices found by a restore scan; never rewinds.
+     * An invalid `index` (non-integer, negative, or >= 2^31) is ignored: persisting it would make
+     * `parseSettings()` throw, and a watermark at the hardened ceiling would fail every later
+     * allocation for the life of the repo.
      */
     async advanceLastIndexUsed(index: number): Promise<void> {
         if (!Number.isInteger(index) || index < 0 || index >= HARDENED_INDEX_OFFSET) return;
@@ -153,22 +107,14 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         });
     }
 
-    /**
-     * Returns true when the given descriptor is derivable from this wallet's
-     * seed. Delegates to the underlying identity, which handles both HD and
-     * simple `tr(pubkey)` descriptors.
-     */
+    /** Whether `descriptor` (HD or simple `tr(pubkey)`) is derivable from this wallet's seed. */
     isOurs(descriptor: string): boolean {
-        return this.identity.isOurs(descriptor);
+        return this.identity.ownsDescriptor(descriptor);
     }
 
-    /**
-     * Signs each request with the key derived from its descriptor. Delegates
-     * to the identity's signing primitives — the identity, not the provider,
-     * holds the seed.
-     */
+    /** Signs each request with its descriptor's derived key (the identity holds the seed). */
     async signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]> {
-        return this.identity.signWithDescriptor(requests);
+        return this.identity.signDescriptorTransactions(requests);
     }
 
     /** Signs a message using the key derived from `descriptor`. */
@@ -177,15 +123,10 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         message: Uint8Array,
         signatureType: "schnorr" | "ecdsa" = "schnorr",
     ): Promise<Uint8Array> {
-        return this.identity.signMessageWithDescriptor(descriptor, message, signatureType);
+        return this.identity.signDescriptorMessage(descriptor, message, signatureType);
     }
 
-    /**
-     * HD providers participate in receive rotation. The default
-     * factory boot (contract-repo lookup → allocate fresh descriptor)
-     * is exactly what we want, so this just delegates to
-     * {@link WalletReceiveRotator.defaultBoot}.
-     */
+    /** HD providers take part in receive rotation via {@link WalletReceiveRotator.defaultBoot}. */
     async createReceiveRotator(
         opts: ReceiveRotatorBootOpts,
     ): Promise<ReceiveRotatorBoot | undefined> {
@@ -195,15 +136,9 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
     // ── internals ────────────────────────────────────────────────────
 
     /**
-     * Substitute the wildcard in the identity's account-descriptor template
-     * with a concrete index, going through the descriptors-scure parser
-     * rather than ad-hoc string substitution. The parser's `expand({ index })`
-     * call validates that the input is a ranged template AND produces a
-     * canonical materialized key expression at the given index.
-     *
-     * This is a pure read: it does NOT advance the allocation watermark.
-     * Used by restore's gap-scan to peek descriptors at arbitrary indices
-     * without side-effects.
+     * Materialize the account template at `index` via the descriptors-scure parser (validates the
+     * ranged template and yields a canonical key expression) rather than string substitution.
+     * Pure: does NOT advance the watermark, so restore's gap-scan can peek arbitrary indices.
      */
     materializeDescriptorAt(index: number): string {
         const descriptor = this.identity.descriptor;
@@ -219,14 +154,9 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
     }
 
     /**
-     * Run the read-modify-write of HD settings inside the shared per-repo
-     * wallet-state mutex. The closure receives a freshly-validated settings
-     * snapshot, mutates it, and returns whatever value the caller wants to
-     * surface; the mutated settings are then persisted as part of the same
-     * atomic update.
-     *
-     * Doing the read inside the lock is what prevents two providers (or two
-     * concurrent callers on the same provider) from racing on a stale index.
+     * Read-modify-write HD settings inside the shared per-repo wallet-state mutex; `fn` mutates a
+     * validated snapshot that is persisted atomically. Reading inside the lock prevents races on a
+     * stale index.
      */
     private async mutate<T>(fn: (settings: HDWalletSettings) => T): Promise<T> {
         let result!: T;
@@ -245,12 +175,8 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
     }
 
     /**
-     * Validate the persisted HD settings (or initialize a fresh record when
-     * absent) and return a clone safe for the caller to mutate.
-     *
-     * The cast to `HDWalletSettings` trusts storage; a corrupted or
-     * partially-migrated repo could otherwise produce `NaN` descriptors.
-     * Fail loud rather than silently derive garbage.
+     * Validate persisted HD settings (or init a fresh record) and return a mutable clone. Fails
+     * loud: a corrupt repo would otherwise derive `NaN` descriptors.
      */
     private parseSettings(state: WalletState): HDWalletSettings {
         const stored = state.settings?.[HD_SETTINGS_KEY] as HDWalletSettings | undefined;

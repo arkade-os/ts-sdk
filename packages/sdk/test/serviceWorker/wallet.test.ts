@@ -20,27 +20,23 @@ import {
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import { MESSAGE_BUS_NOT_INITIALIZED, ServiceWorkerTimeoutError } from "../../src/worker/errors";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../src/networks";
+import { registerWalletRestoreHook } from "../../src/wallet/restoreHooks";
 
 type MessageHandler = (event: { data: any }) => void;
 
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
-// Simulate the structured clone algorithm that postMessage uses
-function structuredCloneError(error: any): any {
-    if (error instanceof Error) {
-        const cloned = new Error(error.message);
-        cloned.name = error.name;
-        return cloned;
-    }
-    if (error && typeof error === "object") {
-        return JSON.parse(JSON.stringify(error));
-    }
-    return error;
-}
-
+// Errors cross the harness through the REAL structured-clone algorithm, so
+// its fidelity is the platform's problem, not a hand-maintained simulation's.
+// A stub that copied `name` verbatim once certified a fix the browser would
+// have rejected (PR #803 review) — the real algorithm normalizes a custom
+// Error name to "Error", which is exactly what these tests must see.
+// Success payloads still pass by REFERENCE on purpose: responses carry spies,
+// which do not clone. A test asserting that a success payload survives a real
+// clone boundary (the bigint test) wraps its own envelope.
 function structuredCloneResponse(response: any): any {
     if (!response || !response.error) return response;
-    return { ...response, error: structuredCloneError(response.error) };
+    return { ...response, error: structuredClone(response.error) };
 }
 
 const createServiceWorkerHarness = (
@@ -157,7 +153,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await ServiceWorkerReadonlyWallet.setup({
             serviceWorkerPath: "/sw.js",
             serviceWorkerActivationTimeoutMs: 30_000,
-            arkServerUrl: "https://ark.example",
+            arkServer: { url: "https://ark.example" },
             identity: {} as any,
         });
 
@@ -212,21 +208,62 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // The gate reads contract-row metadata, which exists only inside the
         // worker — so this cannot be a main-thread filter over GET_VTXOS.
         const vtxos = [{ txid: "tx", vout: 0, value: 1, virtualStatus: { state: "settled" } }];
+        const filters: unknown[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "GET_SPENDABLE_VTXOS") return null;
+            filters.push(message.payload.filter);
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "SPENDABLE_VTXOS",
+                payload: { vtxos, filterApplied: true },
+            };
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(
+            wallet.getSpendableVtxos({
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            }),
+        ).resolves.toMatchObject([{ txid: "tx" }]);
+        expect(filters).toEqual([
+            {
+                watchedOnly: true,
+                genericallySpendableOnly: true,
+                maxSyncAgeMs: 60_000,
+                requireSynced: true,
+            },
+        ]);
+    });
+
+    it("rejects scoped reads from a worker that ignores contract scopes", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
             message.type === "GET_SPENDABLE_VTXOS"
                 ? {
                       id: message.id,
                       tag: messageTag,
                       type: "SPENDABLE_VTXOS",
-                      payload: { vtxos },
+                      payload: { vtxos: [] },
                   }
                 : null,
         );
-
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getSpendableVtxos()).resolves.toMatchObject([{ txid: "tx" }]);
+        await expect(wallet.getSpendableVtxos({ watchedOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ genericallySpendableOnly: true })).rejects.toThrow(
+            "does not support the requested contract scope",
+        );
+        await expect(wallet.getSpendableVtxos({ requireSynced: true })).rejects.toThrow(
+            "does not support the requested contract scope or freshness check",
+        );
     });
 
     it("fails closed against a worker that predates the message", async () => {
@@ -245,6 +282,177 @@ describe("ServiceWorkerReadonlyWallet", () => {
         expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
             expect.objectContaining({ type: "GET_VTXOS" }),
         );
+    });
+
+    it("round-trips GET_ARKADE_INFO, bigints intact", async () => {
+        // Guards the wire-format decision documented on `ResponseGetArkadeInfo`:
+        // a serializer inserted on either side would fail this deep-compare.
+        //
+        // Cloned for real here rather than through the harness's
+        // `structuredCloneResponse`, which returns success responses by
+        // reference — without this the payload would never cross a clone
+        // boundary and the bigint claim would rest on the object identity the
+        // stub happens to preserve. Scoped to this test: the shared helper is
+        // used by responses carrying spies, which do not clone.
+        const info = { network: "regtest", signerPubkey: "02ab", unilateralExitDelay: 4096n };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? structuredClone({
+                      id: message.id,
+                      tag: messageTag,
+                      type: "ARKADE_INFO",
+                      payload: { info },
+                  })
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_ARKADE_INFO" }),
+        );
+    });
+
+    it("sends requireLive on the wire, and omits payload for the default read", async () => {
+        // The other half of the fail-closed path: the page proxy must put the
+        // option INTO the message, and must not grow a payload key on the
+        // default read — wire-shape hygiene toward workers built before the
+        // option existed. (Dedup is unaffected either way: the key is
+        // JSON.stringify, which drops undefined-valued properties.)
+        const info = { network: "regtest" };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? { id: message.id, tag: messageTag, type: "ARKADE_INFO", payload: { info } }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+
+        await expect(wallet.getArkadeInfo({ requireLive: true })).resolves.toEqual(info);
+        expect(serviceWorker.postMessage).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                type: "GET_ARKADE_INFO",
+                payload: { requireLive: true },
+            }),
+        );
+
+        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        const last = (serviceWorker.postMessage as any).mock.calls.at(-1)[0];
+        expect(last.type).toBe("GET_ARKADE_INFO");
+        expect("payload" in last).toBe(false);
+    });
+
+    it("proxies getArkadeReader over its own INDEXER_* messages", async () => {
+        // The page holds no provider, so the reader has to be an RPC proxy.
+        // `INDEXER_GET_VTXOS`, not `GET_VTXOS`: the latter answers the wallet's
+        // own outputs from repositories, and answering an arbitrary-script
+        // query with it would quietly return the wrong set.
+        const vtxos = [{ txid: "ab".repeat(32), vout: 0, value: 1000 }];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "INDEXER_GET_VTXOS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "INDEXER_VTXOS",
+                    payload: { vtxos },
+                };
+            }
+            if (message.type === "INDEXER_GET_VIRTUAL_TXS") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "INDEXER_VIRTUAL_TXS",
+                    payload: { txs: ["deadbeef"] },
+                };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const reader = await wallet.getArkadeReader();
+
+        // Normalized page-side, not passed through: the worker normalizes too,
+        // but a page can run against an older installed worker, so the seam's
+        // guarantee has to be structural rather than trusted.
+        const read = await reader.getVtxos({ scripts: ["5120aa"] });
+        expect(read.vtxos[0]).toMatchObject({
+            txid: vtxos[0].txid,
+            isSpent: false,
+            isSwept: false,
+            isPreconfirmed: false,
+            spentBy: "",
+            commitmentTxIds: [],
+        });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "INDEXER_GET_VTXOS",
+                payload: { opts: { scripts: ["5120aa"] } },
+            }),
+        );
+        // never the wallet-scoped read
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "GET_VTXOS" }),
+        );
+
+        await expect(reader.getVirtualTxs(["cd".repeat(32)])).resolves.toEqual({
+            txs: ["deadbeef"],
+        });
+    });
+
+    it("keeps a worker-side typed error reachable as `cause`", async () => {
+        // The worker's resolveArkInfo distinguishes offline (retry) from a
+        // corrupt cache (re-onboard). The REAL clone algorithm normalizes a
+        // custom Error name to "Error" — this test certified the opposite
+        // until review caught the harness copying `name` verbatim — so the
+        // worker sends `errorName` as plain data (stamped at the bus egress,
+        // `MessageBus.deliverResponse`) and the page restores it. The harness
+        // passes the error through the REAL structured clone, so the
+        // normalization under test is the platform's, not a simulation's.
+        const worker = new Error("no cached snapshot");
+        worker.name = "ProviderUnavailableError";
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? {
+                      id: message.id,
+                      tag: messageTag,
+                      error: worker,
+                      errorName: worker.name,
+                  }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        expect((err.cause as Error).name).toBe("ProviderUnavailableError");
+    });
+
+    it("degrades to the clone-normalized name against a worker without errorName", async () => {
+        // Rolling-upgrade window: a worker built before `errorName` sends only
+        // the Error, whose custom name the clone normalizes away. The page
+        // must not crash — the caller just cannot branch until the worker
+        // updates.
+        const worker = new Error("no cached snapshot");
+        worker.name = "ProviderUnavailableError";
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
+            message.type === "GET_ARKADE_INFO"
+                ? { id: message.id, tag: messageTag, error: worker }
+                : null,
+        );
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        expect((err.cause as Error).name).toBe("Error");
+        expect((err.cause as Error).message).toBe("no cached snapshot");
     });
 
     it("rejects when the response contains an error", async () => {
@@ -340,7 +548,27 @@ describe("ServiceWorkerReadonlyWallet", () => {
             } as any),
         ).resolves.toEqual(contract);
         await expect(manager.getContracts()).resolves.toEqual(contracts);
-        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, {
+                maxSyncAgeMs: 60_000,
+                unspentOnly: true,
+            }),
+        ).resolves.toEqual(contractsWithVtxos);
+        await expect(
+            manager.getContractsWithVtxos({} as any, undefined, { requireSynced: true }),
+        ).rejects.toThrow("Failed to get contracts with vtxos");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: { filter: {}, options: { maxSyncAgeMs: 60_000, unspentOnly: true } },
+            }),
+        );
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "GET_CONTRACTS_WITH_VTXOS",
+                payload: expect.objectContaining({ options: { requireSynced: true } }),
+            }),
+        );
         await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(manager.getSpendablePaths({ contractScript: "c1" } as any)).resolves.toEqual(
@@ -559,6 +787,54 @@ describe("ServiceWorkerWallet", () => {
         vi.unstubAllGlobals();
     });
 
+    it("proxies getArkadeBroadcaster over SUBMIT_TX and FINALIZE_TX", async () => {
+        // The broadcast leg of the seam, end to end from the page. Worth its own
+        // round-trip test rather than leaning on the worker-side handler cases:
+        // this is the only money-moving path the page can reach, and the client
+        // proxy is what turns a `submitTx(...)` call into the wire message.
+        const submitted = {
+            arkTxid: "cd".repeat(32),
+            finalArkTx: "70736274ff",
+            signedCheckpointTxs: ["aa"],
+        };
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "SUBMIT_TX") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: "SUBMIT_TX_SUCCESS",
+                    payload: submitted,
+                };
+            }
+            if (message.type === "FINALIZE_TX") {
+                // no payload — finalize answers with the bare success envelope
+                return { id: message.id, tag: messageTag, type: "FINALIZE_TX_SUCCESS" };
+            }
+            return null;
+        });
+
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag, false);
+        const broadcaster = await wallet.getArkadeBroadcaster();
+
+        await expect(broadcaster.submitTx("70736274ff", ["aa"])).resolves.toEqual(submitted);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "SUBMIT_TX",
+                payload: { signedArkTx: "70736274ff", checkpointTxs: ["aa"] },
+            }),
+        );
+
+        await expect(broadcaster.finalizeTx("cd".repeat(32), ["bb"])).resolves.toBeUndefined();
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "FINALIZE_TX",
+                payload: { arkTxid: "cd".repeat(32), finalCheckpointTxs: ["bb"] },
+            }),
+        );
+    });
+
     it("getDelegateManager returns undefined when no delegate configured", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
 
@@ -734,6 +1010,92 @@ describe("ServiceWorkerWallet", () => {
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await expect(wallet.restore()).rejects.toThrow("boom");
+    });
+
+    it("runs local hooks after worker recovery", async () => {
+        const events: string[] = [];
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            events.push("worker");
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "RESTORE_WALLET_SUCCESS",
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "local",
+            restore: async (restoredWallet) => {
+                expect(restoredWallet).toBe(wallet);
+                events.push("hook");
+            },
+        });
+
+        await wallet.restore();
+
+        unregister();
+        expect(events).toEqual(["worker", "hook"]);
+    });
+
+    it("coalesces worker recovery through local hook completion", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "RESTORE_WALLET_SUCCESS",
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        let releaseHook = () => undefined;
+        const hookGate = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        const hook = vi.fn(async () => hookGate);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "delayed",
+            restore: hook,
+        });
+
+        const first = wallet.restore();
+        await vi.waitFor(() => expect(hook).toHaveBeenCalledOnce());
+        const second = wallet.restore();
+        releaseHook();
+        await Promise.all([first, second]);
+
+        unregister();
+        expect(hook).toHaveBeenCalledOnce();
+        expect(
+            serviceWorker.postMessage.mock.calls.filter(
+                ([message]) => message.type === "RESTORE_WALLET",
+            ),
+        ).toHaveLength(1);
+    });
+
+    it("skips local hooks when worker recovery fails", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type !== "RESTORE_WALLET") return null;
+            return {
+                id: message.id,
+                tag: messageTag,
+                error: new Error("worker failed"),
+            };
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const hook = vi.fn(async () => undefined);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "must-not-run",
+            restore: hook,
+        });
+
+        await expect(wallet.restore()).rejects.toThrow("worker failed");
+
+        unregister();
+        expect(hook).not.toHaveBeenCalled();
     });
 });
 
@@ -1063,11 +1425,11 @@ describe("in-flight request deduplication", () => {
 
     it("does not dedup state-mutating requests", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
-            if (message.type === "SEND_BITCOIN") {
+            if (message.type === "SEND") {
                 return {
                     id: message.id,
                     tag: messageTag,
-                    type: "SEND_BITCOIN_SUCCESS",
+                    type: "SEND_SUCCESS",
                     payload: { txid: "tx-" + message.id },
                 };
             }
@@ -1080,12 +1442,12 @@ describe("in-flight request deduplication", () => {
 
         const wallet = createSWWallet(serviceWorker as any, messageTag);
         await Promise.all([
-            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
-            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
+            wallet.send({ address: "addr", amount: 1000 }),
+            wallet.send({ address: "addr", amount: 1000 }),
         ]);
 
         const sendCalls = serviceWorker.postMessage.mock.calls.filter(
-            ([msg]: any) => msg.type === "SEND_BITCOIN",
+            ([msg]: any) => msg.type === "SEND",
         );
         expect(sendCalls).toHaveLength(2);
     });
@@ -1479,7 +1841,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1517,7 +1879,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             walletMode: "hd",
             storage: storage(),
@@ -1536,7 +1898,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             minBatchExpirySeconds: 3_600n,
             minCheckpointExitDelaySeconds: 2_048n,
@@ -1556,7 +1918,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1593,7 +1955,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1613,7 +1975,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1635,7 +1997,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1655,7 +2017,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1677,7 +2039,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1698,7 +2060,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1720,7 +2082,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         await ServiceWorkerReadonlyWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });
@@ -1742,7 +2104,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
+                arkServer: { url: "https://ark.test" },
                 identity: readonly as any,
                 storage: storage(),
             }),
@@ -1794,21 +2156,6 @@ describe("ServiceWorker identity boundary assertion", () => {
         vi.unstubAllGlobals();
     });
 
-    it("create() resolves when the worker reports the matching identity", async () => {
-        const identity = await SingleKey.fromHex(KEY_A);
-        const key = await identity.xOnlyPublicKey();
-        const { serviceWorker } = stub(initResponder(key));
-
-        await expect(
-            ServiceWorkerWallet.create({
-                serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
-                identity,
-                storage: storage(),
-            }),
-        ).resolves.toBeDefined();
-    });
-
     it("create() rejects when the worker reports a different identity", async () => {
         const identity = SingleKey.fromHex(KEY_A);
         const otherKey = await SingleKey.fromHex(KEY_B).xOnlyPublicKey();
@@ -1817,7 +2164,7 @@ describe("ServiceWorker identity boundary assertion", () => {
         await expect(
             ServiceWorkerWallet.create({
                 serviceWorker: serviceWorker as any,
-                arkServerUrl: "https://ark.test",
+                arkServer: { url: "https://ark.test" },
                 identity,
                 storage: storage(),
             }),
@@ -1864,7 +2211,7 @@ describe("ServiceWorker identity boundary assertion", () => {
 
         const wallet = await ServiceWorkerWallet.create({
             serviceWorker: serviceWorker as any,
-            arkServerUrl: "https://ark.test",
+            arkServer: { url: "https://ark.test" },
             identity,
             storage: storage(),
         });

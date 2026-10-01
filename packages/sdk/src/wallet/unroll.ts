@@ -3,11 +3,7 @@ import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { sequenceToTimelock } from "../utils/timelock";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
-import {
-    ChainedTxType,
-    type VirtualTx,
-    type VirtualTxRepository,
-} from "../repositories/virtualTxRepository";
+import { type VirtualTx, type VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
 import { Outpoint } from ".";
@@ -16,30 +12,11 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
 import { DUST_AMOUNT } from "./utils";
+import { chainTxTypeToChainedExit } from "./exit/chain";
 import { finalizeVirtualTx } from "./exit/finalizeVirtualTx";
 import { resolveUnilateralPath } from "./exit/path";
 import { exitObserverFor, notifyExitObserved, type OnExitObserved } from "./exitObserver";
 import { canSweepOnchain } from "./vtxo";
-
-/**
- * Local ChainTxType → ChainedTxType map. Duplicated (not imported from
- * contractManager) deliberately: keeps the unilateral-exit path free of a
- * cross-module dependency on the contract layer.
- */
-function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {
-    switch (t) {
-        case ChainTxType.COMMITMENT:
-            return ChainedTxType.Commitment;
-        case ChainTxType.ARK:
-            return ChainedTxType.Ark;
-        case ChainTxType.TREE:
-            return ChainedTxType.Tree;
-        case ChainTxType.CHECKPOINT:
-            return ChainedTxType.Checkpoint;
-        default:
-            return ChainedTxType.Unspecified;
-    }
-}
 
 export namespace Unroll {
     export enum StepType {
@@ -371,6 +348,15 @@ export async function prepareUnrollTransaction(
     const inputs: TransactionInputUpdate[] = [];
     let totalAmount = 0n;
     const txWeightEstimator = TxWeightEstimator.create();
+
+    // The wallet's key has to come along: a handler that cannot place the
+    // wallet among a contract's parties answers wrongly in one of two ways —
+    // VHTLC offers no path at all, so the sweep fails with no-unilateral-path,
+    // while the Arkade handler drops its signer filter and offers leaves this
+    // wallet cannot sign, one of which the shortest-delay pick would pre-sign.
+    // Raw x-only hex is what the rest of the SDK passes as the descriptor (see
+    // `assertSpendableNow`); `resolveRole` accepts it alongside `tr(...)`.
+    const walletDescriptor = hex.encode(await wallet.identity.xOnlyPublicKey());
     for (const vtxo of vtxos) {
         if (!canSweepOnchain(vtxo)) {
             throw new Error(
@@ -388,7 +374,7 @@ export async function prepareUnrollTransaction(
             vtxo,
             scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
             contractRepository: wallet.contractRepository,
-            walletPubKeyHex: hex.encode((await wallet.identity.xOnlyPublicKey())!),
+            walletDescriptor,
             currentTime: Date.now(),
         });
         const spendingLeaf = resolved.selection.leaf;

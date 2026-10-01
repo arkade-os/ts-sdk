@@ -1,7 +1,7 @@
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
-    ArkInfo,
+    ArkadeInfo,
     ArkProvider,
     Asset,
     decodeTapscript,
@@ -24,7 +24,6 @@ import {
 import {
     canRecoverOnchain,
     normalizeVtxo,
-    toBatchExpiry,
     toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
 } from "./vtxo";
@@ -65,9 +64,6 @@ export interface IDelegateManager {
     /** Fetch delegate metadata such as pubkey, fee, and delegate address. */
     getDelegateInfo(): Promise<DelegateInfo>;
 }
-
-/** @deprecated alias for @see IDelegateManager */
-export type IDelegatorManager = IDelegateManager;
 
 export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
@@ -113,25 +109,29 @@ export class DelegateManagerImpl implements IDelegateManager {
             return { delegated: [], failed: [] };
         }
 
-        // if explicit delegateAt is provided, delegate all virtual outputs at once without sorting
-        if (delegateAt) {
+        const delegateAll = async (group: NormalizedExtendedVirtualCoin[]) => {
             try {
                 await delegate(
                     this.identity,
                     this.delegateProvider,
                     arkInfo,
                     delegateInfo,
-                    eligible,
+                    group,
                     destinationScript,
                     delegateAt,
                 );
             } catch (error) {
                 return {
                     delegated: [],
-                    failed: [{ outpoints: eligible, error }],
+                    failed: [{ outpoints: group, error }],
                 };
             }
-            return { delegated: eligible, failed: [] };
+            return { delegated: group, failed: [] };
+        };
+
+        // if explicit delegateAt is provided, delegate all virtual outputs at once without sorting
+        if (delegateAt) {
+            return delegateAll(eligible);
         }
 
         // if no explicit delegateAt is provided, sort virtual outputs by expiry and delegate in groups of the same expiry day
@@ -146,7 +146,7 @@ export class DelegateManagerImpl implements IDelegateManager {
                 continue;
             }
 
-            const expiry = toBatchExpiry(vtxo);
+            const expiry = vtxo.expiresAt?.getTime();
             if (!expiry) continue;
 
             const dayKey = getDayTimestamp(expiry);
@@ -155,23 +155,7 @@ export class DelegateManagerImpl implements IDelegateManager {
 
         // if no groups, it means we only need to delegate the recoverable virtual outputs
         if (groupByExpiry.size === 0) {
-            try {
-                await delegate(
-                    this.identity,
-                    this.delegateProvider,
-                    arkInfo,
-                    delegateInfo,
-                    recoverableVtxos,
-                    destinationScript,
-                    delegateAt,
-                );
-            } catch (error) {
-                return {
-                    delegated: [],
-                    failed: [{ outpoints: recoverableVtxos, error }],
-                };
-            }
-            return { delegated: recoverableVtxos, failed: [] };
+            return delegateAll(recoverableVtxos);
         }
 
         // search for the earliest group, include recoverable virtual outputs into it
@@ -214,22 +198,17 @@ export class DelegateManagerImpl implements IDelegateManager {
     }
 }
 
-/** @deprecated alias for @see DelegateManagerImpl */
-export const DelegatorManagerImpl = DelegateManagerImpl;
-export type DelegatorManagerImpl = DelegateManagerImpl;
-
 /**
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
  * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
- * @param delegateAt - Optional Date specifying when the delegation
- *                     should occur. If not provided, defaults to 12 hours before the earliest
- *                     expiry time of the provided vtxos.
+ * @param delegateAt - Optional delegation time. By default, scheduling leaves at least 10% of
+ *                     the remaining lifetime and one operator session before the earliest expiry.
  */
 async function delegate(
     identity: Identity,
     delegateProvider: DelegateProvider,
-    arkInfo: ArkInfo,
+    arkInfo: ArkadeInfo,
     delegateInfo: DelegateInfo,
     vtxos: NormalizedExtendedVirtualCoin[],
     destinationScript: Bytes,
@@ -246,19 +225,16 @@ async function delegate(
     if (!delegateAt) {
         const now = { timestamp: new Date() };
         const expiryTimestamp = vtxos
-            .filter((coin) => !canRecoverOnchain(coin, now) && toBatchExpiry(coin))
-            .reduce((min, coin) => Math.min(min, toBatchExpiry(coin)!), Number.MAX_SAFE_INTEGER);
+            .filter((coin) => !canRecoverOnchain(coin, now) && coin.expiresAt)
+            .reduce(
+                (min, coin) => Math.min(min, coin.expiresAt!.getTime()),
+                Number.MAX_SAFE_INTEGER,
+            );
         if (!expiryTimestamp || expiryTimestamp === Number.MAX_SAFE_INTEGER) {
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            const remainingTimeMs = expiryTimestamp - Date.now();
-            if (remainingTimeMs <= 0) {
-                delegateAt = new Date(Date.now() + 1 * 60 * 1000);
-            } else {
-                // delegate 10% before the expiry
-                delegateAt = new Date(expiryTimestamp - remainingTimeMs * 0.1);
-            }
+            delegateAt = defaultDelegateAt(expiryTimestamp, arkInfo.sessionDuration);
         }
     }
     const { fees, dust, forfeitAddress, network } = arkInfo;
@@ -283,10 +259,10 @@ async function delegate(
             ...toOffchainInputFeeParams(coin),
             type: "vtxo",
         });
-        if (inputFee.value >= coin.value) {
+        if (inputFee.satoshis >= coin.value) {
             continue;
         }
-        amount += BigInt(coin.value) - BigInt(inputFee.value);
+        amount += BigInt(coin.value) - BigInt(inputFee.satoshis);
     }
     const { pubkey, fee } = delegateInfo;
     // getDelegateInfo() normalizes delegateAddress, so it is always populated here.
@@ -465,6 +441,20 @@ async function makeSignedDelegateIntent(
         proof: base64.encode(signedProof.toPSBT()),
         message,
     };
+}
+
+export function defaultDelegateAt(
+    expiryTimestamp: number,
+    sessionDurationSeconds: bigint,
+    now = Date.now(),
+): Date {
+    const remainingTimeMs = expiryTimestamp - now;
+    if (remainingTimeMs <= 0) return new Date(now + 60_000);
+
+    const sessionLeadMs = Number(sessionDurationSeconds * 1000n);
+    const leadTimeMs = Math.max(remainingTimeMs * 0.1, sessionLeadMs);
+    const delegateAt = expiryTimestamp - leadTimeMs;
+    return new Date(delegateAt > now ? delegateAt : now + 2_000);
 }
 
 /**

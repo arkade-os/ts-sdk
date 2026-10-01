@@ -34,13 +34,16 @@ import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import {
     assertFinalCommitmentMatchesValidated,
+    declaredIntentOutputs,
+    validateBatchAgainstIntent,
+    validateBatchAgainstIntentWithoutTree,
     validateBatchRecipients,
     validateBatchRecipientsWithoutTree,
 } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
-import { isRecoverable, isSubdust, isVirtualCoin } from "../wallet";
+import { canRecoverOnchain, isSubdust, isVirtualCoin } from "../wallet";
 import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
 import type { TxTree } from "../tree/txTree";
@@ -148,8 +151,16 @@ export function createArkadeBatchHandler(
 
             // validate that all expected receivers are in the virtual output
             // tree with correct amounts and assets
+            // The caller signed the proof's outputs, so an omitted `recipients`
+            // is no longer an unchecked settlement.
             if (recipients && recipients.length > 0) {
                 validateBatchRecipients(commitmentTx, vtxoTree.leaves(), recipients, network);
+            } else {
+                validateBatchAgainstIntent(
+                    commitmentTx,
+                    vtxoTree.leaves(),
+                    declaredIntentOutputs(signedProof, message.onchain_output_indexes),
+                );
             }
 
             const sharedOutput = commitmentTx.getOutput(0);
@@ -204,8 +215,15 @@ export function createArkadeBatchHandler(
             // No validated txid means tree signing never ran, so the recipients
             // have not been checked yet and this commitment tx is the only thing
             // to check them against. Before any signature is handed over.
-            if (!validatedCommitmentTxid && recipients && recipients.length > 0) {
-                validateBatchRecipientsWithoutTree(commitmentPsbt, recipients, network);
+            if (!validatedCommitmentTxid) {
+                if (recipients && recipients.length > 0) {
+                    validateBatchRecipientsWithoutTree(commitmentPsbt, recipients, network);
+                } else {
+                    validateBatchAgainstIntentWithoutTree(
+                        commitmentPsbt,
+                        declaredIntentOutputs(signedProof, message.onchain_output_indexes),
+                    );
+                }
             }
             const signedForfeits: string[] = [];
             let connectorIndex = 0;
@@ -248,8 +266,15 @@ export function createArkadeBatchHandler(
                     continue;
                 }
 
-                // Recoverable or subdust VTXOs don't require a forfeit tx
-                if (isRecoverable(input) || isSubdust(input, info.dust)) {
+                // Recoverable or subdust VTXOs don't require a forfeit tx.
+                // `canRecoverOnchain` — swept OR past expiry — is the client side of arkd's
+                // `Vtxo.RequiresForfeit()` (`!Swept && !IsExpired() && !IsNote() && !Unrolled`),
+                // so an expired-but-unswept coin correctly settles without one. The predicate this
+                // replaced was swept-only, and built a forfeit the server never asked for.
+                if (
+                    canRecoverOnchain(input, { timestamp: new Date() }) ||
+                    isSubdust(input, info.dust)
+                ) {
                     continue;
                 }
 

@@ -1,13 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { IndexedDBStorageAdapter } from "../../src/storage/indexedDB";
-import { WalletRepositoryImpl } from "../../src/repositories/migrations/walletRepositoryImpl";
 import {
     type ArkTransaction,
     type ExtendedCoin,
     type ExtendedVirtualCoin,
     IndexedDBWalletRepository,
     InMemoryWalletRepository,
-    migrateWalletRepository,
     type TapLeafScript,
     TxType,
 } from "../../src";
@@ -18,8 +15,10 @@ import {
     createMockUtxo,
     createMockVtxo,
     RepositoryTestItem,
-} from "../storage.test";
+} from "./helpers";
 import { WalletRepository, WalletState } from "../../src/repositories";
+import { RealmWalletRepository } from "../../src/repositories/realm/walletRepository";
+import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 
 const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository>> = [
     {
@@ -29,6 +28,18 @@ const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository
     {
         name: "IndexedDBWalletRepository",
         factory: async () => new IndexedDBWalletRepository(),
+    },
+    {
+        name: "RealmWalletRepository",
+        factory: async () =>
+            new RealmWalletRepository(
+                createMockRealm({
+                    ArkVtxo: "pk",
+                    ArkUtxo: "pk",
+                    ArkTransaction: "pk",
+                    ArkWalletState: "key",
+                }),
+            ),
     },
 ];
 
@@ -110,6 +121,31 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
     });
 
     describe("Script-scoped VTXO management", () => {
+        it("reads a script set with the same unspent selection", async () => {
+            const liveA = { ...createMockVtxo("live-a", 0, 1000), script: "script-a" };
+            const liveB = { ...createMockVtxo("live-b", 0, 2000), script: "script-b" };
+            const spent = {
+                ...createMockVtxo("spent", 0, 3000),
+                script: "script-a",
+                isSpent: true,
+            };
+            const foreign = { ...createMockVtxo("foreign", 0, 4000), script: "foreign" };
+            await repository.saveVtxos("address-a", [liveA, spent]);
+            await repository.saveVtxos("address-b", [liveB, foreign]);
+
+            const scripts = [
+                "script-a",
+                ...Array.from({ length: 64 }, (_, i) => `missing-${i}`),
+                "script-b",
+                "script-a",
+            ];
+            expect(await repository.getVtxosForScripts!([])).toEqual([]);
+            const all = await repository.getVtxosForScripts!(scripts);
+            expect(all.map((row) => row.txid).sort()).toEqual(["live-a", "live-b", "spent"]);
+            const live = await repository.getVtxosForScripts!(scripts, { unspentOnly: true });
+            expect(live.map((row) => row.txid).sort()).toEqual(["live-a", "live-b"]);
+        });
+
         it("should return empty array when no VTXOs exist for script", async () => {
             const vtxos = await repository.getVtxosForScript!("script1");
             expect(vtxos).toEqual([]);
@@ -168,6 +204,19 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
         });
 
         if (name.includes("IndexedDB")) {
+            it("does not resurrect a live duplicate after its canonical row is spent", async () => {
+                const live = { ...createMockVtxo("duplicate", 0, 1000), script: "script-a" };
+                const spent = { ...live, isSpent: true, spentBy: "spent-tx" };
+                await repository.saveVtxos("old-address", [live]);
+                await repository.saveVtxos("new-address", [spent]);
+                expect(
+                    (await repository.getVtxosForScripts!(["script-a"])).map((row) => row.spentBy),
+                ).toEqual(["spent-tx"]);
+                expect(
+                    await repository.getVtxosForScripts!(["script-a"], { unspentOnly: true }),
+                ).toEqual([]);
+            });
+
             it("should dedup same outpoint across address buckets in getVtxosForScript", async () => {
                 const script1 = "script1";
                 const address1 = "address1";
@@ -193,6 +242,8 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
 
                 const retrieved = await repository.getVtxosForScript!(script1);
                 expect(retrieved).toHaveLength(1);
+                const bulk = await repository.getVtxosForScripts!([script1, script1]);
+                expect(bulk).toHaveLength(1);
             });
         }
     });

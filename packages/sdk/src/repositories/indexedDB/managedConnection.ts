@@ -16,57 +16,32 @@ export interface ManagedConnection extends AsyncDisposable {
     /**
      * The open connection, opening it on first call.
      *
-     * Call this once per operation and use the handle for the transaction you
-     * start right away — never store it on the repository, and never carry it
-     * across an `await`. The connection can be closed underneath you at any
-     * time (a `versionchange` from another tab, eviction, "clear site data"),
-     * after which every transaction on that handle throws `InvalidStateError`;
-     * a later `get()` transparently reopens, but only for callers that ask
-     * again. Holding the resolved database is exactly the defect this type
-     * exists to remove.
+     * Call once per operation and use the handle for the transaction you start right away —
+     * never store it or carry it across an `await`. It can be closed underneath you at any time
+     * (`versionchange` from another tab, eviction, "clear site data"), after which every
+     * transaction on it throws `InvalidStateError`; a later `get()` transparently reopens.
      *
-     * ## The dispose boundary
-     *
-     * `get()` is valid only before `[Symbol.asyncDispose]`. Afterwards it
-     * rejects with {@link ConnectionDisposedError}, permanently: dispose has
-     * released this connection's single reference, and reopening would take a
-     * refcount nothing is left to release. Disposal is final by design — there
-     * is no revive; construct a new repository, which constructs a new
-     * connection, instead.
-     *
-     * Dispose neither awaits nor cancels work already in flight. A transaction
-     * started just before it can abort when the underlying handle closes, and
-     * an in-flight `get()` may resolve to a database that is closing. So
-     * sequence disposal after the operations you care about have settled —
-     * `await` the repository's outstanding calls first — rather than racing it
-     * against them.
-     *
-     * Callers must not close the database themselves; the reference this
-     * connection holds is released by its own dispose, once.
+     * After `[Symbol.asyncDispose]` it rejects with {@link ConnectionDisposedError}, permanently:
+     * reopening would take a refcount nothing releases, so construct a new repository instead.
+     * Dispose neither awaits nor cancels in-flight work, so `await` outstanding repository calls
+     * before disposing. Callers must not close the database themselves.
      */
     get(): Promise<IDBDatabase>;
 }
 
 /**
- * Forget-and-reopen around {@link openDatabase}, shared by every IndexedDB
- * repository. Caching the resolved `IDBDatabase` is the defect this exists to
- * remove: once the manager closes on `versionchange`, every later transaction on
- * that handle throws `InvalidStateError` with no path back.
- *
- * Opens nothing until the first {@link ManagedConnection.get} — repositories
- * construct their storage in their own constructors, and an eager open would
- * move the "IndexedDB is not available in this environment" throw to
- * construction time.
+ * Forget-and-reopen around {@link openDatabase}, shared by every IndexedDB repository: a cached
+ * `IDBDatabase` throws `InvalidStateError` forever once the manager closes it on `versionchange`.
+ * Lazy, so the "IndexedDB is not available" throw stays out of repository constructors.
  */
 export function createManagedConnection(
     dbName: string,
     version: number,
     initDatabase: (db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) => void,
 ): ManagedConnection {
-    // the opening promise, not the resolved database: openDatabase bumps a
-    // refcount on every call including cache hits, while dispose closes once, so
-    // two concurrent first calls would strand the refcount above zero and leak
-    // the connection for the process lifetime.
+    // the opening promise, not the database: openDatabase bumps a refcount on every
+    // call (cache hits too) while dispose closes once, so two concurrent first calls
+    // would leak the connection for the process lifetime.
     let current: Promise<IDBDatabase> | null = null;
     let disposed = false;
 
@@ -81,18 +56,15 @@ export function createManagedConnection(
                     const forget = () => {
                         if (current === opening) current = null;
                     };
-                    // addEventListener, not `db.onversionchange =`: that handler
-                    // is the manager's, and its close is what we want to keep.
-                    // `close` fires only on ABNORMAL termination per spec — never
-                    // on an explicit close() — so the two never double-fire.
+                    // addEventListener, not `db.onversionchange =`, which is the
+                    // manager's. `close` fires only on ABNORMAL termination, never
+                    // on an explicit close(), so the two never double-fire.
                     db.addEventListener("versionchange", forget);
                     db.addEventListener("close", forget);
                     return db;
                 })
                 .catch((err) => {
-                    // forgotten so a retry is possible at all — otherwise a
-                    // VersionError from a newer tab sticks instead of failing
-                    // repeatably
+                    // forgotten so a retry is possible, else a VersionError sticks
                     if (current === opening) current = null;
                     throw err;
                 });

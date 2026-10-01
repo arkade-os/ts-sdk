@@ -93,14 +93,7 @@ export class OnchainWallet implements AnchorBumper {
      */
     async getBalance(): Promise<number> {
         const coins = await this.getCoins();
-        const onchainConfirmed = coins
-            .filter((coin) => coin.status.confirmed)
-            .reduce((sum, coin) => sum + coin.value, 0);
-        const onchainUnconfirmed = coins
-            .filter((coin) => !coin.status.confirmed)
-            .reduce((sum, coin) => sum + coin.value, 0);
-        const onchainTotal = onchainConfirmed + onchainUnconfirmed;
-        return onchainTotal;
+        return coins.reduce((sum, coin) => sum + coin.value, 0);
     }
 
     /**
@@ -198,10 +191,6 @@ export class OnchainWallet implements AnchorBumper {
             feeRate,
             params.address,
         );
-
-        if (!inputs) {
-            throw new Error("Fee estimation failed");
-        }
 
         // Create transaction
         let tx = new Transaction();

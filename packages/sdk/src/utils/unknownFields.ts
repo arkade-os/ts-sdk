@@ -65,13 +65,7 @@ export function getArkPsbtFields<T>(
     coder: ArkPsbtFieldCoder<T>,
 ): T[] {
     const unknown = tx.getInput(inputIndex)?.unknown ?? [];
-
-    const fields: T[] = [];
-    for (const u of unknown) {
-        const v = coder.decode(u);
-        if (v !== null) fields.push(v);
-    }
-    return fields;
+    return unknown.map((u) => coder.decode(u)).filter((v): v is T => v !== null);
 }
 
 /**
@@ -213,7 +207,7 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
             type: ArkPsbtFieldKeyType,
             key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTreeExpiry],
         },
-        ScriptNum(6, true).encode(value.value === 0n ? 0n : value.value),
+        ScriptNum(6, true).encode(value.value),
     ],
     decode: (unknown) =>
         nullIfCatch(() => {

@@ -11,32 +11,15 @@
  * because the point of registering is what the wallet then does with the row:
  * the lockup has to be visible as owned and invisible to generic selection.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-
-const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return state.arkInfo;
-            }
-        },
-    };
-});
 
 import {
     ArkAddress,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
-    ReadonlySingleKey,
     ReadonlyWallet,
     SingleKey,
     VHTLCV2ContractHandler,
@@ -47,7 +30,7 @@ import {
     type OnchainProvider,
 } from "@arkade-os/sdk";
 import {
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestLightningSend,
     requestOnchainSend,
     type RfqQuote,
@@ -61,7 +44,6 @@ import {
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
     lockupContractParams,
-    registerLockupContract,
 } from "../src/lockupContract";
 import { createRfqSwapRecord, rebuildRfqSwap } from "../src/rfqRecord";
 import { rfqSecretsProfile } from "../src/rfqProfileParts";
@@ -69,20 +51,19 @@ import { rfqSecretsProfile } from "../src/rfqProfileParts";
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
-const SERVER = key(3);
+const OPERATOR_PUBKEY = key(3);
 const SOLVER = key(1);
 const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
-
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
 const REFUND_LOCKTIME = NOW + 60 * 24 * 3600;
+const REFUND_WITHOUT_RECEIVER_DELAY = REFUND_LOCKTIME - NOW;
 const HTLC_LOCKTIME = NOW + 30 * 24 * 3600;
 
 const PAYMENT_HASH = "ab".repeat(32);
@@ -97,12 +78,13 @@ const INVOICE = {
 const lightningTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
-        const script = lightningSendVtxoScript({
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
+            refundWithoutReceiverDelay: REFUND_WITHOUT_RECEIVER_DELAY,
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -120,7 +102,8 @@ const lightningTransport = (): RfqTransport => ({
             refund_locktime: REFUND_LOCKTIME,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address("tark", SERVER).encode(),
+                lockup_address: contract.address("tark", OPERATOR_PUBKEY).encode(),
+                refund_without_receiver_delay: REFUND_WITHOUT_RECEIVER_DELAY,
             },
         } satisfies RfqQuote;
     },
@@ -134,10 +117,10 @@ const onchainTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const paymentHash = profile.payment_hash as string;
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash,
             claimDelay: 4096,
             emulatorPubkey: EMULATOR_PUBKEY,
@@ -159,13 +142,13 @@ const onchainTransport = (): RfqTransport => ({
             type: "rfq_quote",
             rfq_id: payload.rfq_id as string,
             pair: "arkade:BTC->onchain:BTC",
-            from_amount: 100_000,
-            to_amount: 99_000,
+            from_amount: 101_000,
+            to_amount: 100_000,
             solver_pubkey: hex.encode(SOLVER),
             valid_until: VALID_UNTIL,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("tark", SERVER).encode(),
+                lockup_address: lockup.address("tark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(HTLC_PUBKEY),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
@@ -191,6 +174,7 @@ const recordingWallet = (
         // identity is not a wallet these entrypoints can serve.
         identity: SingleKey.fromRandomBytes(),
         getAddress: async () => REFUND_ADDRESS,
+        getArkadeInfo: async () => operatorInfo(),
         getContractManager: async () => ({
             createContract: async (params: Record<string, unknown>) => {
                 if (createContract) return createContract(params);
@@ -203,13 +187,13 @@ const recordingWallet = (
 };
 
 const lightningSend = (wallet: IWallet) =>
-    requestLightningSend(wallet, "http://ark", lightningTransport(), {
+    requestLightningSend(wallet, lightningTransport(), {
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         invoice: INVOICE,
     });
 
 const onchainSend = (wallet: IWallet) =>
-    requestOnchainSend(wallet, "http://ark", onchainTransport(), {
+    requestOnchainSend(wallet, onchainTransport(), {
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         amount: 100_000,
         amountSide: "to",
@@ -255,12 +239,12 @@ describe.each([
         const secrets = result.secrets;
         expect(secrets).not.toHaveProperty("senderPrivateKey");
 
-        expect(secrets.preimage !== undefined).toBe(hasPreimage);
+        expect("preimage" in secrets && secrets.preimage !== undefined).toBe(hasPreimage);
 
         const serialized = JSON.stringify(created[0]);
         const forbidden = [
             result.rfqId,
-            ...(secrets.preimage ? [hex.encode(secrets.preimage)] : []),
+            ...("preimage" in secrets && secrets.preimage ? [hex.encode(secrets.preimage)] : []),
         ];
         for (const value of forbidden) expect(serialized).not.toContain(value);
     });
@@ -291,7 +275,7 @@ describe.each([
 
 // ── What the registration buys, against a real contract manager ──────────────
 
-const arkInfo = () => ({
+const operatorInfo = () => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
@@ -300,11 +284,11 @@ const arkInfo = () => ({
     dust: 1000n,
     fees: { intentFee: {}, txFeeRate: "0" },
     forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-    forfeitPubkey: "02" + hex.encode(SERVER),
+    forfeitPubkey: "02" + hex.encode(OPERATOR_PUBKEY),
     network: "regtest",
     serviceStatus: {},
     sessionDuration: 3600n,
-    signerPubkey: "02" + hex.encode(SERVER),
+    signerPubkey: "02" + hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096n,
     utxoMaxAmount: -1n,
     utxoMinAmount: 0n,
@@ -331,10 +315,11 @@ const vtxo = (script: string, value: number): ExtendedVirtualCoin =>
         vout: 0,
         value,
         status: { confirmed: true },
-        virtualStatus: { state: "settled" },
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
+        isSwept: false,
+        isPreconfirmed: false,
         script,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
         intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
@@ -345,8 +330,7 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkServerUrl: "http://localhost:7070",
-        arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],
@@ -402,15 +386,15 @@ describe("a registered lockup, against a real contract manager", () => {
             {
                 kind: "lightning_send",
                 lockupAddress: swap.address,
-                profile: rfqSecretsProfile(swap.secrets, swap.treeParams.paymentHash),
+                profile: rfqSecretsProfile(swap.secrets, swap.contractParams.paymentHash),
             },
             {
                 kind: "lightning_send",
                 rfqId: swap.rfqId,
                 state: "pending",
                 lockupPkScript: swap.swapPkScript,
-                paymentHash: swap.treeParams.paymentHash,
-                refundLocktime: swap.treeParams.refundLocktime,
+                paymentHash: swap.contractParams.paymentHash,
+                refundLocktime: swap.contractParams.refundLocktime,
                 createdAt: 1,
                 updatedAt: 1,
             },
@@ -418,7 +402,7 @@ describe("a registered lockup, against a real contract manager", () => {
 
         const rebuilt = rebuildRfqSwap(record, params);
         expect(hex.encode(rebuilt.lockupPkScript)).toBe(hex.encode(swap.swapPkScript));
-        expect(rebuilt.refundLocktime).toBe(swap.treeParams.refundLocktime);
+        expect(rebuilt.refundLocktime).toBe(swap.contractParams.refundLocktime);
     });
 
     it("names a lockup with no row instead of rebuilding from nothing", async () => {
@@ -428,17 +412,5 @@ describe("a registered lockup, against a real contract manager", () => {
         await expect(
             lockupContractParams(await wallet.getContractManager(), REFUND_ADDRESS),
         ).rejects.toBeInstanceOf(LockupContractMissing);
-    });
-
-    it("survives the manager's backstop re-registering it", async () => {
-        // `ensureRegistered` still runs for records that predate pre-funding
-        // registration, and must be a no-op for those that do not.
-        const { wallet, contractRepository } = await realWallet();
-        const swap = await lightningSend(wallet as unknown as IWallet);
-
-        const before = await contractRepository.getContracts();
-        // `swap.script` is what a caller hands the manager as `lockup.script`.
-        await registerLockupContract(await wallet.getContractManager(), swap.script, swap.address);
-        expect(await contractRepository.getContracts()).toEqual(before);
     });
 });

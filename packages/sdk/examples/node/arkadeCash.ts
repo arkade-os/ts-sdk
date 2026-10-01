@@ -19,8 +19,15 @@ import { EventSource } from "eventsource";
 // It is not available in Node.js by default, so we need to polyfill it.
 (globalThis as any).EventSource = EventSource;
 
-const { InMemoryContractRepository, InMemoryWalletRepository, Ramps, SingleKey, Wallet } =
-    await import("../../src");
+const {
+    EsploraProvider,
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+    Ramps,
+    RestArkProvider,
+    SingleKey,
+    Wallet,
+} = await import("../../src");
 
 type WalletInstance = Awaited<ReturnType<typeof Wallet.create>>;
 
@@ -52,8 +59,8 @@ async function waitFor(
 async function createWallet(name: string): Promise<WalletInstance> {
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_SERVER_URL,
-        esploraUrl: ESPLORA_URL,
+        arkProvider: new RestArkProvider(ARK_SERVER_URL),
+        onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),

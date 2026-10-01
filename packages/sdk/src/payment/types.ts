@@ -1,4 +1,4 @@
-import type { Wallet } from "../index";
+import type { Asset, IWallet, NormalizedExtendedVirtualCoin, Recipient } from "../index";
 
 export type PaymentStatus = "pending" | "sent" | "settled" | "failed";
 
@@ -26,31 +26,41 @@ export interface PaymentHandle {
 }
 
 /**
- * A priced route. The three amounts are **receiver-exact** and mean the same
- * thing on every rail, so `options()` can be ranked on cost and a rail swapped
- * without changing what the recipient gets:
+ * A priced route. The amounts are **receiver-exact** on every rail, so options rank on cost and
+ * rails swap without changing what the recipient gets. Rails whose primitive *deducts* its fee
+ * (collaborative exit) gross the amount up; a rail that can't (it doesn't choose the fee) flags
+ * it via `claimFeeDeductedFromPayout`.
  *
- * - `amount` — sats delivered **to the recipient**.
- * - `fee` — sats charged **on top**, by the rail and its counterparty.
- * - `total` — `amount + fee`; the sats that leave the wallet.
- *
- * Rails whose underlying primitive *deducts* its fee (the collaborative exit)
- * gross the amount up to honour this; rails that add it on top pass it through.
- *
- * `fee` is a pre-send estimate wherever the true cost is only fixed later: the
- * swap rails quote from Boltz's advertised pricing and are superseded by the
- * amount Boltz returns at swap creation, and the collaborative exit does not
- * include the per-input intent fees, which depend on the VTXO selection made at
- * settlement. Treat it as a display and ranking figure, not a guarantee.
+ * `fee` is an estimate where cost is fixed later: the collaborative exit omits per-input intent
+ * fees unless {@link PaymentRequest.selectedVtxos} is named. A display/ranking figure, not a
+ * guarantee.
  */
 export interface RouteQuote {
     railId: string;
     /** Sats delivered to the recipient. */
     amount: number;
-    /** Sats charged on top of {@link amount}; an estimate on the swap rails. */
+    /** Sats charged on top of {@link amount}; an estimate where the cost is fixed later. */
     fee: number;
     /** `amount + fee` — what leaves the wallet. */
     total: number;
+    /**
+     * Unix seconds after which the counterparty stops honouring this quote. Absent means "no
+     * check possible" (rails without a counterparty), not "never expires"; {@link send} may
+     * still refuse, since swap rails re-check validity at spend time.
+     */
+    validUntil?: number;
+    /**
+     * @experimental The asset shape is provisional, expected to converge with the v2 swap
+     * client's `give`/`take`/`amountOn` over `AssetRef` in v0.5; not stable 0.4.x API.
+     *
+     * The asset view; absent means BTC only. `amount` stays the sats carrier, not zero. On a
+     * cross-asset route `delivered`/`spent` are different assets, so the purchase price lands in
+     * `fee`; prefer `assets.spent` for a cost display.
+     */
+    assets?: {
+        delivered: Asset;
+        spent: Asset;
+    };
     /** Execute. Returns an observable handle, never a bare result. */
     send(): Promise<PaymentHandle>;
     meta?: Record<string, unknown>;
@@ -66,20 +76,33 @@ export interface RouterPreferences {
 }
 
 export interface RouterContext {
-    wallet: Wallet;
+    /** A rail needing more than this takes it as a constructor dep, rather than
+     *  narrowing the context every other rail shares. */
+    wallet: IWallet;
     /** Loosely typed in core to avoid a dependency on boltz-swap; swap rails cast it. */
     swaps?: unknown;
     prefs: RouterPreferences;
 }
 
-/** A payment request: the raw target plus an optional explicit amount. Rails
- *  self-extract their target from `raw` (bare address/invoice or a BIP21 URI);
- *  `amount` supplements or overrides any amount encoded in `raw`. */
+/** Mirrors {@link Recipient}: an Arkade address is the same string for BTC and
+ *  for an asset, so the AMOUNT names the asset, never the target. */
 export interface PaymentRequest {
     /** Raw target: bare address/invoice, or a BIP21 URI. */
     raw: string;
     /** Explicit sats; supplements/overrides any amount encoded in `raw`. */
     amount?: number;
+    /** @experimental — provisional, see {@link RouteQuote.assets}.
+     *
+     *  Additive: an asset transfer also moves sats, so a 500 USDX request
+     *  legitimately has both. A rail that cannot deliver assets must REFUSE. */
+    assets?: Asset[];
+    /**
+     * Spend exactly these (normalized) virtual outputs, as {@link SendParams.selectedVtxos}:
+     * ungated like `settle({ inputs })`, and a shortfall is an error, not a top-up. Only rails
+     * spending the wallet's own coins (`ark`, `ark-asset`, `onchain`) can honour it;
+     * counterparty-funded rails must REFUSE, not ignore it.
+     */
+    selectedVtxos?: NormalizedExtendedVirtualCoin[];
 }
 
 /** A payment rail — registered by id, mirrors the ActivityRegistry resolver shape. */

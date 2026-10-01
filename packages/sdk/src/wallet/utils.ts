@@ -1,4 +1,4 @@
-import type { IWallet, Recipient } from ".";
+import type { IReadonlyWallet, Recipient } from ".";
 import {
     ArkAddress,
     type Coin,
@@ -12,7 +12,6 @@ import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import { VtxoScript } from "../script/base";
-import type { ReadonlyWallet } from "./wallet";
 import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -23,8 +22,10 @@ export const DUST_AMOUNT = 546; // sats
 export const FALLBACK_WALLET_DUST_AMOUNT = 330n;
 
 /** Extracts the dust amount from the wallet, defaulting to the fallback dust threshold. */
-export function getDustAmount(wallet: IWallet): bigint {
-    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : FALLBACK_WALLET_DUST_AMOUNT;
+export function getDustAmount(wallet: IReadonlyWallet | undefined): bigint {
+    return wallet && "dustAmount" in wallet
+        ? (wallet.dustAmount as bigint)
+        : FALLBACK_WALLET_DUST_AMOUNT;
 }
 
 /**
@@ -47,19 +48,6 @@ export function extendCoinWithTapscript(
         intentTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
     };
-}
-
-/**
- * Annotate a boarding {@link Coin} with the wallet's *current* boarding
- * tapscript. Kept for callers that only ever deal with the current boarding
- * address; the multi-address spending path uses {@link extendCoinWithTapscript}
- * with the per-UTXO tapscript instead.
- */
-export function extendCoin(
-    wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
-    utxo: Coin,
-): ExtendedCoin {
-    return extendCoinWithTapscript(wallet.boardingTapscript, utxo);
 }
 
 /**
@@ -204,15 +192,6 @@ export function getRandomId(): string {
     return hex.encode(randomValue);
 }
 
-export function isValidArkAddress(address: string): boolean {
-    try {
-        ArkAddress.decode(address);
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
-
 type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {
     script: Bytes;
     extensions?: Recipient["extensions"];
@@ -224,7 +203,7 @@ type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & 
  * belongs to another network or operator, so this wallet's operator cannot
  * create the VTXO where the recipient's wallet expects it.
  */
-export type RecipientAddressContext = {
+export type RecipientArkadeAddressContext = {
     hrp: string;
     signerSet: SignerSet;
 };
@@ -233,10 +212,10 @@ export type RecipientAddressContext = {
  * The embedded server key may be the current signer or a deprecated signer
  * whose rotation cutoff has not passed.
  */
-export function assertRecipientArkAddress(
+export function assertRecipientArkadeAddress(
     encoded: string,
     address: ArkAddress,
-    context: RecipientAddressContext,
+    context: RecipientArkadeAddressContext,
 ): void {
     if (address.hrp !== context.hrp) {
         throw new Error(
@@ -286,7 +265,7 @@ function assertTapTreeDerivesAddress(encoded: string, tapTree: Bytes, address: A
 export function validateRecipients(
     recipients: Recipient[],
     dustAmount: number,
-    context: RecipientAddressContext,
+    context: RecipientArkadeAddressContext,
 ): ValidatedRecipient[] {
     const validatedRecipients: ValidatedRecipient[] = [];
 
@@ -298,7 +277,7 @@ export function validateRecipients(
             throw new Error(`Invalid Arkade address: ${recipient.address}`);
         }
 
-        assertRecipientArkAddress(recipient.address, address, context);
+        assertRecipientArkadeAddress(recipient.address, address, context);
 
         const amount = recipient.amount || dustAmount;
         if (amount <= 0) {

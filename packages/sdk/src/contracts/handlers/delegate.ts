@@ -118,12 +118,7 @@ function delegateCandidatesAt(
         (opts) => new DelegateVtxo.Script({ ...opts, delegatePubKey }),
     ).map((c) => ({
         type: "delegate",
-        params: {
-            pubKey: hex.encode(c.pubKey),
-            serverPubKey: hex.encode(c.serverPubKey),
-            delegatePubKey: hex.encode(delegatePubKey),
-            csvTimelock: timelockToSequence(c.csvTimelock).toString(),
-        },
+        params: DelegateContractHandler.serializeParams({ ...c, delegatePubKey }),
         script: c.scriptHex,
         address: c.script.address(deps.network.hrp, c.serverPubKey).encode(),
     }));

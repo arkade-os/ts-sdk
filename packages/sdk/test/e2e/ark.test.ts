@@ -22,6 +22,7 @@ import {
     InMemoryContractRepository,
     RestDelegateProvider,
 } from "../../src";
+import { prepareUnrollTransaction } from "../../src/wallet/unroll";
 import {
     arkdExec,
     beforeEachFaucet,
@@ -107,11 +108,12 @@ describe("Common", () => {
                 execCommand(
                     `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
+                await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
                 execCommand(
                     `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`,
                 );
-
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await waitFor(async () => (await bob.wallet.getVtxos()).length > 0);
 
                 const virtualCoins = await alice.wallet.getVtxos();
                 expect(virtualCoins).toHaveLength(1);
@@ -188,7 +190,7 @@ describe("Common", () => {
                 const vtxo = virtualCoins[0];
                 expect(vtxo.txid).toBeDefined();
                 expect(vtxo.value).toBe(fundAmount);
-                expect(vtxo.virtualStatus.state).toBe("preconfirmed");
+                expect(vtxo.isPreconfirmed).toBe(true);
 
                 // Check Alice's balance after funding
                 const aliceBalanceAfterFunding = await alice.wallet.getBalance();
@@ -560,7 +562,9 @@ describe("Common", () => {
                 expect(exits.length).toBeGreaterThan(0);
 
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
-                expect(txStatus.confirmed).toBe(true);
+                // `expect` does not narrow, and the unconfirmed arm carries no
+                // block fields — assert through the guard so it does.
+                if (!txStatus.confirmed) throw new Error("unroll tx is not confirmed");
 
                 // Keep this aligned with availableExitPath() selection logic,
                 // which currently returns the first mature exit path.
@@ -656,43 +660,28 @@ describe("Common", () => {
                 expect(exits.length).toBeGreaterThan(0);
 
                 const txStatus = await alice.wallet.onchainProvider.getTxStatus(unrolled.txid);
-                expect(txStatus.confirmed).toBe(true);
+                // `expect` does not narrow, and the unconfirmed arm carries no
+                // block fields — assert through the guard so it does.
+                if (!txStatus.confirmed) throw new Error("unroll tx is not confirmed");
 
-                // Keep this aligned with availableExitPath() selection logic,
-                // which currently returns the first mature exit path.
-                const exitTimelock = exits[0].params.timelock;
-                if (exitTimelock.type === "blocks") {
-                    const chainTip = await alice.wallet.onchainProvider.getChainTip();
-                    const requiredHeight = txStatus.blockHeight + Number(exitTimelock.value);
-                    const remainingBlocks = Math.max(0, requiredHeight - chainTip.height);
-                    if (remainingBlocks > 0) {
-                        execCommand(`node regtest/regtest.mjs mine ${remainingBlocks}`);
-                        // Wait for the onchain provider to observe the new
-                        // tip; freshly mined blocks are not always visible
-                        // to esplora the instant `regtest.mjs mine` returns.
-                        await waitFor(async () => {
-                            const tip = await alice.wallet.onchainProvider.getChainTip();
-                            return tip.height >= requiredHeight;
-                        });
-                    }
-                } else {
-                    const requiredTime = txStatus.blockTime + Number(exitTimelock.value);
-                    const initialTip = await alice.wallet.onchainProvider.getChainTip();
-                    let blocksMined = 0;
-                    for (let i = 0; i < 300; i += 1) {
-                        const chainTip = await alice.wallet.onchainProvider.getChainTip();
-                        if (chainTip.time >= requiredTime) {
-                            break;
+                // Recomputing maturity here can disagree with completeUnroll's and mine nothing.
+                await waitFor(
+                    async () => {
+                        try {
+                            await prepareUnrollTransaction(
+                                alice.wallet,
+                                [unrolled.txid],
+                                onchainAlice.address,
+                            );
+                            return true;
+                        } catch (err) {
+                            if (!/no available exit path found/i.test(String(err))) throw err;
+                            execCommand(`node regtest/regtest.mjs mine 1`);
+                            return false;
                         }
-                        execCommand(`node regtest/regtest.mjs mine 1`);
-                        blocksMined += 1;
-                    }
-                    const finalTip = await alice.wallet.onchainProvider.getChainTip();
-                    expect(finalTip.time).toBeGreaterThanOrEqual(requiredTime);
-                    if (initialTip.time < requiredTime) {
-                        expect(blocksMined).toBeGreaterThan(0);
-                    }
-                }
+                    },
+                    { timeout: 60_000, interval: 0 },
+                );
 
                 const beforeBalance = await onchainAlice.getBalance();
                 const completeTxid = await Unroll.completeUnroll(
@@ -771,7 +760,8 @@ describe("Common", () => {
                 expect(vtxos).toHaveLength(1);
                 const vtxo = vtxos[0];
                 expect(vtxo.txid).toBeDefined();
-                expect(vtxo.virtualStatus.state).toBe("settled");
+                expect(vtxo.isPreconfirmed).toBe(false);
+                expect(vtxo.isSwept).toBe(false);
 
                 // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
                 execCommand(`node regtest/regtest.mjs mine 25`);
@@ -781,7 +771,7 @@ describe("Common", () => {
                     const v = await alice.wallet.getVtxos({
                         withRecoverable: true,
                     });
-                    return v.some((c) => c.txid === vtxo.txid && c.virtualStatus.state === "swept");
+                    return v.some((c) => c.txid === vtxo.txid && c.isSwept);
                 });
 
                 // get vtxos including the recoverable ones
@@ -793,7 +783,7 @@ describe("Common", () => {
                 expect(vtxosAfterSweep).toHaveLength(1);
                 const vtxoAfterSweep = vtxosAfterSweep[0];
                 expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
-                expect(vtxoAfterSweep.virtualStatus.state).toBe("swept");
+                expect(vtxoAfterSweep.isSwept).toBe(true);
                 expect(vtxoAfterSweep.spentBy).toBe("");
 
                 const settleTxid = await alice.wallet.settle({
@@ -828,7 +818,7 @@ describe("Common", () => {
                     expect(newVtxos).toHaveLength(1);
                     expect(newVtxos[0].spentBy).toBeFalsy();
                     expect(newVtxos[0].value).toBe(fundAmount);
-                    expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                    expect(newVtxos[0].isPreconfirmed).toBe(true);
                     const age = now.getTime() - newVtxos[0].createdAt.getTime();
                     expect(age).toBeLessThanOrEqual(4000);
                     notified = true;
@@ -904,7 +894,7 @@ describe("Common", () => {
                 expect(newVtxos).toHaveLength(1);
                 expect(newVtxos[0].spentBy).toBeFalsy();
                 expect(newVtxos[0].value).toBe(fundAmount);
-                expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                expect(newVtxos[0].isPreconfirmed).toBe(true);
                 const age = now.getTime() - newVtxos[0].createdAt.getTime();
                 expect(age).toBeLessThanOrEqual(4000);
             });
@@ -1198,7 +1188,9 @@ describe("Delegate", () => {
 
         const delegateManager = await alice.wallet.getDelegateManager();
         await delegateManager?.delegate(
-            [vtxoBeforeDelegate],
+            // `delegate` takes ContractVtxo; the wallet's own read does not carry
+            // `contractScript`, so name it the way the worker handler does.
+            [{ ...vtxoBeforeDelegate, contractScript: vtxoBeforeDelegate.script }],
             await alice.wallet.getAddress(),
             new Date(Date.now() + 1000),
         );
@@ -1233,7 +1225,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 1 — No delegate
         const wallet1 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1251,7 +1243,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 2 — Add delegate
         const wallet2 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1301,22 +1293,27 @@ describe("Delegate Lifecycle", () => {
         expect(txid2).toBeDefined();
 
         // Verify delegate VTXOs were spent
-        const contractsAfter = await manager2.getContractsWithVtxos({
-            type: ["delegate"],
+        // arkd commits the spend to its indexer after FinalizeTx returns.
+        let spentDelegateOutpoints: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateOutpoints = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfter.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateOutpoints.length > 0;
         });
-        const delegateVtxosAfter = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateOutpoints = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfter.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
         // Phase 3 — Remove delegate
         const wallet3 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1328,19 +1325,27 @@ describe("Delegate Lifecycle", () => {
         const contracts3 = await manager3.getContracts();
         expect(contracts3.length).toBeGreaterThanOrEqual(2);
 
+        const unspentOf = async (type: "default" | "delegate") => {
+            const contracts = await manager3.getContractsWithVtxos({ type: [type] });
+            expect(contracts).toHaveLength(1);
+            return contracts[0].vtxos.filter((v) => !v.isSpent);
+        };
+
+        // Phase 2's change alone satisfies `getVtxos().length >= 2`, so each faucet must
+        // wait on its own contract: an incomplete or spent-inclusive baseline cannot fail.
+        const defaultUnspentBefore = (await unspentOf("default")).length;
+        const delegateUnspentBefore = (await unspentOf("delegate")).length;
+
         faucetOffchain(addressA, 10_000);
+        await waitFor(async () => (await unspentOf("default")).length > defaultUnspentBefore);
+
         faucetOffchain(addressB, 10_000);
-        await waitFor(async () => (await wallet3.getVtxos()).length >= 2);
+        await waitFor(async () => (await unspentOf("delegate")).length > delegateUnspentBefore);
 
         const vtxos3 = await wallet3.getVtxos();
         expect(vtxos3.length).toBeGreaterThanOrEqual(2);
 
-        // Capture delegate VTXOs before spending (forfeit path)
-        const contracts3Before = await manager3.getContractsWithVtxos({
-            type: ["delegate"],
-        });
-        expect(contracts3Before).toHaveLength(1);
-        const delegateVtxos3Before = contracts3Before[0].vtxos;
+        const delegateVtxos3Before = await unspentOf("delegate");
         expect(delegateVtxos3Before.length).toBeGreaterThan(0);
 
         // Send more than any single VTXO so delegate pool must be consumed
@@ -1356,16 +1361,17 @@ describe("Delegate Lifecycle", () => {
         expect(txid3).toBeDefined();
 
         // Verify delegate VTXOs were consumed via forfeit path
-        const contracts3After = await manager3.getContractsWithVtxos({
-            type: ["delegate"],
+        let spentDelegate3: typeof delegateVtxos3Before = [];
+        await waitFor(async () => {
+            const delegateVtxos3After = await unspentOf("delegate");
+            spentDelegate3 = delegateVtxos3Before.filter(
+                (before) =>
+                    !delegateVtxos3After.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegate3.length > 0;
         });
-        const delegateVtxos3After = contracts3After[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegate3 = delegateVtxos3Before.filter(
-            (before) =>
-                !delegateVtxos3After.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegate3.length).toBeGreaterThan(0);
     });
 });
@@ -1388,7 +1394,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1406,7 +1412,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1455,23 +1461,31 @@ describe("Cross-contract spending", () => {
         });
         expect(txid).toBeDefined();
 
-        // Verify delegate VTXOs were consumed
-        const contractsAfter = await manager.getContractsWithVtxos({
-            type: ["delegate"],
+        // Verify delegate VTXOs were consumed. arkd commits the spend to its
+        // indexer after FinalizeTx returns, so a single read can predate it.
+        let spentDelegateVtxos: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateVtxos.length > 0;
         });
-        const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateVtxos = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfterUnspent.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateVtxos.length).toBeGreaterThan(0);
 
         // Step 4 — Verify change landed on the delegate address
+        // Named outpoint: "some VTXO is unspent" is already true pre-send.
         await waitFor(async () => {
-            const vtxos = await wallet2.getVtxos();
-            return vtxos.some((v) => !v.isSpent);
+            const delegateNow = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            return delegateNow[0].vtxos.some((v) => v.txid === txid && !v.isSpent);
         });
 
         const vtxosAfter = await wallet2.getVtxos();
@@ -1504,7 +1518,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1516,7 +1530,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1572,22 +1586,28 @@ describe("Cross-contract spending", () => {
         expect(txid).toBeDefined();
 
         // Verify delegate VTXOs were consumed
-        const contractsAfter = await manager.getContractsWithVtxos({
-            type: ["delegate"],
+        let spentDelegateVtxos: typeof delegateVtxosBefore = [];
+        await waitFor(async () => {
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
+            spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) => after.txid === before.txid && after.vout === before.vout,
+                    ),
+            );
+            return spentDelegateVtxos.length > 0;
         });
-        const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter((v) => !v.isSpent);
-        const spentDelegateVtxos = delegateVtxosBefore.filter(
-            (before) =>
-                !delegateVtxosAfterUnspent.some(
-                    (after) => after.txid === before.txid && after.vout === before.vout,
-                ),
-        );
         expect(spentDelegateVtxos.length).toBeGreaterThan(0);
 
         // Step 4 — Verify change landed on the delegate address
         await waitFor(async () => {
-            const vtxos = await wallet2.getVtxos();
-            return vtxos.some((v) => !v.isSpent);
+            const delegateNow = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            return delegateNow[0].vtxos.some((v) => v.txid === txid && !v.isSpent);
         });
 
         const vtxosAfter = await wallet2.getVtxos();

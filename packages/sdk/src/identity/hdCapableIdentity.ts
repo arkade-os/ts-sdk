@@ -21,14 +21,8 @@ export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
      */
     readonly descriptor: string;
 
-    /**
-     * True iff `descriptor` derives from this identity's xpub/seed.
-     *
-     * @deprecated Prefer `DescriptorProvider.isOurs()` via
-     * `HDDescriptorProvider` for rotating HD wallets or
-     * `StaticDescriptorProvider` for legacy single-key wallets.
-     */
-    isOurs(descriptor: string): boolean;
+    /** True iff `descriptor` derives from this identity's xpub/seed. */
+    ownsDescriptor(descriptor: string): boolean;
 }
 
 /**
@@ -46,23 +40,11 @@ export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
  *    explicitly-non-rotating use cases.
  */
 export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
-    /**
-     * Signs each request with the key derived from its descriptor.
-     *
-     * @deprecated Prefer `DescriptorProvider.signWithDescriptor()` via
-     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
-     * this method only as backing implementation for descriptor providers.
-     */
-    signWithDescriptor(requests: DescriptorSigningRequest[]): Promise<Transaction[]>;
+    /** Signs each request with the key derived from its descriptor. */
+    signDescriptorTransactions(requests: DescriptorSigningRequest[]): Promise<Transaction[]>;
 
-    /**
-     * Signs a message using the key derived from `descriptor`.
-     *
-     * @deprecated Prefer `DescriptorProvider.signMessageWithDescriptor()` via
-     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
-     * this method only as backing implementation for descriptor providers.
-     */
-    signMessageWithDescriptor(
+    /** Signs a message using the key derived from `descriptor`. */
+    signDescriptorMessage(
         descriptor: string,
         message: Uint8Array,
         signatureType?: "schnorr" | "ecdsa",
@@ -72,8 +54,8 @@ export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
 /**
  * Structural type guard for {@link HDCapableIdentity}. Returns `true`
  * when the value exposes the four members the HD wallet flow relies on:
- * `descriptor`, `isOurs`, `signWithDescriptor`, and
- * `signMessageWithDescriptor`. Used by callers that need to opt into
+ * `descriptor`, `ownsDescriptor`, `signDescriptorTransactions`, and
+ * `signDescriptorMessage`. Used by callers that need to opt into
  * the HD path (e.g. installing an `HDDescriptorProvider`) without
  * coupling to a concrete identity class.
  */
@@ -82,8 +64,8 @@ export function isHDCapableIdentity(value: unknown): value is HDCapableIdentity 
     const v = value as Record<string, unknown>;
     return (
         typeof v.descriptor === "string" &&
-        typeof v.isOurs === "function" &&
-        typeof v.signWithDescriptor === "function" &&
-        typeof v.signMessageWithDescriptor === "function"
+        typeof v.ownsDescriptor === "function" &&
+        typeof v.signDescriptorTransactions === "function" &&
+        typeof v.signDescriptorMessage === "function"
     );
 }

@@ -7,7 +7,6 @@ import {
     IndexerProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    SubscriptionResponse,
 } from "../../src";
 import { ContractRepository } from "../../src/repositories";
 import { contractHandlers } from "../../src/contracts/handlers";
@@ -308,42 +307,98 @@ describe("ContractManager", () => {
         expect(lastCall[0].spendableOnly).toBeUndefined();
     });
 
-    it("should force VTXOs refresh from indexer when received a `connection_reset` event", async () => {
-        (mockIndexer.subscribeForScripts as any).mockImplementationOnce(() => {
-            throw new Error("Connection refused");
+    it("groups each contract's VTXOs in repository order and keeps empty contracts", async () => {
+        const walletRepo = new InMemoryWalletRepository();
+        const localManager = await ContractManager.create({
+            indexerProvider: createMockIndexerProvider(),
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: walletRepo,
         });
-
-        const contract = await manager.createContract({
+        const first = await localManager.createContract({
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
-            address: "address",
+            address: "first-address",
         });
-    });
+        const second = await localManager.createContract({
+            type: "default",
+            params: SECOND_DEFAULT_PARAMS,
+            script: SECOND_DEFAULT_SCRIPT,
+            address: "second-address",
+        });
+        const emptyParams = DefaultContractHandler.serializeParams({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: { type: "blocks", value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n },
+        });
+        const empty = await localManager.createContract({
+            type: "default",
+            params: emptyParams,
+            script: hex.encode(DefaultContractHandler.createScript(emptyParams).pkScript),
+            address: "empty-address",
+        });
+        const row = (script: string, byte: string) =>
+            createMockExtendedVtxo({
+                txid: byte.repeat(32),
+                vout: 0,
+                script,
+                isSpent: false,
+                virtualStatus: { state: "settled" },
+            });
+        await walletRepo.saveVtxos(first.address, [
+            row(first.script, "aa"),
+            row(first.script, "bb"),
+        ]);
+        await walletRepo.saveVtxos(second.address, [
+            row(second.script, "cc"),
+            row(second.script, "dd"),
+        ]);
 
-    it("should force VTXOs refresh from indexer when received a `vtxo_received` event", async () => {
-        (mockIndexer.getSubscription as any).mockImplementationOnce(
-            (): AsyncIterableIterator<SubscriptionResponse> => {
-                async function* gen(): AsyncIterableIterator<SubscriptionResponse> {
-                    yield {
-                        scripts: [TEST_DEFAULT_SCRIPT],
-                        newVtxos: [createMockVtxo()],
-                        spentVtxos: [],
-                        sweptVtxos: [],
-                    };
-                }
-                return gen();
-            },
+        const result = await localManager.getContractsWithVtxos();
+
+        expect(result.map(({ contract }) => contract.script)).toEqual([
+            first.script,
+            second.script,
+            empty.script,
+        ]);
+        expect(result.map(({ vtxos }) => vtxos.map(({ txid }) => txid))).toEqual([
+            ["aa".repeat(32), "bb".repeat(32)],
+            ["cc".repeat(32), "dd".repeat(32)],
+            [],
+        ]);
+
+        const bulk = vi.fn(async (scripts: string[]) =>
+            [
+                row(first.script, "aa"),
+                row(first.script, "bb"),
+                { ...row(first.script, "ee"), isSpent: true },
+                row(second.script, "cc"),
+                row(second.script, "dd"),
+                row("5120" + "ff".repeat(32), "ee"),
+            ].filter((vtxo) => scripts.includes(vtxo.script!)),
         );
-
-        const contract = await manager.createContract({
-            type: "default",
-            params: createDefaultContractParams(),
-            script: TEST_DEFAULT_SCRIPT,
-            address: "address",
+        (
+            walletRepo as InMemoryWalletRepository & { getVtxosForScripts: typeof bulk }
+        ).getVtxosForScripts = bulk;
+        const perScript = vi.spyOn(walletRepo, "getVtxosForScript");
+        const batched = await localManager.getContractsWithVtxos();
+        expect(bulk).toHaveBeenCalledTimes(1);
+        expect(perScript).not.toHaveBeenCalled();
+        expect(batched.map(({ vtxos }) => vtxos.length)).toEqual([3, 2, 0]);
+        const unspent = await localManager.getContractsWithVtxos(undefined, undefined, {
+            unspentOnly: true,
+        });
+        expect(unspent.map(({ vtxos }) => vtxos.length)).toEqual([2, 2, 0]);
+        expect(bulk).toHaveBeenLastCalledWith([first.script, second.script, empty.script], {
+            unspentOnly: true,
         });
 
-        vi.advanceTimersByTime(3000);
+        vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);
+        const duplicate = await localManager.getContractsWithVtxos();
+        const secondLength = duplicate[1].vtxos.length;
+        duplicate[0].vtxos.pop();
+        expect(duplicate[1].vtxos).toHaveLength(secondLength);
+        localManager.dispose();
     });
 
     describe("refreshVtxos includeInactive", () => {
@@ -804,22 +859,6 @@ describe("ContractManager", () => {
             expect(extended).toEqual([]);
         });
 
-        it("stamps the owning contract's tapscripts via vtxo.script", async () => {
-            await manager.createContract({
-                type: "default",
-                params: createDefaultContractParams(),
-                script: TEST_DEFAULT_SCRIPT,
-                address: "address",
-            });
-
-            const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT });
-            const [extended] = await manager.annotateVtxos([vtxo]);
-
-            expect(extended.forfeitTapLeafScript).toBeDefined();
-            expect(extended.intentTapLeafScript).toBeDefined();
-            expect(extended.tapTree).toBeDefined();
-        });
-
         it("throws when a vtxo's script has no registered contract", async () => {
             const orphan = createMockVtxo({ script: "ab".repeat(34) });
             await expect(manager.annotateVtxos([orphan])).rejects.toThrow();
@@ -846,6 +885,109 @@ describe("ContractManager", () => {
             // how many VTXOs share the contract.
             expect(spy).toHaveBeenCalledTimes(1);
             spy.mockRestore();
+        });
+
+        it("builds the taproot tree once per contract across syncs, not once per sync", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            const spy = vi.spyOn(contractHandlers.get("default")!, "createScript");
+
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+
+            expect(spy).toHaveBeenCalledTimes(1);
+            spy.mockRestore();
+        });
+
+        it("rebuilds the taproot tree when a contract's params change", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            const spy = vi.spyOn(contractHandlers.get("default")!, "createScript");
+
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            await manager.updateContractParams(TEST_DEFAULT_SCRIPT, { note: "edited" });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+
+            expect(spy).toHaveBeenCalledTimes(2);
+            expect((Reflect.get(manager, "tapscriptMemo") as Map<string, unknown>).size).toBe(1);
+            spy.mockRestore();
+        });
+
+        it("drops memoized tapscripts when a contract is deleted", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            const memo = Reflect.get(manager, "tapscriptMemo") as Map<string, unknown>;
+            expect(memo.size).toBe(1);
+
+            await manager.deleteContract(TEST_DEFAULT_SCRIPT);
+
+            expect(memo.size).toBe(0);
+        });
+
+        it("evicts the oldest memo entry at the capacity limit", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            const memo = Reflect.get(manager, "tapscriptMemo") as Map<string, unknown>;
+            for (let i = 0; i < 1024; i++) memo.set(`old-${i}`, {});
+
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+
+            expect(memo.size).toBe(1024);
+            expect(memo.has("old-0")).toBe(false);
+            expect(memo.has(TEST_DEFAULT_SCRIPT)).toBe(true);
+        });
+
+        it("refuses a memoized contract once its handler is unregistered", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [createMockVtxo({ script: TEST_DEFAULT_SCRIPT })],
+            });
+            await manager.refreshVtxos({ scripts: [TEST_DEFAULT_SCRIPT] });
+            const handler = contractHandlers.get("default")!;
+            contractHandlers.unregister("default");
+            try {
+                await expect(
+                    manager.assertAnnotatable([
+                        { txid: "aa".repeat(32), vout: 0, script: TEST_DEFAULT_SCRIPT },
+                    ]),
+                ).rejects.toThrow(/cannot be annotated/);
+            } finally {
+                contractHandlers.register(handler);
+            }
         });
     });
 

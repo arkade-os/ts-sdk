@@ -81,6 +81,10 @@ import {
     TxType,
     IWallet,
     IReadonlyWallet,
+    ArkadeReader,
+    ArkadeBroadcaster,
+    GetArkadeInfoOptions,
+    NormalizedVtxoPage,
     BaseWalletConfig,
     GetNewAddressesOptions,
     NewAddress,
@@ -93,26 +97,24 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    NormalizedExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
     Status,
-    VirtualStatus,
     Outpoint,
     VirtualCoin,
     TxKey,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     TapLeaves,
     StorageConfig,
-    isSpendable,
     isSubdust,
-    isRecoverable,
-    isExpired,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     TimeHeight,
@@ -133,6 +135,11 @@ import {
 export {
     ActivityRegistry,
     boardingResolver,
+    // The reader-compatible bulk read `ArkadeReader`'s doc points at, and the
+    // single-shot normalizer it wraps. Exported so a plugin holding only a
+    // wallet can follow the doc without re-implementing the chunk/page loop.
+    getAllNormalizedVtxos,
+    getNormalizedVtxos,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -142,6 +149,10 @@ export {
     type ActivityResolver,
     type TxTag,
 } from "./wallet";
+export {
+    registerWalletRestoreHook,
+    type WalletRestoreHook,
+} from "./wallet/restoreHooks";
 import { Batch } from "./wallet/batch";
 import {
     signingDescriptorIndex,
@@ -152,6 +163,8 @@ import {
     ReadonlyWallet,
     MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     waitForIncomingFunds,
+    AbortError,
+    type WaitForIncomingFundsOptions,
     IncomingFunds,
     selectVirtualCoins,
     BoardingUtxoGroup,
@@ -165,7 +178,7 @@ import {
 import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
-import { DustChangeError, Ramps } from "./wallet/ramps";
+import { DustChangeError, OversizedChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
@@ -219,7 +232,7 @@ import {
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
-    ArkInfo,
+    ArkadeInfo,
     SignedIntent,
     Output,
     TxNotification,
@@ -239,11 +252,9 @@ import {
 import { CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
-    DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
     RestDelegateProvider,
-    RestDelegatorProvider,
 } from "./providers/delegate";
 import {
     CLTVMultisigTapscript,
@@ -271,7 +282,8 @@ import {
     combineTapscriptSigs,
     isValidArkAddress,
 } from "./utils/arkTransaction";
-import { getRandomId } from "./wallet/utils";
+import { getRandomId, assertRecipientArkadeAddress } from "./wallet/utils";
+import type { RecipientArkadeAddressContext } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -301,6 +313,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     Network,
     NetworkName,
@@ -315,6 +328,7 @@ import {
     IndexerProvider,
     IndexerTxType,
     ChainTxType,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -437,24 +451,9 @@ import type {
     VtxoBranch,
 } from "./repositories/virtualTxRepository";
 import { ChainedTxType } from "./repositories/virtualTxRepository";
-import {
-    MIGRATION_KEY,
-    migrateWalletRepository,
-    requiresMigration,
-    getMigrationStatus,
-    rollbackMigration,
-} from "./repositories/migrations/fromStorageAdapter";
-import type { MigrationStatus } from "./repositories/migrations/fromStorageAdapter";
-import { WalletRepositoryImpl } from "./repositories/migrations/walletRepositoryImpl";
-import { ContractRepositoryImpl } from "./repositories/migrations/contractRepositoryImpl";
 import type { WalletRepository } from "./repositories/walletRepository";
 import type { ContractRepository } from "./repositories/contractRepository";
-import {
-    DelegateManagerImpl,
-    DelegatorManagerImpl,
-    IDelegateManager,
-    IDelegatorManager,
-} from "./wallet/delegate";
+import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 
 export * from "./arkfee";
 export * from "./extension";
@@ -503,7 +502,7 @@ import {
     isArkContract,
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
-import { hasCandidates, isDiscoverable } from "./contracts/types";
+import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -520,9 +519,11 @@ import type {
     ContractState,
     ContractEvent,
     ContractEventCallback,
+    ContractVtxoEvent,
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
+    WatchedScript,
     PathSelection,
     PathContext,
     ExtendedContractVtxo,
@@ -534,7 +535,7 @@ import type {
 import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { toXOnly } from "./utils/keys";
-import { buildVersion, sdkVersion, FetchError } from "./utils/fetch";
+import { buildVersion, sdkVersion, FetchError, READ_TIMEOUT_MS } from "./utils/fetch";
 import {
     closeDatabase,
     openDatabase,
@@ -557,7 +558,6 @@ import {
     WalletNotInitializedError,
     ReadonlyWalletError,
     DelegateNotConfiguredError,
-    DelegatorNotConfiguredError,
 } from "./wallet/serviceWorker/wallet-message-handler";
 import {
     MESSAGE_BUS_INITIALIZING,
@@ -612,6 +612,7 @@ export {
     OnchainWallet,
     Ramps,
     DustChangeError,
+    OversizedChangeError,
     VtxoManager,
     classifyContractSigner,
     classifyAgainstSignerSet,
@@ -620,9 +621,7 @@ export {
     toXOnlySignerHex,
     HDDescriptorProvider,
     DelegateManagerImpl,
-    DelegatorManagerImpl,
     RestDelegateProvider,
-    RestDelegatorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -634,6 +633,7 @@ export {
     CachingArkProvider,
     DigestMismatchError,
     FetchError,
+    READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
     DEFAULT_VTXO_PAGE_SIZE,
@@ -657,7 +657,6 @@ export {
     WalletNotInitializedError,
     ReadonlyWalletError,
     DelegateNotConfiguredError,
-    DelegatorNotConfiguredError,
     MESSAGE_BUS_INITIALIZING,
     MESSAGE_BUS_NOT_INITIALIZED,
     MessageBusInitializingError,
@@ -702,10 +701,18 @@ export {
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
     waitForIncomingFunds,
+    AbortError,
+    type WaitForIncomingFundsOptions,
     hasBoardingTxExpired,
     combineTapscriptSigs,
     isVtxoExpiringSoon,
     isValidArkAddress,
+    // The rotation-aware recipient check: hrp plus `classifyAgainstSignerSet`,
+    // refusing an unknown or past-cutoff operator signer. Root-exported because
+    // its ingredients already are and a plugin deriving against another
+    // operator's address would otherwise hand-roll a `serverPubKey ===` that
+    // rejects valid addresses mid-rotation.
+    assertRecipientArkadeAddress,
     getRandomId,
     buildVersion,
     sdkVersion,
@@ -720,6 +727,7 @@ export {
     ArkadeCashCreateError,
     // Network
     getNetwork,
+    networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
@@ -749,13 +757,6 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    MIGRATION_KEY,
-    migrateWalletRepository,
-    requiresMigration,
-    getMigrationStatus,
-    rollbackMigration,
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
     // Intent proof
     Intent,
     // BIP-322 message signing
@@ -809,16 +810,13 @@ export {
     SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
     type CheckpointExitDelayPolicy,
     buildForfeitTx,
-    isRecoverable,
-    isSpendable,
     isSubdust,
-    isExpired,
     getSequence,
     // VTXO capability predicates
     canRecoverOnchain,
     canSpendOffchain,
     canSweepOnchain,
-    hasTerminalSpend,
+    isVtxoSpent,
     isPastExpiry,
     isVirtualCoin,
     // Contracts
@@ -845,6 +843,7 @@ export {
     isArkContract,
     isDiscoverable,
     hasCandidates,
+    isContractVtxoEvent,
     // Contract handler authoring helpers (spending-path selection)
     isCsvSpendable,
     isCltvSatisfied,
@@ -855,12 +854,17 @@ export {
 
 export type {
     // Types and Interfaces
+    RecipientArkadeAddressContext,
     Identity,
     ReadonlyIdentity,
     BatchSignableIdentity,
     SignRequest,
     IWallet,
     IReadonlyWallet,
+    ArkadeReader,
+    ArkadeBroadcaster,
+    GetArkadeInfoOptions,
+    NormalizedVtxoPage,
     BaseWalletConfig,
     GetNewAddressesOptions,
     NewAddress,
@@ -873,11 +877,11 @@ export type {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    NormalizedExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
     Status,
-    VirtualStatus,
     Outpoint,
     VirtualCoin,
     TimeHeight,
@@ -908,6 +912,7 @@ export type {
     ProvisionedKey,
     // Indexer types
     IndexerProvider,
+    GetVtxosOptions,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -925,7 +930,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
-    ArkInfo,
+    ArkadeInfo,
     SignedIntent,
     Output,
     TxNotification,
@@ -962,6 +967,7 @@ export type {
     TreePartialSigs,
     // Wallet types
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     BoardingUtxoGroup,
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,
@@ -1030,10 +1036,12 @@ export type {
     ContractState,
     ContractEvent,
     ContractEventCallback,
+    ContractVtxoEvent,
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
     IContractManager,
+    WatchedScript,
     PathSelection,
     ExtendedContractVtxo,
     PathContext,
@@ -1066,18 +1074,15 @@ export type {
     ArkadeBatchInput,
     ArkadeExtendedCoin,
     ArkadeExtendedVirtualCoin,
-    // Delegate types (Delegator* aliases deprecated)
+    // Delegate types
     IDelegateManager,
-    IDelegatorManager,
     DelegateProvider,
-    DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
     // Repositories
     ManagedConnection,
     WalletRepository,
     ContractRepository,
-    MigrationStatus,
     IntentRepository,
     ArkIntent,
     ArkIntentState,

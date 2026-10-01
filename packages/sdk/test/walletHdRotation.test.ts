@@ -9,6 +9,7 @@ import {
     InMemoryContractRepository,
     DefaultVtxo,
     MissingSigningDescriptorError,
+    RestArkProvider,
     buildOffchainTx,
     CSVMultisigTapscript,
     type BatchSignableIdentity,
@@ -18,6 +19,7 @@ import {
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
 import type { Contract, ContractEvent, ExtendedVirtualCoin } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 /**
  * Hand-crafted integration tests for HD receive rotation against the
@@ -68,11 +70,7 @@ beforeEach(() => {
     mockFetch.mockReset();
     // Route by URL so test ordering doesn't depend on exact fetch counts.
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({
-                ok: true,
-                json: () => Promise.resolve(body),
-            });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
@@ -100,12 +98,33 @@ function makeHdWallet(
         // this file exercise the HD-rotation path, so they must opt
         // in explicitly.
         walletMode: "hd",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
         },
     });
+}
+
+// The server key these fixtures configure their wallets with. A mocked
+// `submitTx` has to co-sign what it hands back, or the wallet rejects it.
+const ARK_SERVER_KEY = SingleKey.fromHex(
+    "0000000000000000000000000000000000000000000000000000000000000001",
+);
+
+async function serverSignArkTx(arkTxB64: string): Promise<string> {
+    const signed = await ARK_SERVER_KEY.sign(Transaction.fromPSBT(base64.decode(arkTxB64)));
+    return base64.encode(signed.toPSBT());
+}
+
+function serverSignCheckpoints(checkpointsB64: string[]): Promise<string[]> {
+    return Promise.all(
+        checkpointsB64.map(async (b64) =>
+            base64.encode(
+                (await ARK_SERVER_KEY.sign(Transaction.fromPSBT(base64.decode(b64)), [0])).toPSBT(),
+            ),
+        ),
+    );
 }
 
 describe("Wallet HD rotation", () => {
@@ -165,7 +184,7 @@ describe("Wallet HD rotation", () => {
                 identity: SingleKey.fromHex(
                     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -789,7 +808,7 @@ describe("Wallet HD rotation", () => {
                     isMainnet: false,
                 }),
                 walletMode: "static",
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -824,7 +843,7 @@ describe("Wallet HD rotation", () => {
                     isMainnet: false,
                 }),
                 // walletMode intentionally omitted → defaults to 'auto'.
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -842,7 +861,7 @@ describe("Wallet HD rotation", () => {
                         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: "hd",
-                    arkServerUrl: "http://localhost:7070",
+                    arkProvider: new RestArkProvider("http://localhost:7070"),
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -863,7 +882,7 @@ describe("Wallet HD rotation", () => {
                     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
                 walletMode: provider as never,
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -897,7 +916,7 @@ describe("Wallet HD rotation", () => {
                         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: provider as never,
-                    arkServerUrl: "http://localhost:7070",
+                    arkProvider: new RestArkProvider("http://localhost:7070"),
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -1285,8 +1304,8 @@ describe("Wallet HD rotation", () => {
                     submittedArkTxB64 = arkTxB64;
                     return {
                         arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                        finalArkTx: arkTxB64,
-                        signedCheckpointTxs: checkpointsB64,
+                        finalArkTx: await serverSignArkTx(arkTxB64),
+                        signedCheckpointTxs: await serverSignCheckpoints(checkpointsB64),
                     };
                 });
             const finalizeSpy = vi
@@ -1339,8 +1358,8 @@ describe("Wallet HD rotation", () => {
                     submittedArkTxB64 = arkTxB64;
                     return {
                         arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                        finalArkTx: arkTxB64,
-                        signedCheckpointTxs: checkpointsB64,
+                        finalArkTx: await serverSignArkTx(arkTxB64),
+                        signedCheckpointTxs: await serverSignCheckpoints(checkpointsB64),
                     };
                 });
             const finalizeSpy = vi
@@ -1463,7 +1482,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             : (base as unknown as ReturnType<typeof makeBatchSignable>);
         const wallet = await Wallet.create({
             identity,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -1548,7 +1567,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const signSpy = vi.spyOn(base, "sign");
         const wallet = await Wallet.create({
             identity: base,
-            arkServerUrl: "http://localhost:7070",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),
@@ -1559,8 +1578,8 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         vi.spyOn(wallet.arkProvider, "submitTx").mockImplementation(
             async (arkTxB64, checkpointsB64) => ({
                 arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: arkTxB64,
-                signedCheckpointTxs: checkpointsB64,
+                finalArkTx: await serverSignArkTx(arkTxB64),
+                signedCheckpointTxs: await serverSignCheckpoints(checkpointsB64),
             }),
         );
         vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
@@ -1597,7 +1616,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             .spyOn(wallet.arkProvider, "submitTx")
             .mockImplementation(async (arkTxB64, checkpointsB64) => ({
                 arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: arkTxB64,
+                finalArkTx: await serverSignArkTx(arkTxB64),
                 // Server adds its share to the *unsigned* checkpoints it
                 // was handed — exactly what arkd does in production.
                 signedCheckpointTxs: await Promise.all(
@@ -1648,7 +1667,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
                 );
                 return {
                     arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                    finalArkTx: arkTxB64,
+                    finalArkTx: await serverSignArkTx(arkTxB64),
                     // One more checkpoint than the user signed → mismatch.
                     signedCheckpointTxs: [...signed, signed[0]],
                 };
@@ -1888,7 +1907,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             .spyOn(wallet.arkProvider, "submitTx")
             .mockImplementation(async (arkTxB64, checkpointsB64) => ({
                 arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: arkTxB64,
+                finalArkTx: await serverSignArkTx(arkTxB64),
                 signedCheckpointTxs: reorder(
                     await Promise.all(checkpointsB64.map((c) => serverSignCheckpoint(c))),
                 ),

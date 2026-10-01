@@ -8,12 +8,7 @@ import {
 } from "../virtualTxRepository";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
-
-const SAFE_PREFIX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-function sanitizePrefix(p: string): string {
-    if (!SAFE_PREFIX.test(p)) throw new Error(`Invalid table prefix "${p}"`);
-    return p;
-}
+import { sanitizeTablePrefix } from "./prefix";
 
 interface VtxRow {
     txid: string;
@@ -32,7 +27,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         private readonly db: SQLExecutor,
         options?: { prefix?: string },
     ) {
-        this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
+        this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.tTx = `${this.prefix}virtual_txs`;
         this.tBranch = `${this.prefix}vtxo_branches`;
     }
@@ -61,13 +56,9 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
         );
     }
 
-    private tx(fn: () => Promise<void>): Promise<void> {
-        return runInTransaction(this.db, fn);
-    }
-
     async clear(): Promise<void> {
         await this.ensureInit();
-        await this.tx(async () => {
+        await runInTransaction(this.db, async () => {
             await this.db.run(`DELETE FROM ${this.tTx}`);
             await this.db.run(`DELETE FROM ${this.tBranch}`);
         });
@@ -76,7 +67,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     async upsertVirtualTxs(txs: VirtualTx[]): Promise<void> {
         if (txs.length === 0) return;
         await this.ensureInit();
-        await this.tx(async () => {
+        await runInTransaction(this.db, async () => {
             // Prefetch existing rows in one query instead of a SELECT per tx,
             // then merge (new value wins, else keep the stored one) in memory.
             const placeholders = txs.map(() => "?").join(", ");
@@ -109,7 +100,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async setBranch(vtxo: Outpoint, branch: VtxoBranch[]): Promise<void> {
         await this.ensureInit();
-        await this.tx(async () => {
+        await runInTransaction(this.db, async () => {
             await this.db.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
                 vtxo.txid,
                 vtxo.vout,
@@ -149,7 +140,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async pruneForSpentVtxo(vtxo: Outpoint): Promise<void> {
         await this.ensureInit();
-        await this.tx(async () => {
+        await runInTransaction(this.db, async () => {
             // Capture the txs this vtxo's branch referenced, then delete its
             // branch rows and — in one set-based pass — drop only those txs
             // that no other branch still references. Scoping the delete to the

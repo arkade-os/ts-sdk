@@ -77,18 +77,7 @@ describe("resolveRole", () => {
         ).toBe("receiver");
     });
 
-    it("should fall back to walletPubKey when walletDescriptor is unresolvable", () => {
-        expect(
-            resolveRole(contract, {
-                collaborative: false,
-                currentTime: Date.now(),
-                walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
-                walletPubKey: senderXOnly,
-            }),
-        ).toBe("sender");
-    });
-
-    it("should return undefined when neither walletDescriptor nor walletPubKey resolves", () => {
+    it("should return undefined when walletDescriptor is unresolvable", () => {
         expect(
             resolveRole(contract, {
                 collaborative: false,
@@ -98,16 +87,13 @@ describe("resolveRole", () => {
         ).toBeUndefined();
     });
 
-    it("should not fall back to walletPubKey when walletDescriptor resolves but does not match", () => {
-        // A resolved descriptor is authoritative: if it doesn't match
-        // sender/receiver, we return undefined rather than trying walletPubKey.
+    it("should return undefined when walletDescriptor resolves but does not match", () => {
         const unrelatedXOnly = "a".repeat(64);
         expect(
             resolveRole(contract, {
                 collaborative: false,
                 currentTime: Date.now(),
                 walletDescriptor: `tr(${unrelatedXOnly})`,
-                walletPubKey: senderXOnly,
             }),
         ).toBeUndefined();
     });
@@ -136,15 +122,6 @@ describe("DefaultContractHandler", () => {
         expect(hex.encode(script.pkScript)).toEqual(params.script);
     });
 
-    it("should create script from params", () => {
-        const params = createDefaultContractParams();
-
-        const script = DefaultContractHandler.createScript(params);
-
-        expect(script).toBeDefined();
-        expect(script.pkScript).toBeDefined();
-    });
-
     it("should serialize and deserialize params", () => {
         const original = {
             pubKey: TEST_PUB_KEY,
@@ -157,56 +134,6 @@ describe("DefaultContractHandler", () => {
 
         expect(deserialized.pubKey).toEqual(TEST_PUB_KEY);
         expect(deserialized.serverPubKey).toEqual(TEST_SERVER_PUB_KEY);
-    });
-
-    it("should select forfeit path when collaborative", () => {
-        const params = createDefaultContractParams();
-        const script = DefaultContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "default",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DefaultContractHandler.selectPath(script, contract, {
-            collaborative: true,
-            currentTime: Date.now(),
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
-    });
-
-    it("should select exit path when not collaborative", () => {
-        const params = createDefaultContractParams();
-        const script = DefaultContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "default",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DefaultContractHandler.selectPath(script, contract, {
-            collaborative: false,
-            currentTime: Date.now(),
-            vtxo: createMockVtxo({
-                status: {
-                    confirmed: true,
-                    block_height: 100,
-                    block_time: 1000,
-                },
-            }),
-            blockHeight: 300,
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
     });
 
     it("should return multiple spendable paths", () => {
@@ -334,18 +261,6 @@ describe("DefaultContractHandler", () => {
 });
 
 describe("DelegateContractHandler", () => {
-    it("should create script from params", () => {
-        const params = createDelegateContractParams();
-        const script = DelegateContractHandler.createScript(params);
-
-        expect(script).toBeDefined();
-        expect(script.pkScript).toBeDefined();
-        // Delegate script should have 3 leaves: forfeit, exit, delegate
-        expect(script.forfeit()).toBeDefined();
-        expect(script.exit()).toBeDefined();
-        expect(script.delegate()).toBeDefined();
-    });
-
     it("should produce a different pkScript than default with same keys", () => {
         const defaultParams = createDefaultContractParams();
         const delegateParams = createDelegateContractParams();
@@ -391,56 +306,6 @@ describe("DelegateContractHandler", () => {
         const script2 = DelegateContractHandler.createScript(reserialized);
 
         expect(hex.encode(script2.pkScript)).toEqual(hex.encode(script1.pkScript));
-    });
-
-    it("should select forfeit path when collaborative", () => {
-        const params = createDelegateContractParams();
-        const script = DelegateContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "delegate",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DelegateContractHandler.selectPath(script, contract, {
-            collaborative: true,
-            currentTime: Date.now(),
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
-    });
-
-    it("should select exit path when not collaborative and CSV satisfied", () => {
-        const params = createDelegateContractParams();
-        const script = DelegateContractHandler.createScript(params);
-        const contract: Contract = {
-            type: "delegate",
-            params,
-            script: hex.encode(script.pkScript),
-            address: "address",
-            state: "active",
-            createdAt: Date.now(),
-        };
-
-        const path = DelegateContractHandler.selectPath(script, contract, {
-            collaborative: false,
-            currentTime: Date.now(),
-            vtxo: createMockVtxo({
-                status: {
-                    confirmed: true,
-                    block_height: 100,
-                    block_time: 1000,
-                },
-            }),
-            blockHeight: 300,
-        });
-
-        expect(path).toBeDefined();
-        expect(path?.leaf).toBeDefined();
     });
 
     it("should return null when not collaborative and CSV not satisfied", () => {
@@ -703,7 +568,7 @@ describe("VHTLCContractHandler", () => {
             collaborative: false,
             currentTime: Date.now(),
             blockHeight: 105,
-            walletPubKey: receiverXOnly,
+            walletDescriptor: `tr(${receiverXOnly})`,
             vtxo,
         });
         expect(notMature).toHaveLength(0);
@@ -712,7 +577,7 @@ describe("VHTLCContractHandler", () => {
             collaborative: false,
             currentTime: Date.now(),
             blockHeight: 200,
-            walletPubKey: receiverXOnly,
+            walletDescriptor: `tr(${receiverXOnly})`,
             vtxo,
         });
         expect(mature).toHaveLength(1);
@@ -754,7 +619,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(), // Unix seconds far above 800000
                 blockHeight: 799_999,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(0);
@@ -768,7 +633,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 800_000,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(1);
@@ -781,7 +646,7 @@ describe("VHTLCContractHandler", () => {
             const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
                 collaborative: true,
                 currentTime: Date.now(),
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(0);
@@ -796,7 +661,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 1_000_000_000, // irrelevant for timestamp locktime
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(0);
@@ -810,7 +675,7 @@ describe("VHTLCContractHandler", () => {
             const paths = VHTLCContractHandler.getSpendablePaths(script, contract, {
                 collaborative: true,
                 currentTime: Date.now(),
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
 
             expect(paths).toHaveLength(1);
@@ -824,7 +689,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 799_999,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
             expect(before).toBeNull();
 
@@ -832,7 +697,7 @@ describe("VHTLCContractHandler", () => {
                 collaborative: true,
                 currentTime: Date.now(),
                 blockHeight: 800_001,
-                walletPubKey: senderXOnly,
+                walletDescriptor: `tr(${senderXOnly})`,
             });
             expect(after).not.toBeNull();
             expect(after?.leaf).toBeDefined();

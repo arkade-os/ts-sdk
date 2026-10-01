@@ -19,7 +19,7 @@ import {
     ONCHAIN_SEND_PAIR,
     assertFundable,
     deriveOnchainSend,
-    lightningSendVtxoScript,
+    lightningSendContract,
     onchainReceiveRequest,
     onchainSendRequest,
     type RfqQuote,
@@ -34,13 +34,14 @@ const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
 
 const RFQ_ID = "a1".repeat(32);
+const PAYOUT = p2tr(key(21));
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
 const NOW = 1_800_000_000;
 const REFUND_LOCKTIME = NOW + 200 * 3600;
 const HTLC_LOCKTIME = NOW + 24 * 3600;
 
-// The onchain leg's Arkade lockup shares `lightningSendVtxoScript` with the
+// The onchain leg's Arkade lockup shares `lightningSendContract` with the
 // Lightning leg directly (see `deriveOnchainSend` below) — one function, one
 // golden test (`rfq.test.ts`). There is no separate onchain program object
 // left to compare it against, so there is nothing to pin here any more.
@@ -145,6 +146,14 @@ describe("assertFundable — onchain gates", () => {
         }
     });
 
+    it("refuses a non-positive quoted amount", () => {
+        for (const over of [{ to_amount: 0 }, { to_amount: -1 }, { from_amount: 0 }]) {
+            expect(() => assertFundable({ quote: quote(over), now: NOW, onchain })).toThrow(
+                expect.objectContaining({ reason: "non_positive_amount" }),
+            );
+        }
+    });
+
     it("requires a safe claim window before the L1 refund leaf opens", () => {
         const tight = NOW + 2 * 600 + ONCHAIN_CLAIM_MARGIN_SECONDS; // exactly the bound
         expect(() =>
@@ -178,13 +187,13 @@ describe("deriveOnchainSend", () => {
     // The maker's own view of its stack: server key(3), emulator key(9),
     // claim delay 4096, sender key(13) — and a real, decodable arkade refund
     // address.
-    const SERVER = key(3);
+    const OPERATOR_PUBKEY = key(3);
     const SENDER_PUBKEY = key(13);
     const RECEIVER_PK_SCRIPT = p2tr(key(1));
-    const REFUND_ADDRESS = lightningSendVtxoScript({
+    const REFUND_ADDRESS = lightningSendContract({
         solverPubkey: key(1),
         refundLocktime: REFUND_LOCKTIME,
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         paymentHash: PAYMENT_HASH,
         claimDelay: 4096,
         emulatorPubkey: key(9),
@@ -192,13 +201,13 @@ describe("deriveOnchainSend", () => {
         senderPubkey: SENDER_PUBKEY,
         receiverPkScript: RECEIVER_PK_SCRIPT,
     })
-        .address("ark", SERVER)
+        .address("ark", OPERATOR_PUBKEY)
         .encode();
 
     const derivation = () => ({
         paymentHash: PAYMENT_HASH,
         payoutPubkey: key(5),
-        serverPubkey: SERVER,
+        operatorPubkey: OPERATOR_PUBKEY,
         emulatorPubkey: key(9),
         claimDelay: 4096,
         hrp: "ark",
@@ -210,10 +219,10 @@ describe("deriveOnchainSend", () => {
     /** A quote whose compare-only fields MATCH the maker's own derivations. */
     const consistentQuote = (): RfqQuote => {
         const input = derivation();
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: key(1),
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
             emulatorPubkey: key(9),
@@ -241,7 +250,7 @@ describe("deriveOnchainSend", () => {
             valid_until: NOW + 900,
             refund_locktime: REFUND_LOCKTIME,
             profile: {
-                lockup_address: lockup.address("ark", SERVER).encode(),
+                lockup_address: lockup.address("ark", OPERATOR_PUBKEY).encode(),
                 htlc_pubkey: hex.encode(key(11)),
                 htlc_locktime: HTLC_LOCKTIME,
                 htlc_address: htlc.address,
@@ -294,13 +303,15 @@ describe("deriveOnchainSend", () => {
         // entirely), the keys go to hex, and `htlcAddress` is derived — no
         // input carries it, and it is what the rebuild checks against.
         const derived = deriveOnchainSend({ quote: consistentQuote(), ...derivation() });
-        expect(onchainSendProfile(derived)).toEqual({
+        expect(onchainSendProfile({ ...derived, payoutPkScript: PAYOUT })).toEqual({
             claimKey: hex.encode(key(5)),
             refundKey: hex.encode(key(11)),
             htlcLocktime: HTLC_LOCKTIME,
             network: "regtest",
             htlcAddress: derived.htlc.address,
             minConfirmations: 2,
+            expectedAmount: 99_000,
+            payoutPkScript: hex.encode(PAYOUT),
         });
     });
 
@@ -317,7 +328,7 @@ describe("deriveOnchainSend", () => {
                 profile: {
                     signer: { signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})` },
                     hashlock: { paymentHash: PAYMENT_HASH },
-                    ...onchainSendProfile(derived),
+                    ...onchainSendProfile({ ...derived, payoutPkScript: PAYOUT }),
                 },
             },
             {
@@ -329,6 +340,7 @@ describe("deriveOnchainSend", () => {
                 refundLocktime: derived.refundLocktime,
                 htlc: derived.htlc,
                 minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
                 createdAt: NOW,
                 updatedAt: NOW,
             } as unknown as Parameters<typeof createRfqSwapRecord>[1],
@@ -337,11 +349,56 @@ describe("deriveOnchainSend", () => {
         const rebuilt = rebuildRfqSwap(
             record,
             VHTLCV2ContractHandler.serializeParams(derived.script.options),
-        ) as { htlc: OnchainHtlc; minConfirmations: number };
+        ) as {
+            htlc: OnchainHtlc;
+            minConfirmations: number;
+            payoutPkScript?: Uint8Array;
+        };
 
         expect(rebuilt.htlc.address).toBe(derived.htlc.address);
         expect(hex.encode(rebuilt.htlc.pkScript)).toBe(hex.encode(derived.htlc.pkScript));
         expect(rebuilt.minConfirmations).toBe(2);
+        expect(rebuilt.payoutPkScript).toEqual(PAYOUT);
+    });
+
+    it("restores a record written before the payout script had a slot", () => {
+        const derived = deriveOnchainSend({ quote: consistentQuote(), ...derivation() });
+        const { payoutPkScript: _dropped, ...legacy } = onchainSendProfile({
+            ...derived,
+            payoutPkScript: PAYOUT,
+        });
+        const record = createRfqSwapRecord(
+            {
+                kind: "onchain_send",
+                lockupAddress: derived.address,
+                profile: {
+                    signer: { signingDescriptor: `tr(${hex.encode(SENDER_PUBKEY)})` },
+                    hashlock: { paymentHash: PAYMENT_HASH },
+                    ...legacy,
+                },
+            },
+            {
+                kind: "onchain_send",
+                rfqId: RFQ_ID,
+                state: "pending",
+                lockupPkScript: derived.swapPkScript,
+                paymentHash: PAYMENT_HASH,
+                refundLocktime: derived.refundLocktime,
+                htlc: derived.htlc,
+                minConfirmations: derived.minConfirmations,
+                expectedAmount: derived.expectedAmount,
+                createdAt: NOW,
+                updatedAt: NOW,
+            } as unknown as Parameters<typeof createRfqSwapRecord>[1],
+        );
+
+        const rebuilt = rebuildRfqSwap(
+            record,
+            VHTLCV2ContractHandler.serializeParams(derived.script.options),
+        ) as { htlc: OnchainHtlc; payoutPkScript?: Uint8Array };
+
+        expect(rebuilt.htlc.address).toBe(derived.htlc.address);
+        expect(rebuilt.payoutPkScript).toBeUndefined();
     });
 });
 

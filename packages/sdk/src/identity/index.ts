@@ -11,8 +11,7 @@ export interface Identity extends ReadonlyIdentity {
     /**
      * Sign the provided transaction inputs.
      *
-     * @param tx - Transaction to sign
-     * @param inputIndexes - Optional input indexes to sign. When omitted, the implementation should sign every signable input.
+     * @param inputIndexes - Inputs to sign; when omitted, sign every signable input.
      */
     sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
 }
@@ -32,33 +31,19 @@ export interface SignRequest {
 }
 
 /**
- * Identity that supports signing multiple PSBTs in a single wallet interaction.
- * Browser wallet providers that support batch signing (e.g. Xverse, UniSat, OKX)
- * should implement this interface to reduce the number of confirmation popups
- * from N+1 to 1 during Arkade send transactions.
+ * Identity that signs multiple PSBTs in one wallet interaction. Batch-capable browser wallets
+ * (e.g. Xverse, UniSat, OKX) implement it to cut Arkade send popups from N+1 to 1.
  *
  * Contract:
- * - Implementations MUST return exactly one `Transaction` per request, in the
- *   same order as the input array. The SDK validates this at runtime and will
- *   throw if the lengths do not match.
- * - Implementations MUST preserve any partial signatures already present on the
- *   input PSBTs and only ADD their own — never drop, replace, or normalize away
- *   foreign signatures. The pending-tx recovery path
- *   (`Wallet.finalizePendingTxs`) hands `signMultiple` checkpoint PSBTs that
- *   already carry the server's `tapScriptSig` and relies on that server
- *   signature surviving alongside the freshly added user signature. A provider
- *   that discards the pre-existing server sig produces checkpoints that fail
- *   server-side finalization, stranding the transaction in the pending state.
+ * - Return exactly one `Transaction` per request, in request order (validated at runtime).
+ * - Preserve partial signatures already on the PSBTs and only ADD your own. The pending-tx
+ *   recovery path (`Wallet.finalizePendingTxs`) passes checkpoints already carrying the
+ *   server's `tapScriptSig`; dropping it fails server-side finalization and strands the tx.
  */
 export interface BatchSignableIdentity extends Identity {
     /**
-     * Sign multiple transactions in a single wallet interaction.
+     * Sign multiple transactions in a single wallet interaction (see the interface contract).
      *
-     * Must preserve pre-existing partial signatures on each input PSBT (see the
-     * interface-level contract) and return one signed `Transaction` per request,
-     * in request order.
-     *
-     * @param requests - Transactions and optional input indexes to sign
      * @returns Signed transactions in the same order as the input requests
      */
     signMultiple(requests: SignRequest[]): Promise<Transaction[]>;
@@ -73,10 +58,7 @@ export function isBatchSignable(identity: Identity): identity is BatchSignableId
 }
 
 export * from "./singleKey";
-// Explicit named re-export so the barrel stays a documented public surface.
-// `serializeSeedOwnedSigningIdentity` and `serializeSeedOwnedReadonlyIdentity`
-// are deliberately omitted — they are SDK-internal helpers consumed only by
-// `./serialize`, per Appendix A of the plan.
+// Named, not `*`: `serializeSeedOwned*Identity` are SDK-internal (used only by `./serialize`).
 export type {
     NetworkOptions,
     DescriptorOptions,
@@ -117,18 +99,11 @@ export { isHDCapableIdentity } from "./hdCapableIdentity";
 export { StaticDescriptorProvider } from "./staticDescriptorProvider";
 
 /**
- * Whether `value` is a complete {@link Identity} rather than the read-only
- * half of one.
+ * Whether `value` is a complete {@link Identity} rather than the read-only half of one.
  *
- * All four members are checked because all four are load-bearing —
- * `signerSession` in particular, which an interactive refund needs and which
- * a watch-only identity lacks. A partial identity satisfies a pubkey check
- * happily and then fails as a `TypeError` deep inside a signing path, where
- * callers read it as retryable.
- *
- * One shared guard: two copies drift, and the copy that is not updated when
- * `Identity` gains a member is the one that lets a watch-only identity
- * through.
+ * All four members are checked (notably `signerSession`, needed by an interactive refund): a
+ * partial identity otherwise fails as a `TypeError` deep in a signing path, which callers read
+ * as retryable. Keep this the one shared guard, so it can't drift when `Identity` grows.
  */
 export function isSigningIdentity(value: unknown): value is Identity {
     if (typeof value !== "object" || value === null) return false;

@@ -6,6 +6,7 @@ import {
     rateGate,
     requestOrigin,
 } from "../src/providers/rateGate";
+import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
@@ -27,7 +28,7 @@ function rateLimited(retryAfter = "10") {
 }
 
 function ok(body: unknown) {
-    return { ok: true, headers: new Headers(), json: async () => body };
+    return jsonResponse(body);
 }
 
 describe("parseRetryAfterMs", () => {
@@ -213,7 +214,7 @@ describe("shared cooldown across requests (herd regression)", () => {
         expect(mockFetch).toHaveBeenCalledTimes(1);
 
         // A request that never saw a 429 itself must not reach the network.
-        mockFetch.mockResolvedValue(ok({ vtxos: [] }));
+        mockFetch.mockImplementation(async () => ok({ vtxos: [] }));
         const newcomer = indexer.getVtxos({ scripts: ["b"] });
         await vi.advanceTimersByTimeAsync(5_000);
         expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -260,7 +261,7 @@ describe("shared cooldown across requests (herd regression)", () => {
         expect(mockFetch).toHaveBeenCalledTimes(1);
 
         // Different provider class, same host, same limiter.
-        mockFetch.mockResolvedValue(ok({}));
+        mockFetch.mockImplementation(async () => ok({}));
         const info = ark.getInfo().catch((e) => e);
         await vi.advanceTimersByTimeAsync(2_000);
         expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -301,7 +302,9 @@ describe("shared cooldown across requests (herd regression)", () => {
     it("retries a 429 and succeeds once the cooldown lifts", async () => {
         vi.useFakeTimers();
         const indexer = new RestIndexerProvider("http://localhost:7070");
-        mockFetch.mockResolvedValueOnce(rateLimited("1")).mockResolvedValue(ok({ vtxos: [] }));
+        mockFetch
+            .mockResolvedValueOnce(rateLimited("1"))
+            .mockImplementation(async () => ok({ vtxos: [] }));
 
         const pending = indexer.getVtxos({ scripts: ["a"] });
         await vi.advanceTimersByTimeAsync(10_000);

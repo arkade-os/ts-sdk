@@ -1,6 +1,5 @@
 export const TX_HASH_SIZE = 32;
 export const ASSET_ID_SIZE = 34;
-export const ASSET_VERSION = 0x01;
 
 export enum AssetInputType {
     Unspecified = 0,

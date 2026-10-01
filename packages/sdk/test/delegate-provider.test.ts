@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestDelegateProvider } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
@@ -19,14 +20,9 @@ describe("RestDelegateProvider.getDelegateInfo", () => {
         vi.unstubAllGlobals();
     });
 
-    const respondWith = (body: unknown) =>
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(body),
-        });
+    const respondWith = (body: unknown) => mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
-    it("normalizes delegateAddress to a string when the payload field is a non-string", async () => {
-        // delegateAddress is a truthy non-string; delegatorAddress is the valid one.
+    it("rejects a non-string delegateAddress even when the legacy field is present", async () => {
         respondWith({
             pubkey: "02abc",
             fee: "0",
@@ -34,10 +30,9 @@ describe("RestDelegateProvider.getDelegateInfo", () => {
             delegatorAddress: "tark1validaddress",
         });
 
-        const info = await new RestDelegateProvider("http://localhost:7012").getDelegateInfo();
-
-        expect(typeof info.delegateAddress).toBe("string");
-        expect(info.delegateAddress).toBe("tark1validaddress");
+        await expect(
+            new RestDelegateProvider("http://localhost:7012").getDelegateInfo(),
+        ).rejects.toThrow("Invalid delegate info");
     });
 
     it("prefers delegateAddress when it is a valid string", async () => {
@@ -45,7 +40,6 @@ describe("RestDelegateProvider.getDelegateInfo", () => {
             pubkey: "02abc",
             fee: "0",
             delegateAddress: "tark1delegate",
-            delegatorAddress: "tark1legacy",
         });
 
         const info = await new RestDelegateProvider("http://localhost:7012").getDelegateInfo();

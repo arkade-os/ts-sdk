@@ -9,55 +9,35 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 
 /**
- * Contract lifecycle state. Neither state affects coverage: the watcher
- * subscribes and sweeps a contract according to {@link Contract.watch}
- * alone, because a retired receive address can still be paid. `inactive`
- * only demotes a contract out of receive-address selection; it does
- * **not** unsubscribe it. To stop watching but keep the row, set
- * {@link ContractWatchState} to `retained`; to drop both, use
- * {@link IContractManager.deleteContract}.
+ * Contract lifecycle state. Governs receive-address selection only: `inactive` does **not**
+ * unsubscribe (a retired receive address can still be paid; coverage follows
+ * {@link Contract.watch} alone). To stop watching but keep the row use `retained`
+ * {@link ContractWatchState}; to drop both, {@link IContractManager.deleteContract}.
  */
 export type ContractState = "active" | "inactive";
 
 /**
- * Whether a contract is covered by background monitoring — the
- * subscription and the failsafe/indexer sweep
- * ({@link ContractWatcher.getWatchedContracts}).
+ * Whether a contract is covered by background monitoring (subscription and failsafe/indexer
+ * sweep, {@link ContractWatcher.getWatchedContracts}). Orthogonal to {@link ContractState}.
  *
- * Orthogonal to {@link ContractState}, which governs receive-address
- * selection only. A contract can be the wallet's display address and
- * watched, or terminal and retained; the two questions never answer each
- * other.
- *
- * NArk calls this `ContractActivityState` (`Active` / `Inactive` /
- * `AwaitingFundsBeforeDeactivate`). The concept is the same; the names
- * differ because TS already spends `active`/`inactive` on
- * {@link ContractState}, and a row reading `state: "active",
- * activityState: "inactive"` would be unreadable.
+ * NArk parity: `ContractActivityState`; renamed because `active`/`inactive` are taken by
+ * {@link ContractState}.
  */
 export type ContractWatchState =
     /** Subscribed and polled. */
     | "watched"
     /**
-     * Watched until the first VTXO lands at the script, then
-     * automatically demoted to `retained` by the contract manager.
-     * For one-shot destinations — a refund address, a swap lockup —
-     * that only need coverage until they are funded.
+     * Watched until the first VTXO lands, then demoted to `retained` by the contract manager.
+     * For one-shot destinations (refund address, swap lockup).
      */
     | "awaiting-funds"
     /**
-     * Kept for history, restore and classification, but absent from
-     * every background channel. The row still resolves in
-     * `getContracts`, still annotates its VTXOs, and still feeds
-     * transaction history; nothing subscribes or polls it.
+     * Not subscribed or polled, but still resolves in `getContracts`, annotates its VTXOs and
+     * feeds transaction history.
      */
     | "retained";
 
-/**
- * A contract's watch state, defaulting rows written before the field
- * existed — including retired (`inactive`) receive addresses — to
- * `watched`, which is the coverage they have today.
- */
+/** A contract's watch state; rows written before the field existed default to `watched`. */
 export function watchStateOf(contract: Pick<Contract, "watch">): ContractWatchState {
     return contract.watch ?? "watched";
 }
@@ -68,14 +48,9 @@ export function isWatchedContract(contract: Pick<Contract, "watch">): boolean {
 }
 
 /**
- * Represents a contract that can receive and manage virtual outputs.
- *
- * A contract is defined by its type and parameters, which together
- * determine the VtxoScript (spending paths). The wallet's default
- * receiving address is itself a contract of type "default".
- *
- * External services (Boltz swaps, atomic swaps, etc.) create additional
- * contracts with their own types and parameters.
+ * A contract that can receive and manage virtual outputs. Its type and parameters determine the
+ * VtxoScript (spending paths); the wallet's default receiving address is a `"default"` contract,
+ * and external services (swaps, etc.) register their own types.
  *
  * @example
  * ```typescript
@@ -100,17 +75,12 @@ export interface Contract {
     /** Human-readable label for display purposes. */
     label?: string;
 
-    /**
-     * Contract type identifier.
-     * Built-in types: "default", "vhtlc"
-     * Custom types can be registered via ContractHandler.
-     */
+    /** Contract type identifier (e.g. "default", "vhtlc"); custom types add a ContractHandler. */
     type: string;
 
     /**
-     * Type-specific parameters for constructing the VtxoScript.
-     * All values are serialized as strings (hex for bytes, string for bigint).
-     * The ContractHandler for this type knows how to interpret these.
+     * Type-specific VtxoScript parameters, serialized as strings (hex for bytes, string for
+     * bigint) and interpreted by the type's ContractHandler.
      */
     params: Record<string, string>;
 
@@ -132,15 +102,11 @@ export interface Contract {
     /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;
 
-    /**
-     * Optional metadata for external integrations.
-     */
+    /** Optional metadata for external integrations. */
     metadata?: Record<string, unknown>;
 }
 
-/**
- * A virtual output that has been associated with a specific contract.
- */
+/** A virtual output associated with a specific contract. */
 export type ContractVtxo = VirtualCoin &
     Partial<TapLeaves & EncodedVtxoScript> & {
         extraWitness?: Bytes[];
@@ -148,26 +114,15 @@ export type ContractVtxo = VirtualCoin &
     };
 
 /**
- * A {@link ContractVtxo} with all taproot annotation fields required.
- *
- * Mirrors the {@link ExtendedVirtualCoin} / {@link VirtualCoin} split:
- * - {@link ContractVtxo} carries `TapLeaves` and `EncodedVtxoScript` as
- *   `Partial<>` because VTXOs fetched raw from the indexer do not yet have
- *   taproot data.
- * - `ExtendedContractVtxo` narrows those fields to required, guaranteeing
- *   that `annotateVtxos` has run and the taproot leaves are present.
- *
- * Use this type (instead of {@link ContractVtxo}) wherever the compiler
- * should enforce that annotation has happened — e.g. `saveVtxos` and
- * forfeit transaction construction.
+ * A {@link ContractVtxo} with all taproot annotation fields required (mirrors the
+ * {@link ExtendedVirtualCoin} / {@link VirtualCoin} split). Use it wherever the compiler should
+ * enforce that `annotateVtxos` has run, e.g. `saveVtxos` and forfeit construction.
  */
 export type ExtendedContractVtxo = NormalizedExtendedVirtualCoin & {
     contractScript: string;
 };
 
-/**
- * Result of path selection, including the tapleaf to use and any extra witness data.
- */
+/** Result of path selection: the tapleaf to use and any extra witness data. */
 export interface PathSelection {
     /** Tapleaf script to use for spending. */
     leaf: TapLeafScript;
@@ -183,9 +138,7 @@ export interface PathSelection {
     sequence?: number;
 }
 
-/**
- * Context for path selection decisions.
- */
+/** Context for path selection decisions. */
 export interface PathContext {
     /** Whether collaborative spending is available through server cooperation. */
     collaborative: boolean;
@@ -197,35 +150,21 @@ export interface PathContext {
     blockHeight?: number;
 
     /**
-     * Wallet's descriptor for signing.
-     * Format: tr(pubkey) for static keys, tr([fingerprint/path']xpub/0/{index}) for HD.
-     * Used by handlers to determine wallet's role in multi-party contracts.
+     * Wallet's signing descriptor: `tr(pubkey)` for static keys,
+     * `tr([fingerprint/path']xpub/0/{index})` for HD. Handlers use it to find the wallet's role.
      */
     walletDescriptor?: string;
 
     /**
-     * Wallet's public key (x-only, 32 bytes hex).
-     * @deprecated Use walletDescriptor instead.
-     */
-    walletPubKey?: string;
-
-    /**
-     * Explicit role override for multi-party contracts such as VHTLC.
-     * If not provided, the handler may derive the role by matching
-     * {@link walletDescriptor} (preferred) — or {@link walletPubKey} as a
-     * fallback — against the contract's sender/receiver params.
+     * Explicit role override for multi-party contracts such as VHTLC. If absent, handlers may
+     * match {@link walletDescriptor} against the contract's sender/receiver params.
      */
     role?: string;
 
     /**
-     * Chain tip timestamp in SECONDS, when known.
-     *
-     * Timelocks mature against chain time, not the machine's clock, so any
-     * seconds-typed comparison should prefer this and fall back to
-     * {@link currentTime} only when it is absent. The two differ by more than
-     * pedantry: the server matures absolute locktimes against median-time-past,
-     * which trails wall clock, and a host whose clock drifts turns a local
-     * decision into a wrong one in whichever direction it drifted.
+     * Chain tip timestamp in SECONDS, when known. Seconds-typed timelock checks should prefer it
+     * over {@link currentTime}: the server matures absolute locktimes against median-time-past,
+     * which trails wall clock, and host clock drift would skew the decision.
      */
     chainTime?: number;
 
@@ -264,91 +203,48 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
     /** Contract type managed by this handler. */
     readonly type: string;
 
-    /**
-     * Create the VtxoScript from serialized parameters.
-     *
-     * @param params - Serialized contract parameters
-     * @returns Contract script instance
-     */
+    /** Create the VtxoScript from serialized parameters. */
     createScript(params: Record<string, string>): S;
 
-    /**
-     * Serialize typed parameters to string key-value pairs.
-     *
-     * @param params - Typed contract parameters
-     * @returns Serialized key-value representation
-     */
+    /** Serialize typed parameters to string key-value pairs. */
     serializeParams(params: P): Record<string, string>;
 
-    /**
-     * Deserialize string key-value pairs to typed parameters.
-     */
+    /** Deserialize string key-value pairs to typed parameters. */
     deserializeParams(params: Record<string, string>): P;
 
     /**
-     * Select the preferred spending path based on contract state and context.
-     * Returns the best available path (e.g., collaborative over unilateral).
+     * Select the preferred spending path (e.g. collaborative over unilateral).
      *
      * @returns PathSelection if a viable path exists, null otherwise
      */
     selectPath(script: S, contract: Contract, context: PathContext): PathSelection | null;
 
-    /**
-     * Get all possible spending paths for the current context.
-     * Returns empty array if no paths are available.
-     *
-     * Useful for showing users which spending options exist regardless of
-     * current spendability.
-     */
+    /** All possible spending paths for the context, regardless of current spendability. */
     getAllSpendingPaths(script: S, contract: Contract, context: PathContext): PathSelection[];
 
-    /**
-     * Get all currently spendable paths.
-     * Returns empty array if no paths are available.
-     */
+    /** All currently spendable paths (empty if none). */
     getSpendablePaths(script: S, contract: Contract, context: PathContext): PathSelection[];
 
     /**
-     * Whether this contract's VTXOs may be picked by *generic* wallet spending —
-     * send, settle, renewal, asset operations, offboard, `available` balance.
-     * Explicit-input APIs (`settle({ inputs })`, `sendBitcoin({ selectedVtxos })`,
-     * …) stay open regardless: naming an outpoint is the intent this gate protects.
+     * Whether this contract's VTXOs may be picked by *generic* wallet spending (send, settle,
+     * renewal, asset operations, offboard, `available` balance). Explicit-input APIs
+     * (`settle({ inputs })`, `send({ selectedVtxos })`) stay open regardless.
      *
-     * Pure, synchronous and offline — it runs inside the service worker, so no
-     * chain tip, no network, no live plugin object. Absent or `false` ⇒ NOT
-     * spendable: a type core cannot reason about must not leak by omission.
-     *
-     * No `script` parameter: deriving it costs a taproot tree per contract on a
-     * read path (#521) and no shipped handler needs it. A handler that does can
-     * call its own `createScript(contract.params)`.
+     * Pure, synchronous and offline (runs in the service worker). Absent or `false` ⇒ NOT
+     * spendable, so an unknown type can't leak by omission. No `script` param: deriving a taproot
+     * tree per contract on a read path is costly (#521); use `createScript` if needed.
      */
     isGenericallySpendable?(contract: Contract): boolean;
 
     /**
-     * Refuse a spend this contract definitively cannot make right now, with a
-     * reason the caller can act on. Called before anything is signed or
-     * submitted, for inputs the caller named explicitly.
+     * Refuse, before signing, an explicitly named input this contract definitively cannot spend
+     * now (e.g. an immature timelock), with an actionable reason instead of an opaque server
+     * rejection. Counterpart to {@link isGenericallySpendable}, which leaves explicit inputs open.
      *
-     * This is the counterpart to {@link isGenericallySpendable}, not a
-     * duplicate of it. That gate keeps escrow out of GENERIC selection and
-     * deliberately leaves explicit-input APIs open, because naming an outpoint
-     * is the intent it protects. Naming one too early is still a mistake
-     * though, and without this it is a mistake the server reports — as a
-     * protocol-level rejection, after the round trip, in terms that do not name
-     * the timelock that was not yet mature.
-     *
-     * **Throw only on a definite no.** Absent, silent, or unsure all mean "no
-     * opinion" and the spend proceeds. A handler must not refuse merely because
-     * it found no path: `getSpendablePaths` legitimately returns empty for
-     * spendable contracts — `arkade`'s skips every covenant leaf, so a program
-     * spendable only through its emulator-signed leaf reports nothing — and an
-     * unreadable timelock (height-typed with no chain tip) is unknown, not
-     * immature. @see cltvMaturity, which keeps those apart.
-     *
-     * Returning a promise is allowed so a handler needing I/O is not forced to
-     * throw synchronously — callers await the result. Prefer synchronous where
-     * possible: this runs on the path between a caller's decision to spend and
-     * the spend itself.
+     * **Throw only on a definite no**; absent or unsure means the spend proceeds. An empty
+     * `getSpendablePaths` is not a no (`arkade`'s skips covenant leaves), nor is an unreadable
+     * timelock (height-typed with no chain tip) — @see cltvMaturity. May return a promise for
+     * I/O, but prefer synchronous: it sits on the spend path.
      *
      * @throws Error when the contract provably cannot be spent at `context`
      */
@@ -356,9 +252,8 @@ export interface ContractHandler<P = Record<string, unknown>, S extends VtxoScri
 }
 
 /**
- * What a {@link Discoverable.discoverAt} call returns — exactly the
- * shape `ContractManager.createContract` accepts (script-keyed,
- * idempotent on re-register).
+ * What {@link Discoverable.discoverAt} returns: exactly what `ContractManager.createContract`
+ * accepts (script-keyed, idempotent on re-register).
  */
 export interface DiscoveredContract {
     type: string;
@@ -370,50 +265,36 @@ export interface DiscoveredContract {
 }
 
 /**
- * Read-only context the scanner injects into every `discoverAt` call.
- * The boltz/swap handler does NOT receive its Boltz client here — it
- * closes over its own client at registration time.
+ * Read-only context the scanner injects into every `discoverAt` call. Never carries an external
+ * service client; a handler needing one closes over it at registration.
  */
 export interface DiscoveryDeps {
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
-    /**
-     * Ark-address network data. The `{ hrp }` shape is all the L2
-     * (`default`/`delegate`) discovery path needs to render an Ark address.
-     */
+    /** Ark-address network data; `{ hrp }` is all L2 (`default`/`delegate`) discovery needs. */
     network: { hrp: string };
     /**
-     * Full Bitcoin network descriptor for on-chain (P2TR) address
-     * rendering. Required by the boarding discovery probe, which derives an
-     * on-chain Taproot address via {@link VtxoScript.onchainAddress} — the
-     * `{ hrp }`-only {@link DiscoveryDeps.network} lacks the `bech32` data
-     * that needs. Absent only when no boarding discovery is plumbed (e.g.
-     * the scanner unit harness), in which case boarding `discoverAt` no-ops.
+     * Full Bitcoin network for on-chain (P2TR) addresses, needed by boarding discovery (`{ hrp }`
+     * lacks the `bech32` data). When absent, boarding `discoverAt` no-ops.
      */
     onchainNetwork?: Network;
     /**
-     * The server's **current** signer key (x-only, 32 bytes), taken from a
-     * fresh server-info snapshot at restore time. L2 (`default`/`delegate`)
-     * discovery probes this key first.
+     * The server's **current** signer key (x-only, 32 bytes) from a fresh server-info snapshot at
+     * restore time; L2 discovery probes it first.
      */
     serverPubKey: Uint8Array;
     /**
-     * The server's **deprecated** signer keys (x-only, 32 bytes) from the same
-     * snapshot. A VTXO minted under a now-rotated signer is anchored to a
-     * different script; L2 discovery scans these keys alongside
-     * {@link DiscoveryDeps.serverPubKey} so signer rotation does not strand
-     * funds. Empty/absent when the server advertises no deprecated signers.
-     * Boarding discovery does not consult this set (current UTXO set only).
+     * The server's **deprecated** signer keys (x-only, 32 bytes) from the same snapshot. L2
+     * discovery scans them too so signer rotation doesn't strand funds; boarding discovery
+     * ignores them (current UTXO set only).
      */
     deprecatedSignerPubKeys?: Uint8Array[];
     /** Relative timelocks the wallet treats as its baseline matrix. */
     csvTimelocks: RelativeTimelock[];
     /**
-     * Boarding-exit CSV timelock. Distinct from {@link DiscoveryDeps.csvTimelocks}
-     * (the unilateral-exit matrix): boarding scripts source their CSV from the
-     * server's boarding-exit delay. Present only when boarding discovery is
-     * plumbed; when absent, boarding `discoverAt` no-ops (so the scanner unit
-     * harness, which never sets it, is unaffected).
+     * Boarding-exit CSV timelock (the server's boarding-exit delay), distinct from the
+     * unilateral-exit {@link DiscoveryDeps.csvTimelocks}. When absent, boarding `discoverAt`
+     * no-ops.
      */
     boardingTimelock?: RelativeTimelock;
     /** Present only for delegate wallets. */
@@ -429,12 +310,9 @@ export type CandidateDeps = Pick<DiscoveryDeps, "network" | "serverPubKey" | "cs
     Pick<Partial<DiscoveryDeps>, "deprecatedSignerPubKeys" | "delegatePubKey">;
 
 /**
- * Optional capability a {@link ContractHandler} implements to participate
- * in `wallet.restore()`'s gap-limit scan. The scanner owns the index
- * loop and the gap counter; the handler answers "do I own a contract
- * anchored to the pubkey/descriptor at this index?" — checked against
- * the indexer / explorer / (for swaps) the handler's own source. The
- * handler MAY batch/cache internally across calls.
+ * Optional {@link ContractHandler} capability for `wallet.restore()`'s gap-limit scan. The scanner
+ * owns the index loop and gap counter; the handler answers "do I own a contract at this index?"
+ * from its own source, and may batch/cache across calls.
  */
 export interface Discoverable {
     discoverAt(
@@ -444,21 +322,13 @@ export interface Discoverable {
     ): Promise<DiscoveredContract[]>;
 
     /**
-     * Optional: answer for a whole scan window in one batched round-trip.
-     * The scanner prefers it over per-index `discoverAt` calls when present,
-     * which is what keeps a 10-index window to 1-2 indexer requests instead
-     * of one per index. Handlers whose source is inherently per-address (e.g.
-     * boarding, on Esplora) implement only `discoverAt`.
+     * Optional: answer a whole scan window in one batched round-trip; preferred over per-index
+     * `discoverAt` when present. Per-address sources (e.g. boarding on Esplora) omit it.
      *
-     * **All-or-nothing per call.** Either resolve with a map covering *every*
-     * requested index (empty array = confirmed miss), or reject — a handler
-     * whose inner chunk fails partway must discard the partial results and
-     * reject, because a missing index would otherwise read as "no funds here"
-     * and let restore close its gap window on a failed request. The scanner
-     * enforces this rather than trusting it: an incomplete map is treated as a
-     * rejection, making the whole requested range indeterminate (hits present
-     * in it are still persisted) and truncating the scan at the range's first
-     * index. Indices that were not requested are ignored.
+     * **All-or-nothing per call.** Resolve with a map covering *every* requested index (empty
+     * array = confirmed miss) or reject; a missing index would read as "no funds" and close the
+     * gap window on a failed request. The scanner treats an incomplete map as a rejection (hits
+     * still persisted, scan truncated at the range's first index); unrequested indices are ignored.
      */
     discoverRange?(
         entries: readonly { index: number; descriptor: string }[],
@@ -466,13 +336,9 @@ export interface Discoverable {
     ): Promise<Map<number, DiscoveredContract[]>>;
 
     /**
-     * Optional: every unverified contract this handler could own at one HD
-     * index — pure derivation, no I/O, no metadata. `discoverRange` probes
-     * these scripts and the look-ahead band subscribes to them, so the two
-     * cannot cover different sets.
-     *
-     * `boarding` omits it: its probe is an on-chain address lookup, and that
-     * keeps it out of the band (deposits are watched on their own channel).
+     * Optional: every unverified contract this handler could own at one HD index (pure
+     * derivation, no I/O). `discoverRange` probes these and the look-ahead band subscribes to
+     * them, so the two cover the same set. `boarding` omits it (deposits have their own channel).
      */
     candidatesAt?(index: number, descriptor: string, deps: CandidateDeps): DiscoveredContract[];
 }
@@ -503,11 +369,10 @@ export interface DerivedContractTapscripts {
 }
 
 /**
- * Optional capability a {@link ContractHandler} implements to provide the
- * forfeit/intent tapscripts for VTXO annotation. Handlers whose script shape
- * doesn't expose the legacy `forfeit()` method (e.g. program-compiled arkade
- * contracts, where the right leaf depends on the program) implement this so
- * the annotation pipeline stays type-agnostic.
+ * Optional {@link ContractHandler} capability providing the forfeit/intent tapscripts for VTXO
+ * annotation, for scripts without the legacy `forfeit()` (e.g. program-compiled arkade contracts).
+ * Must be pure in `(contract.type, contract.script, contract.params)`: `ContractManager` memoizes
+ * the result for its lifetime.
  */
 export interface TapscriptDeriving<S extends VtxoScript = VtxoScript> {
     deriveTapscripts(script: S, contract: Contract): DerivedContractTapscripts;
@@ -522,8 +387,18 @@ export function isTapscriptDeriving(
     );
 }
 
+/** A script the watcher reports on without the wallet owning it. */
+export interface WatchedScript {
+    script: string;
+
+    /** Free-form tag echoed back by `getWatchedScripts`; never sent anywhere. */
+    label?: string;
+}
+
 /**
- * Event emitted when contract-related changes occur.
+ * Event emitted when contract-related changes occur. Watch-only scripts report the same
+ * `vtxo_received` / `vtxo_spent` types without a `contract`; that absence is the ownership
+ * boundary, so `event.contract` only compiles after {@link isContractVtxoEvent}.
  */
 export type ContractEvent =
     | {
@@ -540,30 +415,44 @@ export type ContractEvent =
           contract: Contract;
           timestamp: number;
       }
+    | {
+          type: "vtxo_received";
+          contractScript: string;
+          vtxos: VirtualCoin[];
+          timestamp: number;
+      }
+    | {
+          type: "vtxo_spent";
+          contractScript: string;
+          vtxos: VirtualCoin[];
+          timestamp: number;
+      }
     | { type: "connection_reset"; timestamp: number };
 
+export type ContractVtxoEvent = Extract<ContractEvent, { contract: Contract }>;
+
 /**
- * Callback for contract events.
+ * Gate every wallet-side effect on this: a watch-only event has no contract.
+ * @example `if (!isContractVtxoEvent(event)) return;` inside `onContractEvent`,
+ * before reading `event.contract` — which does not compile without it.
  */
+export function isContractVtxoEvent(event: ContractEvent): event is ContractVtxoEvent {
+    return "contract" in event && event.contract !== undefined;
+}
+
+/** Callback for contract events. */
 export type ContractEventCallback = (event: ContractEvent) => void;
 
-/**
- * Options for retrieving contracts from the Contract Manager.
- * Currently an alias of the repository's filter type but can be extended in the future.
- */
+/** Options for retrieving contracts from the Contract Manager (currently the repository filter). */
 export type GetContractsFilter = ContractFilter;
 
-/**
- * Contract with its virtual outputs included.
- */
+/** Contract with its virtual outputs included. */
 export type ContractWithVtxos = {
     contract: Contract;
     vtxos: ExtendedContractVtxo[];
 };
 
-/**
- * Summary of a contract's balance.
- */
+/** Summary of a contract's balance. */
 export interface ContractBalance {
     /** Total balance (settled + pending) in satoshis */
     total: number;

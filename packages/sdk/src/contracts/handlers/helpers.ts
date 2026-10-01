@@ -1,6 +1,12 @@
 import { hex } from "@scure/base";
 import { sequenceToTimelock } from "../../utils/timelock";
-import { Contract, DiscoveredContract, PathContext, PathSelection } from "../types";
+import {
+    Contract,
+    DerivedContractTapscripts,
+    DiscoveredContract,
+    PathContext,
+    PathSelection,
+} from "../types";
 import type { CandidateDeps, Discoverable, DiscoveryDeps } from "../types";
 import {
     isDescriptor,
@@ -13,6 +19,7 @@ import { getNormalizedVtxos } from "../../wallet/vtxo";
 import { DefaultVtxo } from "../../script/default";
 import type { TapLeafScript } from "../../script/base";
 import type { RelativeTimelock } from "../../script/tapscript";
+import type { VHTLC } from "../../script/vhtlc";
 import { WALLET_RECEIVE_SOURCE } from "../metadata";
 import { DEFAULT_PAGE_SIZE, SCRIPT_QUERY_CHUNK_SIZE } from "../constants";
 
@@ -60,27 +67,8 @@ export function resolveRole(
         return undefined;
     };
 
-    // Try the preferred descriptor first. If it cannot be resolved
-    // (for example an HD descriptor without derivation support), fall back
-    // to walletPubKey for backward compatibility.
-    if (context.walletDescriptor) {
-        const walletDescriptorKey = extractRawPubKey(context.walletDescriptor);
-        const matchedRole = matchRole(walletDescriptorKey);
-        if (matchedRole) {
-            return matchedRole;
-        }
-
-        if (!walletDescriptorKey && context.walletPubKey) {
-            return matchRole(extractRawPubKey(context.walletPubKey));
-        }
-        return undefined;
-    }
-
-    if (context.walletPubKey) {
-        return matchRole(extractRawPubKey(context.walletPubKey));
-    }
-
-    return undefined;
+    if (!context.walletDescriptor) return undefined;
+    return matchRole(extractRawPubKey(context.walletDescriptor));
 }
 
 /**
@@ -229,6 +217,179 @@ export function assertVhtlcSpendableNow(contract: Contract, context: PathContext
             `rejects a spend of it. Retry after ${matures}, or wait for the receiver to ` +
             `claim it with the preimage.`,
     );
+}
+
+/** The leaves both VHTLC script versions inherit from `VHTLC.BaseScript`, which is not exported. */
+type VhtlcLeaves = Pick<
+    VHTLC.Script,
+    | "claim"
+    | "refundWithoutReceiver"
+    | "unilateralClaim"
+    | "unilateralRefundWithoutReceiver"
+    | "encode"
+>;
+
+export function selectVhtlcPath(
+    script: VhtlcLeaves,
+    contract: Contract,
+    context: PathContext,
+): PathSelection | null {
+    const role = resolveRole(contract, context);
+    const preimage = contract.params?.preimage;
+    const refundLocktime = BigInt(contract.params.refundLocktime);
+
+    if (!role) {
+        return null;
+    }
+
+    if (context.collaborative) {
+        if (role === "receiver" && preimage) {
+            return {
+                leaf: script.claim(),
+                extraWitness: [hex.decode(preimage)],
+            };
+        }
+
+        if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
+            return {
+                leaf: script.refundWithoutReceiver(),
+            };
+        }
+
+        return null;
+    }
+
+    if (role === "receiver" && preimage) {
+        const sequence = Number(contract.params.claimDelay);
+        if (!isCsvSpendable(context, sequence)) return null;
+        return {
+            leaf: script.unilateralClaim(),
+            extraWitness: [hex.decode(preimage)],
+            sequence,
+        };
+    }
+
+    if (role === "sender") {
+        const sequence = Number(contract.params.refundNoReceiverDelay);
+        if (!isCsvSpendable(context, sequence)) return null;
+        return {
+            leaf: script.unilateralRefundWithoutReceiver(),
+            sequence,
+        };
+    }
+
+    return null;
+}
+
+export function vhtlcAllSpendingPaths(
+    script: VhtlcLeaves,
+    contract: Contract,
+    context: PathContext,
+): PathSelection[] {
+    const role = resolveRole(contract, context);
+    const paths: PathSelection[] = [];
+
+    if (!role) {
+        return paths;
+    }
+
+    const preimage = contract.params?.preimage;
+
+    // Collaborative paths (no timelock checks)
+    if (context.collaborative) {
+        if (role === "receiver" && preimage) {
+            paths.push({
+                leaf: script.claim(),
+                extraWitness: [hex.decode(preimage)],
+            });
+        }
+        if (role === "sender") {
+            paths.push({
+                leaf: script.refundWithoutReceiver(),
+            });
+        }
+    } else {
+        // Unilateral paths (no timelock checks)
+        if (role === "receiver" && preimage) {
+            const sequence = Number(contract.params.claimDelay);
+            paths.push({
+                leaf: script.unilateralClaim(),
+                extraWitness: [hex.decode(preimage)],
+                sequence,
+            });
+        }
+        if (role === "sender") {
+            const sequence = Number(contract.params.refundNoReceiverDelay);
+            paths.push({
+                leaf: script.unilateralRefundWithoutReceiver(),
+                sequence,
+            });
+        }
+    }
+
+    return paths;
+}
+
+export function vhtlcSpendablePaths(
+    script: VhtlcLeaves,
+    contract: Contract,
+    context: PathContext,
+): PathSelection[] {
+    const role = resolveRole(contract, context);
+    const paths: PathSelection[] = [];
+
+    if (!role) {
+        return paths;
+    }
+
+    const preimage = contract.params?.preimage;
+    const refundLocktime = BigInt(contract.params.refundLocktime);
+
+    if (context.collaborative) {
+        if (role === "receiver" && preimage) {
+            paths.push({
+                leaf: script.claim(),
+                extraWitness: [hex.decode(preimage)],
+            });
+        }
+        if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
+            paths.push({
+                leaf: script.refundWithoutReceiver(),
+            });
+        }
+        return paths;
+    }
+
+    if (role === "receiver" && preimage) {
+        const sequence = Number(contract.params.claimDelay);
+        if (isCsvSpendable(context, sequence)) {
+            paths.push({
+                leaf: script.unilateralClaim(),
+                extraWitness: [hex.decode(preimage)],
+                sequence,
+            });
+        }
+    }
+    if (role === "sender") {
+        const sequence = Number(contract.params.refundNoReceiverDelay);
+        if (isCsvSpendable(context, sequence)) {
+            paths.push({
+                leaf: script.unilateralRefundWithoutReceiver(),
+                sequence,
+            });
+        }
+    }
+
+    return paths;
+}
+
+export function deriveVhtlcTapscripts(script: VhtlcLeaves): DerivedContractTapscripts {
+    const leaf = script.refundWithoutReceiver();
+    return {
+        forfeitTapLeafScript: leaf,
+        intentTapLeafScript: leaf,
+        tapTree: script.encode(),
+    };
 }
 
 /**

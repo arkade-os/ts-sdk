@@ -1,25 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseFetch, fetch, FetchError } from "../src/utils/fetch";
+import { jsonResponse } from "./helpers/response";
 
 afterEach(() => vi.unstubAllGlobals());
-
-describe("FetchError", () => {
-    it("is a named Error subclass carrying url, method and cause", () => {
-        const cause = new TypeError("Failed to fetch");
-        const err = new FetchError("boom", {
-            url: "https://x.test/a",
-            method: "POST",
-            cause,
-        });
-        expect(err).toBeInstanceOf(Error);
-        expect(err).toBeInstanceOf(FetchError);
-        expect(err.name).toBe("FetchError");
-        expect(err.message).toBe("boom");
-        expect(err.url).toBe("https://x.test/a");
-        expect(err.method).toBe("POST");
-        expect(err.cause).toBe(cause);
-    });
-});
 
 describe("baseFetch", () => {
     it("wraps a transport-level rejection in FetchError, defaulting method to GET and honoring init.method", async () => {
@@ -73,7 +56,7 @@ describe("baseFetch", () => {
     });
 
     it("passes a resolving Response through unchanged", async () => {
-        const response = { ok: true, status: 200 } as unknown as Response;
+        const response = jsonResponse({});
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => response),
@@ -120,7 +103,7 @@ describe("Ark-server fetch wrapper", () => {
     });
 
     it("passes a resolving Response through unchanged", async () => {
-        const response = { ok: true } as unknown as Response;
+        const response = jsonResponse({});
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => response),

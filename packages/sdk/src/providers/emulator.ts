@@ -3,9 +3,16 @@
  *
  * The emulator is a signing service that executes Arkade scripts
  * and co-signs transactions when the scripts pass validation.
+ *
+ * The read here goes through `baseFetch`, the SDK's shared fetch boundary, so
+ * it picks up whatever policy that boundary carries. The four submit calls
+ * deliberately do not: aborting a submit would not tell the caller whether the
+ * emulator signed, and none of them has a way to find out, so they stay on the
+ * global `fetch` with their transport-error type unchanged.
  */
 
 import { Intent } from "../intent";
+import { baseFetch } from "../utils/fetch";
 
 export interface EmulatorInfo {
     signerPubkey: string;
@@ -57,7 +64,9 @@ export class RestEmulatorProvider implements EmulatorProvider {
 
     async getInfo(): Promise<EmulatorInfo> {
         const url = `${this.serverUrl}/v1/info`;
-        const response = await fetch(url);
+        // `baseFetch`, not the Ark-server `fetch`: the emulator is a distinct
+        // origin and rejects `X-Build-Version` / `X-SDK-VERSION` in preflight.
+        const response = await baseFetch(url);
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Failed to get emulator info: ${errorText}`);

@@ -16,15 +16,6 @@ export interface WalletState {
     lastSyncTime?: number;
 }
 
-/** Stored commitment transaction metadata. */
-export type CommitmentTxRecord = {
-    /** Commitment transaction id. */
-    txid: string;
-
-    /** Creation timestamp in milliseconds. */
-    createdAt: number;
-};
-
 export interface VtxoRepositoryKey {
     /** Authoritative ownership key. */
     script: string;
@@ -52,6 +43,12 @@ export interface WalletRepository extends AsyncDisposable {
      * @optional SDK backends implement this; custom backends fall back to Tier 1.
      */
     getVtxosForScript?(script: string): Promise<ExtendedVirtualCoin[]>;
+
+    /** Fetch a script set without one read per contract; `unspentOnly` omits spent rows. */
+    getVtxosForScripts?(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]>;
 
     /**
      * Save virtual outputs for a script.

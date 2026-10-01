@@ -4,20 +4,32 @@ import {
     promisifyRequest,
     type ManagedConnection,
 } from "@arkade-os/sdk";
-import { marketsCacheKey, type AssetSwapRepository, type MarketsCacheEntry } from "./repository";
+import {
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
+    marketsCacheKey,
+    type AssetSwapRepository,
+    type MarketsCacheEntry,
+    type RfqHistoryCursor,
+} from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
+import type { SwapRecord } from "./client/record";
+import type { RfqSwapState } from "./rfqSwapState";
 
 const DEFAULT_DB_NAME = "arkade-intents";
 /** Bump when adding an object store or index. `initDatabase` only runs inside
  * `onupgradeneeded`, which fires on a version *increase* — its contains-guard
  * cannot backfill a store into a database already open at this version, so a
  * new store added without a bump is simply missing for existing users. */
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 const STORE_SWAPS = "swaps";
 const STORE_RFQ_SWAPS = "rfqSwaps";
+const STORE_SWAP_RECORDS = "swapRecords";
 const STORE_SCANNED = "scannedTxids";
 const STORE_MARKETS = "markets";
+const HISTORY_INDEX = "byStateUpdatedAtAndRfqId";
+const PAGE_INDEX = "byStateAndRfqId";
 
 /** Every store, declared once. `clear()` wipes exactly this list, so a store
  * added here cannot be forgotten there — which would leave a partial wipe the
@@ -28,32 +40,32 @@ const STORES: readonly [name: string, options?: IDBObjectStoreParameters][] = [
     // v2. Separate from `swaps` rather than sharing it: the two record types
     // have different keys and no consumer wants them interleaved.
     [STORE_RFQ_SWAPS, { keyPath: "rfqId" }],
+    // v3. The v2 client's accept records, keyed by quote id. Its own store for
+    // the same reason, plus one more: the v1 read path drops a row carrying
+    // neither `offerHex` nor `paymentHash`, so sharing `swaps` would pin the
+    // v2 shape to a v1 predicate.
+    [STORE_SWAP_RECORDS, { keyPath: "id" }],
     [STORE_SCANNED],
     [STORE_MARKETS],
 ];
 
-/**
- * @param oldVersion the version being upgraded FROM, 0 on a fresh install.
- * @param transaction the upgrade transaction — the only way to read or rewrite
- * existing rows during a migration.
- *
- * Both unused today: every version so far has only added an object store, and
- * `createObjectStore` needs neither. Named rather than dropped because the next
- * migration will not be additive, and a signature that takes them is what makes
- * "cursor over v2 rows and rewrite them" a local change here.
- */
-function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
-    void oldVersion;
-    void transaction;
+function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTransaction | null) {
     for (const [name, options] of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options);
     }
+    // v4. RFQ history and active-restore page indexes.
+    const rfq = transaction?.objectStore(STORE_RFQ_SWAPS);
+    if (rfq && !rfq.indexNames.contains(HISTORY_INDEX)) {
+        rfq.createIndex(HISTORY_INDEX, ["state", "updatedAt", "rfqId"]);
+    }
+    if (rfq && !rfq.indexNames.contains(PAGE_INDEX)) {
+        rfq.createIndex(PAGE_INDEX, ["state", "rfqId"]);
+    }
 }
 
-/** Browser backend over the SDK's shared IndexedDB manager — the same
- * infrastructure the wallet already uses for its Boltz swap repository. */
+/** Browser backend over the SDK's shared IndexedDB manager. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {
@@ -102,9 +114,62 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         return promisifyRequest((await this.readStore(STORE_RFQ_SWAPS)).getAll());
     }
 
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        const range = IDBKeyRange.bound(
+            [state, afterId ?? ""],
+            [state, "\uffff"],
+            afterId !== undefined,
+        );
+        const index = (await this.readStore(STORE_RFQ_SWAPS)).index(PAGE_INDEX);
+        return promisifyRequest(index.getAll(range, limit));
+    }
+
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        const useCursor = after !== undefined && after.updatedAt >= since;
+        const range = IDBKeyRange.bound(
+            useCursor ? [state, after!.updatedAt, after!.rfqId] : [state, since, ""],
+            [state, Number.MAX_SAFE_INTEGER, "\uffff"],
+            useCursor,
+        );
+        const index = (await this.readStore(STORE_RFQ_SWAPS)).index(HISTORY_INDEX);
+        return promisifyRequest(index.getAll(range, limit));
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.write(STORE_RFQ_SWAPS, (store) => {
             store.delete(rfqId);
+        });
+    }
+
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            store.put(record);
+        });
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).get(id));
+    }
+
+    async getAllSwapRecords(): Promise<SwapRecord[]> {
+        return promisifyRequest((await this.readStore(STORE_SWAP_RECORDS)).getAll());
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        await this.write(STORE_SWAP_RECORDS, (store) => {
+            store.delete(id);
         });
     }
 

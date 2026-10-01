@@ -396,6 +396,20 @@ export namespace CSVMultisigTapscript {
     }
 }
 
+function isConditionScriptValid(script: Uint8Array): true | Error {
+    const asm = Script.decode(script);
+
+    if (asm.length < 1) {
+        return new Error(`Invalid script: too short (expected at least 1)`);
+    }
+
+    if (asm.lastIndexOf("VERIFY") === -1) {
+        return new Error("Invalid script: missing VERIFY operation");
+    }
+
+    return true;
+}
+
 /**
  * Combines a condition script with an exit closure. The resulting script requires
  * the condition to be met, followed by the standard exit closure requirements
@@ -443,7 +457,7 @@ export namespace ConditionCSVMultisigTapscript {
 
         const asm = Script.decode(script);
 
-        let verifyIndex = getVerifyIndex(asm);
+        const verifyIndex = asm.lastIndexOf("VERIFY");
 
         if (verifyIndex === -1) {
             throw Error("Invalid script: missing VERIFY operation");
@@ -485,31 +499,8 @@ export namespace ConditionCSVMultisigTapscript {
         return tapscript.type === TapscriptType.ConditionCSVMultisig;
     }
 
-    function getVerifyIndex(asm: ScriptType) {
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-                return verifyIndex;
-            }
-        }
-        return verifyIndex;
-    }
-
     export function isScriptValid(script: Uint8Array): true | Error {
-        const asm = Script.decode(script);
-
-        if (asm.length < 1) {
-            return new Error(`Invalid script: too short (expected at least 1)`);
-        }
-
-        let verifyIndex = getVerifyIndex(asm);
-
-        if (verifyIndex === -1) {
-            return new Error("Invalid script: missing VERIFY operation");
-        }
-
-        return true;
+        return isConditionScriptValid(script);
     }
 }
 
@@ -560,7 +551,7 @@ export namespace ConditionMultisigTapscript {
 
         const asm = Script.decode(script);
 
-        let verifyIndex = getVerifyIndex(asm);
+        const verifyIndex = asm.lastIndexOf("VERIFY");
 
         if (verifyIndex === -1) {
             throw Error("Invalid script: missing VERIFY operation");
@@ -602,31 +593,8 @@ export namespace ConditionMultisigTapscript {
         return tapscript.type === TapscriptType.ConditionMultisig;
     }
 
-    function getVerifyIndex(asm: ScriptType) {
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-                return verifyIndex;
-            }
-        }
-        return verifyIndex;
-    }
-
     export function isScriptValid(script: Uint8Array): true | Error {
-        const asm = Script.decode(script);
-
-        if (asm.length < 1) {
-            return new Error(`Invalid script: too short (expected at least 1)`);
-        }
-
-        let verifyIndex = getVerifyIndex(asm);
-
-        if (verifyIndex === -1) {
-            return new Error("Invalid script: missing VERIFY operation");
-        }
-
-        return true;
+        return isConditionScriptValid(script);
     }
 }
 

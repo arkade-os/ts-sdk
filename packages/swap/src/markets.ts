@@ -1,23 +1,16 @@
 /**
  * Quoting: solver discovery and the pricing guardrails around a plan.
  *
- * The user side of a swap — the layer that works out what one would cost
- * before `offer` commits to it. This is request-for-quote like every other
- * Arkade Intents corridor; what is specific here is that the quote resolves
- * client-side, from the market card the solver publishes (its price feed and
- * its fee) rather than over a relay roundtrip. The card commits a solver to a
- * price; only a fill commits it to this swap, so nothing here is signed and no
- * inventory is reserved.
- *
- * Relay-negotiated quotes are where every corridor converges, this one
- * included. What stays specific to intra-Arkade is the settlement covenant,
- * not the negotiation. See the README's Roles section for why this package
- * says user and solver rather than maker and taker.
+ * The quote resolves client-side from the solver's published market card (price feed
+ * and fee), not over a relay round trip. The card commits a solver to a price; only a
+ * fill commits it to this swap, so nothing here is signed and no inventory is reserved.
  */
 import {
     bestMarket,
     discover,
     isNetwork,
+    marketLegKey,
+    registryIndexUrl,
     sideLimits,
     type DiscoveredMarket,
     type LocalCardInput,
@@ -27,33 +20,31 @@ import {
 } from "@arkade-os/solver-discovery";
 import { isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
+import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
 
 /** Shared quote options so every quote path agrees.
  * No safety margin on top of the market fee: pricing drift between quote
- * and fill is the solver's risk to manage, not the user's to prepay. */
+ * and fill is the solver's risk to manage, not the user's to prepay.
+ */
 export const QUOTE_OPTIONS = { safetyBps: 0 } as const;
 
-/** Feed fetcher with a short per-URL TTL cache. A quote UI refetches the
- * market's price feed on every debounced keystroke, and public feeds
- * (CoinGecko) rate-limit that burst hard enough that big amounts reliably die
- * as "Quote unavailable" mid-typing — one feed value per TTL window is fresh
- * enough for a preview whose rate is re-checked at fill anyway.
+/** Feed fetcher with a short per-URL TTL cache: a quote UI refetches the feed on every
+ * debounced keystroke, and public feeds (CoinGecko) rate-limit that burst. The rate is
+ * re-checked at fill anyway.
  * ponytail: no stale-serve when the fetch itself fails; add one if feeds
  * flake beyond the TTL window (cap the staleness — the feed value becomes
  * the covenant floor, so an old price must never price a real offer).
- * Keyed on the request URL, so it assumes a market's feed URL is stable and
- * amount-invariant (true today); a cache-busting nonce would silently make it
- * a no-op — the flat-feedCalls swap test guards against that regressing. */
+ * Assumes a market's feed URL is stable and amount-invariant; a cache-busting nonce
+ * would silently make this a no-op (guarded by the flat-feedCalls swap test).
+ */
 export const makeCachedFeedFetch = (
     ttlMs = 30_000,
     fetchImpl: typeof fetch = fetch,
 ): typeof fetch => {
     const cache = new Map<string, { at: number; body: string }>();
-    // requests that have been sent but not yet answered, so a burst that starts
-    // inside one round trip collapses to a single upstream call — without this
-    // the cache only dedups *after* the first response lands, which is exactly
-    // the window a debounced quote UI fires its keystrokes in
+    // Sent-but-unanswered requests, so a burst inside one round trip collapses to a
+    // single upstream call (the cache alone only dedups after the first response).
     const inflight = new Map<string, Promise<string | undefined>>();
     return async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
@@ -65,8 +56,7 @@ export const makeCachedFeedFetch = (
         const pending = inflight.get(url);
         if (pending) {
             const body = await pending;
-            // undefined means that response was not cacheable (not ok, or an
-            // unreadable body); fall through and make our own request
+            // undefined: that response was not cacheable; make our own request
             if (body !== undefined) return new Response(body);
         }
 
@@ -79,9 +69,7 @@ export const makeCachedFeedFetch = (
         );
         try {
             const response = await fetchImpl(input, init);
-            // caching is best effort: a body read that fails mid-stream must not
-            // take the live response down with it (the caller would see an internal
-            // error instead of the quote it actually got)
+            // Best effort: a failed body read must not take the live response down with it.
             let body: string | undefined;
             if (response.ok) {
                 try {
@@ -102,21 +90,22 @@ export const makeCachedFeedFetch = (
     };
 };
 
-const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
+/** How long a discovered market set is reused. Shared with v2 discovery so the two
+ * paths cannot drift into different answers. */
+export const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
+    if (!market) return false;
     return (
-        typeof market?.pair === "string" &&
         typeof market.base_asset?.id === "string" &&
         typeof market.quote_asset?.id === "string" &&
         typeof market.quote_asset.decimals === "number"
     );
 };
 
-// a missing, malformed, or unreadable cache reads as a miss; the refetch
-// overwrites it. Shape is re-checked on read because a stored entry outlives
-// the schema that wrote it.
+// A missing, malformed, or unreadable cache reads as a miss. Shape is re-checked on
+// read because a stored entry outlives the schema that wrote it.
 const readMarketsCache = async (
     repository: AssetSwapRepository,
     network: Network,
@@ -126,7 +115,11 @@ const readMarketsCache = async (
         const entry = await repository.getCachedMarkets(network, registry);
         if (!Array.isArray(entry?.markets) || typeof entry?.fetchedAt !== "number")
             return undefined;
-        return entry.markets.every(isMarketShaped) ? entry : undefined;
+        const markets = entry.markets.filter(isMarketShaped);
+        // An empty cache is authoritative. A non-empty cache with no readable
+        // markets is malformed and should be replaced by a fresh fetch.
+        if (entry.markets.length > 0 && markets.length === 0) return undefined;
+        return { ...entry, markets };
     } catch {
         return undefined;
     }
@@ -134,7 +127,8 @@ const readMarketsCache = async (
 
 export interface DiscoverMarketsOptions {
     network: Network;
-    /** The network's solver registry index URL; no registry means no markets. */
+    /** Overrides the network's default registry. `undefined` follows
+     * `@arkade-os/solver-discovery`'s per-network default (never hardcoded here). */
     registryUrl: string | undefined;
     /** Backs the 1-hour markets cache and its stale fallback. Omit for a
      * one-shot discovery that always hits the registry. */
@@ -148,16 +142,14 @@ export interface DiscoverMarketsOptions {
      * own fetchImpl with an AbortSignal; add one if a hung registry ever
      * strands discovery in practice. */
     fetchImpl?: typeof fetch;
-    /** `false` forces a refetch past a fresh cache (a user-triggered reload).
-     * It does not disable the stale-cache fallback: an unreachable registry
-     * still serves the last known markets rather than none. */
+    /** `false` forces a refetch past a fresh cache. The stale-cache fallback for an
+     * unreachable registry still applies. */
     useCache?: boolean;
 }
 
 /**
- * Markets from the network's solver registry; [] when none is configured.
- * Registry content changes rarely, so results are cached for an hour and a
- * stale cache backstops an unreachable registry (quotes stay live either way).
+ * Markets from this network's solver registry, cached for an hour, with a stale cache
+ * backstopping an unreachable registry. Only an unrecognised network yields [].
  */
 export const discoverMarkets = async (
     options: DiscoverMarketsOptions,
@@ -171,24 +163,27 @@ export const discoverMarkets = async (
         fetchImpl,
         useCache = true,
     } = options;
-    if (!registry || !isNetwork(network)) return [];
-    const cached = repository && (await readMarketsCache(repository, network, registry));
+    if (!isNetwork(network)) return [];
+    // undefined follows the default ([] would opt out); the cache key is the URL
+    // `discover()` actually reads, default included.
+    const registries = registry ? [registry] : undefined;
+    const registryKey = registries?.[0] ?? registryIndexUrl(network);
+    const cached = repository && (await readMarketsCache(repository, network, registryKey));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
     const { markets, sources, warnings } = await discover({
-        registries: [registry],
+        registries,
         localCards,
         network,
         fetchImpl,
     });
     if (warnings.length) logger?.("solver discovery:", ...warnings);
-    // an unreachable registry (fetch/validation failure) falls back to the stale
-    // cache; a reachable registry is authoritative even when it emptied out
+    // A reachable registry is authoritative even when empty.
     const reachable = sources.some((source) => source.ok);
     if (!reachable && cached) return cached.markets;
     if (reachable && repository) {
         try {
-            await repository.saveCachedMarkets(network, registry, {
+            await repository.saveCachedMarkets(network, registryKey, {
                 markets,
                 fetchedAt: Date.now(),
             });
@@ -201,17 +196,43 @@ export const discoverMarkets = async (
 
 /** Best market for a from/to pair, in either orientation. `give` is the side
  * the sender deposits; `wantSide` skips markets whose receive side is
- * disabled (max = "0"). */
+ * disabled (max = "0").
+ */
 export const findMarket = (
     markets: DiscoveredMarket[],
     fromId: string,
     toId: string,
 ): { market: DiscoveredMarket | null; give: Side } | undefined => {
     if (fromId === toId) return undefined;
-    const givingBase = bestMarket(markets, { baseId: fromId, quoteId: toId, wantSide: "quote" });
+    const resolveMarketId = (id: string): string => {
+        for (const market of markets) {
+            for (const side of ["base", "quote"] as const) {
+                const asset = side === "base" ? market.base_asset : market.quote_asset;
+                if (asset.id === id) return marketLegKey(market, side);
+                const canonical = marketAssetId(market, side) ?? "";
+                const matchesBtc =
+                    id === BTC_ASSET_ID && /^arkade:[^/]+\/slip44:(?:0|1)$/.test(canonical);
+                const matchesAsset =
+                    /^[0-9a-f]{68}$/.test(id) && canonical.endsWith(`/asset:${id}`);
+                if (matchesBtc || matchesAsset) return marketLegKey(market, side);
+            }
+        }
+        return id;
+    };
+    const resolvedFrom = resolveMarketId(fromId);
+    const resolvedTo = resolveMarketId(toId);
+    const givingBase = bestMarket(markets, {
+        baseId: resolvedFrom,
+        quoteId: resolvedTo,
+        wantSide: "quote",
+    });
     if (givingBase) return { market: givingBase, give: "base" };
     return {
-        market: bestMarket(markets, { baseId: toId, quoteId: fromId, wantSide: "base" }),
+        market: bestMarket(markets, {
+            baseId: resolvedTo,
+            quoteId: resolvedFrom,
+            wantSide: "base",
+        }),
         give: "quote",
     };
 };
@@ -226,29 +247,25 @@ export type PlanError =
     | "above-max"
     | "below-dust";
 
-/** Validate a plan against the user's balance and the server dust limit. */
+/** Validate a plan against the user's balance and the server dust limit.*/
 export const validatePlan = (
     plan: OfferPlan,
     giveBalance: bigint,
     dust: bigint,
 ): PlanError | undefined => {
     if (plan.deposit.atomic > giveBalance) return "insufficient-balance";
-    // limits bound the receive side; null bounds mean the solver cannot pay it out
+    // null receive-side bounds mean the solver cannot pay it out
     const { min, max, withinLimits } = plan.limits;
     if (!min || !max) return "side-disabled";
-    // the SDK's plan.limits only covers the receive side, but the market card
-    // bounds BOTH sides — enforce the give side (atomic units of the deposit
-    // asset) or the solver rejects the offer at fill time. sideLimits reads a
-    // disabled or malformed bound as null, so a bad feed fails safe here.
+    // plan.limits covers only the receive side, but the card bounds BOTH; an unchecked
+    // give side is rejected at fill. A malformed bound reads as null, failing safe.
     const giveLimits = sideLimits(plan.market, plan.give);
     if (!giveLimits) return "side-disabled";
     if (plan.deposit.atomic < giveLimits.min) return "below-min";
     if (plan.deposit.atomic > giveLimits.max) return "above-max";
     if (!withinLimits) return plan.receive.atomic < min.atomic ? "below-min" : "above-max";
-    // a BTC side must survive as a VTXO — picked by asset id, not market
-    // orientation, since a registry may publish BTC as base or quote. An
-    // asset↔asset plan has no BTC leg to protect: both sides ride the SDK's
-    // own dust-sat carriers.
+    // A BTC side must survive as a VTXO; picked by asset id since BTC may be base or
+    // quote. Asset↔asset plans ride the SDK's own dust-sat carriers.
     const depositIsBtc = plan.deposit.asset.id === BTC_ASSET_ID;
     const receiveIsBtc = plan.receive.asset.id === BTC_ASSET_ID;
     if (depositIsBtc || receiveIsBtc) {

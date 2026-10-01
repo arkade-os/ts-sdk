@@ -22,10 +22,11 @@ import {
     arkadeSwapRequest,
     assertFundable,
     assertPairLength,
+    deriveLightningSend,
     expectQuote,
     httpTransport,
     lightningSendRequest,
-    lightningSendVtxoScript,
+    lightningSendContract,
     newRfqId,
     offerTermsFromQuote,
     relayTransport,
@@ -58,12 +59,13 @@ const quoteFixture = (over: Partial<RfqQuote> = {}): RfqQuote => ({
     profile: {
         payment_hash: "da".repeat(32),
         lockup_address: "ark1qexample",
+        refund_without_receiver_delay: 277_504,
         receiver_pk_script: hex.encode(p2tr(key(1))),
     },
     ...over,
 });
 
-describe("lightningSendVtxoScript", () => {
+describe("lightningSendContract", () => {
     // Any change to these pinned bytes changes every lockup address and needs
     // coordinated trader/solver deployment — see "Breaking changes" in the
     // README. A version mismatch refuses quotes (verifyLockupAddress), it does
@@ -108,9 +110,9 @@ describe("lightningSendVtxoScript", () => {
     const SENDER_PUBKEY = key(13);
 
     const script = () =>
-        lightningSendVtxoScript({
+        lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -201,9 +203,9 @@ describe("lightningSendVtxoScript", () => {
 
     it("derives the HASH160 commitment from the payment hash — the trader never sees P", () => {
         // Same script from the payment hash alone; a different hash, different tree.
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: hex.encode(sha256(new Uint8Array(32).fill(8))),
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -216,9 +218,9 @@ describe("lightningSendVtxoScript", () => {
     });
 
     it("produces a different address when the sender key changes", () => {
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -231,9 +233,9 @@ describe("lightningSendVtxoScript", () => {
     });
 
     it("produces a different address when the receiver payout script changes", () => {
-        const other = lightningSendVtxoScript({
+        const other = lightningSendContract({
             solverPubkey: key(1),
-            serverPubkey: key(3),
+            operatorPubkey: key(3),
             paymentHash: PAYMENT_HASH,
             refundLocktime: 1_800_000_000,
             claimDelay: 4096,
@@ -246,8 +248,88 @@ describe("lightningSendVtxoScript", () => {
     });
 });
 
+// The send-leg twin of rfqReceive's shape pins. They arrived on the receive
+// leg only because the send derivation was reachable then just through
+// `requestLightningSend`, which needs a wallet; as a pure core it takes the
+// same three, and the shape it picks is what gets funded.
+describe("deriveLightningSend", () => {
+    const PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
+    const contractParams = {
+        solverPubkey: key(1),
+        operatorPubkey: key(3),
+        paymentHash: PAYMENT_HASH,
+        refundLocktime: 1_800_000_000,
+        claimDelay: 4096,
+        emulatorPubkey: key(9),
+        refundPkScript: p2tr(key(5)),
+        senderPubkey: key(13),
+        receiverPkScript: p2tr(key(1)),
+    };
+    const fullSuite = lightningSendContract(contractParams);
+    const legacySuite = lightningSendContract({ ...contractParams, legacy: "preTimelockedRefund" });
+    const fullAddress = fullSuite.address("tark", key(3)).encode();
+    const legacyAddress = legacySuite.address("tark", key(3)).encode();
+
+    const derive = (lockupAddress: string) =>
+        deriveLightningSend({
+            quote: quoteFixture({
+                refund_locktime: 1_800_000_000,
+                profile: {
+                    lockup_address: lockupAddress,
+                    receiver_pk_script: hex.encode(p2tr(key(1))),
+                    refund_without_receiver_delay: 8192,
+                },
+            }),
+            paymentHash: PAYMENT_HASH,
+            senderPubkey: key(13),
+            refundPkScript: p2tr(key(5)),
+            operatorPubkey: key(3),
+            emulatorPubkey: key(9),
+            claimDelay: 4096,
+            hrp: "tark",
+            now: 1_800_000_000 - 8192,
+        });
+
+    it("a nine-leaf-quoting solver matches the FULL-suite candidate, not the legacy one", () => {
+        // The two shapes must actually differ, or the assertions below prove nothing.
+        expect(fullAddress).not.toBe(legacyAddress);
+
+        const derived = derive(fullAddress);
+
+        expect(derived.address).toBe(fullAddress);
+        expect(derived.contractParams.legacy).toBeUndefined();
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(fullSuite.pkScript));
+        expect(hex.encode(derived.swapPkScript)).toBe(hex.encode(fullSuite.pkScript));
+    });
+
+    it("an eight-leaf-quoting solver matches the LEGACY candidate", () => {
+        const derived = derive(legacyAddress);
+
+        expect(derived.address).toBe(legacyAddress);
+        // ...and the matched shape travels in contractParams, so a record
+        // persisted from it rebuilds the lockup the solver actually funded.
+        expect(derived.contractParams.legacy).toBe("preTimelockedRefund");
+        expect(hex.encode(derived.script.pkScript)).toBe(hex.encode(legacySuite.pkScript));
+        expect(hex.encode(derived.swapPkScript)).toBe(hex.encode(legacySuite.pkScript));
+    });
+
+    it("a quote matching NEITHER shape throws AddressMismatch carrying both candidates", () => {
+        const mismatch = ((): unknown => {
+            try {
+                derive("tark1qwrong");
+                return undefined;
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(mismatch).toBeInstanceOf(AddressMismatch);
+        // Newest first — the full suite, then the legacy rebuild.
+        expect((mismatch as AddressMismatch).derived).toEqual([fullAddress, legacyAddress]);
+    });
+});
+
 describe("unilateralClaimDelay", () => {
-    it("rounds the server's exit delay UP to BIP68 granularity, as the solver does", () => {
+    it("rounds the operator's exit delay UP to BIP68 granularity, as the solver does", () => {
         expect(unilateralClaimDelay(4096)).toBe(4096);
         expect(unilateralClaimDelay(4000)).toBe(4096);
         expect(unilateralClaimDelay(604672)).toBe(604672);
@@ -257,7 +339,7 @@ describe("unilateralClaimDelay", () => {
         expect(() => unilateralClaimDelay(144)).toThrow(/512/);
     });
 
-    it("keeps all three tiers BIP68-encodable at the maximum server delay", () => {
+    it("keeps all three tiers BIP68-encodable at the maximum operator delay", () => {
         // the cap sits SOLO_REFUND_HEADROOM_SECONDS below BIP68's 0xffff * 512
         // ceiling so the solo refund stacked above claimDelay still encodes
         const max = 0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS;
@@ -269,9 +351,9 @@ describe("unilateralClaimDelay", () => {
         // leaf's sequence encoded — this threw from inside the tapscript
         // encoder before the cap accounted for the stacked tiers
         expect(() =>
-            lightningSendVtxoScript({
+            lightningSendContract({
                 solverPubkey: key(1),
-                serverPubkey: key(3),
+                operatorPubkey: key(3),
                 paymentHash: "da".repeat(32),
                 refundLocktime: 1_800_000_000,
                 claimDelay: claim,
@@ -283,7 +365,7 @@ describe("unilateralClaimDelay", () => {
         ).not.toThrow();
     });
 
-    it("rejects a server delay whose solo refund would overflow BIP68", () => {
+    it("rejects an operator delay whose solo refund would overflow BIP68", () => {
         expect(() => unilateralClaimDelay(0xffff * 512 - SOLO_REFUND_HEADROOM_SECONDS + 1)).toThrow(
             /BIP68/,
         );
@@ -314,24 +396,41 @@ describe("requests", () => {
         });
     });
 
-    it("names the asset id in the pair, in both directions", () => {
+    it("names the asset ids in BTC-to-asset, asset-to-BTC, and asset-to-asset pairs", () => {
         const usd = asset.AssetId.fromString(USD_ID);
+        const chf = asset.AssetId.fromString(CHF_ID);
+        const makerPkScript = p2tr(key(5));
+        const makerPublicKey = key(1);
         const wanting = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: usd,
-            amountSide: "from",
             amount: 5000,
+            makerPkScript,
+            makerPublicKey,
         }) as Record<string, unknown>;
         expect(wanting.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
-        expect(wanting.amount).toBe(5000);
+        expect(wanting.amount).toBe("5000");
+        expect(wanting.amount_side).toBe("from");
 
         const offering = arkadeSwapRequest({
             rfqId: RFQ_ID,
             offerAsset: usd,
-            amountSide: "to",
-            amount: 5000,
+            amount: 5000n,
+            makerPkScript,
+            makerPublicKey,
         }) as Record<string, unknown>;
         expect(offering.pair).toBe(`arkade:${USD_ID}->arkade:BTC`);
+        expect(offering.amount).toBe("5000");
+
+        const trading = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            offerAsset: usd,
+            wantAsset: chf,
+            amount: 5000n,
+            makerPkScript,
+            makerPublicKey,
+        }) as Record<string, unknown>;
+        expect(trading.pair).toBe(`arkade:${USD_ID}->arkade:${CHF_ID}`);
     });
 
     /** Solvers compare pair strings byte for byte, so an uppercase id reaching
@@ -341,8 +440,9 @@ describe("requests", () => {
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID.toUpperCase()),
-            amountSide: "from",
             amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
         }) as Record<string, unknown>;
         expect(request.pair).toBe(`arkade:BTC->arkade:${USD_ID}`);
     });
@@ -375,39 +475,54 @@ describe("requests", () => {
             });
     });
 
-    /** Each refusal names its own cause: neither set is degenerate, both set is
-     * a real corridor with no counterparty. One shared message would tell the
-     * BTC->BTC caller to wait for a solver that will never help it. */
-    it("refuses neither asset and both, for the reason that applies", () => {
-        const usd = asset.AssetId.fromString(USD_ID);
-        const chf = asset.AssetId.fromString(CHF_ID);
-        expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amountSide: "to", amount: 1 })).toThrow(
-            /exactly one.*not a swap/s,
+    it("refuses a directionless BTC-to-BTC request", () => {
+        const maker = { makerPkScript: p2tr(key(5)), makerPublicKey: key(1) };
+        expect(() => arkadeSwapRequest({ rfqId: RFQ_ID, amount: 1, ...maker })).toThrow(
+            /at least one.*not a swap/s,
         );
-        expect(() =>
-            arkadeSwapRequest({
-                rfqId: RFQ_ID,
-                offerAsset: usd,
-                wantAsset: chf,
-                amountSide: "to",
-                amount: 1,
-            }),
-        ).toThrow(/no solver quotes it yet/);
+    });
+
+    /** Refused client-side until the solver stopped answering `exact_out_unsupported`. */
+    it("names the leg the caller asked for, so exact-out reaches the solver", () => {
+        const exactOut = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amountSide: "to",
+            amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
+        }) as Record<string, unknown>;
+        expect(exactOut.amount_side).toBe("to");
+
+        const exactIn = arkadeSwapRequest({
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
+        }) as Record<string, unknown>;
+        expect(exactIn.amount_side).toBe("from");
     });
 
     /** Load-bearing against the solver's `.strict()` profile schema: a key it
      * does not declare refuses the whole request. */
-    it("sends an empty profile, with no asset keys left in it", () => {
+    it("sends the trader's covenant position in the profile, and nothing else", () => {
+        const makerPkScript = p2tr(key(5));
+        const makerPublicKey = key(1);
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
-            amountSide: "from",
             amount: 5000,
+            makerPkScript,
+            makerPublicKey,
         }) as Record<string, unknown>;
-        expect(Object.keys(request.profile as Record<string, unknown>)).toHaveLength(0);
+        expect(request.profile).toEqual({
+            maker_pk_script: hex.encode(makerPkScript),
+            maker_public_key: hex.encode(makerPublicKey),
+        });
     });
 
-    it("mirrors the wire's pair-length cap, dormant until asset->asset lands", () => {
+    it("mirrors the wire's pair-length cap for asset-to-asset", () => {
         expect(MAX_PAIR_LENGTH).toBe(158);
         const both = rfqPair(
             arkadeAssetLeg(asset.AssetId.fromString(USD_ID)),
@@ -415,15 +530,15 @@ describe("requests", () => {
         );
         expect(both.length).toBe(152);
         expect(() => assertPairLength("x".repeat(MAX_PAIR_LENGTH + 1))).toThrow(/158/);
-        // What the builder can actually emit today — the number that makes the
-        // guard unreachable until the exactly-one-asset rule relaxes.
         const request = arkadeSwapRequest({
             rfqId: RFQ_ID,
             wantAsset: asset.AssetId.fromString(USD_ID),
-            amountSide: "from",
+            offerAsset: asset.AssetId.fromString(CHF_ID),
             amount: 1,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
         }) as Record<string, unknown>;
-        expect((request.pair as string).length).toBe(87);
+        expect((request.pair as string).length).toBe(152);
     });
 });
 
@@ -468,9 +583,40 @@ describe("guardrails", () => {
             /headroom/,
         );
     });
+
+    it("assertFundable refuses a valid_until it cannot compare against", () => {
+        const now = 1_800_000_000;
+        // The wire is JSON: `valid_until` is typed number here but nothing
+        // typechecks the solver's payload, and `now >= NaN` is false — the
+        // expiry gate would pass rather than fail.
+        for (const valid_until of [Number.NaN, Number.POSITIVE_INFINITY, "soon", undefined]) {
+            const quote = quoteFixture({ valid_until: valid_until as unknown as number });
+            const refusal = ((): unknown => {
+                try {
+                    assertFundable({ quote, invoiceExpiresAt: now + 3600, now });
+                    return undefined;
+                } catch (error) {
+                    return error;
+                }
+            })();
+            expect((refusal as { reason?: string }).reason).toBe("quote_malformed");
+        }
+    });
 });
 
 describe("expectQuote", () => {
+    it("exports the refusal vocabulary clients use for typed handling", async () => {
+        const publicApi = (await import("../src/index")) as Record<string, unknown>;
+        const codes = publicApi.RFQ_REFUSAL_ERROR_CODES as string[] | undefined;
+        const recognises = publicApi.isRfqRefusalErrorCode as
+            | ((value: unknown) => boolean)
+            | undefined;
+
+        expect(codes).toContain("invoice_cltv_too_large");
+        expect(recognises?.("invoice_cltv_too_large")).toBe(true);
+        expect(recognises?.("backend_exception")).toBe(false);
+    });
+
     it("refuses a quote for a pair other than the one requested, case included", () => {
         const requested = LIGHTNING_SEND_PAIR;
         expect(expectQuote(quoteFixture(), RFQ_ID, requested).to_amount).toBe(2100);
@@ -494,6 +640,68 @@ describe("expectQuote", () => {
                 LIGHTNING_SEND_PAIR,
             ),
         ).toThrow(SwapRefusal);
+    });
+
+    it("surfaces recognised client-safe refusal details", () => {
+        const reply = {
+            v: 1,
+            type: "rfq_refusal",
+            rfq_id: RFQ_ID,
+            reason: "unsupported_payload",
+            error_code: "invoice_cltv_too_large",
+            field: "profile.invoice",
+            actual: 624,
+            limit: 288,
+            unit: "blocks",
+        };
+
+        let refusal: SwapRefusal | undefined;
+        try {
+            expectQuote(reply, RFQ_ID);
+        } catch (error) {
+            refusal = error as SwapRefusal;
+        }
+
+        expect(refusal).toMatchObject({
+            reason: "unsupported_payload",
+            errorCode: "invoice_cltv_too_large",
+            field: "profile.invoice",
+            actual: 624,
+            limit: 288,
+            unit: "blocks",
+        });
+        expect(refusal?.message).toContain("624 blocks, limit 288");
+    });
+
+    it("keeps an unrecognised diagnostic generic", () => {
+        const reply = {
+            v: 1,
+            type: "rfq_refusal",
+            rfq_id: RFQ_ID,
+            reason: "unsupported_payload",
+            error_code: "backend_exception",
+            field: "internal.stack",
+            actual: 624,
+            limit: 288,
+            unit: "secret",
+        };
+
+        let refusal: SwapRefusal | undefined;
+        try {
+            expectQuote(reply, RFQ_ID);
+        } catch (error) {
+            refusal = error as SwapRefusal;
+        }
+
+        expect(refusal).toMatchObject({
+            message: "solver refused: unsupported_payload",
+            reason: "unsupported_payload",
+        });
+        expect(refusal?.errorCode).toBeUndefined();
+        expect(refusal?.field).toBeUndefined();
+        expect(refusal?.actual).toBeUndefined();
+        expect(refusal?.limit).toBeUndefined();
+        expect(refusal?.unit).toBeUndefined();
     });
 });
 
@@ -648,9 +856,223 @@ describe("relayTransport", () => {
 describe("offerTermsFromQuote", () => {
     it("binds the quoted to_amount as the offer's wantAmount", () => {
         const wantAsset = asset.AssetId.fromBytes(hex.decode(USD_ID));
+        const offerAsset = asset.AssetId.fromBytes(hex.decode(CHF_ID));
         const terms = offerTermsFromQuote(quoteFixture({ to_amount: 12_345 }), { wantAsset });
         expect(terms.wantAmount).toBe(12_345n);
         expect(terms.wantAsset).toBe(wantAsset);
-        expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/exactly one/);
+        expect(
+            offerTermsFromQuote(quoteFixture({ to_amount: "54321" }), {
+                wantAsset,
+                offerAsset,
+            }),
+        ).toEqual({ wantAmount: 54_321n, wantAsset });
+        expect(() => offerTermsFromQuote(quoteFixture(), {})).toThrow(/at least one/);
+    });
+});
+
+/** The max-fee gate: the client's own ceiling on what a quote may charge. */
+describe("assertFundable — the max-fee gate", () => {
+    const now = 1_800_000_000;
+    const fundable = (over: Partial<RfqQuote>, maxFee?: { bps?: number; sats?: number }) =>
+        assertFundable({
+            quote: quoteFixture({ valid_until: now + 900, refund_locktime: now + 7200, ...over }),
+            invoiceExpiresAt: now + 3600,
+            now,
+            maxFee,
+        });
+
+    it("does not gate at all when no ceiling is given", () => {
+        expect(() => fundable({ from_amount: 10_000, to_amount: 1 })).not.toThrow();
+    });
+
+    const reasonOf = (run: () => unknown): string => {
+        try {
+            run();
+        } catch (error) {
+            return (error as { reason?: string }).reason ?? "<threw without a reason>";
+        }
+        return "<did not throw>";
+    };
+
+    it.each([
+        ["bps past 100%", { bps: 10_001 }],
+        ["negative bps", { bps: -1 }],
+        ["fractional bps", { bps: 12.5 }],
+        ["negative sats", { sats: -1 }],
+        ["fractional sats", { sats: 0.5 }],
+    ])("refuses a ceiling that is not a usable bound: %s", (_label, maxFee) => {
+        expect(reasonOf(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, maxFee))).toBe(
+            "max_fee_out_of_range",
+        );
+    });
+
+    it("allows the boundary values, so the guard does not become the bug", () => {
+        const quote = { from_amount: 100_000, to_amount: 99_999 };
+        expect(() => fundable(quote, { bps: 10_000 })).not.toThrow();
+        expect(() => fundable(quote, { bps: 0, sats: 1 })).not.toThrow();
+        expect(() => fundable(quote, { sats: 0, bps: 1 })).not.toThrow();
+    });
+
+    it("refuses a fee above the proportional ceiling", () => {
+        expect(() =>
+            fundable({ from_amount: 100_000, to_amount: 99_000 }, { bps: 100 }),
+        ).not.toThrow();
+        expect(() => fundable({ from_amount: 100_000, to_amount: 98_999 }, { bps: 100 })).toThrow(
+            /fee/i,
+        );
+    });
+
+    it("allows a flat network fee on a small swap that a bare percentage would refuse", () => {
+        expect(() => fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100 })).toThrow(
+            /fee/i,
+        );
+        expect(() =>
+            fundable({ from_amount: 5_420, to_amount: 5_000 }, { bps: 100, sats: 1_000 }),
+        ).not.toThrow();
+    });
+
+    it("keeps the proportional bound on a large swap, where the absolute one is slack", () => {
+        // allowed = max(1_000, 1% of 500_000) = 5_000.
+        expect(() =>
+            fundable({ from_amount: 500_000, to_amount: 495_000 }, { bps: 100, sats: 1_000 }),
+        ).not.toThrow();
+        expect(() =>
+            fundable({ from_amount: 500_000, to_amount: 494_999 }, { bps: 100, sats: 1_000 }),
+        ).toThrow(/fee/i);
+    });
+
+    it("refuses to pretend it can gate a cross-asset pair", () => {
+        expect(() =>
+            fundable(
+                { pair: "arkade:BTC->ethereum:0xa0b86991", from_amount: 100_000, to_amount: 42 },
+                { bps: 100 },
+            ),
+        ).toThrow(/cross-asset|different assets/i);
+    });
+
+    it("refuses a ceiling that names neither bound, rather than tolerating no fee", () => {
+        expect(() => fundable({ from_amount: 100_000, to_amount: 99_999 }, {})).toThrow(
+            /bps|sats/i,
+        );
+    });
+});
+
+/**
+ * Cross-asset: with `R` in to-units per from-unit the fee in FROM units is
+ * `(from_amount * R - to_amount) / R`, and the same max() rule applies.
+ */
+describe("assertFundable — the max-fee gate, cross-asset", () => {
+    const now = 1_800_000_000;
+    const CROSS = "arkade:BTC->ethereum:0xa0b86991";
+    const gate = (
+        over: Partial<RfqQuote>,
+        maxFee?: { bps?: number; sats?: number; referenceRate?: number },
+    ) =>
+        assertFundable({
+            quote: quoteFixture({
+                pair: CROSS,
+                from_amount: 100_000,
+                valid_until: now + 900,
+                refund_locktime: now + 7200,
+                ...over,
+            }),
+            invoiceExpiresAt: now + 3600,
+            now,
+            maxFee,
+        });
+
+    it("gates on the spread against the caller's own rate", () => {
+        // R = 0.5: 100_000 sats is worth 50_000; 49_500 received = 1_000 sats fee = 1%.
+        expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate: 0.5 })).not.toThrow();
+        expect(() => gate({ to_amount: 49_499 }, { bps: 100, referenceRate: 0.5 })).toThrow(/fee/i);
+    });
+
+    it("still refuses when no rate is supplied — unchanged from before", () => {
+        expect(() => gate({ to_amount: 42 }, { bps: 100 })).toThrow(/different assets|rate/i);
+    });
+
+    it("refuses a rate that cannot price anything", () => {
+        for (const referenceRate of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(() => gate({ to_amount: 49_500 }, { bps: 100, referenceRate })).toThrow(
+                /referenceRate/i,
+            );
+        }
+    });
+
+    // The only case that distinguishes ceil from floor: R = 3, 2_999 short =
+    // 999.67 sats, which ceil refuses against a 999-sat ceiling and floor funds.
+    it("rounds a fractional cross-asset fee up, not down", () => {
+        expect(() => gate({ to_amount: 297_001 }, { sats: 999, referenceRate: 3 })).toThrow(/fee/i);
+    });
+
+    it("ignores a rate on a same-asset pair, where the exact fee is already known", () => {
+        expect(() =>
+            assertFundable({
+                quote: quoteFixture({
+                    from_amount: 100_000,
+                    to_amount: 99_500,
+                    valid_until: now + 900,
+                    refund_locktime: now + 7200,
+                }),
+                invoiceExpiresAt: now + 3600,
+                now,
+                maxFee: { bps: 100, referenceRate: 0.5 },
+            }),
+        ).not.toThrow();
+    });
+});
+
+describe("arkade↔arkade wire compat", () => {
+    it("encodes bigint amounts as canonical strings", async () => {
+        const { canonicalAssetAmount } = await import("../src/rfq");
+        expect(canonicalAssetAmount(5000n)).toBe("5000");
+        expect(canonicalAssetAmount(5000)).toBe("5000");
+        expect(canonicalAssetAmount("5000")).toBe("5000");
+        expect(() => canonicalAssetAmount(0)).toThrow(/positive/);
+        expect(() => canonicalAssetAmount(0n)).toThrow(/positive/);
+        expect(() => canonicalAssetAmount("01")).toThrow(/canonical/);
+        expect(() => canonicalAssetAmount(1.5)).toThrow(/safe integer/);
+    });
+
+    it("refuses malformed maker keys", async () => {
+        const { normalizeMakerPkScript, normalizeMakerPublicKey } = await import("../src/rfq");
+        expect(() => normalizeMakerPkScript(key(1))).toThrow(/34 bytes/);
+        expect(() => normalizeMakerPublicKey(new Uint8Array(33).fill(2))).toThrow(/x-only/);
+        expect(normalizeMakerPublicKey(key(1))).toBe(hex.encode(key(1)));
+        expect(normalizeMakerPkScript(p2tr(key(5)))).toBe(hex.encode(p2tr(key(5))));
+    });
+
+    it("gates arkade quotes on valid_until only (no timelock)", async () => {
+        const { assertArkadeFundable } = await import("../src/rfq");
+        const now = 1_800_000_000;
+        const base = quoteFixture({
+            pair: `arkade:BTC->arkade:${USD_ID}`,
+            from_amount: "5000",
+            to_amount: "4900",
+            valid_until: now + 30,
+        });
+        expect(() => assertArkadeFundable({ quote: base, now })).not.toThrow();
+        expect(() => assertArkadeFundable({ quote: base, now: now + 30 })).toThrow(/lapsed/);
+    });
+
+    it("verifyOfferAddress matches both address and script", async () => {
+        const { verifyOfferAddress, AddressMismatch: Mismatch } = await import("../src/rfq");
+        const derived = { address: "ark1qmine", swapPkScript: p2tr(key(5)) };
+        const quote = quoteFixture({
+            profile: {
+                offer_address: "ark1qmine",
+                offer_pk_script: hex.encode(p2tr(key(5))),
+            },
+        });
+        expect(verifyOfferAddress(quote, derived)).toBe(derived);
+        expect(() =>
+            verifyOfferAddress(quoteFixture({ profile: { offer_address: "ark1qother" } }), derived),
+        ).toThrow(Mismatch);
+    });
+
+    it("offerTermsFromQuote binds string to_amount as bigint", () => {
+        const wantAsset = asset.AssetId.fromBytes(hex.decode(USD_ID));
+        const terms = offerTermsFromQuote(quoteFixture({ to_amount: "12345" }), { wantAsset });
+        expect(terms.wantAmount).toBe(12_345n);
     });
 });

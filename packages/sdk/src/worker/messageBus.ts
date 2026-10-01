@@ -3,14 +3,14 @@
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
 import { RestDelegateProvider } from "../providers/delegate";
+import { RestIndexerProvider } from "../providers/indexer";
 import {
     type Identity,
     type ReadonlyIdentity,
     type SerializedIdentity,
-    type LegacySerializedIdentity,
     hydrateIdentity,
-    isSigningSerialized,
     normalizeSerializedIdentity,
+    isSigningSerialized,
 } from "../identity";
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
@@ -34,7 +34,22 @@ export type ResponseEnvelope = {
     tag: string;
     id?: string;
     error?: Error;
+    /**
+     * `error.name`, carried beside the error as an ordinary string. The
+     * structured-clone algorithm serializes an Error's `name` only from the
+     * built-in whitelist (Error, TypeError, RangeError, …) — a custom name
+     * like `ProviderUnavailableError` reaches the page as `"Error"`. A plain
+     * property survives verbatim, so the page restores it before rejecting.
+     * Absent from workers built before it existed; the page then sees the
+     * clone-normalized name, exactly as it always did.
+     */
+    errorName?: string;
     broadcast?: boolean;
+};
+type MessageBusServices = {
+    arkProvider: ArkProvider;
+    wallet?: Wallet;
+    readonlyWallet: ReadonlyWallet;
 };
 export interface MessageHandler<
     REQ extends RequestEnvelope = RequestEnvelope,
@@ -57,11 +72,7 @@ export interface MessageHandler<
      * `stop()` cannot post.
      **/
     start(
-        services: {
-            arkProvider: ArkProvider;
-            wallet?: Wallet;
-            readonlyWallet: ReadonlyWallet;
-        },
+        services: MessageBusServices,
         repositories: {
             walletRepository: WalletRepository;
         },
@@ -121,11 +132,7 @@ type Options = {
      */
     intentRepository?: IntentRepository;
     debug?: boolean;
-    buildServices?: (config: Initialize["config"]) => Promise<{
-        arkProvider: ArkProvider;
-        wallet?: Wallet;
-        readonlyWallet: ReadonlyWallet;
-    }>;
+    buildServices?: (config: Initialize["config"]) => Promise<MessageBusServices>;
 };
 
 /**
@@ -152,16 +159,12 @@ type Initialize = {
     type: "INITIALIZE_MESSAGE_BUS";
     id: string;
     config: {
-        wallet: SerializedIdentity | LegacySerializedIdentity;
+        wallet: SerializedIdentity;
         arkServer: {
             url: string;
             publicKey?: string;
         };
         delegateUrl?: string;
-        /** @deprecated alias for @see Initialize.config.delegateUrl */
-        delegatorUrl?: string;
-        indexerUrl?: string;
-        esploraUrl?: string;
         settlementConfig?: SettlementConfig | false;
         walletMode?: "auto" | "static" | "hd";
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
@@ -202,11 +205,7 @@ export class MessageBus {
      * bus refuses ordinary wallet messages while this is > 0.
      */
     private pendingInitCount = 0;
-    private readonly buildServicesFn: (config: Initialize["config"]) => Promise<{
-        arkProvider: ArkProvider;
-        wallet?: Wallet;
-        readonlyWallet: ReadonlyWallet;
-    }>;
+    private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: IntentRepository;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
@@ -504,11 +503,7 @@ export class MessageBus {
         this.initialized = true;
     }
 
-    private async buildServices(config: Initialize["config"]): Promise<{
-        arkProvider: ArkProvider;
-        wallet?: Wallet;
-        readonlyWallet: ReadonlyWallet;
-    }> {
+    private async buildServices(config: Initialize["config"]): Promise<MessageBusServices> {
         const arkProvider = new RestArkProvider(config.arkServer.url);
         const storage = {
             walletRepository: this.walletRepository,
@@ -517,9 +512,8 @@ export class MessageBus {
         };
         const delegateProvider = config.delegateUrl
             ? new RestDelegateProvider(config.delegateUrl)
-            : config.delegatorUrl
-              ? new RestDelegateProvider(config.delegatorUrl)
-              : undefined;
+            : undefined;
+        const indexerProvider = new RestIndexerProvider(config.arkServer.url);
 
         const serialized = normalizeSerializedIdentity(config.wallet);
 
@@ -527,10 +521,9 @@ export class MessageBus {
             const identity = hydrateIdentity(serialized) as Identity;
             const wallet = await Wallet.create({
                 identity,
-                arkServerUrl: config.arkServer.url,
+                arkProvider,
                 arkServerPublicKey: config.arkServer.publicKey,
-                indexerUrl: config.indexerUrl,
-                esploraUrl: config.esploraUrl,
+                indexerProvider,
                 storage,
                 delegateProvider,
                 settlementConfig: config.settlementConfig,
@@ -546,10 +539,9 @@ export class MessageBus {
         const identity = hydrateIdentity(serialized) as ReadonlyIdentity;
         const readonlyWallet = await ReadonlyWallet.create({
             identity,
-            arkServerUrl: config.arkServer.url,
+            arkProvider,
             arkServerPublicKey: config.arkServer.publicKey,
-            indexerUrl: config.indexerUrl,
-            esploraUrl: config.esploraUrl,
+            indexerProvider,
             storage,
             delegateProvider,
             watcherConfig: config.watcherConfig,
@@ -771,13 +763,10 @@ export class MessageBus {
      * (`messageTimeoutMs`) as the final fallback.
      */
     private resolveTimeoutMs(messageType: string | undefined, handlerTag: string): number {
-        if (
-            messageType &&
-            Object.prototype.hasOwnProperty.call(this.messageTimeoutOverrides, messageType)
-        ) {
+        if (messageType && Object.hasOwn(this.messageTimeoutOverrides, messageType)) {
             return this.messageTimeoutOverrides[messageType];
         }
-        if (Object.prototype.hasOwnProperty.call(this.messageTimeoutOverrides, handlerTag)) {
+        if (Object.hasOwn(this.messageTimeoutOverrides, handlerTag)) {
             return this.messageTimeoutOverrides[handlerTag];
         }
         return this.messageTimeoutMs;
@@ -812,6 +801,15 @@ export class MessageBus {
                 });
             return;
         }
+        // postMessage's structured clone normalizes a custom Error name to
+        // "Error"; a plain-string copy survives, and the page restores it.
+        // Stamped HERE — the single egress — so the bus's own typed errors
+        // (MessageBusInitializingError, ServiceWorkerTimeoutError, …) and
+        // every handler's, present or future, all carry their names without
+        // each site remembering to.
+        if (response.error instanceof Error && !response.errorName) {
+            response.errorName = response.error.name;
+        }
         source.postMessage(response);
     }
 
@@ -831,42 +829,32 @@ export class MessageBus {
         messageType: string | undefined,
     ): void {
         const context = { id, tag, messageType };
+        const settle = (response: ResponseEnvelope) => {
+            if (record.settled) return;
+            record.settled = true;
+            self.clearTimeout(record.deadline);
+            this.lateDeliveries.delete(record);
+            this.deliverResponse(source, response, context);
+        };
         const record: LateDelivery = {
             settled: false,
-            deadline: self.setTimeout(() => {
-                if (record.settled) return;
-                record.settled = true;
-                this.lateDeliveries.delete(record);
-                this.deliverResponse(
-                    source,
-                    {
+            deadline: self.setTimeout(
+                () =>
+                    settle({
                         id,
                         tag,
                         error: new Error(
                             `Operation abandoned: handler did not complete within ${LATE_DELIVERY_GRACE_MS}ms after timeout (${this.labelFor(messageType, tag)})`,
                         ),
-                    },
-                    context,
-                );
-            }, LATE_DELIVERY_GRACE_MS),
+                    }),
+                LATE_DELIVERY_GRACE_MS,
+            ),
         };
         this.lateDeliveries.add(record);
 
         handlerPromise.then(
-            (response) => {
-                if (record.settled) return;
-                record.settled = true;
-                self.clearTimeout(record.deadline);
-                this.lateDeliveries.delete(record);
-                this.deliverResponse(source, response ?? { id, tag }, context);
-            },
-            (err) => {
-                if (record.settled) return;
-                record.settled = true;
-                self.clearTimeout(record.deadline);
-                this.lateDeliveries.delete(record);
-                this.deliverResponse(source, { id, tag, error: toError(err) }, context);
-            },
+            (response) => settle(response ?? { id, tag }),
+            (err) => settle({ id, tag, error: toError(err) }),
         );
     }
 

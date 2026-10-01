@@ -13,6 +13,7 @@ import {
     Wallet,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    EsploraProvider,
     RestArkProvider,
     RestIndexerProvider,
     buildOffchainTx,
@@ -43,8 +44,8 @@ async function main() {
     console.log("\nInitializing Bob's wallet...");
     const bobWallet = await Wallet.create({
         identity: bob,
-        esploraUrl: "http://localhost:3000/api",
-        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000/api"),
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -53,8 +54,8 @@ async function main() {
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        esploraUrl: "http://localhost:3000/api",
-        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000/api"),
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),

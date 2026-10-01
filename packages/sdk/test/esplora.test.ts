@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EsploraProvider, Coin } from "../src";
+import { jsonResponse, textResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
@@ -31,10 +32,7 @@ describe("EsploraProvider", () => {
         ];
 
         it("should fetch and convert UTXOs to coins", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const utxos = await provider.getCoins("bc1qtest");
@@ -58,12 +56,9 @@ describe("EsploraProvider", () => {
 
     describe("getRawTransaction", () => {
         it("decodes the /hex endpoint into wire bytes", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                // Esplora's plain-text response is newline-terminated on some
-                // deployments; hex.decode rejects the stray byte.
-                text: () => Promise.resolve("0200000001ab\n"),
-            });
+            // Esplora's plain-text response is newline-terminated on some
+            // deployments; hex.decode rejects the stray byte.
+            mockFetch.mockResolvedValueOnce(textResponse("0200000001ab\n"));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const raw = await provider.getRawTransaction("deadbeef");
@@ -91,10 +86,7 @@ describe("EsploraProvider", () => {
         };
 
         it("should fetch and return fee rate", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockFeeResponse),
-            });
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockFeeResponse));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const feeRate = await provider.getFeeRate();
@@ -121,10 +113,7 @@ describe("EsploraProvider", () => {
         const mockTxid = "abcd1234";
 
         it("should broadcast transaction and return txid", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                text: () => Promise.resolve(mockTxid),
-            });
+            mockFetch.mockResolvedValueOnce(textResponse(mockTxid));
 
             const provider = new EsploraProvider("http://localhost:3000");
             const txid = await provider.broadcastTransaction(mockTxHex);
@@ -151,6 +140,76 @@ describe("EsploraProvider", () => {
             await expect(provider.broadcastTransaction(mockTxHex)).rejects.toThrow(
                 "Failed to broadcast transaction: Invalid transaction",
             );
+        });
+    });
+
+    describe("getChainTip", () => {
+        const mockBlocks = [
+            { id: "tip-hash", height: 800000, mediantime: 1700000000 },
+            { id: "prev-hash", height: 799999, mediantime: 1699999000 },
+        ];
+        const expectedTip = { hash: "tip-hash", height: 800000, time: 1700000000 };
+
+        it("should fetch the tip from /blocks", async () => {
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockBlocks));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const tip = await provider.getChainTip();
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/blocks");
+            expect(tip).toEqual(expectedTip);
+        });
+
+        it("should fall back to /v1/blocks when /blocks returns 404", async () => {
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    statusText: "Not Found",
+                })
+                .mockResolvedValueOnce(jsonResponse(mockBlocks));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const tip = await provider.getChainTip();
+
+            expect(mockFetch).toHaveBeenNthCalledWith(1, "http://localhost:3000/blocks");
+            expect(mockFetch).toHaveBeenNthCalledWith(2, "http://localhost:3000/v1/blocks");
+            expect(tip).toEqual(expectedTip);
+        });
+
+        it("should throw when the /v1/blocks fallback also fails", async () => {
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    statusText: "Not Found",
+                })
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    statusText: "Not Found",
+                });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getChainTip()).rejects.toThrow(
+                "Failed to get chain tip: Not Found",
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        it("should not fall back on non-404 errors", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+                statusText: "Service Unavailable",
+            });
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            await expect(provider.getChainTip()).rejects.toThrow(
+                "Failed to get chain tip: Service Unavailable",
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(1);
         });
     });
 });

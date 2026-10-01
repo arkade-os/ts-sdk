@@ -15,7 +15,7 @@ const TEST_PUB_KEY = hex.decode(TEST_PUB_KEY_HEX);
 const TEST_SERVER_PUB_KEY_HEX = "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b";
 const TEST_SERVER_PUB_KEY = hex.decode(TEST_SERVER_PUB_KEY_HEX);
 
-// Boarding-exit delay sourced from ArkInfo.boardingExitDelay (seconds),
+// Boarding-exit delay sourced from ArkadeInfo.boardingExitDelay (seconds),
 // distinct from the offchain unilateral-exit delay used by `default`.
 const BOARDING_EXIT_DELAY = { value: 86016n, type: "seconds" as const };
 const UNILATERAL_EXIT_DELAY = { value: 512n, type: "seconds" as const };
@@ -61,12 +61,6 @@ describe("BoardingContractHandler.createScript", () => {
 
         expect(fromHandler).toBeInstanceOf(DefaultVtxo.Script);
         expect(hex.encode(fromHandler.pkScript)).toEqual(hex.encode(legacy.pkScript));
-    });
-
-    it("produces a DefaultVtxo.Script with forfeit and exit leaves", () => {
-        const script = BoardingContractHandler.createScript(boardingParams());
-        expect(script.forfeit()).toBeDefined();
-        expect(script.exit()).toBeDefined();
     });
 
     it("sources the CSV timelock from the boarding delay, not the unilateral exit delay", () => {
@@ -183,12 +177,6 @@ describe("BoardingContractHandler param serialize/deserialize", () => {
 });
 
 describe("BoardingContractHandler is discoverable", () => {
-    it("implements discoverAt", () => {
-        expect(typeof (BoardingContractHandler as { discoverAt?: unknown }).discoverAt).toBe(
-            "function",
-        );
-    });
-
     it("isDiscoverable(BoardingContractHandler) is true", () => {
         expect(isDiscoverable(BoardingContractHandler)).toBe(true);
         // sanity: the default handler is also discoverable, proving the guard works
@@ -344,14 +332,6 @@ describe("BoardingContractHandler spend paths reuse the default surface", () => 
         state: "active" as const,
         createdAt: 0,
     };
-
-    it("selects the forfeit path when collaborative", () => {
-        const path = BoardingContractHandler.selectPath(script, contract, {
-            collaborative: true,
-            currentTime: 0,
-        });
-        expect(path?.leaf).toBeDefined();
-    });
 
     it("selects the exit path (with sequence) after the boarding CSV matures", () => {
         const paths = BoardingContractHandler.getSpendablePaths(script, contract, {

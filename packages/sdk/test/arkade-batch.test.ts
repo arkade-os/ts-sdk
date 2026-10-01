@@ -94,18 +94,34 @@ function makeEvents() {
     return { batchStarted, treeSigningStarted, vtxoTree };
 }
 
+const DECLARED_OUTPUT = {
+    script: new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(7)]),
+    amount: 1000n,
+};
+
+/** An intent proof declaring `outputs`; the leading zero-amount OP_RETURN is
+ * what `Intent.create` writes when the caller declared none. */
+function proofDeclaring(outputs: { script: Uint8Array; amount: bigint }[] = []): string {
+    const tx = new Transaction({ allowUnknownOutputs: true });
+    tx.addOutput({ script: new Uint8Array([0x6a]), amount: 0n });
+    for (const output of outputs) tx.addOutput(output);
+    return base64.encode(tx.toPSBT());
+}
+
 function makeHandler(
     session: SignerSession,
     arkProvider: ArkProvider,
     recipients?: Recipient[],
     emulator: EmulatorProvider = {} as unknown as EmulatorProvider,
+    signedProof: string = proofDeclaring(),
+    onchainOutputIndexes: number[] = [],
 ) {
     return createArkadeBatchHandler(
         INTENT_ID,
         [],
         {} as unknown as Identity,
-        "signed-proof",
-        {} as unknown as Intent.RegisterMessage,
+        signedProof,
+        { onchain_output_indexes: onchainOutputIndexes } as unknown as Intent.RegisterMessage,
         session,
         arkProvider,
         emulator,
@@ -167,6 +183,45 @@ describe("createArkadeBatchHandler recipient validation", () => {
 
         expect(skip).toBe(false);
         expect(validateBatchRecipients).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the intent proof's own outputs when no recipients are given", async () => {
+        const session = makeSession();
+        const handler = makeHandler(
+            session,
+            makeArkProvider(),
+            undefined,
+            undefined,
+            proofDeclaring([DECLARED_OUTPUT]),
+        );
+        const { batchStarted, treeSigningStarted } = makeEvents();
+        const leaf = new Transaction({ allowUnknownOutputs: true });
+        leaf.addOutput(DECLARED_OUTPUT);
+        const vtxoTree = { leaves: () => [leaf] } as unknown as TxTree;
+
+        await handler.onBatchStarted(batchStarted);
+        const { skip } = await handler.onTreeSigningStarted(treeSigningStarted, vtxoTree);
+
+        expect(skip).toBe(false);
+        expect(session.init).toHaveBeenCalled();
+    });
+
+    it("aborts when the tree omits an output the intent proof declared", async () => {
+        const session = makeSession();
+        const handler = makeHandler(
+            session,
+            makeArkProvider(),
+            undefined,
+            undefined,
+            proofDeclaring([DECLARED_OUTPUT]),
+        );
+        const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
+
+        await handler.onBatchStarted(batchStarted);
+        await expect(handler.onTreeSigningStarted(treeSigningStarted, vtxoTree)).rejects.toThrow(
+            /offchain output 1 of the intent proof is not present/,
+        );
+        expect(session.init).not.toHaveBeenCalled();
     });
 });
 

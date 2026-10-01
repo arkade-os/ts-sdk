@@ -10,9 +10,15 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction } from "@arkade-os/sdk";
+import {
+    CSVMultisigTapscript,
+    SingleKey,
+    Transaction,
+    getNetwork,
+    type ArkProvider,
+} from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript, type RfqStatus, type RfqTransport } from "../src/rfq";
+import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
     LockupNeedsRecoveryError,
     RFQ_RESOLVED_STATES,
@@ -22,10 +28,9 @@ import {
     pushRefundWithoutReceiver,
     readLockupFate,
     refundIfUnresolved,
+    type LockupContractSource,
     type LockupSpendIndexer,
     type LockupVtxo,
-    type RefundArkProvider,
-    type RefundIndexer,
 } from "../src/refund";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
@@ -43,9 +48,9 @@ const SWAP_PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
 
 /** The same golden participant set rfq.test.ts pins the script bytes against. */
 const swapScript = () =>
-    lightningSendVtxoScript({
+    lightningSendContract({
         solverPubkey: key(1),
-        serverPubkey: key(3),
+        operatorPubkey: key(3),
         paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
         claimDelay: 4096,
@@ -55,12 +60,12 @@ const swapScript = () =>
         receiverPkScript: p2tr(key(1)),
     });
 
-const CHECKPOINT_TAPSCRIPT = hex.encode(
-    CSVMultisigTapscript.encode({
-        timelock: { type: "blocks", value: BigInt(144) },
-        pubkeys: [key(3)],
-    }).script,
-);
+const checkpointTapscriptOf = (
+    timelock: { type: "blocks" | "seconds"; value: bigint },
+    pubkey: Uint8Array = key(3),
+): string => hex.encode(CSVMultisigTapscript.encode({ timelock, pubkeys: [pubkey] }).script);
+
+const CHECKPOINT_TAPSCRIPT = checkpointTapscriptOf({ type: "blocks", value: BigInt(144) });
 
 const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
@@ -69,42 +74,46 @@ const VTXOS: LockupVtxo[] = [
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the ark txid it was submitted.
- * Typed against the production contract so a change to RefundArkProvider
+ * Typed against the production contract so a change to ArkProvider
  * breaks the fake at compile time. */
-type FakeOperator = RefundArkProvider & {
-    submitted: { arkTx: string; checkpoints: string[] }[];
-    finalized: { arkTxid: string; checkpoints: string[] }[];
+type FakeOperator = ArkProvider & {
+    submitted: { tx: string; checkpoints: string[] }[];
+    finalized: { txid: string; checkpoints: string[] }[];
 };
 
 const fakeOperator = (
     over: {
         checkpointTapscript?: string;
+        network?: string;
+        forfeitPubkey?: string;
         checkpointsFor?: (submitted: string[]) => string[];
         failSubmit?: () => Error | undefined;
     } = {},
 ): FakeOperator => {
-    const submitted: { arkTx: string; checkpoints: string[] }[] = [];
-    const finalized: { arkTxid: string; checkpoints: string[] }[] = [];
+    const submitted: { tx: string; checkpoints: string[] }[] = [];
+    const finalized: { txid: string; checkpoints: string[] }[] = [];
     return {
         submitted,
         finalized,
         getInfo: async () => ({
             checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
+            network: over.network ?? "regtest",
+            forfeitPubkey: over.forfeitPubkey ?? hex.encode(key(3)),
         }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => {
+        submitTx: async (tx: string, checkpoints: string[]) => {
             const failure = over.failSubmit?.();
             if (failure) throw failure;
-            submitted.push({ arkTx, checkpoints });
+            submitted.push({ tx, checkpoints });
             return {
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-                finalArkTx: arkTx,
+                arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+                finalArkTx: tx,
                 signedCheckpointTxs: over.checkpointsFor
                     ? over.checkpointsFor(checkpoints)
                     : checkpoints,
             };
         },
-        finalizeTx: async (arkTxid: string, checkpoints: string[]) => {
-            finalized.push({ arkTxid, checkpoints });
+        finalizeTx: async (txid: string, checkpoints: string[]) => {
+            finalized.push({ txid, checkpoints });
         },
     } as unknown as FakeOperator;
 };
@@ -119,6 +128,54 @@ const fakeIndexer = (vtxos: LockupVtxo[]): LockupSpendIndexer & { scripts: strin
         },
         getVirtualTxs: async () => ({ txs: [] }),
     } as unknown as LockupSpendIndexer & { scripts: string[][] };
+};
+
+/** A lockup output as a test names it, plus the fact flags the manager's
+ * normalized row would carry. `recoverable` maps to `isSwept`. */
+type LockupRow = LockupVtxo & {
+    isUnrolled?: boolean;
+    isSpent?: boolean;
+    spentBy?: string;
+    settledBy?: string;
+};
+
+/** The lockup as the contract manager serves it: the registered row, one
+ * normalized output per entry, canonical facts filled in. Filters are recorded
+ * so a test can assert the script asked for. */
+const fakeContracts = (
+    rows: LockupRow[] = [],
+): LockupContractSource & { asked: (string | undefined)[] } => {
+    const asked: (string | undefined)[] = [];
+    return {
+        asked,
+        getContractsWithVtxos: async (filter?: { script?: string }) => {
+            asked.push(filter?.script);
+            return [
+                {
+                    contract: {
+                        script: filter?.script,
+                        type: "vhtlc-v2",
+                        params: {},
+                        address: "ark1lockup",
+                        state: "active",
+                        createdAt: 1,
+                    },
+                    // `value` is kept as the test's number; the real rows carry
+                    // the same numeric `value` a settled coin does.
+                    vtxos: rows.map((row) => ({
+                        txid: row.txid,
+                        vout: row.vout,
+                        value: row.value,
+                        isSwept: !!row.recoverable,
+                        isSpent: !!row.isSpent,
+                        isUnrolled: !!row.isUnrolled,
+                        spentBy: row.spentBy ?? "",
+                        settledBy: row.settledBy,
+                    })),
+                },
+            ];
+        },
+    } as unknown as LockupContractSource & { asked: (string | undefined)[] };
 };
 
 const statusOf = (state: string): RfqStatus => ({
@@ -156,10 +213,10 @@ const spentLeafOf = (psbt: string): string => {
 
 describe("pushRefundWithoutReceiver", () => {
     it("spends the refundWithoutReceiver leaf, signed by the trader's own sender key", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const operator = fakeOperator();
         await pushRefundWithoutReceiver(operator, {
-            script,
+            contract: contract,
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -167,11 +224,11 @@ describe("pushRefundWithoutReceiver", () => {
         expect(operator.submitted).toHaveLength(1);
         // Not `refund` (needs the solver) and not a unilateral leaf (needs an
         // exit): the CLTV leaf is the only one a stranded trader can drive.
-        expect(spentLeafOf(operator.submitted[0].arkTx)).toBe(script.refundWithoutReceiverScript);
+        expect(spentLeafOf(operator.submitted[0].tx)).toBe(contract.refundWithoutReceiverScript);
 
         // SingleKey.sign() swallows "No inputs signed", so an unsigned tx would
         // otherwise sail through to submitTx and be rejected only server-side.
-        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         for (let i = 0; i < tx.inputsLength; i++) {
             expect(tx.getInput(i).tapScriptSig?.length).toBeGreaterThan(0);
         }
@@ -180,7 +237,7 @@ describe("pushRefundWithoutReceiver", () => {
     it("carries the CLTV locktime and an nLockTime-enabling sequence", async () => {
         const operator = fakeOperator();
         await pushRefundWithoutReceiver(operator, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -188,7 +245,7 @@ describe("pushRefundWithoutReceiver", () => {
         // Without both of these the spend is simply not consensus-valid — and
         // nothing in this package restates the locktime, so this is the check
         // that the CLTV leaf (not a timelock-free one) was handed to the builder.
-        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.lockTime).toBe(REFUND_LOCKTIME);
         expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });
@@ -196,7 +253,7 @@ describe("pushRefundWithoutReceiver", () => {
     it("returns every funded output to the contract's own committed destination", async () => {
         const operator = fakeOperator();
         const result = await pushRefundWithoutReceiver(operator, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
         });
@@ -204,31 +261,31 @@ describe("pushRefundWithoutReceiver", () => {
         // Both deposits, aggregated: refunding vtxos[0] alone would strand the
         // rest at a script whose other refund paths are all longer.
         expect(result.amount).toBe(100_000);
-        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
         expect(operator.finalized).toHaveLength(1);
-        expect(operator.finalized[0].arkTxid).toBe(result.arkTxid);
+        expect(operator.finalized[0].txid).toBe(result.txid);
     });
 
     it("honours an explicit destination override", async () => {
         const operator = fakeOperator();
         const elsewhere = p2tr(key(21));
         await pushRefundWithoutReceiver(operator, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: VTXOS,
             refundPkScript: elsewhere,
         });
-        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].arkTx));
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(elsewhere));
     });
 
     it("refuses an empty lockup instead of pushing an inputless transaction", async () => {
         await expect(
             pushRefundWithoutReceiver(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: [],
             }),
@@ -241,8 +298,7 @@ describe("pushRefundWithoutReceiver", () => {
          * take it back — `canSpendOffchain` and `canRecoverOnchain` are
          * mutually exclusive in the SDK, and the latter means "must be
          * recovered into a fresh batch rather than spent offchain". Holding the
-         * sender key does not change that. `packages/boltz-swap` routes exactly
-         * this case through `joinBatch` instead of an offchain tx.
+         * sender key does not change that.
          */
         it("refuses rather than submitting a spend the server must reject", async () => {
             const operator = fakeOperator();
@@ -251,7 +307,7 @@ describe("pushRefundWithoutReceiver", () => {
             ];
             await expect(
                 pushRefundWithoutReceiver(operator, {
-                    script: swapScript(),
+                    contract: swapScript(),
                     sender: SENDER,
                     vtxos: swept,
                 }),
@@ -265,7 +321,7 @@ describe("pushRefundWithoutReceiver", () => {
                 { txid: "33".repeat(32), vout: 2, value: 5_000, recoverable: true },
             ];
             const error: unknown = await pushRefundWithoutReceiver(fakeOperator(), {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: swept,
             }).then(
@@ -295,7 +351,7 @@ describe("pushRefundWithoutReceiver", () => {
             ];
             await expect(
                 pushRefundWithoutReceiver(operator, {
-                    script: swapScript(),
+                    contract: swapScript(),
                     sender: SENDER,
                     vtxos: mixed,
                 }),
@@ -307,7 +363,7 @@ describe("pushRefundWithoutReceiver", () => {
             const operator = fakeOperator();
             const live: LockupVtxo[] = VTXOS.map((v) => ({ ...v, recoverable: false }));
             await pushRefundWithoutReceiver(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: live,
             });
@@ -322,7 +378,7 @@ describe("pushRefundWithoutReceiver", () => {
         // malformed stand-in would prove nothing: signing would fail anyway.)
         const capture = fakeOperator();
         await pushRefundWithoutReceiver(capture, {
-            script: swapScript(),
+            contract: swapScript(),
             sender: SENDER,
             vtxos: [{ txid: "33".repeat(32), vout: 0, value: 7_000, recoverable: false }],
         });
@@ -331,7 +387,7 @@ describe("pushRefundWithoutReceiver", () => {
         const operator = fakeOperator({ checkpointsFor: () => [foreignCheckpoint] });
         await expect(
             pushRefundWithoutReceiver(operator, {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: [VTXOS[0]],
             }),
@@ -342,33 +398,69 @@ describe("pushRefundWithoutReceiver", () => {
     it("reports a malformed checkpointTapscript rather than failing deep in the builder", async () => {
         await expect(
             pushRefundWithoutReceiver(fakeOperator({ checkpointTapscript: "00" }), {
-                script: swapScript(),
+                contract: swapScript(),
                 sender: SENDER,
                 vtxos: VTXOS,
             }),
         ).rejects.toThrow(/checkpointTapscript/);
     });
+
+    describe("the checkpoint script the operator hands out is gated", () => {
+        // Sweepable checkpoints, so every refusal must land before anything is signed or sent.
+        it("refuses a checkpoint exit delay below the network's floor", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+            });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("refuses a checkpoint pinned to a key other than the advertised forfeit key", async () => {
+            const operator = fakeOperator({
+                checkpointTapscript: checkpointTapscriptOf(
+                    { type: "blocks", value: BigInt(144) },
+                    key(4),
+                ),
+            });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                }),
+            ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
+            expect(operator.submitted).toEqual([]);
+        });
+
+        it("floors against the caller's pinned network, not the one the operator names", async () => {
+            // The same block-typed script the regtest default accepts: only the pin rejects it.
+            const operator = fakeOperator({ network: "regtest" });
+            await expect(
+                pushRefundWithoutReceiver(operator, {
+                    contract: swapScript(),
+                    sender: SENDER,
+                    vtxos: VTXOS,
+                    network: getNetwork("bitcoin"),
+                }),
+            ).rejects.toThrow(/checkpoint exit delay rejected/);
+            expect(operator.submitted).toEqual([]);
+        });
+    });
 });
 
 describe("findLockupVtxos", () => {
-    it("asks for the lockup script and returns every spendable output", async () => {
-        const script = swapScript();
-        const indexer = fakeIndexer(VTXOS);
-        expect(await findLockupVtxos(indexer, script.pkScript)).toHaveLength(2);
-        expect(indexer.scripts[0]).toEqual([hex.encode(script.pkScript)]);
+    it("reads the lockup's registered contract and returns every unspent output", async () => {
+        const contract = swapScript();
+        const contracts = fakeContracts(VTXOS);
+        expect(await findLockupVtxos(contracts, contract.pkScript)).toHaveLength(2);
+        expect(contracts.asked[0]).toBe(hex.encode(contract.pkScript));
     });
-
-    /** Filter-aware, unlike `fakeIndexer`: the two sets are disjoint here, which
-     * is what makes a swept output visible or not. `isUnrolled` is the wire's,
-     * not `LockupVtxo`'s — the point is that it never survives the mapping. */
-    type IndexedVtxo = LockupVtxo & { isUnrolled?: boolean };
-
-    const byFilterIndexer = (spendable: IndexedVtxo[], recoverable: IndexedVtxo[]): RefundIndexer =>
-        ({
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? recoverable : opts?.spendableOnly ? spendable : [],
-            }),
-        }) as unknown as RefundIndexer;
 
     it("finds a swept lockup, which a spendable-only read would report as nothing to refund", async () => {
         // A batch expiry sweeps the output out of the spendable set. It is
@@ -378,66 +470,71 @@ describe("findLockupVtxos", () => {
         // Visible is NOT the same as refundable: a swept output must be
         // recovered before any offchain spend, which
         // `pushRefundWithoutReceiver` enforces rather than discovers.
-        const script = swapScript();
+        const contract = swapScript();
         const swept = { txid: "cc".repeat(32), vout: 1, value: 4_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([], [swept]), script.pkScript);
+        const found = await findLockupVtxos(
+            fakeContracts([
+                { txid: swept.txid, vout: swept.vout, value: swept.value, recoverable: true },
+            ]),
+            contract.pkScript,
+        );
         expect(found).toEqual([{ ...swept, recoverable: true }]);
     });
 
     it("merges both sets and marks which outputs were swept", async () => {
-        const script = swapScript();
+        const contract = swapScript();
         const live = { txid: "aa".repeat(32), vout: 0, value: 1_000, recoverable: false };
-        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([live], [swept]), script.pkScript);
-        expect(found).toEqual([
-            { ...live, recoverable: false },
-            { ...swept, recoverable: true },
-        ]);
+        const swept = { txid: "bb".repeat(32), vout: 2, value: 2_000, recoverable: true };
+        const found = await findLockupVtxos(fakeContracts([live, swept]), contract.pkScript);
+        expect(found).toEqual([live, swept]);
     });
 
-    it("drops an unrolled output the indexer still lists as spendable", async () => {
-        // arkd is not depended on to exclude a unilateral exit from
-        // `spendableOnly`, and `LockupVtxo` carries no flag to pass one along —
-        // so anything that reached the mapping would be indistinguishable from
-        // the live output beside it and would be signed into a refund that no
-        // offchain leaf can land. The live sibling proves the drop is the
-        // output's own, not the whole response being discarded.
+    it("drops an unrolled output the manager still serves", async () => {
+        // A unilaterally exited output lives onchain behind its CSV, and
+        // `LockupVtxo` carries no flag to pass one along — anything that
+        // reached the mapping would be indistinguishable from the live output
+        // beside it and would be signed into a refund that no offchain leaf can
+        // land. The live sibling proves the drop is the output's own, not the
+        // whole response being discarded.
         const script = swapScript();
         const live = { txid: "ee".repeat(32), vout: 0, value: 3_000, recoverable: false };
         const exited = {
             txid: "ef".repeat(32),
             vout: 1,
             value: 6_000,
-            recoverable: false,
             isUnrolled: true,
+            recoverable: false,
         };
-        const found = await findLockupVtxos(byFilterIndexer([live, exited], []), script.pkScript);
+        const found = await findLockupVtxos(fakeContracts([live, exited]), script.pkScript);
         expect(found).toEqual([live]);
     });
 
-    it("drops an unrolled output from the recoverable half too", async () => {
-        // Both queries feed one loop, so the exclusion has to hold on the side
-        // whose outputs are already un-spendable for a different reason.
+    it("drops a terminally spent output beside its live sibling", async () => {
+        // A consumed output cannot back any refund push, and `isVtxoSpent`
+        // unions every spend fact the manager's normalized row carries — so the
+        // fake fills all three in and one alone must not drop out.
         const script = swapScript();
-        const swept = { txid: "f0".repeat(32), vout: 0, value: 2_500, recoverable: false };
-        const exited = {
+        const live = { txid: "f2".repeat(32), vout: 0, value: 2_500, recoverable: false };
+        const consumed = {
             txid: "f1".repeat(32),
             vout: 3,
             value: 9_000,
+            isSpent: true,
+            spentBy: "77".repeat(32),
+            settledBy: "88".repeat(32),
             recoverable: false,
-            isUnrolled: true,
         };
-        const found = await findLockupVtxos(byFilterIndexer([], [swept, exited]), script.pkScript);
-        expect(found).toEqual([{ ...swept, recoverable: true }]);
+        const found = await findLockupVtxos(fakeContracts([live, consumed]), script.pkScript);
+        expect(found).toEqual([{ ...live, recoverable: false }]);
     });
 
     it("counts an output appearing in both sets exactly once", async () => {
         // Disjoint today, but double-counting would add the same outpoint to
         // the refund's aggregate output twice and build a transaction that
         // cannot be signed.
-        const script = swapScript();
+        const contract = swapScript();
         const both = { txid: "dd".repeat(32), vout: 0, value: 7_000, recoverable: false };
-        const found = await findLockupVtxos(byFilterIndexer([both], [both]), script.pkScript);
+        const found = await findLockupVtxos(fakeContracts([both, both]), contract.pkScript);
         expect(found).toHaveLength(1);
         expect(found[0]!.recoverable).toBe(false);
     });
@@ -468,7 +565,7 @@ describe("awaitRfqResolution", () => {
 describe("refundIfUnresolved", () => {
     const baseInput = () => ({
         rfqId: RFQ_ID,
-        script: swapScript(),
+        contract: swapScript(),
         sender: SENDER,
         paymentHash: SWAP_PAYMENT_HASH,
         refundLocktime: REFUND_LOCKTIME,
@@ -481,6 +578,7 @@ describe("refundIfUnresolved", () => {
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
                 operator,
+                fakeContracts(VTXOS),
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
@@ -499,6 +597,7 @@ describe("refundIfUnresolved", () => {
             const result = await refundIfUnresolved(
                 fakeTransport([state]),
                 operator,
+                fakeContracts(VTXOS),
                 fakeIndexer(VTXOS),
                 { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
             );
@@ -516,16 +615,28 @@ describe("refundIfUnresolved", () => {
         const operator = fakeOperator();
         const swept = { txid: "55".repeat(32), vout: 3, value: 8_000 };
         const indexer = {
-            getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-                vtxos: opts?.recoverableOnly ? [swept] : [],
+            getVtxos: async (opts?: {
+                spendableOnly?: boolean;
+                recoverableOnly?: boolean;
+                renewableOnly?: boolean;
+            }) => ({
+                vtxos: opts?.renewableOnly ? [{ ...swept, isSwept: true }] : [],
             }),
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), operator, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            operator,
+            // The manager's row carries the swept fact, the wire vtxo the fate
+            // read sees does not — that split is what says "still open" to the
+            // fate read and "recoverable" to the push.
+            fakeContracts([
+                { txid: swept.txid, vout: swept.vout, value: swept.value, recoverable: true },
+            ]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("needs_recovery");
         if (result.outcome === "needs_recovery") {
@@ -541,6 +652,7 @@ describe("refundIfUnresolved", () => {
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
             operator,
+            fakeContracts(VTXOS),
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => clock++ },
         );
@@ -557,6 +669,7 @@ describe("refundIfUnresolved", () => {
         const result = await refundIfUnresolved(
             fakeTransport(["quoted"]),
             operator,
+            fakeContracts(VTXOS),
             fakeIndexer(VTXOS),
             { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
         );
@@ -567,11 +680,17 @@ describe("refundIfUnresolved", () => {
     it("rethrows the server's refusal once the attempt window closes", async () => {
         const operator = fakeOperator({ failSubmit: () => new Error("FORFEIT_CLOSURE_LOCKED") });
         await expect(
-            refundIfUnresolved(fakeTransport(["quoted"]), operator, fakeIndexer(VTXOS), {
-                ...baseInput(),
-                now: () => REFUND_LOCKTIME + 1,
-                attemptDeadline: REFUND_LOCKTIME,
-            }),
+            refundIfUnresolved(
+                fakeTransport(["quoted"]),
+                operator,
+                fakeContracts(VTXOS),
+                fakeIndexer(VTXOS),
+                {
+                    ...baseInput(),
+                    now: () => REFUND_LOCKTIME + 1,
+                    attemptDeadline: REFUND_LOCKTIME,
+                },
+            ),
         ).rejects.toThrow(/FORFEIT_CLOSURE_LOCKED/);
     });
 
@@ -585,11 +704,17 @@ describe("refundIfUnresolved", () => {
                 pushes += 1;
                 return operator.getInfo();
             },
-        } as unknown as RefundArkProvider;
+        } as unknown as FakeOperator;
         return { operator, provider, pushes: () => pushes };
     };
 
-    const EXITED = { txid: "66".repeat(32), vout: 0, value: 8_000, isUnrolled: true };
+    const EXITED = {
+        txid: "66".repeat(32),
+        vout: 0,
+        value: 8_000,
+        isUnrolled: true,
+        recoverable: false,
+    };
 
     it("reports an exited lockup instead of pushing a refund that cannot land", async () => {
         // The output is unspent, but onchain behind its CSV: no offchain leaf
@@ -601,10 +726,13 @@ describe("refundIfUnresolved", () => {
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            provider,
+            fakeContracts([]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("exited");
         if (result.outcome === "exited") {
@@ -625,10 +753,13 @@ describe("refundIfUnresolved", () => {
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            provider,
+            fakeContracts([EXITED]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("nothing_to_refund");
         expect(pushes()).toBe(0);
@@ -642,15 +773,18 @@ describe("refundIfUnresolved", () => {
         const { operator, provider, pushes } = watchedOperator();
         const indexer = {
             getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
-                vtxos: opts?.spendableOnly ? [EXITED] : [],
+                vtxos: [],
             }),
             getVirtualTxs: async () => ({ txs: [] }),
         } as unknown as LockupSpendIndexer;
 
-        const result = await refundIfUnresolved(fakeTransport(["quoted"]), provider, indexer, {
-            ...baseInput(),
-            now: () => REFUND_LOCKTIME + 1,
-        });
+        const result = await refundIfUnresolved(
+            fakeTransport(["quoted"]),
+            provider,
+            fakeContracts([EXITED]),
+            indexer,
+            { ...baseInput(), now: () => REFUND_LOCKTIME + 1 },
+        );
 
         expect(result.outcome).toBe("nothing_to_refund");
         expect(pushes()).toBe(0);
@@ -662,6 +796,7 @@ describe("refundIfUnresolved", () => {
         const result = await refundIfUnresolved(
             fakeTransport(["stuck"]),
             operator,
+            fakeContracts([]),
             fakeIndexer([]),
             {
                 ...baseInput(),
@@ -734,14 +869,14 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [
-                { checkpointTxid: first.txid, arkTxid: "c1".repeat(32) },
-                { checkpointTxid: second.txid, arkTxid: "c2".repeat(32) },
+                { checkpointTxid: first.txid, txid: "c1".repeat(32) },
+                { checkpointTxid: second.txid, txid: "c2".repeat(32) },
             ],
         });
     });
 
     it("keeps each output's own ark tx when only one of them has it", async () => {
-        // The shape a single hoisted `arkTxid` would get wrong: two outputs,
+        // The shape a single hoisted `txid` would get wrong: two outputs,
         // one named, one not.
         const first = spendOf(OUT_A);
         const second = spendOf(OUT_B);
@@ -757,8 +892,8 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [
-                { checkpointTxid: first.txid, arkTxid: undefined },
-                { checkpointTxid: second.txid, arkTxid: "c4".repeat(32) },
+                { checkpointTxid: first.txid, txid: undefined },
+                { checkpointTxid: second.txid, txid: "c4".repeat(32) },
             ],
         });
     });
@@ -768,7 +903,7 @@ describe("readLockupFate", () => {
         const fate = await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]));
         expect(fate).toEqual({
             fate: "returned",
-            spends: [{ checkpointTxid: spend.txid, arkTxid: undefined }],
+            spends: [{ checkpointTxid: spend.txid, txid: undefined }],
         });
     });
 
@@ -780,7 +915,7 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "claimed",
             preimage: PREIMAGE,
-            spends: [{ checkpointTxid: spend.txid, arkTxid: "c3".repeat(32) }],
+            spends: [{ checkpointTxid: spend.txid, txid: "c3".repeat(32) }],
         });
     });
 
@@ -826,7 +961,7 @@ describe("readLockupFate", () => {
     });
 
     it("reads a settled-only output as spent, not as money still sitting there", async () => {
-        // The third spend fact, carried by the SDK's `hasTerminalSpend` and by
+        // The third spend fact, carried by the SDK's `isVtxoSpent` and by
         // nothing else here: `settledBy` with no `spentBy` and no `isSpent`
         // means the output was renewed away, and a `spentBy`-only test would
         // call the empty lockup `open`.

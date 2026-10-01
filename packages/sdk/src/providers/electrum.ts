@@ -71,6 +71,8 @@ const MAX_FETCH_TRANSACTIONS_ATTEMPTS = 5;
 // Bitcoin block header is 80 bytes
 const BLOCK_HEADER_SIZE = 80;
 
+const MTP_WINDOW = 11;
+
 export type TransactionHistory = {
     tx_hash: string;
     height: number;
@@ -555,6 +557,8 @@ export class WsElectrumChainSource {
  */
 export class ElectrumOnchainProvider implements OnchainProvider {
     private chain: WsElectrumChainSource;
+    private mtpCache?: { hash: string; mtp: number };
+    private mtpInflight?: { hash: string; mtp: Promise<number> };
 
     constructor(
         private ws: ElectrumWS,
@@ -889,6 +893,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         };
     }
 
+    /** `time` is median-time-past, per {@link OnchainProvider.getChainTip};
+     *  Electrum serves raw headers and no MTP, so it is computed here. */
     async getChainTip(): Promise<{
         height: number;
         time: number;
@@ -899,9 +905,64 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         return {
             height: tip.height,
-            time: timestamp,
+            time: await this.medianTimePast(tip.height, timestamp, hash),
             hash,
         };
+    }
+
+    /**
+     * Consensus's `GetMedianTimePast`, ending at and including `height`.
+     *
+     * Cached per tip HASH, not height: this runs on every balance read, and
+     * hashing means a reorg at the same height recomputes rather than serving
+     * the orphaned chain's median.
+     */
+    private async medianTimePast(height: number, tipTime: number, hash: string): Promise<number> {
+        if (this.mtpCache?.hash === hash) return this.mtpCache.mtp;
+        if (this.mtpInflight?.hash === hash) return this.mtpInflight.mtp;
+        // The cache lands only once the window resolves, so every reader before
+        // then re-fetches — each burst another chance at the early-maturing
+        // `tipTime` fallback. Hash-gated, so a mid-flight tip change costs one
+        // extra fetch rather than the wrong median.
+        const mtp = this.readMedianTimePast(height, tipTime, hash).finally(() => {
+            this.mtpInflight = undefined;
+        });
+        this.mtpInflight = { hash, mtp };
+        return mtp;
+    }
+
+    /** Degrades to the tip's `nTime` rather than throwing — a caller that
+     *  cannot read the tip at all is worse off. */
+    private async readMedianTimePast(
+        height: number,
+        tipTime: number,
+        hash: string,
+    ): Promise<number> {
+        // Stops at 0: near genesis, consensus takes the median of what exists.
+        const heights: number[] = [];
+        for (let h = height - 1; h >= 0 && heights.length < MTP_WINDOW - 1; h--) heights.push(h);
+        if (heights.length === 0) return tipTime;
+
+        let timestamps: number[];
+        try {
+            const headers = await this.chain.fetchBlockHeaders(heights);
+            timestamps = [
+                tipTime,
+                ...headers.map((header) => parseBlockHeader(header.hex).timestamp),
+            ];
+        } catch (e) {
+            // Not cached: retry the window next call rather than serve the
+            // early-maturing fallback for this whole block.
+            console.warn(
+                "Failed to fetch the median-time-past window; using the tip's own time",
+                e,
+            );
+            return tipTime;
+        }
+        timestamps.sort((a, b) => a - b);
+        const mtp = timestamps[Math.floor(timestamps.length / 2)];
+        this.mtpCache = { hash, mtp };
+        return mtp;
     }
 
     async watchAddresses(

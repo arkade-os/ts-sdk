@@ -5,11 +5,13 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestArkProvider,
 } from "../../src";
 import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
 import type { VirtualCoin } from "../../src";
 import { HDDescriptorProvider } from "../../src/wallet/hdDescriptorProvider";
+import { jsonResponse } from "./response";
 
 /**
  * Test harness for the `Wallet.restore()` suite.
@@ -54,11 +56,7 @@ export const mockArkInfo = {
  */
 export function installRestoreHarness(): void {
     const mockFetch = vi.fn().mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({
-                ok: true,
-                json: () => Promise.resolve(body),
-            });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
@@ -118,7 +116,6 @@ function makeVtxo(script: string, value: number, createdAt: Date = new Date()): 
         script,
         isUnrolled: false,
         isSpent: false,
-        virtualStatus: { state: "settled" },
     };
 }
 
@@ -279,7 +276,7 @@ export async function makeStaticWalletForTest(
     const wallet = await Wallet.create({
         identity: SingleKey.fromHex(SINGLEKEY_HEX),
         walletMode: "static",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
@@ -314,7 +311,7 @@ export async function makeHdWalletForTest(
             isMainnet: false,
         }),
         walletMode: "hd",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },

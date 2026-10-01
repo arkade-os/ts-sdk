@@ -5,7 +5,7 @@ import { RealmWalletRepository } from "../src/repositories/realm/walletRepositor
 import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
-import { hasTerminalSpend } from "../src/wallet/vtxo";
+import { isVtxoSpent } from "../src/wallet/vtxo";
 
 // ── Mock Realm ──────────────────────────────────────────────────────────
 // A lightweight in-memory mock that simulates the Realm API surface
@@ -168,9 +168,7 @@ function createMockVtxo(txid: string, vout: number, value: number): ExtendedVirt
             block_hash: hex.encode(new Uint8Array(32).fill(1)),
             block_time: 1700000000,
         },
-        virtualStatus: {
-            state: "preconfirmed",
-        },
+        isPreconfirmed: true,
         createdAt: new Date("2024-01-15T12:00:00Z"),
         isUnrolled: false,
         isSpent: false,
@@ -193,11 +191,8 @@ function createMockVtxoWithExtras(txid: string, vout: number, value: number): Ex
             block_hash: hex.encode(new Uint8Array(32).fill(4)),
             block_time: 1700001000,
         },
-        virtualStatus: {
-            state: "settled",
-            commitmentTxIds: ["commit-tx-1", "commit-tx-2"],
-            batchExpiry: 1700100000,
-        },
+        commitmentTxIds: ["commit-tx-1", "commit-tx-2"],
+        expiresAt: new Date(1700100000 * 1000),
         createdAt: new Date("2024-02-20T08:30:00Z"),
         isUnrolled: true,
         isSpent: true,
@@ -284,12 +279,6 @@ describe("RealmWalletRepository", () => {
         await repository[Symbol.asyncDispose]();
     });
 
-    // ── version ────────────────────────────────────────────────────────
-
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
-    });
-
     // ── VTXO management ────────────────────────────────────────────────
 
     describe("VTXO management", () => {
@@ -327,9 +316,10 @@ describe("RealmWalletRepository", () => {
             expect(retrieved.spentBy).toBe("spent-by-tx");
             expect(retrieved.settledBy).toBe("settled-by-tx");
             expect(retrieved.arkTxId).toBe("ark-tx-123");
-            expect(retrieved.virtualStatus.state).toBe("settled");
-            expect(retrieved.virtualStatus.commitmentTxIds).toEqual(["commit-tx-1", "commit-tx-2"]);
-            expect(retrieved.virtualStatus.batchExpiry).toBe(1700100000);
+            expect(retrieved.isSwept).toBe(false);
+            expect(retrieved.isPreconfirmed).toBe(false);
+            expect(retrieved.commitmentTxIds).toEqual(["commit-tx-1", "commit-tx-2"]);
+            expect(retrieved.expiresAt?.toISOString()).toBe("2023-11-16T02:00:00.000Z");
             expect(retrieved.assets).toEqual([{ assetId: "asset-1", amount: 500n }]);
             // extraWitness round-trip (Uint8Array)
             expect(retrieved.extraWitness).toBeDefined();
@@ -433,19 +423,20 @@ describe("RealmWalletRepository", () => {
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
-            expect(hasTerminalSpend(retrieved)).toBe(false);
+            expect(isVtxoSpent(retrieved)).toBe(false);
         });
 
-        it("derives isSpent as true for a spent VTXO stored with a null is_spent column", async () => {
+        it("preserves terminal spend for a VTXO stored with a null is_spent column", async () => {
             const vtxo = createMockVtxo("tx-nospent-spent", 0, 1000);
             (vtxo as any).isSpent = undefined;
-            vtxo.virtualStatus = { ...vtxo.virtualStatus, state: "spent" };
+            vtxo.spentBy = "spent-by-tx";
 
             await repository.saveVtxos(testAddress, [vtxo]);
             const [retrieved] = await repository.getVtxos(testAddress);
 
-            expect(retrieved.isSpent).toBe(true);
-            expect(hasTerminalSpend(retrieved)).toBe(true);
+            expect(retrieved.isSpent).toBe(false);
+            expect(retrieved.spentBy).toBe("spent-by-tx");
+            expect(isVtxoSpent(retrieved)).toBe(true);
         });
     });
 
@@ -736,14 +727,6 @@ describe("RealmWalletRepository", () => {
             expect(await repository.getUtxos(testAddress)).toEqual([]);
             expect(await repository.getTransactionHistory(testAddress)).toEqual([]);
             expect(await repository.getWalletState()).toBeNull();
-        });
-    });
-
-    // ── asyncDispose ───────────────────────────────────────────────────
-
-    describe("[Symbol.asyncDispose]", () => {
-        it("should be a no-op and not throw", async () => {
-            await expect(repository[Symbol.asyncDispose]()).resolves.toBeUndefined();
         });
     });
 });

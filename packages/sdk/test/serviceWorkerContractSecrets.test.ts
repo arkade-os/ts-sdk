@@ -26,6 +26,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     MnemonicIdentity,
+    RestArkProvider,
     SingleKey,
     Wallet,
     deriveDescriptorLeafPubKey,
@@ -48,6 +49,7 @@ import {
     provisionClaimSecret,
     provisionRefundKey,
 } from "../src/wallet/contractSecrets";
+import { jsonResponse } from "./helpers/response";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -84,7 +86,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) => Promise.resolve({ ok: true, json: async () => body });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
@@ -111,7 +113,7 @@ async function makeInnerWallet(opts: {
     const wallet = await Wallet.create({
         identity: opts.identity,
         walletMode: opts.hd ? "hd" : "static",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: opts.walletRepository,
             contractRepository: new InMemoryContractRepository(),

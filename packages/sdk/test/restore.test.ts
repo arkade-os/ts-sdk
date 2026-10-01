@@ -27,6 +27,8 @@ import {
     makeStaticWalletForTest,
     makeHdWalletForTest,
 } from "./helpers/restoreWallet";
+import { jsonResponse } from "./helpers/response";
+import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -636,7 +638,7 @@ describe("ContractManager.scanContracts", () => {
             // The swap hit at 4 reset `unused` (was 4 after 0..3 unused),
             // so the loop kept probing 5..9 instead of stopping at 4, and
             // lastIndexUsed is driven solely by the swap handler.
-            expect(res.lastIndexUsed).toBe(4);
+            expect(res.highestConfirmedUsedIndex).toBe(4);
             expect(res.handlerErrors).toEqual([]);
             // Strong regression: a buggy loop that STOPS after the first
             // hit would still satisfy lastIndexUsed===4. The handler MUST
@@ -670,10 +672,10 @@ describe("ContractManager.scanContracts", () => {
             // Resolved (did not abort), error collected with full context.
             expect(res.handlerErrors).toHaveLength(1);
             expect(res.handlerErrors[0].handler).toBe("boomfake");
-            expect(res.handlerErrors[0].index).toBe(0);
+            expect(res.handlerErrors[0].fromIndex).toBe(0);
             expect(res.handlerErrors[0].error).toBeInstanceOf(Error);
             expect((res.handlerErrors[0].error as Error).message).toBe("handler down");
-            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.highestConfirmedUsedIndex).toBe(-1);
             // Loop ran exactly the single static pass.
             expect(calls).toEqual([0]);
         } finally {
@@ -700,7 +702,7 @@ describe("ContractManager.scanContracts", () => {
             expect(res.highestConfirmedUsedIndex).toBe(-1);
             expect(res.truncatedAt).toBe(0);
             expect(res.handlerErrors).toHaveLength(3);
-            expect(res.handlerErrors.map((e) => e.index)).toEqual([0, 1, 2]);
+            expect(res.handlerErrors.map((e) => e.fromIndex)).toEqual([0, 1, 2]);
             expect(res.handlerErrors.every((e) => e.handler === "boomfake")).toBe(true);
         } finally {
             mgr.dispose();
@@ -727,7 +729,7 @@ describe("ContractManager.scanContracts", () => {
             });
             expect(res.truncatedAt).toBe(3);
             expect(res.handlerErrors).toHaveLength(1);
-            expect(res.handlerErrors[0]).toMatchObject({ handler: "boomfake", index: 3 });
+            expect(res.handlerErrors[0]).toMatchObject({ handler: "boomfake", fromIndex: 3 });
             // Stopped verifying AT the hole — never probed past it.
             expect(calls).toEqual([0, 1, 2, 3]);
         } finally {
@@ -786,7 +788,7 @@ describe("ContractManager.scanContracts", () => {
             });
             expect(res.truncatedAt).toBe(1);
             expect(res.highestConfirmedUsedIndex).toBe(4);
-            expect(res.lastIndexUsed).toBe(4); // deprecated alias stays faithful
+            expect(res.highestConfirmedUsedIndex).toBe(4);
             // Persisted, not merely counted.
             const [c] = await mgr.getContracts({ script: "aabb" });
             expect(c?.type).toBe("swapfake");
@@ -886,7 +888,7 @@ describe("ContractManager.scanContracts", () => {
             expect(res.handlerErrors).toHaveLength(1);
             expect(res.handlerErrors[0]).toMatchObject({
                 handler: "rangefake",
-                index: 0,
+                fromIndex: 0,
                 toIndex: 9,
             });
             // Only the first window ran: the scan stopped at the truncation.
@@ -950,7 +952,7 @@ describe("ContractManager.scanContracts", () => {
             });
             expect(res.truncatedAt).toBe(0);
             expect(res.handlerErrors).toHaveLength(1);
-            expect(res.handlerErrors[0]).toMatchObject({ index: 0, toIndex: 4 });
+            expect(res.handlerErrors[0]).toMatchObject({ fromIndex: 0, toIndex: 4 });
             expect((res.handlerErrors[0].error as Error).message).toContain("index 3");
             // Hits the buggy handler DID return are affirmative data.
             expect(res.highestConfirmedUsedIndex).toBe(2);
@@ -1007,7 +1009,7 @@ describe("ContractManager.scanContracts", () => {
             });
             // Single pass at i=0 only; never reached the index-3 hit.
             expect(calls).toEqual([0]);
-            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.highestConfirmedUsedIndex).toBe(-1);
             expect(res.handlerErrors).toEqual([]);
         } finally {
             mgr.dispose();
@@ -1204,7 +1206,7 @@ describe("ContractManager.scanContracts", () => {
                     materialize,
                     deps: makeDeps(),
                 });
-                expect(res.lastIndexUsed).toBe(4);
+                expect(res.highestConfirmedUsedIndex).toBe(4);
                 expect(res.handlerErrors).toEqual([]);
                 expect([...calls].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
             } finally {
@@ -1329,7 +1331,10 @@ describe("Wallet.restore", () => {
         } finally {
             await wallet.dispose();
         }
-    });
+        // ~1.7s of real HD gap-scanning in isolation, against vitest's 5s
+        // default — close enough that a loaded worker pool tips it over
+        // intermittently. Explicit budget rather than a moving default.
+    }, 20_000);
 
     it("HD: recovers history older than the delta-sync overlap window", async () => {
         // Regression: the boot-time reconcile advances the global sync
@@ -1717,8 +1722,7 @@ describe("Wallet.restore", () => {
         deprecatedSigners: { cutoffDate: number; pubkey: string }[],
     ) => {
         const mockFetch = vi.fn().mockImplementation((url: string) => {
-            const reply = (body: unknown) =>
-                Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
             if (url.includes("/info"))
                 return reply({
                     signerPubkey,
@@ -2077,6 +2081,71 @@ describe("Wallet.restore", () => {
             await wallet.restore();
             expect(indexer.getVtxosCalls.length).toBeGreaterThan(singleRunCalls);
         } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("runs registered hooks after core recovery", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        const observedProbeCounts: number[] = [];
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "observe-core-recovery",
+            restore: async (restoredWallet) => {
+                expect(restoredWallet).toBe(wallet);
+                observedProbeCounts.push(indexer.getVtxosCalls.length);
+            },
+        });
+        try {
+            await wallet.restore();
+
+            expect(observedProbeCounts).toHaveLength(1);
+            expect(observedProbeCounts[0]).toBeGreaterThan(0);
+        } finally {
+            unregister();
+            await wallet.dispose();
+        }
+    });
+
+    it("keeps concurrent restore calls coalesced until hooks finish", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        let releaseHook = () => undefined;
+        const hookGate = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        const hook = vi.fn(async () => hookGate);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "delayed",
+            restore: hook,
+        });
+        try {
+            const first = wallet.restore();
+            await vi.waitFor(() => expect(hook).toHaveBeenCalledOnce());
+            const second = wallet.restore();
+
+            releaseHook();
+            await Promise.all([first, second]);
+
+            expect(hook).toHaveBeenCalledOnce();
+        } finally {
+            unregister();
+            await wallet.dispose();
+        }
+    });
+
+    it("skips hooks when core recovery fails", async () => {
+        const { wallet } = await makeStaticWalletForTest();
+        const coreFailure = new Error("core recovery failed");
+        vi.spyOn(wallet as any, "_runRestore").mockRejectedValueOnce(coreFailure);
+        const hook = vi.fn(async () => undefined);
+        const unregister = registerWalletRestoreHook(wallet, {
+            id: "must-not-run",
+            restore: hook,
+        });
+        try {
+            await expect(wallet.restore()).rejects.toBe(coreFailure);
+            expect(hook).not.toHaveBeenCalled();
+        } finally {
+            unregister();
             await wallet.dispose();
         }
     });

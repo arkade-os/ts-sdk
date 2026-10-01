@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EsploraProvider, RestArkProvider, RestIndexerProvider } from "../src";
 import { version as sdkVersion } from "../package.json";
+import { jsonResponse } from "./helpers/response";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -10,7 +11,7 @@ function captureHeaders(json: () => any = async () => []): Headers[] {
         "fetch",
         vi.fn(async (_url: string, init?: RequestInit) => {
             seen.push(new Headers(init?.headers));
-            return { ok: true, json, text: async () => "[]" };
+            return jsonResponse(await json());
         }),
     );
     return seen;

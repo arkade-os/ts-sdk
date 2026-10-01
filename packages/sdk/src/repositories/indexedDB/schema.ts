@@ -1,4 +1,7 @@
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { legacyFactsOfRow } from "../legacyVtxoFacts";
+import { isVtxoSpent } from "../../wallet/vtxo";
+import type { VirtualCoin } from "../../wallet";
 
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
@@ -10,9 +13,6 @@ export const STORE_INTENTS = "intents";
 export const STORE_VIRTUAL_TXS = "virtualTxs";
 export const STORE_VTXO_BRANCHES = "vtxoBranches";
 
-// @deprecated use only for migrations, this is created in V1
-export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
-
 // Version history:
 //   v1 — initial wallet repo schema, `contractsCollections` store.
 //   v2 — new `vtxos/utxos/transactions/walletState/contracts` stores.
@@ -20,14 +20,10 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        `vtxo.script` from `vtxo.address` so the field is always present
 //        at read time. Matches the `script` indexing already in place for
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
-//
-// The shared wallet/contract DB is pinned at v3 so upgrading the SDK never
-// migrates an existing user's database. The intent/virtualtx persistence
-// stores (v4/v5 below) are experimental and inert: they are created only by
-// the opt-in `IndexedDBIntentRepository`/`IndexedDBVirtualTxRepository`, which
-// open at `INTENT_DB_VERSION` with `initDatabaseWithIntents` on a *dedicated*
-// DB name — never through the default wallet path.
-export const DB_VERSION = 3;
+//   v4 — add the `scriptUnspent` index; existing rows are backfilled.
+// An older SDK cannot reopen a v4 database. The intent ladder below runs on a
+// dedicated DB name: its v4/v5 are not this v4.
+export const DB_VERSION = 4;
 
 //   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
@@ -62,11 +58,6 @@ export function initDatabase(
         }
         if (!vtxosStore.indexNames.contains("status")) {
             vtxosStore.createIndex("status", "status", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("virtualStatus")) {
-            vtxosStore.createIndex("virtualStatus", "virtualStatus", {
                 unique: false,
             });
         }
@@ -105,6 +96,7 @@ export function initDatabase(
                 unique: false,
             });
         }
+        vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
     }
 
     if (!db.objectStoreNames.contains(STORE_UTXOS)) {
@@ -191,26 +183,24 @@ export function initDatabase(
         }
     }
 
-    if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {
-        db.createObjectStore(LEGACY_STORE_CONTRACT_COLLECTIONS, {
-            keyPath: "key",
-        });
-    }
-
-    // v2 → v3: add the `script` index on the existing vtxos store and
-    // backfill missing `script` on legacy VTXO rows. The upgrade transaction
-    // is null only on a brand-new database (oldVersion === 0), where no
-    // legacy rows exist. `createIndex` scans existing records; rows still
-    // missing `script` are skipped and get indexed automatically when the
-    // backfill's `cursor.update()` adds the field.
-    if (oldVersion >= 1 && oldVersion < 3 && transaction) {
+    // v1–v3 → v4: one cursor pass backfills both indexed fields. `transaction`
+    // is null only on a brand-new database, where no legacy rows exist.
+    if (oldVersion >= 1 && oldVersion < 4 && transaction) {
         const vtxosStore = transaction.objectStore(STORE_VTXOS);
         if (!vtxosStore.indexNames.contains("script")) {
             vtxosStore.createIndex("script", "script", { unique: false });
         }
-        backfillVtxoScripts(transaction);
+        if (!vtxosStore.indexNames.contains("scriptUnspent")) {
+            vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
+        }
+        backfillVtxoIndexFields(transaction);
     }
 }
+
+// Booleans are not valid IndexedDB keys, so unspent rows carry `unspent: 1`
+// to enter the `scriptUnspent` index; spent history stays out of it.
+export const unspentFlag = (vtxo: VirtualCoin): { unspent?: 1 } =>
+    isVtxoSpent(vtxo) ? {} : { unspent: 1 };
 
 // Experimental / inert: creates the intent, virtualtx and vtxoBranch stores on
 // top of the shared wallet schema. Invoked ONLY by the opt-in
@@ -292,19 +282,31 @@ function dedupeIntentIds(store: IDBObjectStore, onComplete: () => void): void {
 }
 
 // Exported for unit tests — the `onupgradeneeded` transaction can't be
-// forged in-process, so tests exercise the cursor logic with a regular
+// forged in-process, so tests exercise the backfill with a regular
 // readwrite transaction on a live DB.
-export function backfillVtxoScripts(transaction: IDBTransaction): void {
+export function backfillVtxoIndexFields(transaction: IDBTransaction): void {
     const store = transaction.objectStore(STORE_VTXOS);
-    const cursorRequest = store.openCursor();
-    cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) return;
-        const value = cursor.value as { script?: string; address: string };
-        if (!value.script) {
-            value.script = scriptFromArkAddress(value.address);
-            cursor.update(value);
-        }
-        cursor.continue();
+    const pageSize = 1000;
+    // Paged getAll, not a cursor: a cursor pays one event per row.
+    const readPage = (after?: IDBValidKey) => {
+        const request = store.getAll(after && IDBKeyRange.lowerBound(after, true), pageSize);
+        request.onsuccess = () => {
+            const rows = request.result as (VirtualCoin & { address: string; unspent?: 1 })[];
+            for (const value of rows) {
+                // Same legacy repair the read path applies, so the flag matches what reads return.
+                const legacy = legacyFactsOfRow(value);
+                const next = {
+                    ...value,
+                    script: value.script || scriptFromArkAddress(value.address),
+                    ...unspentFlag({ ...value, isSpent: value.isSpent ?? legacy?.isSpent }),
+                };
+                if (next.script !== value.script || next.unspent !== value.unspent) {
+                    store.put(next);
+                }
+            }
+            const last = rows.at(-1);
+            if (rows.length === pageSize && last) readPage([last.address, last.txid, last.vout]);
+        };
     };
+    readPage();
 }

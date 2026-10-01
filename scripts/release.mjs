@@ -24,35 +24,20 @@ const PACKAGES = [
         order: 1,
     },
     {
-        key: "boltz-swap",
-        name: "@arkade-os/boltz-swap",
-        dir: path.join(ROOT_DIR, "packages/boltz-swap"),
-        pkgJson: path.join(ROOT_DIR, "packages/boltz-swap/package.json"),
-        tagPrefix: "@arkade-os/boltz-swap/",
-        order: 2,
-        dependsOnSdk: true,
-        bumpFlag: "--boltz-bump",
-        // Not part of bulk `all` releases for now; still releasable directly
-        // (`release.mjs boltz-swap <bump>`) and still dragged along as a
-        // dependent when `sdk` is released.
-        excludeFromAll: true,
-    },
-    {
         key: "swap",
         name: "@arkade-os/swap",
         dir: path.join(ROOT_DIR, "packages/swap"),
         pkgJson: path.join(ROOT_DIR, "packages/swap/package.json"),
         tagPrefix: "@arkade-os/swap/",
-        order: 3,
+        order: 2,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
     },
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const ACTIVE_PACKAGES = PACKAGES.filter((p) => !p.excludedFromRelease);
-const ALL_KEYS = ACTIVE_PACKAGES.map((p) => p.key);
-const DEPENDENT_PACKAGES = ACTIVE_PACKAGES.filter((p) => p.dependsOnSdk);
+const ALL_KEYS = PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = PACKAGES.filter((p) => p.dependsOnSdk);
 const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
     DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
 );
@@ -69,7 +54,14 @@ const BUMP_TYPES = new Set([
 const VALID_PREIDS = new Set(["alpha", "beta", "rc", "next"]);
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
 
-const STATE_FILE = path.join(ROOT_DIR, ".git", "arkade-release-state.json");
+// Asking git rather than joining ".git": in a worktree that is a FILE pointing at
+// the real gitdir, so the old path made `mkdirSync` throw EEXIST before a release
+// could write its first byte. Per-worktree by design — recovery state belongs to
+// the checkout that crashed, not to its siblings.
+const STATE_FILE = path.join(
+    path.resolve(ROOT_DIR, execFileSync("git", ["rev-parse", "--git-dir"], { cwd: ROOT_DIR, encoding: "utf8" }).trim()),
+    "arkade-release-state.json",
+);
 const RELEASE_BRANCH = "master";
 
 function die(message) {
@@ -88,7 +80,10 @@ function writePackageVersion(pkgJsonPath, version) {
 }
 
 function headPackageVersion(repoRelativePath) {
-    const result = spawnSync("git", ["show", `HEAD:${repoRelativePath}`], {
+    // git wants forward slashes in a HEAD:<path> revspec; path.relative hands back
+    // backslashes on Windows, where this failed silently and left cleanup thinking
+    // every manifest already matched HEAD.
+    const result = spawnSync("git", ["show", `HEAD:${repoRelativePath.split(path.sep).join("/")}`], {
         cwd: ROOT_DIR,
         encoding: "utf8",
     });
@@ -321,10 +316,6 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        const excluded = PACKAGES.find((p) => p.key === target && p.excludedFromRelease);
-        if (excluded) {
-            die(`${excluded.name} is excluded from the release cycle until further notice.`);
-        }
         die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
@@ -342,9 +333,10 @@ function validatePreid(preid) {
 }
 
 function primarySelection(target) {
-    // Releasing the SDK drags every SDK-dependent package along, because each
-    // would otherwise stay published against the previous SDK version.
-    if (target === "sdk") return ALL_KEYS;
+    // Releasing the SDK drags its dependents along, because each would otherwise
+    // stay published against the previous SDK version — except those opted out,
+    // which are deliberately left pinned to the SDK they last shipped with.
+    if (target === "sdk") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
     // `all` is a bulk convenience, not an implication of the SDK bump; packages
     // marked `excludeFromAll` opt out of it but remain releasable directly.
     if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
@@ -520,10 +512,18 @@ function gitHeadSha() {
     return execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT_DIR, encoding: "utf8" }).trim();
 }
 
+// On Windows pnpm and npm exist only as .cmd shims, and since CVE-2024-27980
+// Node refuses to execute one directly (EINVAL) — a shell is the sanctioned
+// way. Scoped to those two so git and tar keep spawning as plain executables.
+function needsShell(cmd) {
+    return process.platform === "win32" && (cmd === "pnpm" || cmd === "npm");
+}
+
 function run(cmd, cmdArgs, options = {}) {
     const result = spawnSync(cmd, cmdArgs, {
         cwd: options.cwd ?? ROOT_DIR,
         stdio: "inherit",
+        shell: needsShell(cmd),
         ...options,
     });
     if (result.status !== 0) die(`Command failed: ${cmd} ${cmdArgs.join(" ")}`);
@@ -533,6 +533,7 @@ function runCapture(cmd, cmdArgs, options = {}) {
     const result = spawnSync(cmd, cmdArgs, {
         cwd: options.cwd ?? ROOT_DIR,
         encoding: "utf8",
+        shell: needsShell(cmd),
         ...options,
     });
     if (result.status !== 0) {
@@ -641,13 +642,18 @@ function cleanup({ target }) {
         const current = readPackageVersion(pkg.pkgJson);
         const head = headPackageVersion(path.relative(ROOT_DIR, pkg.pkgJson));
         if (head && current !== head) {
-            run("git", ["checkout", "--", pkg.pkgJson]);
+            // From HEAD, not the index: the release stages these before committing,
+            // so a plain `checkout --` would restore the bumped version over itself.
+            run("git", ["checkout", "HEAD", "--", pkg.pkgJson]);
             console.log(`Restored ${pkg.name} manifest to ${head}`);
         }
         const candidates = new Set();
         if (state?.tags?.[key]) candidates.add(state.tags[key]);
         candidates.add(`${pkg.tagPrefix}${current}`);
-        if (head) candidates.add(`${pkg.tagPrefix}${head}`);
+        // Never the version HEAD sits on: that tag belongs to the last release and is
+        // already published. Dropped after the fact so a stale state file naming it
+        // cannot smuggle it back in either.
+        if (head) candidates.delete(`${pkg.tagPrefix}${head}`);
         for (const tag of candidates) {
             if (gitTagExists(tag)) {
                 run("git", ["tag", "-d", tag]);
@@ -699,8 +705,14 @@ function release(args) {
             console.log(`Set ${pkg.name} to ${plan.get(key).next}`);
         }
 
-        console.log("Building packages...");
-        run("pnpm", ["-r", "build"]);
+        if (!selectedKeys.includes("sdk")) {
+            // Dependents resolve @arkade-os/sdk to its built dist via the workspace
+            // link, so it must be fresh even when SDK isn't part of this release.
+            // When SDK *is* selected, its own publish below builds it (via `prepack`)
+            // before any dependent's turn, since packages publish in dependency order.
+            console.log("Building @arkade-os/sdk (workspace dependency)...");
+            run("pnpm", ["run", "build"], { cwd: PACKAGE_BY_KEY.sdk.dir });
+        }
 
         const manifestPaths = selectedKeys.map((k) => PACKAGE_BY_KEY[k].pkgJson);
         run("git", ["add", ...manifestPaths]);
@@ -726,7 +738,10 @@ function release(args) {
                 }
                 console.log(`Tag ${tag} already exists at HEAD; reusing.`);
             } else {
-                run("git", ["tag", tag]);
+                // Always annotated, never bare: under `tag.gpgsign` a bare `git tag`
+                // is a SIGNED tag, which needs a message and opens an editor — a
+                // release that hangs on vim forever with the commit already made.
+                run("git", ["tag", "-m", `${PACKAGE_BY_KEY[key].name} ${plan.get(key).next}`, tag]);
                 console.log(`Created tag ${tag}`);
             }
             state.tagsCreated[key] = true;
@@ -747,6 +762,7 @@ function release(args) {
             const published = spawnSync("npm", ["view", `${pkg.name}@${version}`, "version"], {
                 cwd: ROOT_DIR,
                 stdio: "ignore",
+                shell: needsShell("npm"),
             });
             if (published.status === 0) {
                 console.log(`${pkg.name}@${version} is already published; skipping.`);

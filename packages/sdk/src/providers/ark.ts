@@ -168,7 +168,20 @@ export interface DeprecatedSigner {
 
 export type ServiceStatus = Record<string, string>;
 
-export interface ArkInfo {
+/**
+ * The Arkade server's advertised configuration — the `/v1/info` response.
+ *
+ * Naming/placement vs the NArk reference (AGENTS.md asks divergences to be
+ * noted): NArk calls this `ArkServerInfo`, reads it via `GetServerInfoAsync`
+ * on the *transport*, and caches it in a dedicated `CachingClientTransport`.
+ * This SDK names it for the product (`ArkadeInfo`, per #734) and hangs the
+ * read off the wallet (`getArkadeInfo()`), because here the wallet is the one
+ * object every consumer already holds and — in the service-worker model — the
+ * only side that has a transport at all; the page has no provider to hang it
+ * on. The `CachingClientTransport`-style memo lives at this layer instead, as
+ * `CachingArkProvider`.
+ */
+export interface ArkadeInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
     deprecatedSigners: DeprecatedSigner[];
@@ -278,7 +291,7 @@ export interface TxNotificationEvent {
 
 export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
-    getInfo(): Promise<ArkInfo>;
+    getInfo(): Promise<ArkadeInfo>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
@@ -365,28 +378,29 @@ export class RestArkProvider implements ArkProvider {
     }
 
     /**
-     * Last server-info digest seen from {@link getInfo}. Sent as `X-Digest`
-     * so arkd can reject stale client configuration.
+     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
+     * on outgoing requests so arkd can reject a client whose cached info is
+     * stale. Empty until the first {@link getInfo}.
      */
     private _digest = "";
     private _hasServerInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
-    private _serverInfoListeners = new Set<(info: ArkInfo) => void>();
+    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
 
     /**
      * Subscribe to server-info changes. Fired after a stale-info
      * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
      * Returns an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
         return () => {
             this._serverInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkInfo): void {
+    private emitServerInfoChanged(info: ArkadeInfo): void {
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
@@ -466,7 +480,7 @@ export class RestArkProvider implements ArkProvider {
         // so the caller must rebuild and retry it under the refreshed server info.
         this._digest = "";
         this._suppressNextGetInfoChangeEmit = true;
-        let info: ArkInfo;
+        let info: ArkadeInfo;
         try {
             info = await this.getInfo();
         } finally {
@@ -479,11 +493,39 @@ export class RestArkProvider implements ArkProvider {
         );
     }
 
-    async getInfo(): Promise<ArkInfo> {
+    private async postJson(
+        url: string,
+        body: unknown,
+        failureMessage: (errorText: string, response: Response) => string,
+    ): Promise<Response> {
+        const response = await this.authedFetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            handleError(errorText, failureMessage(errorText, response));
+        }
+        return response;
+    }
+
+    async getInfo(): Promise<ArkadeInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
-        // the indexer.
-        const response = await rateGate.runHttp(url, () => fetch(url));
+        // the indexer. The fetch carries its own budget where the runtime
+        // supports one: on a black-holed connection (captive portal, dropped
+        // Wi-Fi with no RST) an unbounded fetch hangs to the OS connect
+        // timeout (30-75s), which outlives the service-worker page deadline
+        // (20s) — the page would time out while the worker was still seconds
+        // from serving the cached snapshot. The abort rejects as a retryable
+        // timeout, so the snapshot fallback stays reachable.
+        const response = await rateGate.runHttp(url, () =>
+            fetch(url, { signal: infoFetchSignal() }),
+        );
         if (!response.ok) {
             const errorText = await response.text();
             // A 429 or 5xx means the operator is up but temporarily unable to
@@ -498,7 +540,7 @@ export class RestArkProvider implements ArkProvider {
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
-        const info: ArkInfo = {
+        const info: ArkadeInfo = {
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
@@ -571,21 +613,14 @@ export class RestArkProvider implements ArkProvider {
         signedCheckpointTxs: string[];
     }> {
         const url = `${this.serverUrl}/v1/tx/submit`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await this.postJson(
+            url,
+            {
                 signedArkTx,
                 checkpointTxs,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit virtual transaction: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to submit virtual transaction: ${errorText}`,
+        );
 
         const data = await response.json();
         return {
@@ -597,42 +632,28 @@ export class RestArkProvider implements ArkProvider {
 
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/tx/finalize`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 arkTxid,
                 finalCheckpointTxs,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to finalize offchain transaction: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to finalize offchain transaction: ${errorText}`,
+        );
     }
 
     async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await this.postJson(
+            url,
+            {
                 intent: {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to register intent: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to register intent: ${errorText}`,
+        );
 
         const data = await response.json();
         return data.intentId;
@@ -640,61 +661,40 @@ export class RestArkProvider implements ArkProvider {
 
     async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 intent: {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to delete intent: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to delete intent: ${errorText}`,
+        );
     }
 
     async confirmRegistration(intentId: string): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/ack`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 intentId,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to confirm registration: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to confirm registration: ${errorText}`,
+        );
     }
 
     async submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitNonces`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 batchId,
                 pubkey,
                 treeNonces: encodeMusig2Nonces(nonces),
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit tree nonces: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to submit tree nonces: ${errorText}`,
+        );
     }
 
     async submitTreeSignatures(
@@ -703,22 +703,15 @@ export class RestArkProvider implements ArkProvider {
         signatures: TreePartialSigs,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/tree/submitSignatures`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 batchId,
                 pubkey,
                 treeSignatures: encodeMusig2Signatures(signatures),
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit tree signatures: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to submit tree signatures: ${errorText}`,
+        );
     }
 
     async submitSignedForfeitTxs(
@@ -726,21 +719,14 @@ export class RestArkProvider implements ArkProvider {
         signedCommitmentTx?: string,
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/submitForfeitTxs`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        await this.postJson(
+            url,
+            {
                 signedForfeitTxs: signedForfeitTxs,
                 signedCommitmentTx: signedCommitmentTx,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to submit forfeit transactions: ${response.statusText}`);
-        }
+            },
+            (_, res) => `Failed to submit forfeit transactions: ${res.statusText}`,
+        );
     }
 
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent> {
@@ -913,23 +899,16 @@ export class RestArkProvider implements ArkProvider {
 
     async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
-        const response = await this.authedFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const response = await this.postJson(
+            url,
+            {
                 intent: {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            handleError(errorText, `Failed to get pending transactions: ${errorText}`);
-        }
+            },
+            (errorText) => `Failed to get pending transactions: ${errorText}`,
+        );
 
         const data = await response.json();
         return data.pendingTxs;
@@ -1222,35 +1201,20 @@ namespace ProtoTypes {
         sweepTx?: TxNotificationData;
         heartbeat?: Heartbeat;
     }
+}
 
-    // Legacy types for backward compatibility
-    export interface EventData {
-        batchStarted?: BatchStartedEvent;
-        batchFailed?: BatchFailed;
-        batchFinalization?: BatchFinalizationEvent;
-        batchFinalized?: BatchFinalizedEvent;
-        treeSigningStarted?: TreeSigningStartedEvent;
-        treeNoncesAggregated?: TreeNoncesAggregatedEvent;
-        treeTx?: TreeTxEvent;
-        treeSignature?: TreeSignatureEvent;
-    }
+/**
+ * Budget for a single live `/v1/info` fetch. Exported so the service-worker
+ * page deadline for GET_ARKADE_INFO is DERIVED from it (budget + queue
+ * headroom).
+ */
+export const INFO_FETCH_TIMEOUT_MS = 12_000;
 
-    export interface TransactionData {
-        commitmentTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
-        arkTx?: {
-            txid: string;
-            tx: string;
-            spentVtxos: VtxoData[];
-            spendableVtxos: VtxoData[];
-            checkpointTxs?: Record<string, { txid: string; tx: string }>;
-        };
-    }
+/** `AbortSignal.timeout` where the runtime has it; older runtimes go unbudgeted. */
+function infoFetchSignal(): AbortSignal | undefined {
+    return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(INFO_FETCH_TIMEOUT_MS)
+        : undefined;
 }
 
 export function isFetchTimeoutError(err: any): boolean {
@@ -1262,6 +1226,8 @@ export function isFetchTimeoutError(err: any): boolean {
 
         return (
             isCloudflare524 ||
+            // AbortSignal.timeout rejects with a DOMException named this
+            error.name === "TimeoutError" ||
             error.name === "HeadersTimeoutError" ||
             error.name === "BodyTimeoutError" ||
             (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||

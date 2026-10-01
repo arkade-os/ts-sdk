@@ -1,13 +1,12 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { TapLeafScript } from "../script/base";
-import { ArkTransaction, Asset, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import { Asset, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../wallet/vtxo";
 
 export type SerializedTapLeaf = { cb: string; s: string };
 export type SerializedVtxo = ReturnType<typeof serializeVtxo>;
 export type SerializedUtxo = ReturnType<typeof serializeUtxo>;
-export type SerializedTransaction = ReturnType<typeof serializeTransaction>;
 
 // `Asset.amount` is a `bigint`, which `JSON.stringify` cannot serialize
 // (`TypeError: Do not know how to serialize a BigInt`). Persist it as a
@@ -25,8 +24,9 @@ export const serializeAsset = (a: Asset): SerializedAsset => ({
     amount: a.amount.toString(),
 });
 
-// Accept legacy persisted shapes where `amount` is a `number` — pre-bigint
-// data already on disk must keep round-tripping.
+// `number` is still accepted: amounts persisted before they became bigint are on disk as JSON
+// numbers, and `BigInt()` would take a fractional one as a throw rather than a diagnosis. The
+// guard turns silent precision loss into a message that says what to do about it.
 export const deserializeAsset = (a: {
     assetId: string;
     amount: string | number | bigint;
@@ -58,6 +58,14 @@ export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     assets: serializeAssets(v.assets),
 });
 
+/** Legacy rows may carry `createdAt` as a string or epoch number rather than a Date. */
+export const createdAtToIso = (createdAt: Date | string | number): string =>
+    typeof createdAt === "string"
+        ? createdAt
+        : createdAt instanceof Date
+          ? createdAt.toISOString()
+          : new Date(createdAt).toISOString();
+
 export const serializeUtxo = (u: ExtendedCoin) => ({
     ...u,
     tapTree: hex.encode(u.tapTree),
@@ -66,22 +74,13 @@ export const serializeUtxo = (u: ExtendedCoin) => ({
     extraWitness: u.extraWitness?.map(hex.encode),
 });
 
-export const serializeTransaction = (t: ArkTransaction) => ({
-    ...t,
-    assets: serializeAssets(t.assets),
-});
-
 export const deserializeTapLeaf = (t: SerializedTapLeaf): TapLeafScript => {
     const cb = TaprootControlBlock.decode(hex.decode(t.cb));
     const s = hex.decode(t.s);
     return [cb, s];
 };
 
-// Normalized on the way out so rows written before canonical facts existed — and rows from the
-// column-mapped backends, whose explicit column lists don't carry them — come back with the facts
-// reconstructed from the legacy blob, and with `expiresAt` rehydrated to a real Date rather than
-// the ISO string JSON left behind. The correctness boundary is `getVtxosForContract`, which also
-// covers the backends that never reach this code.
+// Normalized on the way out so persisted Date fields are rehydrated and optional facts are present.
 export const deserializeVtxo = (o: SerializedVtxo): NormalizedExtendedVirtualCoin =>
     normalizeVtxo({
         ...o,
@@ -99,9 +98,4 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
     extraWitness: o.extraWitness?.map(hex.decode),
-});
-
-export const deserializeTransaction = (o: SerializedTransaction): ArkTransaction => ({
-    ...o,
-    assets: deserializeAssets(o.assets),
 });

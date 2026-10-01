@@ -1,6 +1,5 @@
 import { hex } from "@scure/base";
 import { hash160 } from "@scure/btc-signer/utils.js";
-import { execSync } from "child_process";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
     ExecutorEvent,
@@ -17,6 +16,7 @@ import {
     createTestArkWallet,
     createTestOnchainWallet,
     createVtxo,
+    execCommand,
     faucetOnchain,
     mineBlocks,
     waitFor,
@@ -27,8 +27,8 @@ describe("unilateral exit packages", () => {
 
     let SERVER_KEY: Uint8Array;
     beforeAll(() => {
-        const info = execSync("curl -fsS --max-time 5 http://localhost:7070/v1/info");
-        const signerPubkey = JSON.parse(info.toString()).signerPubkey;
+        const info = execCommand("curl -fsS --max-time 5 http://localhost:7070/v1/info");
+        const signerPubkey = JSON.parse(info).signerPubkey;
         SERVER_KEY = hex.decode(signerPubkey).slice(1);
     });
 

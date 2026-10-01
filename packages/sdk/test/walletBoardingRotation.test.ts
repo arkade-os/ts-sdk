@@ -5,8 +5,10 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestArkProvider,
     toXOnlySignerHex,
 } from "../src";
+import { jsonResponse } from "./helpers/response";
 
 /**
  * Per-derivation boarding rotation (plan §6-II).
@@ -61,8 +63,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        const reply = (body: unknown) =>
-            Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
         if (url.includes("/info")) return reply(mockArkInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
@@ -83,7 +84,7 @@ function makeHdWallet(
     return Wallet.create({
         identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
         walletMode: "hd",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -98,7 +99,7 @@ describe("Wallet boarding rotation", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: walletRepo,
                     contractRepository: new InMemoryContractRepository(),
@@ -269,7 +270,7 @@ describe("Wallet boarding rotation", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkServerUrl: "http://localhost:7070",
+                arkProvider: new RestArkProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: walletRepo,
                     contractRepository: new InMemoryContractRepository(),

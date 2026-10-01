@@ -41,6 +41,7 @@ export {
     type ArkadeExtendedCoin,
     type ArkadeExtendedVirtualCoin,
 } from "./batch";
+export { programFromArtifact, isContractArtifact, type ContractArtifact } from "./artifact";
 export {
     ArkadeProgramScript,
     stringifyArtifact,
@@ -71,10 +72,12 @@ export {
     type InputDef,
     type InputRef,
     type SignerRef,
+    type TweakedSigner,
     type WitnessRef,
     type Utxo,
     type ArkadeSpendResult,
     type CallableFunctions,
     type ContractFunctions,
     type ArkadeConnectOptions,
+    type ArkadeServerProvider,
 } from "./contract";

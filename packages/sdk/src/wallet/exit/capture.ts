@@ -1,5 +1,5 @@
 import { base64 } from "@scure/base";
-import { ChainTx, ChainTxType } from "../../providers/indexer";
+import { ChainTx } from "../../providers/indexer";
 import {
     ChainedTxType,
     VirtualTx,
@@ -8,7 +8,7 @@ import {
 } from "../../repositories/virtualTxRepository";
 import { Transaction } from "../../utils/transaction";
 import { Outpoint } from "../index";
-import { topoSortByDeps } from "./chain";
+import { chainTxTypeToChainedExit, topoSortByDeps } from "./chain";
 import { ExitChainResolver } from "./resolver";
 
 export type ExitCaptureMode = "lite" | "full";
@@ -19,23 +19,6 @@ export const DEFAULT_MIN_EXIT_WORTH_SATS = 1000;
 /** Default capture mode: Lite (structure only). Full (store PSBTs) is opt-in for
  *  wallets that want indexer-independent exit — most VTXOs never exit (NArk parity). */
 export const DEFAULT_EXIT_CAPTURE_MODE: ExitCaptureMode = "lite";
-
-/** ChainTxType (indexer string enum) → ChainedTxType (repo numeric enum).
- *  Duplicated from unroll.ts:27 to keep the exit path free of a cross-module dep. */
-function chainTxTypeToChainedExit(t: ChainTxType): ChainedTxType {
-    switch (t) {
-        case ChainTxType.COMMITMENT:
-            return ChainedTxType.Commitment;
-        case ChainTxType.ARK:
-            return ChainedTxType.Ark;
-        case ChainTxType.TREE:
-            return ChainedTxType.Tree;
-        case ChainTxType.CHECKPOINT:
-            return ChainedTxType.Checkpoint;
-        default:
-            return ChainedTxType.Unspecified;
-    }
-}
 
 /** Order a chain ancestors-first so position 0 is the root/commitment. */
 function orderAncestryFirst(chain: ChainTx[]): ChainTx[] {

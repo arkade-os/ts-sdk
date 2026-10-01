@@ -7,8 +7,7 @@ TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-cha
 | Package | Description |
 |---------|-------------|
 | [`@arkade-os/sdk`](packages/sdk/) | Bitcoin wallet SDK with Taproot and Ark protocol support |
-| [`@arkade-os/boltz-swap`](packages/boltz-swap/) | **Deprecated, unmaintained.** Lightning and chain swaps using Boltz |
-| [`@arkade-os/swap`](packages/swap/) | Client-side Arkade Intents asset swaps: market discovery, offers, RFQ, restore |
+| [`@arkade-os/swap`](packages/swap/) | Client-side Arkade Intents asset swaps: state a route, get an outcome — pay, receive, exchange |
 
 The [`regtest/`](regtest/) directory is a shared regtest environment, vendored as the
 [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) git submodule.
@@ -47,7 +46,7 @@ pnpm -C packages/sdk vitest run -t "test name pattern"
 ### Integration tests
 
 Integration tests run against the shared regtest stack; `pnpm run test:integration` cycles every
-package's suite (sdk, boltz-swap, swap, and the swap RFQ profile) end-to-end. See
+package's suite (sdk, swap, and the swap RFQ profile) end-to-end. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for per-package stack control, running selected test files, and
 how CI fans the sdk e2e suite out across parallel groups.
 
@@ -64,15 +63,19 @@ After regenerating, sanity-check that source links in the generated HTML point t
 
 ## Releasing
 
-Releases run from the repository root and are package-scoped (`sdk`, `boltz-swap`, `swap`, or `all`),
-each with its own version and tag. Releasing `sdk` also bumps the dependents (`boltz-swap`, `swap`),
-so they never stay pinned to a stale SDK:
+Releases run from the repository root and are package-scoped (`sdk`, `swap`, or `all`), each with
+its own version and tag. Releasing `sdk` also bumps the dependents (`swap`), so they never stay
+pinned to a stale SDK:
 
 ```bash
-pnpm run release -- sdk patch           # SDK + dependent boltz-swap/swap patch
+pnpm run release -- sdk patch           # SDK + dependent swap patch
 pnpm run release:dry-run -- sdk patch   # Preview the plan without changing files
 pnpm run release:cleanup                # Restore manifests, delete local tags
 ```
+
+`workspace:*` dependencies are replaced with the workspace package's exact version when a package
+is published. If a dependent starts using a newly released SDK API, release the SDK first and the
+dependent second; otherwise the dependent can be published with an older, incompatible SDK pin.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for all targets, bump types, prerelease flags, and cleanup
 behavior.

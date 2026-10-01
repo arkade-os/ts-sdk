@@ -1,7 +1,14 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { Wallet, EsploraProvider, MnemonicIdentity, RelativeTimelock, Ramps } from "../../src";
+import {
+    Wallet,
+    EsploraProvider,
+    MnemonicIdentity,
+    RelativeTimelock,
+    Ramps,
+    RestArkProvider,
+} from "../../src";
 import {
     beforeEachFaucet,
     createSharedRepos,
@@ -31,7 +38,7 @@ function createHdWallet(opts: HdWalletOpts): Promise<Wallet> {
     return Wallet.create({
         identity: MnemonicIdentity.fromMnemonic(opts.mnemonic, { isMainnet: false }),
         walletMode: "hd",
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,

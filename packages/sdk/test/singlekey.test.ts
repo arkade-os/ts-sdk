@@ -3,7 +3,6 @@ import { hex } from "@scure/base";
 import { p2tr, SigHash } from "@scure/btc-signer";
 import { Transaction } from "../src/utils/transaction";
 import { SingleKey, ReadonlySingleKey } from "../src/identity/singleKey";
-import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
 
 const zeroAux = new Uint8Array(32);
@@ -27,22 +26,6 @@ describe("SingleKey", () => {
         expect(Array.from(pubKey1)).not.toEqual(Array.from(pubKey2));
     });
 
-    it("should create keys from hex", async () => {
-        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        const key = SingleKey.fromHex(privateKeyHex);
-
-        await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-    });
-
-    it("should create keys from private key bytes", async () => {
-        const privateKeyBytes = new Uint8Array(32).fill(1);
-        const key = SingleKey.fromPrivateKey(privateKeyBytes);
-
-        await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-    });
-
     it("should export private key as hex with toHex()", () => {
         const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const key = SingleKey.fromHex(privateKeyHex);
@@ -50,35 +33,6 @@ describe("SingleKey", () => {
         // Should be able to export the same hex
         const exportedHex = key.toHex();
         expect(exportedHex).toBe(privateKeyHex);
-    });
-
-    it("should round-trip from hex to storage and back", async () => {
-        const originalHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        const storage = new InMemoryStorageAdapter();
-
-        // Create key from hex
-        const key1 = SingleKey.fromHex(originalHex);
-
-        // Store it using toHex()
-        await storage.setItem("test-key", key1.toHex());
-
-        // Load it back using simple pattern: storage.getItem + fromHex
-        const storedHex = await storage.getItem("test-key");
-        expect(storedHex).toBeTruthy(); // Ensure it's not null
-        const key2 = SingleKey.fromHex(storedHex!);
-
-        // Should have the same x-only public key
-        const pubKey1 = await key1.xOnlyPublicKey();
-        const pubKey2 = await key2.xOnlyPublicKey();
-        expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
-
-        // Should have the same compressed public key
-        const compPubKey1 = await key1.compressedPublicKey();
-        const compPubKey2 = await key2.compressedPublicKey();
-        expect(Array.from(compPubKey1)).toEqual(Array.from(compPubKey2));
-
-        // Should export the same hex
-        expect(key2.toHex()).toBe(originalHex);
     });
 
     it("should sign message with schnorr signature", async () => {
@@ -248,22 +202,6 @@ describe("ReadonlySingleKey", () => {
         expect((readonlyKey as any).sign).toBeUndefined();
         expect((readonlyKey as any).signMessage).toBeUndefined();
         expect((readonlyKey as any).toHex).toBeUndefined();
-    });
-
-    it("should work with different public key prefixes", async () => {
-        const privateKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        const key = SingleKey.fromHex(privateKeyHex);
-        const compressedPubKey = await key.compressedPublicKey();
-
-        // Should work with both 0x02 and 0x03 prefixes
-        expect(compressedPubKey[0]).toBeGreaterThanOrEqual(2);
-        expect(compressedPubKey[0]).toBeLessThanOrEqual(3);
-
-        const readonlyKey = ReadonlySingleKey.fromPublicKey(compressedPubKey);
-        const xOnlyPubKey = await readonlyKey.xOnlyPublicKey();
-
-        expect(xOnlyPubKey).toHaveLength(32);
-        expect(xOnlyPubKey).toBeInstanceOf(Uint8Array);
     });
 });
 

@@ -1,14 +1,20 @@
 import type { RealmLike } from "@arkade-os/sdk/repositories/realm";
 import {
     marketsCacheKey,
+    assertRfqSwapPageLimit,
+    assertRfqSwapSince,
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqHistoryCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
+import type { SwapRecord } from "../../client/record";
+import type { RfqSwapState } from "../../rfqSwapState";
 
 const SWAPS = "ArkadeAssetSwap";
 const RFQ_SWAPS = "ArkadeRfqSwap";
+const SWAP_RECORDS = "ArkadeSwapRecord";
 const SCANNED = "ArkadeAssetSwapScannedTxid";
 const MARKETS = "ArkadeAssetSwapMarketsCache";
 
@@ -33,7 +39,7 @@ const MARKETS = "ArkadeAssetSwapMarketsCache";
  * consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
@@ -86,10 +92,96 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
         );
     }
 
+    async getRfqSwapsPage(
+        state: RfqSwapState,
+        afterId: string | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        const rows = this.realm
+            .objects<{ data: string }>(RFQ_SWAPS)
+            .filtered("state == $0 AND rfqId > $1", state, afterId ?? "")
+            .sorted("rfqId");
+        const page: RfqSwapRecord[] = [];
+        for (const row of rows) {
+            page.push(JSON.parse(row.data) as RfqSwapRecord);
+            if (page.length === limit) break;
+        }
+        return page;
+    }
+
+    async getRfqSwapsUpdatedPage(
+        state: RfqSwapState,
+        since: number,
+        after: RfqHistoryCursor | undefined,
+        limit: number,
+    ): Promise<RfqSwapRecord[]> {
+        assertRfqSwapPageLimit(limit);
+        assertRfqSwapSince(since);
+        const rows = after
+            ? this.realm
+                  .objects<{ data: string }>(RFQ_SWAPS)
+                  .filtered(
+                      "state == $0 AND updatedAt >= $1 AND (updatedAt > $2 OR (updatedAt == $2 AND rfqId > $3))",
+                      state,
+                      since,
+                      after.updatedAt,
+                      after.rfqId,
+                  )
+            : this.realm
+                  .objects<{ data: string }>(RFQ_SWAPS)
+                  .filtered("state == $0 AND updatedAt >= $1", state, since);
+        const page: RfqSwapRecord[] = [];
+        for (const row of rows.sorted([
+            ["updatedAt", false],
+            ["rfqId", false],
+        ])) {
+            page.push(JSON.parse(row.data) as RfqSwapRecord);
+            if (page.length === limit) break;
+        }
+        return page;
+    }
+
     async removeRfqSwap(rfqId: string): Promise<void> {
         this.realm.write(() => {
             this.realm.delete(
                 this.realm.objects<{ rfqId: string }>(RFQ_SWAPS).filtered("rfqId == $0", rfqId),
+            );
+        });
+    }
+
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        this.realm.write(() => {
+            this.realm.create(
+                SWAP_RECORDS,
+                {
+                    id: record.id,
+                    family: record.family,
+                    updatedAt: record.updatedAt,
+                    data: JSON.stringify(record),
+                },
+                "modified",
+            );
+        });
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        const [found] = [
+            ...this.realm.objects<{ data: string }>(SWAP_RECORDS).filtered("id == $0", id),
+        ];
+        return found ? (JSON.parse(found.data) as SwapRecord) : undefined;
+    }
+
+    async getAllSwapRecords(): Promise<SwapRecord[]> {
+        return [...this.realm.objects<{ data: string }>(SWAP_RECORDS)].map(
+            (o) => JSON.parse(o.data) as SwapRecord,
+        );
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        this.realm.write(() => {
+            this.realm.delete(
+                this.realm.objects<{ id: string }>(SWAP_RECORDS).filtered("id == $0", id),
             );
         });
     }
@@ -135,7 +227,7 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
      * partial clear must not be observable. */
     async clear(): Promise<void> {
         this.realm.write(() => {
-            for (const name of [SWAPS, RFQ_SWAPS, SCANNED, MARKETS]) {
+            for (const name of [SWAPS, RFQ_SWAPS, SWAP_RECORDS, SCANNED, MARKETS]) {
                 this.realm.delete(this.realm.objects(name));
             }
         });
