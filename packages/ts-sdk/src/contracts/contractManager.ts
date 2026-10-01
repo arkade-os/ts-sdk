@@ -56,9 +56,15 @@ import {
     getVtxosForContract,
     inVtxoWriteOrder,
     saveVtxosForContract,
+    vtxoOutpoint,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 import { DEFAULT_PAGE_SIZE } from "./constants";
+import type { OnchainProvider } from "../providers/onchain";
+import type { Network } from "../networks";
+import { OnchainContractWatcher } from "./onchainWatcher";
+import { onchainAddressOf, toOnchainCoinRow } from "./onchainCoins";
+import { isOnchainScoped } from "./scope";
 
 /**
  * Whether two *different* contract types may legitimately share a single
@@ -545,6 +551,17 @@ export interface IContractManager extends Disposable {
     refreshOutpoints(outpoints: Outpoint[]): Promise<void>;
 
     /**
+     * Fetch onchain coins for onchain-scoped contracts (and contracts holding
+     * unspent unrolled outputs), upsert them, and mark vanished ones spent.
+     * No-op without `onchainProvider` and `network`. Narrowed by `scripts`.
+     * Optional (like {@link watchScript}): the service-worker proxy does not forward it yet.
+     */
+    syncOnchain?(scripts?: string[]): Promise<void>;
+
+    /** Record `txid` as the pending spender of stored onchain coins; the next sync confirms it. */
+    markOnchainSpendPending?(outpoints: Outpoint[], txid: string): Promise<void>;
+
+    /**
      * Rebuild the HD look-ahead watch window around the current allocation
      * watermark. No-op when the manager was configured without `lookAhead`.
      *
@@ -748,6 +765,10 @@ export interface ContractManagerConfig {
      * therefore a budget rather than a free saving.
      */
     vtxoSyncMaxAgeMs?: number;
+
+    /** Enables onchain coin discovery and watching; needs `network` too. */
+    onchainProvider?: OnchainProvider;
+    network?: Network;
 }
 
 /**
@@ -880,9 +901,19 @@ export class ContractManager implements IContractManager {
      * so it re-checks this at every await boundary instead of running on
      * against a torn-down watcher. */
     private disposed = false;
+    private onchainWatcher?: OnchainContractWatcher;
+    /** Serializes onchain read-modify-writes so a pending spender is never overwritten. */
+    private onchainChain: Promise<void> = Promise.resolve();
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
+        if (config.onchainProvider && config.network) {
+            this.onchainWatcher = new OnchainContractWatcher({
+                onchainProvider: config.onchainProvider,
+                network: config.network,
+                onChange: (scripts) => void this.syncOnchain(scripts),
+            });
+        }
 
         // Create watcher with wallet repository for virtual output caching
         this.watcher = new ContractWatcher({
@@ -2316,6 +2347,112 @@ export class ContractManager implements IContractManager {
         return this.watcher.getWatchedScripts();
     }
 
+    /** @see IContractManager.syncOnchain */
+    syncOnchain(scripts?: string[]): Promise<void> {
+        return this.inOnchainOrder(() => this.runOnchainSync(scripts));
+    }
+
+    /** @see IContractManager.markOnchainSpendPending */
+    markOnchainSpendPending(outpoints: Outpoint[], txid: string): Promise<void> {
+        return this.inOnchainOrder(async () => {
+            const keys = new Set(outpoints.map(vtxoOutpoint));
+            const contracts = await this.config.contractRepository.getContracts();
+            const rows = await this.getVtxosForContracts(contracts, { unspentOnly: true });
+            for (const contract of contracts) {
+                const marked = rows
+                    .filter(
+                        (v) => v.contractScript === contract.script && keys.has(vtxoOutpoint(v)),
+                    )
+                    .map(({ contractScript: _, ...v }) => ({ ...v, spentBy: txid }));
+                if (marked.length === 0) continue;
+                await saveVtxosForContract(this.config.walletRepository, contract, marked);
+            }
+        });
+    }
+
+    private inOnchainOrder(fn: () => Promise<void>): Promise<void> {
+        const run = this.onchainChain.then(fn, fn);
+        this.onchainChain = run.catch(() => {});
+        return run;
+    }
+
+    private async runOnchainSync(scripts?: string[]): Promise<void> {
+        const { onchainProvider, network } = this.config;
+        if (!onchainProvider || !network || this.disposed) return;
+        const contracts = await this.config.contractRepository.getContracts();
+        const unrolledOwners = new Set(
+            (await this.getVtxosForContracts(contracts, { unspentOnly: true }))
+                .filter((v) => v.isUnrolled)
+                .map((v) => v.contractScript),
+        );
+        const targets = contracts.filter(
+            (c) =>
+                contractHandlers.has(c.type) &&
+                ((c.state === "active" && isOnchainScoped(c)) || unrolledOwners.has(c.script)),
+        );
+        const wanted = scripts && new Set(scripts);
+        for (const contract of targets) {
+            if (wanted && !wanted.has(contract.script)) continue;
+            try {
+                await this.syncOnchainContract(contract, onchainProvider, network);
+            } catch (e) {
+                console.warn(`[contracts] onchain sync failed for ${contract.script}`, e);
+            }
+        }
+        if (this.disposed) return;
+        await this.onchainWatcher?.setTargets(
+            targets.map((c) => ({ script: c.script, address: onchainAddressOf(c, network) })),
+        );
+    }
+
+    private async syncOnchainContract(
+        contract: Contract,
+        onchainProvider: OnchainProvider,
+        network: Network,
+    ): Promise<void> {
+        const tapscript = contractHandlers.get(contract.type)!.createScript(contract.params);
+        const coins = await onchainProvider.getCoins(tapscript.onchainAddress(network));
+        const stored = new Map(
+            (await getVtxosForContract(this.config.walletRepository, contract)).map((v) => [
+                vtxoOutpoint(v),
+                v,
+            ]),
+        );
+        const rows = coins.map((coin) => {
+            const row = toOnchainCoinRow(coin, contract, tapscript);
+            const spentBy = stored.get(vtxoOutpoint(row))?.spentBy;
+            return spentBy ? { ...row, spentBy } : row;
+        });
+        const live = new Set(rows.map(vtxoOutpoint));
+
+        const spent: ExtendedVirtualCoin[] = [];
+        for (const row of stored.values()) {
+            if (!row.isUnrolled || row.isSpent || live.has(vtxoOutpoint(row))) continue;
+            const outspend = (await onchainProvider.getTxOutspends(row.txid))[row.vout];
+            if (!outspend?.spent) continue;
+            spent.push({ ...row, isSpent: true, spentBy: outspend.txid ?? row.spentBy ?? "" });
+        }
+
+        const writes = [...rows, ...spent];
+        if (writes.length === 0) return;
+        await saveVtxosForContract(this.config.walletRepository, contract, writes);
+        const emit = (type: "vtxo_received" | "vtxo_spent", vtxos: ExtendedVirtualCoin[]) => {
+            if (vtxos.length === 0) return;
+            this.emitEvent({
+                type,
+                contractScript: contract.script,
+                vtxos: vtxos.map((v) => ({ ...v, contractScript: contract.script })),
+                contract,
+                timestamp: Date.now(),
+            });
+        };
+        emit(
+            "vtxo_received",
+            rows.filter((r) => !stored.has(vtxoOutpoint(r))),
+        );
+        emit("vtxo_spent", spent);
+    }
+
     /**
      * Emit an event to all registered callbacks.
      */
@@ -2735,6 +2872,7 @@ export class ContractManager implements IContractManager {
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
+        this.onchainWatcher?.stop();
 
         // Clear callbacks
         this.eventCallbacks.clear();

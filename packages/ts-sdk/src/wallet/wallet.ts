@@ -2185,6 +2185,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const { height, time } = await this.onchainProvider.getChainTip();
                 return { height, time };
             },
+            onchainProvider: this.onchainProvider,
+            network: this.network,
         });
 
         // Register the wallet's baseline always-active contracts: every
@@ -2347,6 +2349,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
         } catch (e) {
             console.warn("Legacy utxos migration failed; retrying next boot", e);
+        }
+        // After the migration, so legacy rows that were already spent are healed.
+        try {
+            await manager.syncOnchain();
+        } catch (e) {
+            console.warn("Onchain contract sync failed; continuing with stored coins", e);
         }
 
         return manager;
