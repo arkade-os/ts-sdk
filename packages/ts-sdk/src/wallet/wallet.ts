@@ -460,14 +460,20 @@ export function filterSnapshotVtxos(
  * connector for. Best-effort: cached inputs are kept on failure.
  */
 async function refreshSweptStateOfExpiredInputs(
-    wallet: Pick<ReadonlyWallet, "getContractManager" | "getVtxos">,
+    wallet: Pick<ReadonlyWallet, "getContractManager" | "getVtxos" | "onchainProvider">,
     inputs: ExtendedCoin[],
 ): Promise<ExtendedCoin[]> {
-    const now = { timestamp: new Date() };
-    const suspects = inputs.filter(
-        (input): input is ExtendedCoin & VirtualCoin =>
-            isVirtualCoin(input) && !normalizeVtxo(input).isSwept && isPastExpiry(input, now),
-    );
+    const candidates = inputs
+        .filter(isVirtualCoin)
+        .map(normalizeVtxo)
+        .filter((v) => !v.isSwept);
+    if (candidates.length === 0) return inputs;
+
+    // Only a height-encoded expiry needs the tip, so time-based networks make no call.
+    const now = candidates.some((v) => v.expiresAtHeight !== undefined)
+        ? await resolveTimeHeight(wallet.onchainProvider)
+        : { timestamp: new Date() };
+    const suspects = candidates.filter((v) => isPastExpiry(v, now));
     if (suspects.length === 0) return inputs;
 
     try {

@@ -208,15 +208,21 @@ describe("delegation forfeits a VTXO past expiry that is not swept", () => {
 
 describe("settle refreshes the swept state of expired inputs", () => {
     const STOP = "stop-before-intent";
+    const EXPIRY_HEIGHT = 500;
 
-    function harness(opts: {
+    type SettleOpts = {
         fresh?: ExtendedVirtualCoin[];
         refreshOutpoints?: () => Promise<void>;
-    }) {
+        tipHeight?: number;
+    };
+
+    function harness(opts: SettleOpts) {
         const refreshOutpoints = vi.fn(opts.refreshOutpoints ?? (async () => {}));
+        const getChainTip = vi.fn(async () => ({ height: opts.tipHeight ?? 0 }));
         const captured: ExtendedCoin[][] = [];
         const thisArg: any = {
             network: NETWORK,
+            onchainProvider: { getChainTip },
             getAddress: vi.fn(async () => ARK_ADDRESS),
             getContractManager: vi.fn(async () => ({ refreshOutpoints })),
             getVtxos: vi.fn(async () => opts.fresh ?? []),
@@ -227,13 +233,10 @@ describe("settle refreshes the swept state of expired inputs", () => {
             }),
             makeDeleteIntentSignature: vi.fn(async () => ({})),
         };
-        return { thisArg, refreshOutpoints, captured };
+        return { thisArg, refreshOutpoints, getChainTip, captured };
     }
 
-    async function settle(
-        inputs: ExtendedVirtualCoin[],
-        opts: { fresh?: ExtendedVirtualCoin[]; refreshOutpoints?: () => Promise<void> } = {},
-    ) {
+    async function settle(inputs: ExtendedVirtualCoin[], opts: SettleOpts = {}) {
         const h = harness(opts);
 
         await expect(
@@ -294,5 +297,29 @@ describe("settle refreshes the swept state of expired inputs", () => {
 
         expect(refreshOutpoints).toHaveBeenCalled();
         expect(captured[0][0]).toBe(input);
+    });
+
+    it("resolves the chain tip to catch a height-expired input", async () => {
+        const input = vtxoInput(vtxoScript, {
+            expiresAt: undefined,
+            expiresAtHeight: EXPIRY_HEIGHT,
+        });
+
+        const { getChainTip, captured } = await settle([input], {
+            tipHeight: EXPIRY_HEIGHT + 1,
+            fresh: [vtxoInput(vtxoScript, { isSwept: true })],
+        });
+
+        expect(getChainTip).toHaveBeenCalled();
+        expect((captured[0][0] as ExtendedVirtualCoin).isSwept).toBe(true);
+    });
+
+    it("fetches no chain tip when every expiry is time-based", async () => {
+        const { getChainTip, refreshOutpoints } = await settle([vtxoInput(vtxoScript)], {
+            fresh: [vtxoInput(vtxoScript)],
+        });
+
+        expect(refreshOutpoints).toHaveBeenCalled();
+        expect(getChainTip).not.toHaveBeenCalled();
     });
 });
