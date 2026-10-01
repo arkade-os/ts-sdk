@@ -18,8 +18,8 @@ const PACKAGES = [
     {
         key: "sdk",
         name: "@arkade-os/sdk",
-        dir: path.join(ROOT_DIR, "packages/ts-sdk"),
-        pkgJson: path.join(ROOT_DIR, "packages/ts-sdk/package.json"),
+        dir: path.join(ROOT_DIR, "packages/sdk"),
+        pkgJson: path.join(ROOT_DIR, "packages/sdk/package.json"),
         tagPrefix: "@arkade-os/sdk/",
         order: 1,
     },

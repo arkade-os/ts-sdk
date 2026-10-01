@@ -66,7 +66,7 @@ describe("assertValidServerUnrollScript", () => {
         // must clear the regtest floor. This repo's own envs are all 20 now —
         // 5 is kept as coverage of the lower bound the floor was sized for.
         [5n, "regtest", "accept", "low block-typed regtest value"],
-        [20n, "regtest", "accept", "ts-sdk/swap regtest env value"],
+        [20n, "regtest", "accept", "SDK/swap regtest env value"],
     ];
 
     for (const [value, network, expected, label] of cases) {

@@ -139,7 +139,7 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
  * Maximum number of VTXOs in a single settlement intent; the overflow waits for the next cycle.
  *
  * arkd has no count limit but rejects an intent with `TX_TOO_LARGE` past `maxTxWeight` (~40k WU
- * by default); 50 stays well under it with headroom for (uncapped) boarding inputs. ts-sdk-only:
+ * by default); 50 stays well under it with headroom for (uncapped) boarding inputs. SDK-only:
  * go-sdk and NArk submit every spendable VTXO in one unordered intent, so we are free to order
  * candidates before capping — see {@link byValueDescending} and {@link byExpiryAscending}.
  */
