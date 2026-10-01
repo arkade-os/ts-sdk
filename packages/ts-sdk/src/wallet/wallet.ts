@@ -1226,7 +1226,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, snapshot] = await Promise.all([
             this.getBoardingUtxos(),
-            this.contractSnapshot(),
+            // The bucketer drops every spent coin and the gate reads contracts only.
+            this.contractSnapshot(undefined, { unspentOnly: true }),
         ]);
         // Explicit, not the default filter: the default drops unrolled coins,
         // and `computeOffchainBalance` cannot report a bucket it never sees.
@@ -1290,7 +1291,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         return filterSnapshotVtxos(
-            await this.contractSnapshot(),
+            // Only an unrolled coin is returned spent, so no other read needs spent rows.
+            await this.contractSnapshot(undefined, { unspentOnly: !filter?.withUnrolled }),
             filter,
             this._pendingSpendOutpoints,
         );

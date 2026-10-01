@@ -119,10 +119,9 @@ export function computeOffchainBalance(
     };
 
     for (const vtxo of vtxos) {
-        // Load-bearing, not belt-and-braces: `Wallet.getBalance` passes
-        // `withUnrolled: true`, so the filter hands over unrolled coins WITHOUT
-        // testing terminal spend, and this guard is what drops the ones that
-        // are also spent.
+        // Load-bearing, not belt-and-braces: the service worker's balance read
+        // passes every stored row, spent history included, so this guard is
+        // what drops the spent ones there.
         if (isVtxoSpent(vtxo)) continue;
         addAssets(owned, vtxo);
 
