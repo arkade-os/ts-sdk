@@ -1,5 +1,9 @@
 import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
-import { ContractFilter, ContractRepository } from "../contractRepository";
+import {
+    contractFilterMatchesNothing,
+    ContractFilter,
+    ContractRepository,
+} from "../contractRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { RealmLike } from "./types";
 
@@ -43,6 +47,7 @@ export class RealmContractRepository implements ContractRepository {
         page: PageRequest,
     ): Promise<PageResult<Contract>> {
         assertPageRequest(page);
+        if (contractFilterMatchesNothing(filter)) return { items: [] };
         let results = this.realm.objects("ArkContract");
         const parts: string[] = [];
         const args: unknown[] = [];

@@ -47,6 +47,25 @@ describe.each(backends)("contract pages (%s)", (_, create) => {
             RangeError,
         );
     });
+
+    it("matches nothing for an empty array filter", async () => {
+        await using repository = create();
+        await repository.saveContract({
+            script: "a",
+            address: "address-a",
+            type: "default",
+            state: "active",
+            params: {},
+            createdAt: 1,
+        });
+
+        for (const filter of [{ script: [] }, { state: [] }, { type: [] }, { watch: [] }]) {
+            const page = await repository.getContractsPage(filter, { limit: 10 });
+            expect(page.items).toEqual([]);
+            expect(page.nextCursor).toBeUndefined();
+        }
+        expect(await collectContracts(repository, { script: [] })).toEqual([]);
+    });
 });
 
 it("uses keyed IndexedDB reads for a script-filtered contract page", async () => {

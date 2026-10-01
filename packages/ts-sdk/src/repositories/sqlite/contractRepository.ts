@@ -1,5 +1,9 @@
 import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
-import { ContractFilter, ContractRepository } from "../contractRepository";
+import {
+    contractFilterMatchesNothing,
+    ContractFilter,
+    ContractRepository,
+} from "../contractRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
 import { sanitizeTablePrefix } from "./prefix";
@@ -95,6 +99,7 @@ export class SQLiteContractRepository implements ContractRepository {
     ): Promise<PageResult<Contract>> {
         assertPageRequest(page);
         await this.ensureInit();
+        if (contractFilterMatchesNothing(filter)) return { items: [] };
         const conditions: string[] = [];
         const params: unknown[] = [];
         if (filter) {
