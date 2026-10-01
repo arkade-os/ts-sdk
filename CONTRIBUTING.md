@@ -4,19 +4,19 @@
 
 Integration tests live in `test/e2e/` within each package and require the Docker regtest stack.
 
-`test:integration` uses `packages/<pkg>/.env.regtest`. Every package but `ts-sdk` runs one full
-cycle (reset + up + setup + test) via `scripts/regtest.sh <pkg> cycle`; `ts-sdk` runs
-`scripts/regtest.sh ts-sdk groups`, which walks the CI groups with a **fresh stack per group**.
+`test:integration` uses `packages/<pkg>/.env.regtest`. Every package but `sdk` runs one full
+cycle (reset + up + setup + test) via `scripts/regtest.sh <pkg> cycle`; `sdk` runs
+`scripts/regtest.sh sdk groups`, which walks the CI groups with a **fresh stack per group**.
 
-That difference is deliberate: the ts-sdk e2e files are not safe to run in one process against one
+That difference is deliberate: the sdk e2e files are not safe to run in one process against one
 long-lived arkd. Server state a test mutates outlives it — the rotation suites change arkd's signer
 set (and with it the `/v1/info` digest every client caches), so a whole-suite run fails other files
-with `DIGEST_MISMATCH`. `scripts/regtest.sh ts-sdk cycle` still does the single-stack pass when you
+with `DIGEST_MISMATCH`. `scripts/regtest.sh sdk cycle` still does the single-stack pass when you
 want a quick one.
 
 ```bash
 pnpm run test:integration              # Every package, end-to-end
-pnpm run test:integration:ts-sdk       # ts-sdk only
+pnpm run test:integration:sdk          # sdk only
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
@@ -30,18 +30,18 @@ matrix jobs.
 
 ### Per-package stack control
 
-Replace `:ts-sdk` with `:swap` or `:swap-rfq` for the other packages.
+Replace `:sdk` with `:swap` or `:swap-rfq` for the other packages.
 
 ```bash
-pnpm run regtest:up:ts-sdk
-pnpm run regtest:setup:ts-sdk
-pnpm run regtest:test:ts-sdk                          # whole e2e suite
-pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts   # or selected files only
-pnpm run regtest:down:ts-sdk
-pnpm run regtest:reset:ts-sdk
+pnpm run regtest:up:sdk
+pnpm run regtest:setup:sdk
+pnpm run regtest:test:sdk                          # whole e2e suite
+pnpm run regtest:test:sdk test/e2e/asset.test.ts   # or selected files only
+pnpm run regtest:down:sdk
+pnpm run regtest:reset:sdk
 ```
 
-CI fans the ts-sdk e2e suite out across parallel groups by passing each group's file list to
+CI fans the sdk e2e suite out across parallel groups by passing each group's file list to
 `regtest:test` (see the `integration` matrix in `.github/workflows/ci.yml`). That matrix is the only
 definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups` run matches CI, and
 `--check` (wired into `pnpm lint`) fails when an e2e file belongs to no group or to two.

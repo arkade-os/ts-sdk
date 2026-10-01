@@ -33,11 +33,11 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      - name: Type-check ts-sdk
-        run: pnpm -C packages/ts-sdk run typecheck
+      - name: Type-check sdk
+        run: pnpm -C packages/sdk run typecheck
 
-      - name: Type-check ts-sdk type tests
-        run: pnpm -C packages/ts-sdk run typecheck:types
+      - name: Type-check sdk type tests
+        run: pnpm -C packages/sdk run typecheck:types
 
       - name: Build
         run: pnpm run build
@@ -45,11 +45,11 @@ jobs:
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
-      - name: Smoke-test ts-sdk dist
-        run: pnpm -C packages/ts-sdk run smoke:dist
+      - name: Smoke-test sdk dist
+        run: pnpm -C packages/sdk run smoke:dist
 
-      - name: Verify ts-sdk publish shape
-        run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
+      - name: Verify sdk publish shape
+        run: cd packages/sdk && npm pack --dry-run --ignore-scripts
 
       - name: Smoke-test swap dist
         run: pnpm -C packages/swap run smoke:dist
@@ -68,17 +68,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: ts-sdk
+          - package: sdk
             group: ark-core
             test_files: test/e2e/ark.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: arkade-assets
             test_files: >-
               test/e2e/asset.test.ts
               test/e2e/asset-covenant.test.ts
               test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: settlement-delegation
             test_files: >-
               test/e2e/settlement.test.ts
@@ -91,7 +91,7 @@ jobs:
               test/e2e/contractWatchState.test.ts
               test/e2e/lookAhead.test.ts
               test/e2e/activity.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: exit-providers-rotation
             test_files: >-
               test/e2e/unilateralExit.test.ts
@@ -131,8 +131,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build ts-sdk
-        run: pnpm -C packages/ts-sdk build
+      - name: Build sdk
+        run: pnpm -C packages/sdk build
 
       # The RFQ client and solver share a fail-closed quote contract. Until the
       # matching solver change is released, exercising this SDK head against
