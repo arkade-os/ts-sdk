@@ -236,7 +236,10 @@ describe("cancelOffer guards", () => {
         expect(state.connectOptions?.contractManager).toBe(contractManager);
     });
 
-    it("updates a bound stable operation by its actual funding txid", async () => {
+    it.each([
+        ["stable id", "operation-a"],
+        ["funding txid", "a".repeat(64)],
+    ])("cancels a bound stable operation named by its %s", async (_, reference) => {
         state.serverKey = fundedServerKey;
         state.utxos = [{ txid: "a".repeat(64), vout: 0, value: 10_000 }];
         const repository = new InMemoryAssetSwapRepository();
@@ -265,7 +268,7 @@ describe("cancelOffer guards", () => {
 
         await cancelOffer(funded, "http://ark", offerHex, {
             repository,
-            fundingTxid: "a".repeat(64),
+            fundingTxid: reference,
         });
 
         expect(await repository.getSwap("operation-a")).toMatchObject({

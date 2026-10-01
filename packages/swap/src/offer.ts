@@ -864,6 +864,7 @@ export async function cancelOffer(
     offerHex: string,
     opts: {
         repository: AssetSwapRepository;
+        /** The deposit's funding txid, or the stable id of the operation that funded it. */
         fundingTxid?: string;
         /** Names the exact deposit when several share a `fundingTxid`. */
         fundingOutpoint?: FillOutpoint;
@@ -921,7 +922,10 @@ export async function cancelOffer(
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
     // Same selection fill uses: identical offers share one address, and a
     // case-sensitive first-match would cancel an arbitrary deposit.
-    const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
+    const vtxo = resolveDeposit(vtxos, {
+        fundingTxid: requested?.fundingTxid ?? fundingTxid,
+        fundingOutpoint,
+    });
 
     const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
     const cancel = contract.functions
