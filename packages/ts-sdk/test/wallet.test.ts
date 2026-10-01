@@ -34,7 +34,8 @@ const { mockFetch } = vi.hoisted(() => ({
     mockFetch: vi.fn(),
 }));
 
-vi.mock("../src/utils/fetch", () => ({
+vi.mock("../src/utils/fetch", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../src/utils/fetch")>()),
     fetch: mockFetch,
     baseFetch: mockFetch,
 }));
@@ -132,37 +133,49 @@ describe("Wallet", () => {
             // already persisted/watched via the default contract) and the
             // fetch sequence above is unchanged.
 
-            mockFetch
-                .mockResolvedValueOnce(
-                    jsonResponse({
-                        signerPubkey: mockServerKeyHex,
-                        forfeitPubkey: mockServerKeyHex,
-                        batchExpiry: BigInt(144),
-                        unilateralExitDelay: BigInt(144),
-                        boardingExitDelay: BigInt(144),
-                        roundInterval: BigInt(144),
-                        network: "mutinynet",
-                        forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                        checkpointTapscript:
-                            "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
-                    }),
-                )
-                .mockResolvedValueOnce(jsonResponse(mockUTXOs))
-                .mockResolvedValueOnce(jsonResponse({ vtxos: [] }))
-                .mockResolvedValueOnce(jsonResponse({ subscriptionId: "sub-1" }))
-                .mockImplementationOnce((url: string) => {
-                    // Extract the script from the request URL so the
-                    // mock response matches the wallet's actual script.
-                    const params = new URLSearchParams(url.split("?")[1]);
+            mockFetch.mockImplementation((url: unknown) => {
+                const target = String(url);
+                if (target.includes("/v1/info")) {
+                    return Promise.resolve(
+                        jsonResponse({
+                            signerPubkey: mockServerKeyHex,
+                            forfeitPubkey: mockServerKeyHex,
+                            batchExpiry: BigInt(144),
+                            unilateralExitDelay: BigInt(144),
+                            boardingExitDelay: BigInt(144),
+                            roundInterval: BigInt(144),
+                            network: "mutinynet",
+                            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                            checkpointTapscript:
+                                "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+                        }),
+                    );
+                }
+                if (target.includes("subscribe")) {
+                    return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
+                }
+                if (target.includes("/address/")) {
+                    return Promise.resolve(jsonResponse(mockUTXOs));
+                }
+                if (target.includes("vtxos")) {
+                    const params = new URLSearchParams(target.split("?")[1] ?? "");
                     const script = params.getAll("scripts")[0];
-                    mockServerResponse.vtxos[0].script = script;
-                    return Promise.resolve(jsonResponse(mockServerResponse));
-                });
+                    return Promise.resolve(
+                        jsonResponse(
+                            script
+                                ? { vtxos: [{ ...mockServerResponse.vtxos[0], script }] }
+                                : { vtxos: [] },
+                        ),
+                    );
+                }
+                return Promise.resolve(jsonResponse([]));
+            });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
             });
+            await (await wallet.getContractManager()).whenBooted?.();
 
             const balance = await wallet.getBalance();
             expect(balance.settled).toBe(50000);

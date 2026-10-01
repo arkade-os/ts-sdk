@@ -22,9 +22,10 @@ describe("look-ahead failure during startup", () => {
     afterEach(teardownRestoreHarness);
 
     /** An HD wallet's boot: the band is registered, then the watched set syncs. */
-    const makeManager = async () => {
+    const makeManager = async (lazyInitialization = false) => {
         const provider = await makeHdProviderForTest();
         return ContractManager.create({
+            lazyInitialization,
             indexerProvider: makeMockIndexer(new Set()),
             contractRepository: new InMemoryContractRepository(),
             walletRepository: new InMemoryWalletRepository(),
@@ -42,32 +43,36 @@ describe("look-ahead failure during startup", () => {
         });
     };
 
-    it("keeps the wallet running and reports the band as unfinished", async () => {
-        const drain = vi
-            .spyOn(ContractManager.prototype as never, "scheduleLookAheadDrain" as never)
-            .mockRejectedValueOnce(new ProviderUnavailableError("operator down"));
+    it.each([false, true])(
+        "keeps the wallet running and reports the band as unfinished (lazyInitialization=%s)",
+        async (lazyInitialization) => {
+            const drain = vi
+                .spyOn(ContractManager.prototype as never, "scheduleLookAheadDrain" as never)
+                .mockRejectedValueOnce(new ProviderUnavailableError("operator down"));
 
-        // The point of the fix: construction survives the outage.
-        const manager = await makeManager();
-        drain.mockRestore();
+            // The point of the fix: construction survives the outage.
+            const manager = await makeManager(lazyInitialization);
+            await manager.whenBooted();
+            drain.mockRestore();
 
-        // The boot sync that follows succeeded, so this is not that sync's own
-        // failure being reported — it is the band still being unfinished, which
-        // a later success must not be able to claim away.
-        const state = manager.getSyncState();
-        expect(state.mode).toBe("degraded");
-        expect(state.mode === "degraded" ? state.reason : "").toContain("look-ahead band");
+            // The boot sync that follows succeeded, so this is not that sync's own
+            // failure being reported — it is the band still being unfinished, which
+            // a later success must not be able to claim away.
+            const state = manager.getSyncState();
+            expect(state.mode).toBe("degraded");
+            expect(state.mode === "degraded" ? state.reason : "").toContain("look-ahead band");
 
-        // The provider is back: the next event pays the owed refill, and the
-        // state stops claiming a gap it no longer has.
-        await (manager as any).handleContractEvent({
-            type: "connection_reset",
-            timestamp: Date.now(),
-        });
-        expect(manager.getSyncState().mode).toBe("online");
+            // The provider is back: the next event pays the owed refill, and the
+            // state stops claiming a gap it no longer has.
+            await (manager as any).handleContractEvent({
+                type: "connection_reset",
+                timestamp: Date.now(),
+            });
+            expect(manager.getSyncState().mode).toBe("online");
 
-        await manager.dispose();
-    });
+            await manager.dispose();
+        },
+    );
 
     it("still propagates a terminal failure", async () => {
         const drain = vi

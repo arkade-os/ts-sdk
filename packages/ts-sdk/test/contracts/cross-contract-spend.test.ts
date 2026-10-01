@@ -172,6 +172,8 @@ describe("Cross-contract spending", () => {
             return Promise.resolve({ vtxos });
         });
 
+        await manager.refreshVtxos();
+
         // getVtxos (public) should see VTXOs from both contracts.
         const allVtxos = await wallet.getVtxos();
         expect(allVtxos).toHaveLength(2);

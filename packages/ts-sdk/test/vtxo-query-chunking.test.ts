@@ -259,6 +259,7 @@ describe("ContractManager script queries stay under the URL cap", () => {
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: { failsafePollIntervalMs: 1_000_000, reconnectDelayMs: 1_000_000 },
         });
+        await manager.whenBooted();
         managers.push(manager);
         return manager;
     };
@@ -389,6 +390,10 @@ describe("Wallet.getTransactionHistory batches createdAt lookups", () => {
             }
             return { vtxos: (opts?.scripts ?? []).map((s) => spent.get(s)).filter(Boolean) };
         }) as IndexerProvider["getVtxos"];
+
+        await (await handle.wallet.getContractManager()).refreshVtxos({
+            includeInactive: true,
+        });
 
         return { wallet: handle.wallet, outpointCalls };
     };
