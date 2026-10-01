@@ -162,8 +162,10 @@ import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
     validateVtxosForScript,
     saveVtxosForContract,
+    getVtxosForContract,
     vtxoOutpoint,
 } from "../contracts/vtxoOwnership";
+import { isOnchainScoped } from "../contracts/scope";
 import {
     WalletReceiveRotator,
     buildReceiveContract,
@@ -1789,20 +1791,46 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * (it retains only the encoded leaves/tapTree the spend needs, not the
      * `DefaultVtxo.Script` and its `serverPubKey`/CSV delay).
      *
-     * Per group it does exactly what {@link getBoardingUtxos} does per tapscript:
-     * `getCoins` → {@link extendCoinWithTapscript} → `saveUtxos`. Offline-first:
-     * it does not call `getInfo()`; the caller supplies the allowed signer set,
-     * so the only network calls are the per-address `getCoins`.
+     * Per group: `getCoins` (a failure throws), then `ContractManager.syncOnchain`,
+     * then the contract's unspent stored rows → {@link extendCoinWithTapscript}.
+     * It does not call `getInfo()`; the caller supplies the allowed signer set.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
      */
     async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const addresses = tapscripts.map((tapscript) => tapscript.onchainAddress(this.network));
-        const groups: BoardingUtxoGroup[] = await Promise.all(
+        const fetched = await Promise.all(
+            tapscripts.map((t) => this.onchainProvider.getCoins(t.onchainAddress(this.network))),
+        );
+        const scripts = tapscripts.map((t) => hex.encode(t.pkScript));
+        const manager = await this.getContractManager();
+        try {
+            await manager.syncOnchain(scripts);
+        } catch (e) {
+            console.warn("Onchain boarding sync failed; returning stored coins", e);
+        }
+        const contracts = new Map(
+            (await this.contractRepository.getContracts({ script: scripts })).map((c) => [
+                c.script,
+                c,
+            ]),
+        );
+        return Promise.all(
             tapscripts.map(async (tapscript, i) => {
-                const coins = await this.onchainProvider.getCoins(addresses[i]);
+                const contract = contracts.get(scripts[i]);
+                // Coins of a contract the sync does not target come straight from the fetch.
+                const coins: Coin[] =
+                    contract?.state === "active" && isOnchainScoped(contract)
+                        ? (await getVtxosForContract(this.walletRepository, contract))
+                              .filter((v) => v.isUnrolled && !isVtxoSpent(v))
+                              .map(({ txid, vout, value, status }) => ({
+                                  txid,
+                                  vout,
+                                  value,
+                                  status,
+                              }))
+                        : fetched[i];
                 const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
                 return {
                     tapscript,
@@ -1818,11 +1846,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Saved only once every fetch has succeeded, so a failure leaves no write in flight.
-        for (const [i, group] of groups.entries()) {
-            await this.walletRepository.saveUtxos(addresses[i], group.coins);
-        }
-        return groups;
     }
 
     /**
@@ -6379,12 +6402,8 @@ export class Wallet
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
             const inputArkTxIds = new Set<string>();
-            // Boarding inputs to remove, grouped by the address they actually
-            // sit on. Under per-derivation rotation a settled boarding UTXO may
-            // have been received at a *previous* boarding address, so the
-            // cleanup must delete from the bucket the UTXO lives in — not just
-            // the current `getBoardingAddress()` bucket (plan §6-III.4).
-            const boardingRemovalsByAddress = new Map<string, Set<string>>();
+            // Scripts of the settled boarding inputs, which may sit on rotated-away addresses.
+            const boardingScripts = new Set<string>();
 
             const vtxoInputs = inputs.filter(isVirtualCoin);
             const cm = await this.getContractManager();
@@ -6411,28 +6430,13 @@ export class Wallet
                         settledBy: commitmentTxid,
                     });
                 } else {
-                    // boarding input = remove it from the bucket of the
-                    // address it actually sits on. The source boarding address
-                    // is recoverable from the input's tapTree (its leaves
-                    // determine the tweaked key → on-chain P2TR), so a UTXO
-                    // received at a rotated-away boarding address is cleaned up
-                    // in its own bucket rather than the current one. Fall back
-                    // to the current boarding address if the tapTree can't be
-                    // decoded (defensive — real inputs always carry it).
-                    let sourceAddress: string;
+                    let pkScript: Uint8Array;
                     try {
-                        sourceAddress = VtxoScript.decode(input.tapTree).onchainAddress(
-                            this.network,
-                        );
+                        pkScript = VtxoScript.decode(input.tapTree).pkScript;
                     } catch {
-                        sourceAddress = this.boardingTapscript.onchainAddress(this.network);
+                        pkScript = this.boardingTapscript.pkScript;
                     }
-                    let set = boardingRemovalsByAddress.get(sourceAddress);
-                    if (!set) {
-                        set = new Set();
-                        boardingRemovalsByAddress.set(sourceAddress, set);
-                    }
-                    set.add(`${input.txid}:${input.vout}`);
+                    boardingScripts.add(hex.encode(pkScript));
                 }
             }
 
@@ -6475,15 +6479,8 @@ export class Wallet
                 }
             }
 
-            for (const [address, toRemove] of boardingRemovalsByAddress) {
-                const currentUtxos = await this.walletRepository.getUtxos(address);
-                const filtered = currentUtxos.filter((u) => !toRemove.has(`${u.txid}:${u.vout}`));
-                // Clear and re-save the filtered list for this address bucket.
-                await this.walletRepository.deleteUtxos(address);
-                if (filtered.length > 0) {
-                    await this.walletRepository.saveUtxos(address, filtered);
-                }
-            }
+            // The utxo endpoints omit mempool-spent outputs, so the sync marks these spent.
+            if (boardingScripts.size > 0) await cm.syncOnchain([...boardingScripts]);
         } catch (e) {
             console.warn("error updating repository after settle", e);
             throw e;

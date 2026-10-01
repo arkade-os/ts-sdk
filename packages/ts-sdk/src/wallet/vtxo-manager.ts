@@ -2020,7 +2020,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * @remarks This is no longer a pure repository/info read: surfacing boarding
      * holdings fans out per boarding address (`getCoins` round trips) and
-     * refreshes the UTXO cache via `saveUtxos`.
+     * syncs those coins into the contract manager's store.
      */
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();

@@ -1882,6 +1882,8 @@ describe("Wallet.restore", () => {
         try {
             const baseline = await wallet.getBoardingAddress();
             const rotated1 = await wallet.getNewBoardingAddress();
+            // The contract manager's onchain watch shares this provider; keep it out of the count.
+            vi.spyOn(await wallet.getContractManager(), "syncOnchain").mockResolvedValue();
 
             // Record each subscription's address set + a per-call stop spy.
             const calls: string[][] = [];

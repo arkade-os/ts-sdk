@@ -333,6 +333,58 @@ describe("boarding contract: legacy utxos migration at boot", () => {
     });
 });
 
+describe("boarding contract: UTXOs through the merged VTXO store", () => {
+    const coin = {
+        txid: "ab".repeat(32),
+        vout: 1,
+        value: 9000,
+        status: { confirmed: true, block_height: 12, block_time: 1700000000 },
+    };
+
+    async function fundedWallet() {
+        const handle = await makeWallet();
+        const { wallet, onchainProvider } = handle;
+        const address = wallet.boardingTapscript.onchainAddress(wallet.network);
+        onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === address ? [coin] : [],
+        );
+        return handle;
+    }
+
+    it("returns the stored row and never writes the legacy utxos table", async () => {
+        const { wallet } = await fundedWallet();
+        const saveUtxos = vi.spyOn(wallet.walletRepository, "saveUtxos");
+
+        const coins = await wallet.getBoardingUtxos();
+
+        expect(coins).toEqual([extendCoinWithTapscript(wallet.boardingTapscript, coin)]);
+        const rows = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(rows).toEqual([expect.objectContaining({ txid: coin.txid, isUnrolled: true })]);
+        expect(saveUtxos).not.toHaveBeenCalled();
+    });
+
+    it("omits a coin with a pending spend", async () => {
+        const { wallet } = await fundedWallet();
+        await wallet.getBoardingUtxos();
+        const manager = await wallet.getContractManager();
+        await manager.markOnchainSpendPending([coin], "ef".repeat(32));
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+    });
+
+    it("returns the stored coins when the onchain sync fails", async () => {
+        const { wallet } = await fundedWallet();
+        const [stored] = await wallet.getBoardingUtxos();
+        const manager = await wallet.getContractManager();
+        vi.spyOn(manager, "syncOnchain").mockRejectedValue(new Error("subscribe failed"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        expect(await wallet.getBoardingUtxos()).toEqual([stored]);
+    });
+});
+
 describe("boarding contract: discoverable", () => {
     it("is part of the discoverable handler set (boarding restore, plan §6-I)", () => {
         const handler = contractHandlers.get("boarding");

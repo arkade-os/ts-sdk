@@ -1450,6 +1450,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                syncOnchain: vi.fn().mockResolvedValue(undefined),
             }),
         };
         (updater as any).wallet = {
@@ -1462,9 +1463,6 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxos: vi.fn().mockResolvedValue([]),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
-            getUtxos: vi.fn().mockResolvedValue([]),
-            deleteUtxos: vi.fn().mockResolvedValue(undefined),
-            saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
         };
 
@@ -1490,6 +1488,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                syncOnchain: vi.fn().mockResolvedValue(undefined),
             }),
         };
         // wallet is NOT set — readonly only
@@ -1499,9 +1498,6 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxos: vi.fn().mockResolvedValue([]),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
-            getUtxos: vi.fn().mockResolvedValue([]),
-            deleteUtxos: vi.fn().mockResolvedValue(undefined),
-            saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
         };
 
@@ -1633,6 +1629,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue(contracts),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                syncOnchain: vi.fn().mockResolvedValue(undefined),
             }),
             onchainProvider: {
                 getCoins: vi.fn().mockResolvedValue([]),
@@ -2303,9 +2300,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(vtxosArg[0].txid).toBe("aa".repeat(32));
     });
 
-    it("boarding cache refresh fans out over the boarding-address set (plan §6-IV.2)", async () => {
+    it("boarding refresh syncs onchain coins through the contract manager", async () => {
         setupHandler();
-        const rw = (updater as any).readonlyWallet;
+        const manager = await (updater as any).readonlyWallet.getContractManager();
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
             finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
@@ -2313,11 +2310,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         await (updater as any).onWalletInitialized();
 
-        // refreshCachedData now enumerates every boarding address and delegates
-        // the per-address fetch + cache to getBoardingUtxos, instead of fetching
-        // a single getBoardingAddress() via the onchain provider directly.
-        expect(rw.getBoardingAddresses).toHaveBeenCalled();
-        expect(rw.getBoardingUtxos).toHaveBeenCalled();
+        expect(manager.syncOnchain).toHaveBeenCalledWith();
     });
 
     it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {
@@ -2327,6 +2320,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             refreshVtxos: refreshSpy,
+            syncOnchain: vi.fn().mockResolvedValue(undefined),
         });
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
@@ -2350,6 +2344,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             refreshVtxos: refreshSpy,
+            syncOnchain: vi.fn().mockResolvedValue(undefined),
         });
         (updater as any).wallet = {
             getVtxoManager: getVtxoManagerSpy,
@@ -2384,6 +2379,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             refreshVtxos: refreshSpy,
+            syncOnchain: vi.fn().mockResolvedValue(undefined),
         });
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),
