@@ -9,6 +9,7 @@ import { contractHandlers } from "../../src/contracts/handlers";
 import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { isDiscoverable } from "../../src/contracts/types";
 import { timelockToSequence } from "../../src/utils/timelock";
+import { extendCoinWithTapscript } from "../../src/wallet/utils";
 import { hex } from "@scure/base";
 
 // Valid secp256k1 server pubkey (33-byte compressed, generator point) and a
@@ -243,6 +244,42 @@ describe("boarding contract: VTXO annotation and spend paths", () => {
             currentTime: Date.now(),
         });
         expect(paths.length).toBeGreaterThanOrEqual(1);
+    });
+});
+
+describe("boarding contract: legacy utxos migration at boot", () => {
+    const legacyCoin = {
+        txid: "cd".repeat(32),
+        vout: 0,
+        value: 7000,
+        status: { confirmed: true, block_height: 10, block_time: 1 },
+    };
+
+    it("moves a legacy boarding utxo into the VTXO store as an isUnrolled row", async () => {
+        const { wallet } = await makeWallet();
+        const address = wallet.boardingTapscript.onchainAddress(wallet.network);
+        await wallet.walletRepository.saveUtxos(address, [
+            extendCoinWithTapscript(wallet.boardingTapscript, legacyCoin),
+        ]);
+
+        await wallet.getContractManager();
+
+        const rows = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ txid: legacyCoin.txid, isUnrolled: true });
+        expect(await wallet.walletRepository.getUtxos(address)).toHaveLength(1);
+    });
+
+    it("does not fail boot when the migration throws", async () => {
+        const { wallet } = await makeWallet();
+        vi.spyOn(wallet.walletRepository, "getUtxos").mockRejectedValue(new Error("boom"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await expect(wallet.getContractManager()).resolves.toBeDefined();
+        const state = await wallet.walletRepository.getWalletState();
+        expect(state?.settings?.legacyUtxosMigrated).toBeUndefined();
     });
 });
 

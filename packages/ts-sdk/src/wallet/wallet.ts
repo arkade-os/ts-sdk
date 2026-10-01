@@ -155,6 +155,7 @@ import type {
     CreateContractParams,
 } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
+import { migrateLegacyUtxos } from "../contracts/onchainCoins";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
@@ -2330,6 +2331,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
                 state: "active",
             });
+        }
+
+        // After the baseline registrations, so an upgrade from a build that never
+        // persisted the boarding contract still finds its legacy utxos.
+        try {
+            await migrateLegacyUtxos({
+                walletRepository: this.walletRepository,
+                contractRepository: this.contractRepository,
+                network: this.network,
+            });
+        } catch (e) {
+            console.warn("Legacy utxos migration failed; retrying next boot", e);
         }
 
         return manager;

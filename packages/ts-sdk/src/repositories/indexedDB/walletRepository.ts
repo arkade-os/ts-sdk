@@ -24,7 +24,7 @@ import { isVtxoSpent } from "../../wallet/vtxo";
  * IndexedDB-based implementation of WalletRepository.
  */
 export class IndexedDBWalletRepository implements WalletRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {

@@ -151,8 +151,8 @@ describe("SQLiteWalletRepository", () => {
 
     // ── version ────────────────────────────────────────────────────────
 
-    it("should have version 1", () => {
-        expect(repository.version).toBe(1);
+    it("should have version 2", () => {
+        expect(repository.version).toBe(2);
     });
 
     // ── VTXO management ────────────────────────────────────────────────
