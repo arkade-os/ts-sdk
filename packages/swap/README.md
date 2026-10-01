@@ -187,6 +187,8 @@ and accept `{ state?, since? }`; `since` is inclusive Unix seconds. Keep the
 filter fixed while paging. Repository collection reads use pages directly;
 internal recovery and lifecycle paths consume every page before acting.
 SDK transaction-history page `since` values use Unix milliseconds instead.
+SQLite RFQ pages use a row-value comparison, so they need SQLite 3.15.0 or
+newer.
 
 ### Restore an imported wallet
 
