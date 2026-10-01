@@ -11,6 +11,16 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`programFromArtifact` reads time-based CSV literals.** A literal
+  relative timelock in an `arkadec` artifact is the encoded BIP68
+  sequence, but the reader tagged every literal as a block count, so a
+  512-second literal such as `4194314` (bit 22 set) failed to build with
+  `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
+  reads as 5,120 seconds and builds the artifact's own script bytes. A
+  literal that does not round-trip through BIP68, such as `70000`, is
+  refused when the artifact is read. `$param` operands are still bound
+  as block counts.
+
 - **`BIP21.create` writes the amount as a plain decimal.** It formatted
   the BTC amount with `String()`, which switches to exponent notation
   below `1e-6`, so any amount under 100 sats came out as `amount=1e-7` —
