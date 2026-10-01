@@ -407,6 +407,21 @@ describe("SQLiteWalletRepository", () => {
                 const unspent = await collectScriptVtxos(sqlite, script, { unspentOnly: true });
                 expect(unspent.map((row) => row.txid)).toEqual([live.txid]);
             });
+
+            it("unspent-only script reads match the full read across address buckets", async () => {
+                // VTXOs are keyed by outpoint, so no spent copy can hide in another bucket.
+                const sqlite = new SQLiteWalletRepository(createNodeSQLExecutor());
+                const script = "5120" + "00".repeat(32);
+                const live = { ...createMockVtxo("00".repeat(32), 0, 1000), script };
+                await sqlite.saveVtxos("address-a", [live]);
+                await sqlite.saveVtxos("address-b", [
+                    { ...live, isSpent: true, spentBy: "spender" },
+                ]);
+
+                const full = await collectScriptVtxos(sqlite, script);
+                const unspent = await collectScriptVtxos(sqlite, script, { unspentOnly: true });
+                expect(unspent).toEqual(full.filter((vtxo) => !isVtxoSpent(vtxo)));
+            });
         });
     });
 
