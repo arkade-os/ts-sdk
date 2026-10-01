@@ -1522,6 +1522,7 @@ export class RfqSwapManager {
         //    only a fully observed spend is a refund; everything else is
         //    "nothing learned" and must not end the swap.
         let fate: LockupFate;
+        let fateUnread = false;
         try {
             fate = await readLockupFate(this.deps.indexer, {
                 swapPkScript: swap.lockupPkScript,
@@ -1532,6 +1533,7 @@ export class RfqSwapManager {
             // pass, and both remaining steps are gated on absolute timelocks
             // that do not care whether the indexer is up.
             fate = { fate: "unknown" };
+            fateUnread = true;
         }
         if (fate.fate === "claimed" || fate.fate === "returned") {
             // Stamped before the state change, so the write that `setState`
@@ -1551,7 +1553,10 @@ export class RfqSwapManager {
         //    push fail forever against a key this wallet does not hold.
         if (swap.kind === "lightning_receive") {
             if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
-            if (fate.fate === "open") return this.driveReceiveClaim(swap);
+            // An unread fate is not an unfunded lockup, but it must not lift a block
+            // the last read set: the contract row can still show an exited lockup live.
+            if (fate.fate === "open" || (fateUnread && swap.state !== "needs_counterparty"))
+                return this.driveReceiveClaim(swap);
             if (this.config.now() >= swap.refundLocktime) return this.driveReceiveClaim(swap);
             return;
         }
