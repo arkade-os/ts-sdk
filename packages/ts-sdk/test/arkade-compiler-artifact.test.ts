@@ -132,6 +132,32 @@ describe("reading an arkadec artifact", () => {
         });
     });
 
+    const csvLeaf = (literal: string) => [
+        literal,
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP",
+        "<SERVER_KEY>",
+        "OP_CHECKSIG",
+    ];
+    const csvDemo = (literal: string) =>
+        demo({ functions: [{ name: "exit", leaves: [{ name: "exit", asm: csvLeaf(literal) }] }] });
+
+    it.each([
+        ["a block count", "144"],
+        ["512-second units (bit 22 set)", "4194314"],
+    ])("builds the artifact's own bytes for a CSV literal in %s", (_, literal) => {
+        const program = programFromArtifact(csvDemo(literal));
+        const keys = { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY };
+        const script = new ArkadeProgramScript(program, { server: SERVER_KEY }, keys);
+        expect(hex.encode(script.compiled[0].leafScript)).toBe(
+            hex.encode(assemble(csvLeaf(literal), { SERVER_KEY })),
+        );
+    });
+
+    it("refuses a CSV literal that is not a canonical BIP68 sequence", () => {
+        expect(() => programFromArtifact(csvDemo("70000"))).toThrow(/'exit'.*70000/);
+    });
+
     it("reads hash conditions and flattens structs, natives, arrays, and child outputs", () => {
         const hash = programFromArtifact(
             demo({
