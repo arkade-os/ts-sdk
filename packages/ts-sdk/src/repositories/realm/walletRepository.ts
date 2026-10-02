@@ -24,7 +24,7 @@ import { RealmLike } from "./types";
  * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmWalletRepository implements WalletRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
 
     constructor(private readonly realm: RealmLike) {}
 

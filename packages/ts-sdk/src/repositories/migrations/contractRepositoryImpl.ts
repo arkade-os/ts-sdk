@@ -15,7 +15,7 @@ export class ContractRepositoryImpl implements ContractRepository {
         this.storage = storage;
     }
 
-    get version(): 2 {
+    get version(): 3 {
         throw new TypeError(
             "ContractRepositoryImpl is a migration shim and does not implement contract rows.",
         );

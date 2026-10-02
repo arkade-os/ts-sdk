@@ -389,6 +389,68 @@ import { Ramps } from '@arkade-os/sdk'
 const boardingTxId = await new Ramps(wallet).onboard();
 ```
 
+### Onchain cosigning
+
+Boarding UTXOs and unrolled virtual outputs can be spent immediately with a server cosignature, without waiting for the exit timelock or joining a batch. This needs an Arkade server that exposes onchain cosigning (`POST /v1/tx/onchain/cosign`); against older servers the SDK falls back to the previous paths automatically.
+
+```typescript
+// Pay onchain from boarding / unrolled coins
+const txid = await wallet.sendOnchain({
+  outputs: [{ address: 'bc1q...', amount: 50_000 }]
+})
+
+// Sweep every cosignable onchain coin (inputs minus fee) to one address
+await wallet.sendOnchain({ outputs: [], sweepTo: 'bc1q...' })
+
+// Cosign a PSBT built elsewhere; returns the broadcast txid
+await wallet.cosignOnchainTx(psbt) // base64 string or Transaction
+```
+
+For `cosignOnchainTx`, foreign inputs must already be signed: the wallet signs only its own inputs.
+
+Preflight: every wallet input must be confirmed and more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). Use `isCosignFallback(e)` to decide whether paying another way is safe; the automatic paths below do exactly that:
+
+```typescript
+import { isCosignFallback, OnchainCosignAmbiguousError } from '@arkade-os/sdk'
+
+try {
+  await wallet.sendOnchain({ outputs: [{ address, amount }] })
+} catch (e) {
+  if (!isCosignFallback(e)) throw e // includes OnchainCosignAmbiguousError
+  await payThroughABatch()
+}
+```
+
+`OnchainCosignAmbiguousError` means the transaction may have been broadcast (a transport failure, or a server error after submission): do not retry with other coins. The inputs stay pending until the chain resolves.
+
+Contracts carry a `scope`: `"offchain"`, `"onchain"` or `"both"`. It controls whether the contract's onchain coins are watched and spent through cosigning; boarding contracts default to `"onchain"`.
+
+Automatic behaviour:
+
+- `VtxoManager` renews boarding coins that are near expiry via cosign, falling back to the CSV path. It never sweeps unrolled outputs (that would undo the exit); spend those with `sendOnchain` or `cosignOnchainTx`.
+- `Ramps.offboardExact` and the payment router's onchain rail spend onchain coins directly when they alone cover the amount; otherwise they use the batch path. `Ramps.offboard` always uses the batch path.
+
+#### Arkade contracts
+
+Arkade contracts can spend their own onchain UTXOs. Pass an `emulator` (cosigner for covenant leaves) and an `onchain` provider to `connect`:
+
+```typescript
+import { arkade } from '@arkade-os/sdk'
+
+const ark = await arkade.Arkade.connect({ arkade: arkProvider, emulator, onchain })
+const contract = ark.contract(program)
+
+const txid = await contract.functions
+  .claim(/* args */)
+  .from(utxo)
+  .to(destinationScript, 40_000n)
+  .onchainFee(500n)       // must not exceed the surplus; without change() it must equal it
+  .change(changeScript)
+  .sendOnchain()          // or .buildOnchain() for the unsigned Transaction
+```
+
+Covenant leaves spent onchain must not include the Arkade server key; the emulator's onchain endpoint refuses them.
+
 ### Checking Balance
 
 ```typescript

@@ -33,7 +33,8 @@ export interface VtxoRepositoryKey {
 }
 
 export interface WalletRepository extends AsyncDisposable {
-    readonly version: 1;
+    /** 2 — onchain coins (boarding, unrolled) live in the VTXO store as isUnrolled rows; the utxos table is legacy, read once by migrateLegacyUtxos. */
+    readonly version: 2;
 
     /**
      * Clear all data from storage.

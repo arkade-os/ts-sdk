@@ -30,7 +30,7 @@ interface SQLiteWalletRepositoryOptions {
  * The consumer owns the SQLExecutor lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class SQLiteWalletRepository implements WalletRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly tables: {

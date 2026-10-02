@@ -32,6 +32,8 @@ export type ExplorerTransaction = {
     vin?: {
         txid: string;
         vout: number;
+        /** Set by Esplora; the electrum provider omits it. */
+        prevout?: { scriptpubkey_address?: string };
     }[];
     vout: {
         scriptpubkey_address: string;

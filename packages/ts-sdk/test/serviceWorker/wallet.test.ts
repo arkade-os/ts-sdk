@@ -13,7 +13,14 @@ import {
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { mnemonicToSeedSync } from "@scure/bip39";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import { Transaction } from "../../src/utils/transaction";
+import { OnchainCosignPreflightError, isCosignFallback } from "../../src/contracts/onchainSpend";
+import {
+    OnchainCosignAmbiguousError,
+    OnchainCosignRejectedError,
+    OnchainCosignUnsupportedError,
+} from "../../src/providers/ark";
 import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
@@ -691,6 +698,100 @@ describe("ServiceWorkerWallet", () => {
                 type: "DELEGATE",
             }),
         );
+    });
+
+    it("cosignOnchainTx sends a Transaction as base64 PSBT and sendOnchain forwards params", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "COSIGN_ONCHAIN_TX" || message.type === "SEND_ONCHAIN") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: `${message.type}_SUCCESS`,
+                    payload: { txid: "tx-" + message.type },
+                };
+            }
+            return null;
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
+
+        await expect(wallet.cosignOnchainTx(tx)).resolves.toBe("tx-COSIGN_ONCHAIN_TX");
+        const params = { outputs: [], sweepTo: "bc1-dest" };
+        await expect(wallet.sendOnchain(params)).resolves.toBe("tx-SEND_ONCHAIN");
+
+        const sent = serviceWorker.postMessage.mock.calls.map((c: any[]) => c[0]);
+        const cosign = sent.find((m: any) => m.type === "COSIGN_ONCHAIN_TX");
+        expect(cosign.payload.psbt).toBe(base64.encode(tx.toPSBT()));
+        expect(sent.find((m: any) => m.type === "SEND_ONCHAIN").payload).toEqual(params);
+    });
+
+    it.each([
+        [
+            "Rejected",
+            new OnchainCosignRejectedError("too late", "INVALID_ARK_PSBT"),
+            OnchainCosignRejectedError,
+            true,
+        ],
+        [
+            "Preflight",
+            new OnchainCosignPreflightError("nothing"),
+            OnchainCosignPreflightError,
+            true,
+        ],
+        ["Unsupported", new OnchainCosignUnsupportedError(), OnchainCosignUnsupportedError, true],
+        ["Ambiguous", new OnchainCosignAmbiguousError("500"), OnchainCosignAmbiguousError, false],
+    ])("rehydrates a cloned %s error from the worker", async (_name, error, cls, fallback) => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error(error.message),
+        }));
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        for (const call of [
+            wallet.cosignOnchainTx("cHNidP8="),
+            wallet.sendOnchain({ outputs: [], sweepTo: "bc1-dest" }),
+        ]) {
+            const err = await call.catch((e) => e);
+            expect(err).toBeInstanceOf(cls);
+            expect(isCosignFallback(err)).toBe(fallback);
+            expect(err).toEqual(error);
+        }
+    });
+
+    it("maps an older worker's unknown-message reply to OnchainCosignUnsupportedError", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error("Unknown message"),
+        }));
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        for (const call of [
+            wallet.cosignOnchainTx("cHNidP8="),
+            wallet.sendOnchain({ outputs: [], sweepTo: "bc1-dest" }),
+        ]) {
+            const err = await call.catch((e) => e);
+            expect(err).toBeInstanceOf(OnchainCosignUnsupportedError);
+            expect(isCosignFallback(err)).toBe(true);
+        }
+    });
+
+    it("passes unrelated worker errors through unchanged", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error("boom"),
+        }));
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const err = await wallet.sendOnchain({ outputs: [] }).catch((e) => e);
+        expect(err.message).toBe("boom");
+        expect(isCosignFallback(err)).toBe(false);
     });
 
     it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {

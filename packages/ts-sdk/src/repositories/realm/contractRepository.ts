@@ -1,4 +1,5 @@
-import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
+import { scopeOf } from "../../contracts/scope";
+import { Contract, ContractScope, ContractState, ContractWatchState } from "../../contracts/types";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { RealmLike } from "./types";
 
@@ -12,7 +13,7 @@ import { RealmLike } from "./types";
  * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class RealmContractRepository implements ContractRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
 
     constructor(private readonly realm: RealmLike) {}
 
@@ -76,7 +77,10 @@ export class RealmContractRepository implements ContractRepository {
             }
         }
 
-        return [...results].map(contractObjectToDomain);
+        const contracts = [...results].map(contractObjectToDomain);
+        return filter?.scope === undefined
+            ? contracts
+            : contracts.filter((c) => [filter.scope!].flat().includes(scopeOf(c)));
     }
 
     async saveContract(contract: Contract): Promise<void> {
@@ -94,6 +98,7 @@ export class RealmContractRepository implements ContractRepository {
                     label: contract.label ?? null,
                     metadataJson: contract.metadata ? JSON.stringify(contract.metadata) : null,
                     watch: contract.watch ?? null,
+                    scope: contract.scope ?? null,
                 },
                 "modified",
             );
@@ -178,6 +183,9 @@ function contractObjectToDomain(obj: any): Contract {
     }
     if (obj.watch !== null && obj.watch !== undefined) {
         contract.watch = obj.watch as ContractWatchState;
+    }
+    if (obj.scope !== null && obj.scope !== undefined) {
+        contract.scope = obj.scope as ContractScope;
     }
 
     return contract;

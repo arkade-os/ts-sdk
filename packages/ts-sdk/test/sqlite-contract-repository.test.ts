@@ -302,7 +302,7 @@ describe("SQLiteContractRepository", () => {
     // ── version ────────────────────────────────────────────────────────
 
     it("should have version 2", () => {
-        expect(repository.version).toBe(2);
+        expect(repository.version).toBe(3);
     });
 
     // ── Save and retrieve ──────────────────────────────────────────────
@@ -444,6 +444,29 @@ describe("SQLiteContractRepository", () => {
             });
             expect(filtered).toHaveLength(2);
             expect(filtered.map((c) => c.type).sort()).toEqual(["default", "vhtlc"]);
+        });
+    });
+
+    describe("scope", () => {
+        it("round-trips scope and filters it, resolving rows without one via the handler default", async () => {
+            await repository.saveContract(
+                createMockContract({ script: "both-row", type: "default", scope: "both" }),
+            );
+            await repository.saveContract(
+                createMockContract({ script: "boarding-row", type: "boarding" }),
+            );
+            await repository.saveContract(
+                createMockContract({ script: "default-row", type: "default" }),
+            );
+
+            const [both] = await repository.getContracts({ script: "both-row" });
+            expect(both.scope).toBe("both");
+
+            const onchain = await repository.getContracts({ scope: "onchain" });
+            expect(onchain.map((c) => c.script)).toEqual(["boarding-row"]);
+
+            const anyOnchain = await repository.getContracts({ scope: ["onchain", "both"] });
+            expect(anyOnchain.map((c) => c.script).sort()).toEqual(["boarding-row", "both-row"]);
         });
     });
 

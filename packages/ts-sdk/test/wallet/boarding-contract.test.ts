@@ -9,6 +9,9 @@ import { contractHandlers } from "../../src/contracts/handlers";
 import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { isDiscoverable } from "../../src/contracts/types";
 import { timelockToSequence } from "../../src/utils/timelock";
+import { extendCoinWithTapscript } from "../../src/wallet/utils";
+import { toOnchainCoinRow } from "../../src/contracts/onchainCoins";
+import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { hex } from "@scure/base";
 
 // Valid secp256k1 server pubkey (33-byte compressed, generator point) and a
@@ -243,6 +246,204 @@ describe("boarding contract: VTXO annotation and spend paths", () => {
             currentTime: Date.now(),
         });
         expect(paths.length).toBeGreaterThanOrEqual(1);
+    });
+});
+
+describe("boarding contract: legacy utxos migration at boot", () => {
+    const legacyCoin = {
+        txid: "cd".repeat(32),
+        vout: 0,
+        value: 7000,
+        status: { confirmed: true, block_height: 10, block_time: 1 },
+    };
+
+    it("moves a legacy boarding utxo into the VTXO store as an isUnrolled row", async () => {
+        const { wallet } = await makeWallet();
+        const address = wallet.boardingTapscript.onchainAddress(wallet.network);
+        await wallet.walletRepository.saveUtxos(address, [
+            extendCoinWithTapscript(wallet.boardingTapscript, legacyCoin),
+        ]);
+
+        await wallet.getContractManager();
+
+        const rows = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ txid: legacyCoin.txid, isUnrolled: true });
+        expect(await wallet.walletRepository.getUtxos(address)).toHaveLength(1);
+    });
+
+    it("does not fail boot when the migration throws", async () => {
+        const { wallet } = await makeWallet();
+        vi.spyOn(wallet.walletRepository, "getUtxos").mockRejectedValue(new Error("boom"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await expect(wallet.getContractManager()).resolves.toBeDefined();
+        const state = await wallet.walletRepository.getWalletState();
+        expect(state?.settings?.legacyUtxosMigrated).toBeUndefined();
+    });
+
+    it("counts a migrated boarding coin once in balance and history", async () => {
+        const { wallet, onchainProvider } = await makeWallet();
+        const address = wallet.boardingTapscript.onchainAddress(wallet.network);
+        await wallet.walletRepository.saveUtxos(address, [
+            extendCoinWithTapscript(wallet.boardingTapscript, legacyCoin),
+        ]);
+        onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === address ? [legacyCoin] : [],
+        );
+        onchainProvider.getTransactions.mockImplementation(async (a: string) =>
+            a === address
+                ? [
+                      {
+                          txid: legacyCoin.txid,
+                          vin: [],
+                          vout: [{ scriptpubkey_address: address, value: legacyCoin.value }],
+                          status: { confirmed: true, block_time: 1 },
+                      },
+                  ]
+                : [],
+        );
+        onchainProvider.getTxOutspends.mockResolvedValue([{ spent: false, txid: "" }]);
+
+        await wallet.getContractManager();
+
+        const balance = await wallet.getBalance();
+        expect(balance.boarding.total).toBe(legacyCoin.value);
+        expect(balance.unrolled).toBe(0);
+        expect(balance.total).toBe(legacyCoin.value);
+        const history = await wallet.getTransactionHistory();
+        expect(history).toHaveLength(1);
+        expect(history[0].key.boardingTxid).toBe(legacyCoin.txid);
+    });
+
+    it("still counts an unrolled VTXO on a default contract as unrolled", async () => {
+        const { wallet } = await makeWallet();
+        const manager = await wallet.getContractManager();
+        const [contract] = await manager.getContracts({ type: ["default"] });
+        const tapscript = contractHandlers.get("default")!.createScript(contract.params);
+        await saveVtxosForContract(wallet.walletRepository, contract, [
+            toOnchainCoinRow(legacyCoin, contract, tapscript),
+        ]);
+
+        const balance = await wallet.getBalance();
+        expect(balance.unrolled).toBe(legacyCoin.value);
+        expect(balance.total).toBe(legacyCoin.value);
+    });
+});
+
+describe("boarding contract: UTXOs through the merged VTXO store", () => {
+    const coin = {
+        txid: "ab".repeat(32),
+        vout: 1,
+        value: 9000,
+        status: { confirmed: true, block_height: 12, block_time: 1700000000 },
+    };
+
+    async function fundedWallet() {
+        const handle = await makeWallet();
+        const { wallet, onchainProvider } = handle;
+        const address = wallet.boardingTapscript.onchainAddress(wallet.network);
+        onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === address ? [coin] : [],
+        );
+        return handle;
+    }
+
+    it("returns the stored row and never writes the legacy utxos table", async () => {
+        const { wallet } = await fundedWallet();
+        const saveUtxos = vi.spyOn(wallet.walletRepository, "saveUtxos");
+
+        const coins = await wallet.getBoardingUtxos();
+
+        expect(coins).toEqual([extendCoinWithTapscript(wallet.boardingTapscript, coin)]);
+        const rows = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(rows).toEqual([expect.objectContaining({ txid: coin.txid, isUnrolled: true })]);
+        expect(saveUtxos).not.toHaveBeenCalled();
+    });
+
+    it("omits a coin with a pending spend", async () => {
+        const { wallet } = await fundedWallet();
+        await wallet.getBoardingUtxos();
+        const manager = await wallet.getContractManager();
+        await manager.markOnchainSpendPending([coin], "ef".repeat(32));
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+    });
+
+    it("stops counting a settled boarding coin the explorer still lists as unspent", async () => {
+        const { wallet } = await fundedWallet();
+        const [input] = await wallet.getBoardingUtxos();
+
+        await (wallet as any).updateDbAfterSettle([input], "ef".repeat(32));
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+        const balance = await wallet.getBalance();
+        expect(balance.boarding.total).toBe(0);
+        expect(balance.total).toBe(0);
+    });
+
+    it("still marks a settled boarding coin pending when another settled input is not stored", async () => {
+        const { wallet } = await fundedWallet();
+        const [input] = await wallet.getBoardingUtxos();
+        const unstored = { ...input, txid: "77".repeat(32) };
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await (wallet as any).updateDbAfterSettle([input, unstored], "ef".repeat(32));
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+    });
+
+    it("hands a settled boarding coin from pending to spent once the explorer sees the commitment", async () => {
+        const { wallet, onchainProvider } = await fundedWallet();
+        const [input] = await wallet.getBoardingUtxos();
+        const commitment = "ef".repeat(32);
+        await (wallet as any).updateDbAfterSettle([input], commitment);
+
+        onchainProvider.getCoins.mockResolvedValue([]);
+        onchainProvider.getTxOutspends.mockResolvedValue([
+            { spent: false },
+            { spent: true, txid: commitment },
+        ]);
+        onchainProvider.getChainTip.mockResolvedValue({ height: 100, hash: "", time: 0 });
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+        const [row] = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(row).toMatchObject({ isSpent: true, spentBy: commitment });
+        const state = await wallet.walletRepository.getWalletState();
+        expect(state?.settings?.onchainPendingSpends).toEqual({});
+    });
+
+    it("returns exactly the fetched coins when a vanished row's outspends lookup fails", async () => {
+        const { wallet, onchainProvider } = await fundedWallet();
+        await wallet.getBoardingUtxos();
+        const fresh = { ...coin, txid: "cd".repeat(32), vout: 0 };
+        onchainProvider.getCoins.mockResolvedValue([fresh]);
+        onchainProvider.getTxOutspends.mockRejectedValue(new Error("tx not found"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        expect(await wallet.getBoardingUtxos()).toEqual([
+            extendCoinWithTapscript(wallet.boardingTapscript, fresh),
+        ]);
+        const rows = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(rows.map((r) => r.txid)).toContain(fresh.txid);
+    });
+
+    it("returns the fetched coins when the onchain sync fails", async () => {
+        const { wallet } = await fundedWallet();
+        const [stored] = await wallet.getBoardingUtxos();
+        const manager = await wallet.getContractManager();
+        vi.spyOn(manager, "syncOnchain").mockRejectedValue(new Error("subscribe failed"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        expect(await wallet.getBoardingUtxos()).toEqual([stored]);
     });
 });
 

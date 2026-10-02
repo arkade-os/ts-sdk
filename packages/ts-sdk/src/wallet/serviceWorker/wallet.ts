@@ -20,10 +20,13 @@ import {
     BurnParams,
     Recipient,
     SendParams,
+    SendOnchainParams,
 } from "..";
-import { SettlementEvent } from "../../providers/ark";
+import { OnchainCosignUnsupportedError, SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import type { Transaction } from "@scure/btc-signer";
+import { rehydrateCosignError } from "../../contracts/onchainSpend";
 import {
     Identity,
     ReadonlyIdentity,
@@ -126,6 +129,10 @@ import {
     ResponseGetExpiredBoardingUtxos,
     RequestSweepExpiredBoardingUtxos,
     ResponseSweepExpiredBoardingUtxos,
+    RequestCosignOnchainTx,
+    ResponseCosignOnchainTx,
+    RequestSendOnchain,
+    ResponseSendOnchain,
     RequestMigrateDeprecatedSignerVtxos,
     ResponseMigrateDeprecatedSignerVtxos,
     ResponseMigrateDeprecatedSignerVtxosEvent,
@@ -252,6 +259,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    COSIGN_ONCHAIN_TX: 50_000,
+    SEND_ONCHAIN: 50_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
     // kept for type completeness and is never enforced as an inactivity deadline.
     MIGRATE_DEPRECATED_SIGNER_VTXOS: 50_000,
@@ -303,6 +312,14 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
 function getRequestDedupKey(request: WalletUpdaterRequest): string {
     const { id, tag, ...rest } = request;
     return JSON.stringify(rest);
+}
+
+/** A worker predating the onchain cosign messages answers "Unknown message": it cannot cosign. */
+function cosignWorkerError(e: unknown): unknown {
+    if (e instanceof Error && e.message === "Unknown message") {
+        return new OnchainCosignUnsupportedError();
+    }
+    return rehydrateCosignError(e);
 }
 
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
@@ -2050,6 +2067,36 @@ export class ServiceWorkerWallet
             return (response as ResponseSend).payload.txid;
         } catch (error) {
             throw new Error(`Send failed: ${error}`);
+        }
+    }
+
+    async cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        const message: RequestCosignOnchainTx = {
+            tag: this.messageTag,
+            type: "COSIGN_ONCHAIN_TX",
+            id: getRandomId(),
+            payload: { psbt: typeof psbt === "string" ? psbt : base64.encode(psbt.toPSBT()) },
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseCosignOnchainTx).payload.txid;
+        } catch (e) {
+            throw cosignWorkerError(e);
+        }
+    }
+
+    async sendOnchain(params: SendOnchainParams): Promise<string> {
+        const message: RequestSendOnchain = {
+            tag: this.messageTag,
+            type: "SEND_ONCHAIN",
+            id: getRandomId(),
+            payload: params,
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseSendOnchain).payload.txid;
+        } catch (e) {
+            throw cosignWorkerError(e);
         }
     }
 

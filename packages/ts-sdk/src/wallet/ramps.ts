@@ -7,6 +7,7 @@ import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import { getDustAmount } from "./utils";
+import { isCosignFallback } from "../contracts/onchainSpend";
 
 /**
  * Thrown when a collaborative-exit / offboard would leave a change VTXO below
@@ -388,6 +389,9 @@ export class Ramps {
      * fee on that output rather than on a grossed-up figure. {@link offboard} keeps
      * the other anchor, which needs `g - fee(g) = amount` solved — impossible for
      * a program charging the whole output.
+     *
+     * Returns the onchain txid instead when onchain coins alone cover `amount`
+     * and were spent via arkd cosigning.
      */
     async offboardExact(params: {
         destinationAddress: string;
@@ -403,6 +407,10 @@ export class Ramps {
         }
 
         const named = vtxos !== undefined;
+        if (!named) {
+            const txid = await this.tryCosign(destinationAddress, amount);
+            if (txid) return txid;
+        }
         if (vtxos) reportUngatedInputs(this.wallet, vtxos);
         const spendable =
             vtxos ??
@@ -434,6 +442,18 @@ export class Ramps {
         const outputs = [{ address: destinationAddress, amount }];
         if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
         return this.wallet.settle({ inputs, outputs }, eventCallback);
+    }
+
+    private async tryCosign(address: string, amount: bigint): Promise<string | undefined> {
+        if (!("sendOnchain" in this.wallet)) return undefined;
+        try {
+            return await this.wallet.sendOnchain({
+                outputs: [{ address, amount: Number(amount) }],
+            });
+        } catch (e) {
+            if (!isCosignFallback(e)) throw e;
+            return undefined;
+        }
     }
 
     /** Fund the change output: pay its own fee, then judge it against both

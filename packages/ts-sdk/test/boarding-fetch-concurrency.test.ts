@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { hex } from "@scure/base";
 import { DefaultVtxo } from "../src/script/default";
 import {
     installRestoreHarness,
@@ -65,9 +66,7 @@ describe("boarding fetch fans out across addresses", () => {
             pubKey: new Uint8Array(32).fill(7),
         });
         (wallet as any).getBoardingTapscripts = async () => [wallet.boardingTapscript, second];
-        const [failing, late] = [wallet.boardingTapscript, second].map((s) =>
-            s.onchainAddress(wallet.network),
-        );
+        const failing = wallet.boardingTapscript.onchainAddress(wallet.network);
         let release!: () => void;
         const released = new Promise<void>((resolve) => (release = resolve));
         (wallet as any).onchainProvider = {
@@ -90,6 +89,6 @@ describe("boarding fetch fans out across addresses", () => {
         release();
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        expect(await walletRepository.getUtxos(late)).toEqual([]);
+        expect(await walletRepository.getVtxosForScript(hex.encode(second.pkScript))).toEqual([]);
     });
 });
