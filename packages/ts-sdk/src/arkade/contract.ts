@@ -69,7 +69,7 @@
  */
 
 import { base64, hex } from "@scure/base";
-import { RawWitness } from "@scure/btc-signer";
+import { DEFAULT_SEQUENCE, RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
@@ -94,7 +94,8 @@ import {
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
 import { attachPrevArkTxs, attachPrevoutTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { prepareOwnedInput, submitOnchainSpend } from "../contracts/onchainSpend";
-import { decodeTapscript } from "../script/tapscript";
+import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
+import { CHILD_DUST_AMOUNT } from "../utils/anchor";
 import type { RelativeTimelock } from "../script/tapscript";
 import { timelockToSequence } from "../utils/timelock";
 import { Transaction } from "../utils/transaction";
@@ -607,6 +608,7 @@ export class ArkadeTransactionBuilder {
     private readonly assetSpecs: AssetSpec[] = [];
     private coin?: Utxo;
     private changeScript?: Uint8Array;
+    private feeSats?: bigint;
 
     /** @internal */
     constructor(
@@ -640,6 +642,12 @@ export class ArkadeTransactionBuilder {
     /** Destination for any surplus (inputs − outputs). Required when the spend is not exact. */
     change(script: Uint8Array): this {
         this.changeScript = script;
+        return this;
+    }
+
+    /** Onchain only: the fee taken out of the surplus before the change output. */
+    onchainFee(sats: bigint): this {
+        this.feeSats = sats;
         return this;
     }
 
@@ -770,19 +778,22 @@ export class ArkadeTransactionBuilder {
         const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
         const surplus = BigInt(coin.value) - outputsSum;
         if (surplus < 0n) throw new Error("ArkadeTransactionBuilder: insufficient input");
-        if (surplus === 0n || this.changeScript) {
-            throw new Error(
-                "ArkadeTransactionBuilder: onchain spend needs a fee: leave surplus or size outputs",
-            );
+        const outputs = [...this.outputs];
+        if (this.changeScript) {
+            const fee = this.feeSats;
+            if (fee === undefined) throw new Error("onchain .change() requires .onchainFee(sats)");
+            if (fee > surplus) throw new Error(`onchainFee ${fee} exceeds surplus ${surplus}`);
+            const changeAmount = surplus - fee;
+            if (changeAmount < BigInt(CHILD_DUST_AMOUNT)) {
+                throw new Error(`onchain change ${changeAmount} is below dust`);
+            }
+            outputs.push({ script: this.changeScript, amount: changeAmount });
         }
+        const { sequence, lockTime } = this.leafTimelocks();
 
-        const tx = new Transaction({ version: 2 });
-        tx.addInput({
-            txid: hex.decode(coin.txid),
-            index: coin.vout,
-            sequence: this.leafSequence(),
-        });
-        for (const o of this.outputs) tx.addOutput(o);
+        const tx = new Transaction({ version: 2, lockTime });
+        tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout, sequence });
+        for (const o of outputs) tx.addOutput(o);
 
         const condition = (this.fn.def.tapscript.witness ?? []).map((w) => this.witnessBytes(w));
         prepareOwnedInput(tx, {
@@ -818,10 +829,16 @@ export class ArkadeTransactionBuilder {
         ]) as ExtensionPacket;
     }
 
-    private leafSequence(): number | undefined {
-        const { params } = decodeTapscript(this.fn.leafScript);
-        const timelock = (params as { timelock?: RelativeTimelock }).timelock;
-        return timelock ? timelockToSequence(timelock) : undefined;
+    private leafTimelocks(): { sequence?: number; lockTime: number } {
+        const tapscript = decodeTapscript(this.fn.leafScript);
+        if (CLTVMultisigTapscript.is(tapscript)) {
+            return {
+                sequence: DEFAULT_SEQUENCE - 1,
+                lockTime: Number(tapscript.params.absoluteTimelock),
+            };
+        }
+        const timelock = (tapscript.params as { timelock?: RelativeTimelock }).timelock;
+        return { sequence: timelock ? timelockToSequence(timelock) : undefined, lockTime: 0 };
     }
 
     /** Build, submit and return the finalized transaction. */

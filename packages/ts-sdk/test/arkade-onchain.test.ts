@@ -29,6 +29,7 @@ const program = {
             arkadeScript: { asm: payTo },
         },
         collab: { tapscript: { signers: ["$server"] } },
+        timed: { tapscript: { signers: ["$server"], cltv: 800_000n } },
     },
 } satisfies arkade.Program;
 
@@ -122,15 +123,39 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         );
     });
 
-    it("surplus without change is the fee; a fee-less spend throws", async () => {
+    it("surplus without change is the whole fee", async () => {
         const { contract } = await setup();
         const tx = await contract.functions.collab().from(COIN).to(out, AMOUNT).buildOnchain();
         expect(tx.outputsLength).toBe(1);
-        await expect(
-            contract.functions.collab().from(COIN).to(out, BigInt(COIN.value)).buildOnchain(),
-        ).rejects.toThrow(/needs a fee/);
-        await expect(
-            contract.functions.collab().from(COIN).to(out, AMOUNT).change(out).buildOnchain(),
-        ).rejects.toThrow(/needs a fee/);
+    });
+
+    it("change takes surplus minus onchainFee", async () => {
+        const { contract } = await setup();
+        const tx = await contract.functions
+            .collab()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .change(out)
+            .onchainFee(300n)
+            .buildOnchain();
+        expect(tx.getOutput(1).amount).toBe(700n);
+    });
+
+    it.each([
+        ["without onchainFee", undefined, AMOUNT, /requires .onchainFee/],
+        ["fee above surplus", 2_000n, AMOUNT, /exceeds surplus/],
+        ["change below dust", 900n, AMOUNT, /below dust/],
+    ])("change %s throws", async (_n, fee, amount, re) => {
+        const { contract } = await setup();
+        const b = contract.functions.collab().from(COIN).to(out, amount).change(out);
+        if (fee !== undefined) b.onchainFee(fee);
+        await expect(b.buildOnchain()).rejects.toThrow(re);
+    });
+
+    it("CLTV leaf sets lockTime and a non-final sequence", async () => {
+        const { contract } = await setup();
+        const tx = await contract.functions.timed().from(COIN).to(out, AMOUNT).buildOnchain();
+        expect(tx.lockTime).toBe(800_000);
+        expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });
 });
