@@ -1,13 +1,20 @@
 import { base64, hex } from "@scure/base";
-import { SigHash } from "@scure/btc-signer";
-import { Extension } from "../extension";
+import { Script, SigHash, TaprootControlBlock } from "@scure/btc-signer";
+import { equalBytes } from "@scure/btc-signer/utils.js";
+import { scriptFromTapLeafScript } from "../script/base";
+import { Extension, ExtensionNotFoundError } from "../extension";
 import type { ArkProvider } from "../providers/ark";
 import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { ConditionWitness, VtxoTaprootTree, setArkPsbtField } from "../utils/unknownFields";
+import {
+    ConditionWitness,
+    VtxoTaprootTree,
+    getArkPsbtFields,
+    setArkPsbtField,
+} from "../utils/unknownFields";
 import type { VirtualCoin } from "../wallet";
 import type { PathSelection } from "./types";
 
@@ -49,8 +56,9 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
                 .getEmulatorPacket()
                 ?.entries.map((e) => e.vin) ?? [],
         );
-    } catch {
-        return new Set();
+    } catch (e) {
+        if (e instanceof ExtensionNotFoundError) return new Set();
+        throw e;
     }
 }
 
@@ -70,6 +78,32 @@ export function assertCosignable(
             `${outpoint} is within ${marginBlocks} blocks of exit maturity`,
         );
     }
+}
+
+/** scure's finalizeIdx cannot place a ConditionWitness, so those inputs are laid out here. */
+function finalizeOwnedInput(tx: Transaction, index: number): void {
+    const condition = getArkPsbtFields(tx, index, ConditionWitness)[0];
+    if (!condition) {
+        tx.finalizeIdx(index);
+        return;
+    }
+    const input = tx.getInput(index);
+    const leaf = input.tapLeafScript?.[0];
+    if (!leaf) throw new Error(`input ${index} has no tap leaf to finalize`);
+    const script = scriptFromTapLeafScript(leaf);
+    const ops = Script.decode(script);
+    const position = (pubKey: Uint8Array) =>
+        ops.findIndex((op) => op instanceof Uint8Array && equalBytes(op, pubKey));
+    const sigs = (input.tapScriptSig ?? [])
+        .map(([{ pubKey }, sig]) => ({ sig, pos: position(pubKey) }))
+        .filter((s) => s.pos !== -1)
+        .sort((a, b) => a.pos - b.pos)
+        .map((s) => s.sig)
+        .reverse();
+    if (sigs.length === 0) throw new Error(`input ${index} has no signatures to finalize`);
+    tx.updateInput(index, {
+        finalScriptWitness: [...sigs, ...condition, script, TaprootControlBlock.encode(leaf[0])],
+    });
 }
 
 export function isCosignFallback(e: unknown): boolean {
@@ -105,7 +139,7 @@ export async function submitOnchainSpend(
         }
         const { signedTx } = await deps.emulator.submitOnchainTx(base64.encode(tx.toPSBT()));
         tx = Transaction.fromPSBT(base64.decode(signedTx));
-        for (const i of emulated) tx.finalizeIdx(i);
+        for (const i of emulated) finalizeOwnedInput(tx, i);
     }
     if (arkInputs.size > 0) {
         if (!deps.arkProvider) {

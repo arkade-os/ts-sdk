@@ -1,18 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { SigHash, Transaction as BtcSignerTransaction } from "@scure/btc-signer";
+import {
+    Script,
+    SigHash,
+    TaprootControlBlock,
+    Transaction as BtcSignerTransaction,
+} from "@scure/btc-signer";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { DefaultVtxo, EmulatorPacket, Transaction } from "../../src";
 import { attachExtension } from "../../src/arkade/contract";
 import {
     OnchainCosignPreflightError,
     assertCosignable,
+    emulatorInputIndexes,
     estimateOnchainCosignFee,
     isCosignFallback,
     prepareOwnedInput,
     submitOnchainSpend,
 } from "../../src/contracts/onchainSpend";
 import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../../src/providers/ark";
+import { ConditionMultisigTapscript } from "../../src/script/tapscript";
+import { VtxoScript, scriptFromTapLeafScript } from "../../src/script/base";
 import { ConditionWitness, VtxoTaprootTree, getArkPsbtFields } from "../../src/utils/unknownFields";
 
 const script = new DefaultVtxo.Script({
@@ -167,5 +176,70 @@ describe("submitOnchainSpend routing", () => {
             base64.decode(arkProvider.cosignOnchainTx.mock.calls[0][0]),
         );
         expect(sent.getInput(1).finalScriptWitness).toEqual(witness);
+    });
+});
+
+describe("emulator inputs", () => {
+    const [keyA, keyB] = [3, 4].map((n) => schnorr.getPublicKey(new Uint8Array(32).fill(n)));
+    const preimage = new Uint8Array(32).fill(9);
+    const conditionLeaf = ConditionMultisigTapscript.encode({
+        conditionScript: Script.encode(["SHA256", sha256(preimage), "EQUAL"]),
+        pubkeys: [keyA, keyB],
+    });
+    const vtxo = new VtxoScript([conditionLeaf.script]);
+    const emulatorTx = () => {
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(coin.txid), index: 0 });
+        tx.addOutput({ script: script.pkScript, amount: 9_000n });
+        prepareOwnedInput(tx, {
+            index: 0,
+            coin: { value: 10_000, script: hex.encode(vtxo.pkScript) },
+            path: { leaf: vtxo.leaves[0], extraWitness: [preimage] },
+            tapTree: vtxo.encode(),
+        });
+        attachExtension(tx, [
+            EmulatorPacket.create([
+                { vin: 0, script: new Uint8Array([0x51]), witness: new Uint8Array(0) },
+            ]) as any,
+        ]);
+        return tx;
+    };
+
+    it("finalizes a condition leaf as sigs (reversed script order), condition, script, control block", async () => {
+        const tx = emulatorTx();
+        const sigA = new Uint8Array(64).fill(0xaa);
+        const sigB = new Uint8Array(64).fill(0xbb);
+        const leafHash = new Uint8Array(32);
+        tx.updateInput(0, {
+            tapScriptSig: [
+                [{ pubKey: keyA, leafHash }, sigA],
+                [{ pubKey: keyB, leafHash }, sigB],
+            ],
+        });
+        const signed = base64.encode(tx.toPSBT());
+        const broadcast = vi.fn(async (_: string) => "direct");
+        await submitOnchainSpend(tx, new Set(), {
+            emulator: { submitOnchainTx: async () => ({ signedTx: signed }) },
+            onchainProvider: { broadcastTransaction: broadcast, getRawTransaction: vi.fn() },
+        });
+        const raw = BtcSignerTransaction.fromRaw(hex.decode(broadcast.mock.calls[0][0]), {
+            allowUnknownInputs: true,
+            allowUnknownOutputs: true,
+        });
+        expect(raw.getInput(0).finalScriptWitness).toEqual([
+            sigB,
+            sigA,
+            preimage,
+            scriptFromTapLeafScript(vtxo.leaves[0]),
+            TaprootControlBlock.encode(vtxo.leaves[0][0]),
+        ]);
+    });
+
+    it("propagates a malformed extension instead of reporting no emulator inputs", () => {
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(coin.txid), index: 0 });
+        const malformed = Script.encode(["RETURN", new Uint8Array([0x41, 0x52, 0x4b, 0x01, 0xff])]);
+        tx.addOutput({ script: malformed, amount: 0n });
+        expect(() => emulatorInputIndexes(tx)).toThrow();
     });
 });
