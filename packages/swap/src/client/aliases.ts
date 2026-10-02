@@ -12,9 +12,10 @@ import { BTC_ASSET_ID } from "../store";
 import {
     ARKADE_ASSET_NAMESPACE,
     AssetIdError,
-    BTC_ASSET_PART,
+    btcOn,
     type AssetId,
     isAssetId,
+    isBtcAsset,
     parseAssetId,
 } from "./assetId";
 import type { NetworkRef } from "./assetId";
@@ -37,24 +38,28 @@ export interface DiscoveryLeg {
  * a non-BTC asset on lightning or L1.
  */
 export const toDiscoveryLeg = (id: AssetId): DiscoveryLeg => {
-    const { rail, assetNamespace, assetReference } = parseAssetId(id);
+    const { rail, reference, assetNamespace, assetReference } = parseAssetId(id);
     const asset = `${assetNamespace}:${assetReference}`;
+    const isBtc = isBtcAsset(id);
+    if (!isBtc && rail !== "eip155" && (asset === "slip44:0" || asset === "slip44:1")) {
+        // BTC's coin type is per network (`slip44:0` mainnet, `slip44:1` elsewhere). The other one
+        // is a caller bug, refused here rather than quoted against a key no card carries.
+        const expected = btcOn(rail, reference as NetworkRef);
+        throw new UnsupportedRoute(`${id} is not BTC on ${reference}: BTC there is ${expected}`);
+    }
     if (rail === "arkade") {
-        if (asset === BTC_ASSET_PART)
-            return { corridor: "arkade", assetId: BTC_ASSET_ID, marketId: id };
+        if (isBtc) return { corridor: "arkade", assetId: BTC_ASSET_ID, marketId: id };
         if (assetNamespace === ARKADE_ASSET_NAMESPACE) {
             return { corridor: "arkade", assetId: assetReference, marketId: id };
         }
         throw new UnsupportedRoute(`the arkade corridor has no ${asset}`);
     }
     if (rail === "bolt11") {
-        if (asset === BTC_ASSET_PART)
-            return { corridor: "lightning", assetId: BTC_ASSET_ID, marketId: id };
+        if (isBtc) return { corridor: "lightning", assetId: BTC_ASSET_ID, marketId: id };
         throw new UnsupportedRoute(`the lightning corridor carries BTC only, not ${asset}`);
     }
     if (rail === "bitcoin") {
-        if (asset === BTC_ASSET_PART)
-            return { corridor: "onchain", assetId: BTC_ASSET_ID, marketId: id };
+        if (isBtc) return { corridor: "onchain", assetId: BTC_ASSET_ID, marketId: id };
         throw new UnsupportedRoute(`the onchain corridor carries BTC only, not ${asset}`);
     }
     throw new UnsupportedRoute(`no corridor serves ${id}`);

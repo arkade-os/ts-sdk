@@ -100,12 +100,12 @@ describe("the destination, parsed once", () => {
 
         expect(resolution.give).toMatchObject({
             corridor: "arkade",
-            asset: "arkade:regtest/slip44:0",
+            asset: "arkade:regtest/slip44:1",
             instrument: { kind: "wallet" },
         });
         expect(resolution.take).toMatchObject({
             corridor: "lightning",
-            asset: "bolt11:regtest/slip44:0",
+            asset: "bolt11:regtest/slip44:1",
             instrument: { kind: "invoice", amount: 5_000n },
         });
         // The invoice pins the take leg by existing.
@@ -119,7 +119,7 @@ describe("the destination, parsed once", () => {
         const resolution = await client.resolve({ to: BCRT1, amount: 100_000n, amountOn: "give" });
         expect(resolution.take).toMatchObject({
             corridor: "onchain",
-            asset: "bitcoin:regtest/slip44:0",
+            asset: "bitcoin:regtest/slip44:1",
             instrument: { kind: "address", address: BCRT1 },
         });
         expect(resolution.amount).toEqual({ value: 100_000n, on: "give", source: "caller" });
@@ -196,7 +196,7 @@ describe("the corridor pair", () => {
         await expect(
             client.resolve({
                 to: invoiceFor(PAYMENT_HASH, CLOCK),
-                take: "arkade:regtest/slip44:0",
+                take: "arkade:regtest/slip44:1",
             }),
         ).rejects.toThrow(UnsupportedRoute);
     });
@@ -315,7 +315,7 @@ describe("what the snapshot serves", () => {
             amount: 10_000n,
             amountOn: "give",
         });
-        expect(resolution.give.asset).toBe("arkade:regtest/slip44:0");
+        expect(resolution.give.asset).toBe("arkade:regtest/slip44:1");
         expect(resolution.take.asset).toBe(`arkade:regtest/asset:${USD_ASSET_ID}`);
         expect(resolution.market?.kind === "card" && resolution.market.backend).toBe("feed");
     });

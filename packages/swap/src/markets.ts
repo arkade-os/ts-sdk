@@ -210,6 +210,8 @@ export const findMarket = (
                 const asset = side === "base" ? market.base_asset : market.quote_asset;
                 if (asset.id === id) return marketLegKey(market, side);
                 const canonical = marketAssetId(market, side) ?? "";
+                // Either coin type: this reads card ids, which discovery validates per network
+                // (`slip44:0` mainnet, `slip44:1` elsewhere), and nothing here knows the network.
                 const matchesBtc =
                     id === BTC_ASSET_ID && /^arkade:[^/]+\/slip44:(?:0|1)$/.test(canonical);
                 const matchesAsset =

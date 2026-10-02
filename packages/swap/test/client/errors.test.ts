@@ -27,7 +27,7 @@ import {
     isSwapError,
 } from "../../src/client/errors";
 
-const BTC = "arkade:regtest/slip44:0" as const;
+const BTC = "arkade:regtest/slip44:1" as const;
 
 /** One instance per member, so the coverage assertion has something to count. */
 const every: readonly SwapError[] = [

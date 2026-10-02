@@ -122,18 +122,18 @@ describe("the Node repository default", () => {
             route: {
                 give: {
                     corridor: "arkade",
-                    asset: "arkade:regtest/slip44:0",
+                    asset: "arkade:regtest/slip44:1",
                     instrument: { kind: "wallet" },
                 },
                 take: {
                     corridor: "arkade",
-                    asset: "arkade:regtest/slip44:0",
+                    asset: "arkade:regtest/slip44:1",
                     instrument: { kind: "wallet" },
                 },
             },
-            give: { asset: "arkade:regtest/slip44:0", amount: "1000" as AtomicDecimal },
-            take: { asset: "arkade:regtest/slip44:0", amount: "990" as AtomicDecimal },
-            fee: { asset: "arkade:regtest/slip44:0", amount: "10" as AtomicDecimal },
+            give: { asset: "arkade:regtest/slip44:1", amount: "1000" as AtomicDecimal },
+            take: { asset: "arkade:regtest/slip44:1", amount: "990" as AtomicDecimal },
+            fee: { asset: "arkade:regtest/slip44:1", amount: "10" as AtomicDecimal },
             market: {
                 kind: "card",
                 key: "k",

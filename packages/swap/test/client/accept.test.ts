@@ -687,6 +687,64 @@ describe("accept() — reconcile from evidence before a second funding", () => {
     });
 });
 
+describe("accept() — a record written when BTC was slip44:0 on every network", () => {
+    // Before BTC's asset part depended on the network, regtest BTC was `arkade:regtest/slip44:0`.
+    // A record (and the quote it answers) from then still spells it so; nothing rewrites it.
+    const LEGACY_BTC = "arkade:regtest/slip44:0";
+
+    /** A spot BTC -> USD swap left persisted but unfunded, then aged into the old spelling. */
+    const legacyUnfunded = async (h: Harness, fail: { on: boolean }): Promise<Quote> => {
+        const quote = await quoteFor(h, "spot");
+        await expect(h.client.accept(quote)).rejects.toThrow(/send exploded/);
+        fail.on = false;
+
+        const stored = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(stored.route.give.asset).toBe("arkade:regtest/slip44:1");
+        await h.repository.saveSwapRecord({
+            ...stored,
+            route: { ...stored.route, give: { ...stored.route.give, asset: LEGACY_BTC } },
+            give: { ...stored.give, asset: LEGACY_BTC },
+        });
+        return {
+            ...quote,
+            route: { ...quote.route, give: { ...quote.route.give, asset: LEGACY_BTC } },
+            give: { ...quote.give, asset: LEGACY_BTC },
+        } as Quote;
+    };
+
+    it("funds the deposit as BTC, not as an asset", async () => {
+        const fail = { on: true };
+        const h = await setup({
+            failSend: () => (fail.on ? new Error("send exploded") : undefined!),
+        });
+        const legacy = await legacyUnfunded(h, fail);
+
+        const swap = await h.client.accept(legacy);
+
+        expect(swap.fundingTxid).toBe(FUNDING_TXID);
+        const [payment] = h.wallet.sent;
+        expect(payment?.amount).toBe(Number(legacy.give.amount));
+        expect(payment?.assets).toBeUndefined();
+    });
+
+    it("adopts a crashed first attempt's deposit by its sat value", async () => {
+        const fail = { on: true };
+        const h = await setup({
+            failSend: () => (fail.on ? new Error("send exploded") : undefined!),
+        });
+        const legacy = await legacyUnfunded(h, fail);
+        const stored = (await h.repository.getSwapRecord(legacy.id)) as OfferSwapRecord;
+        h.wallet.deposits.set(stored.swapPkScript, [
+            { txid: "f".repeat(64), value: Number(legacy.give.amount) },
+        ]);
+
+        const swap = await h.client.accept(legacy);
+
+        expect(swap.fundingTxid).toBe("f".repeat(64));
+        expect(h.wallet.sent).toHaveLength(0);
+    });
+});
+
 describe("accept() — what the record carries", () => {
     it("registers the lockup under the type a rebuild reads", async () => {
         const h = await setup();
