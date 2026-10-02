@@ -34,7 +34,7 @@ export const DEFAULT_COSIGN_MARGIN_BLOCKS = 6;
 /** Upper bound on the renew window; short-CSV networks use a quarter of the CSV instead. */
 export const ONCHAIN_RENEW_WINDOW_BLOCKS = 144;
 
-/** Exit CSV in blocks, seconds counted as 600 per block; no CSV means the exit is already open (0). */
+/** Exit CSV in blocks, seconds counted as 600 per block; 0 means no CSV exit path (never cosignable). */
 export function csvBlocksOf(contract: Contract): number {
     const sequence = exitSequence(contract);
     if (sequence === undefined) return 0;
@@ -105,6 +105,11 @@ export function assertCosignable(
     const confirmedAt = coin.status.block_height;
     if (!coin.status.confirmed || confirmedAt === undefined) {
         throw new OnchainCosignPreflightError(`${outpoint} is unconfirmed`);
+    }
+    if (csvBlocks === 0) {
+        throw new OnchainCosignPreflightError(
+            `${outpoint} has no CSV exit path; cosign margin cannot be evaluated`,
+        );
     }
     if (confirmedAt + csvBlocks - tipHeight <= marginBlocks) {
         throw new OnchainCosignPreflightError(

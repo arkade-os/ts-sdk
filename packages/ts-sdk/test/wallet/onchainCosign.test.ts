@@ -291,6 +291,21 @@ describe("sendOnchain with explicit inputs", () => {
             `${boardingCoin.txid}:1 is within 6 blocks of exit maturity; ${unknown.txid}:3 is not a known unspent onchain coin`,
         );
     });
+
+    it("names a dropped input that has no CSV exit path", async () => {
+        const { wallet, boardingCoin } = await makeWallet();
+        const [boarding] = await (wallet as any).onchainCoins(await wallet.getContractManager());
+        const { csvTimelock: _, ...params } = boarding.contract.params;
+        const noCsv = { ...boarding, contract: { ...boarding.contract, params } };
+        vi.spyOn(wallet as any, "onchainCoins").mockResolvedValue([noCsv]);
+        await expect(
+            wallet.sendOnchain({
+                outputs: [],
+                inputs: [{ txid: boardingCoin.txid, vout: boardingCoin.vout }],
+                sweepTo: externalAddress,
+            }),
+        ).rejects.toThrow(`${boardingCoin.txid}:1 has no CSV exit path`);
+    });
 });
 
 describe("onchainCosignMarginBlocks", () => {
@@ -325,6 +340,19 @@ describe("wallet.cosignOnchainTx", () => {
         const sent = sentPsbt(arkProvider);
         expect(sent.getInput(0).tapLeafScript).toHaveLength(1);
         expect(sent.getInput(1).finalScriptWitness).toEqual([new Uint8Array([1])]);
+    });
+
+    it("rejects a foreign input without a witnessUtxo instead of counting it as 0", async () => {
+        const { wallet, arkProvider, boardingCoin, externalScript } = await makeWallet();
+        const foreign = "bb".repeat(32);
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
+        tx.addInput({ txid: hex.decode(foreign), index: 2 });
+        tx.addOutput({ script: externalScript, amount: 40_000n });
+        const err = await wallet.cosignOnchainTx(tx).catch((e) => e);
+        expect(err).toBeInstanceOf(OnchainCosignPreflightError);
+        expect(err.message).toContain(`input 1 (${foreign}:2) has no witnessUtxo`);
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
     });
 
     it("rejects outputs exceeding inputs", async () => {

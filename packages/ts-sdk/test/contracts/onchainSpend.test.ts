@@ -117,6 +117,11 @@ describe("assertCosignable", () => {
     it("accepts when far from maturity", () => {
         expect(() => assertCosignable(coin, 1008, 101)).not.toThrow();
     });
+    it("rejects a coin with no CSV exit path under its own reason", () => {
+        expect(() => assertCosignable(coin, 0, 101)).toThrow(
+            `${coin.txid}:${coin.vout} has no CSV exit path; cosign margin cannot be evaluated`,
+        );
+    });
 });
 
 describe("isCosignFallback", () => {

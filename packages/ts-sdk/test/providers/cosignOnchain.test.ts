@@ -56,6 +56,25 @@ describe("RestArkProvider.cosignOnchainTx", () => {
         },
     );
 
+    it("retries the network after the server info digest changes", async () => {
+        let digest = "a";
+        const fetchMock = vi.fn(async (url: string) =>
+            url.endsWith("/v1/info")
+                ? okJson({ digest })
+                : new Response("Not Found", { status: 404 }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+        const p = new RestArkProvider("http://ark");
+        await p.getInfo();
+        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
+        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
+        digest = "b";
+        await p.getInfo();
+        await expect(p.cosignOnchainTx("x")).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
+        const cosignCalls = fetchMock.mock.calls.filter(([u]) => u.endsWith("/onchain/cosign"));
+        expect(cosignCalls).toHaveLength(2);
+    });
+
     it("maps a structured arkd rejection to OnchainCosignRejectedError carrying its name", async () => {
         const { err } = cosignWith(okJson(arkErrorBody("INVALID_ARK_PSBT", "too close"), 400));
         const e = await err;

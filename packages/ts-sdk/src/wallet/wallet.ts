@@ -5026,7 +5026,12 @@ export class Wallet
             const outpoint = { txid: hex.encode(input.txid!), vout: input.index! };
             const mine = owned.get(vtxoOutpoint(outpoint));
             if (!mine) {
-                inSum += input.witnessUtxo?.amount ?? 0n;
+                if (!input.witnessUtxo) {
+                    throw new OnchainCosignPreflightError(
+                        `input ${i} (${vtxoOutpoint(outpoint)}) has no witnessUtxo`,
+                    );
+                }
+                inSum += input.witnessUtxo.amount;
                 continue;
             }
             const { coin, contract, script } = mine;

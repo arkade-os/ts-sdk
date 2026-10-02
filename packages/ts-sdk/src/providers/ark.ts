@@ -428,6 +428,7 @@ export class RestArkProvider implements ArkProvider {
     }
 
     private emitServerInfoChanged(info: ArkInfo): void {
+        this._onchainCosignUnsupported = false;
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
