@@ -86,6 +86,9 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
+// Type-only, and it has to stay that way: `evmRfq.ts` imports the pair
+// helpers from here, so a value import would close the cycle at run time.
+import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
@@ -608,9 +611,12 @@ const matchQuotedLockup = (
  * lightning leg has a second clock that can actually run out (the hold
  * invoice's), which is what the split buys. The onchain-receive leg stays here
  * until its own deadline gets the same treatment; the headroom check is merely
- * over-strict there, never unsafe. */
+ * over-strict there, never unsafe.
+ *
+ * EVM quote pairs are negotiation-only and fail closed here until local
+ * contract, finality, and cross-chain deadline verification is implemented. */
 export const assertFundable = (input: {
-    quote: RfqQuote;
+    quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
     now: number;
     onchain?: {
@@ -642,6 +648,12 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    if (input.quote.pair.split("->").some((leg) => leg.startsWith("ethereum:"))) {
+        fail(
+            "evm_funding_unavailable",
+            "EVM funding is unavailable until local contract, finality, and deadline verification is implemented",
+        );
+    }
     if (input.invoiceExpiresAt !== undefined && input.now >= input.invoiceExpiresAt) {
         fail("invoice_expired", "invoice expired");
     }

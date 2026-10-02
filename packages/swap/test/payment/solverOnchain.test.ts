@@ -49,6 +49,7 @@ const negotiated = (fundAmount: number, toAmount: number) =>
         address: "tark1lockup",
         fundAmount,
         quote: {
+            pair: "arkade:BTC->onchain:BTC",
             from_amount: fundAmount,
             to_amount: toAmount,
             valid_until: NOW() + 3600,
