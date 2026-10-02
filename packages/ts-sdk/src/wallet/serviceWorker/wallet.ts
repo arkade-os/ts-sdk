@@ -22,7 +22,7 @@ import {
     SendParams,
     SendOnchainParams,
 } from "..";
-import { SettlementEvent } from "../../providers/ark";
+import { OnchainCosignUnsupportedError, SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { base64, hex } from "@scure/base";
 import type { Transaction } from "@scure/btc-signer";
@@ -312,6 +312,14 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
 function getRequestDedupKey(request: WalletUpdaterRequest): string {
     const { id, tag, ...rest } = request;
     return JSON.stringify(rest);
+}
+
+/** A worker predating the onchain cosign messages answers "Unknown message": it cannot cosign. */
+function cosignWorkerError(e: unknown): unknown {
+    if (e instanceof Error && e.message === "Unknown message") {
+        return new OnchainCosignUnsupportedError();
+    }
+    return rehydrateCosignError(e);
 }
 
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
@@ -2073,7 +2081,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessage(message);
             return (response as ResponseCosignOnchainTx).payload.txid;
         } catch (e) {
-            throw rehydrateCosignError(e);
+            throw cosignWorkerError(e);
         }
     }
 
@@ -2088,7 +2096,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessage(message);
             return (response as ResponseSendOnchain).payload.txid;
         } catch (e) {
-            throw rehydrateCosignError(e);
+            throw cosignWorkerError(e);
         }
     }
 

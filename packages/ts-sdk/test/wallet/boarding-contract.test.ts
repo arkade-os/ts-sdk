@@ -386,6 +386,17 @@ describe("boarding contract: UTXOs through the merged VTXO store", () => {
         expect(balance.total).toBe(0);
     });
 
+    it("still marks a settled boarding coin pending when another settled input is not stored", async () => {
+        const { wallet } = await fundedWallet();
+        const [input] = await wallet.getBoardingUtxos();
+        const unstored = { ...input, txid: "77".repeat(32) };
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await (wallet as any).updateDbAfterSettle([input, unstored], "ef".repeat(32));
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+    });
+
     it("hands a settled boarding coin from pending to spent once the explorer sees the commitment", async () => {
         const { wallet, onchainProvider } = await fundedWallet();
         const [input] = await wallet.getBoardingUtxos();

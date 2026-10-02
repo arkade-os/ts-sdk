@@ -97,6 +97,33 @@ describe("prepareOwnedInput", () => {
         expect(tx.getInput(0).tapLeafScript).toEqual([script.forfeit()]);
         expect(tx.getInput(0).tapScriptSig).toBeUndefined();
     });
+
+    it("replaces taptree and condition witness fields instead of duplicating them", () => {
+        const tx = txWithInput();
+        const foreignField: [{ type: number; key: Uint8Array }, Uint8Array] = [
+            { type: 0x99, key: new Uint8Array([9]) },
+            new Uint8Array([1]),
+        ];
+        tx.updateInput(0, { unknown: [foreignField] });
+        prepareOwnedInput(tx, {
+            index: 0,
+            coin,
+            path: { leaf: script.forfeit(), extraWitness: [new Uint8Array(32).fill(7)] },
+            tapTree: script.encode(),
+        });
+        const retried = Transaction.fromPSBT(tx.toPSBT());
+        prepareOwnedInput(retried, {
+            index: 0,
+            coin,
+            path: { leaf: script.forfeit(), extraWitness: [new Uint8Array(32).fill(8)] },
+            tapTree: script.encode(),
+        });
+        expect(getArkPsbtFields(retried, 0, VtxoTaprootTree)).toHaveLength(1);
+        expect(getArkPsbtFields(retried, 0, ConditionWitness)).toEqual([
+            [new Uint8Array(32).fill(8)],
+        ]);
+        expect(retried.getInput(0).unknown).toContainEqual(foreignField);
+    });
 });
 
 describe("assertCosignable", () => {

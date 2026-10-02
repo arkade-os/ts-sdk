@@ -562,8 +562,13 @@ export interface IContractManager extends Disposable {
     /**
      * Record `txid` as the pending spender of stored onchain coins. A sync confirms it once the
      * coin is spent, or releases it if still unspent `ONCHAIN_PENDING_RELEASE_BLOCKS` later.
+     * `skipUnknown` marks the stored coins and logs the rest instead of rejecting them all.
      */
-    markOnchainSpendPending?(outpoints: Outpoint[], txid: string): Promise<void>;
+    markOnchainSpendPending?(
+        outpoints: Outpoint[],
+        txid: string,
+        options?: { skipUnknown?: boolean },
+    ): Promise<void>;
 
     /**
      * Rebuild the HD look-ahead watch window around the current allocation
@@ -2374,7 +2379,11 @@ export class ContractManager implements IContractManager {
      * @see IContractManager.markOnchainSpendPending
      * @throws naming every outpoint that is not a stored, unconfirmed onchain coin; nothing is written then.
      */
-    markOnchainSpendPending(outpoints: Outpoint[], txid: string): Promise<void> {
+    markOnchainSpendPending(
+        outpoints: Outpoint[],
+        txid: string,
+        options?: { skipUnknown?: boolean },
+    ): Promise<void> {
         return this.inOnchainOrder(async () => {
             const { onchainProvider } = this.config;
             if (!onchainProvider)
@@ -2386,7 +2395,9 @@ export class ContractManager implements IContractManager {
             );
             const unknown = [...keys].filter((k) => !rows.some((v) => vtxoOutpoint(v) === k));
             if (unknown.length > 0) {
-                throw new Error(`Unknown onchain coins: ${unknown.join(", ")}`);
+                const message = `Unknown onchain coins: ${unknown.join(", ")}`;
+                if (!options?.skipUnknown) throw new Error(message);
+                console.warn(`[contracts] ${message}; marking the rest pending`);
             }
 
             const { height } = await onchainProvider.getChainTip();

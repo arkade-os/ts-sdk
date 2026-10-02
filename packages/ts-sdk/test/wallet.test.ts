@@ -2809,6 +2809,7 @@ describe("Wallet.updateDbAfterSettle", () => {
         expect(markOnchainSpendPending).toHaveBeenCalledWith(
             [{ txid: boardingInput.txid, vout: 0 }],
             "commitment-tx",
+            { skipUnknown: true },
         );
         expect(syncOnchain).toHaveBeenCalledWith([hex.encode(boardingScript.pkScript)]);
     });

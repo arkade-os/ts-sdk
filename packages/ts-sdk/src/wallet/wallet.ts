@@ -4910,6 +4910,9 @@ export class Wallet
         if (params.sweepTo && params.outputs.length > 0) {
             throw new Error("sendOnchain: sweepTo requires empty outputs");
         }
+        if (!params.sweepTo && params.outputs.length === 0) {
+            throw new OnchainCosignPreflightError("no outputs and no sweepTo");
+        }
         return this._withTxLock(async () => {
             let tx: Transaction;
             try {
@@ -6738,7 +6741,9 @@ export class Wallet
                 // An explorer that has not seen the commitment yet still lists these as
                 // unspent; the pending mark vetoes them until the sync sees the spend.
                 try {
-                    await cm.markOnchainSpendPending(boardingOutpoints, commitmentTxid);
+                    await cm.markOnchainSpendPending(boardingOutpoints, commitmentTxid, {
+                        skipUnknown: true,
+                    });
                 } catch (e) {
                     console.warn("Settled boarding inputs not marked pending", e);
                 }

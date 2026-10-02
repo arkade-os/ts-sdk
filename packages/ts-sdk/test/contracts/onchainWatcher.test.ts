@@ -251,6 +251,26 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    it("with skipUnknown marks the stored coins and warns about the rest", async () => {
+        const { manager, walletRepository } = await setup(async () => [coin]);
+        await manager.syncOnchain();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await manager.markOnchainSpendPending(
+            [
+                { txid: coin.txid, vout: 1 },
+                { txid: "ff".repeat(32), vout: 0 },
+            ],
+            spender,
+            { skipUnknown: true },
+        );
+        const [row] = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(row.spentBy).toBe(spender);
+        expect(Object.keys(await pendingOf(walletRepository))).toEqual([`${coin.txid}:1`]);
+        expect(String(warn.mock.calls[0][0])).toContain(`${"ff".repeat(32)}:0`);
+        warn.mockRestore();
+        manager.dispose();
+    });
+
     it("reconciles a pending row on an offchain-scoped contract", async () => {
         const getCoins = vi.fn().mockResolvedValue([]);
         const { manager, walletRepository, contractRepository, onchainProvider } = await setup(

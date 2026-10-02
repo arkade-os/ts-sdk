@@ -67,10 +67,14 @@ export function prepareOwnedInput(
 ): void {
     // scure merges key maps, and arkd requires exactly one leaf. Dropping PSBT-only
     // fields leaves the tx, and so other inputs' signatures, untouched.
-    const { tapLeafScript, tapScriptSig } = tx.getInput(index);
+    const { tapLeafScript, tapScriptSig, unknown } = tx.getInput(index);
     if (tapLeafScript || tapScriptSig) {
         tx.updateInput(index, { tapLeafScript: undefined, tapScriptSig: undefined }, true);
     }
+    const kept = unknown?.filter(
+        (u) => VtxoTaprootTree.decode(u) === null && ConditionWitness.decode(u) === null,
+    );
+    if (kept && kept.length !== unknown!.length) tx.updateInput(index, { unknown: kept });
     tx.updateInput(index, {
         witnessUtxo: { amount: BigInt(coin.value), script: hex.decode(coin.script) },
         tapLeafScript: [path.leaf],

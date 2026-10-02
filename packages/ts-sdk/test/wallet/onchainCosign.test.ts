@@ -146,6 +146,14 @@ describe("wallet.sendOnchain", () => {
         ).rejects.toThrow(/nothing to sweep/);
     });
 
+    it("refuses no outputs without sweepTo instead of self-sending", async () => {
+        const { wallet, arkProvider } = await makeWallet();
+        const err = await wallet.sendOnchain({ outputs: [] }).catch((e) => e);
+        expect(err).toBeInstanceOf(OnchainCosignPreflightError);
+        expect(err.message).toContain("no outputs and no sweepTo");
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+    });
+
     it("refuses sweepTo combined with outputs", async () => {
         const { wallet } = await makeWallet();
         await expect(

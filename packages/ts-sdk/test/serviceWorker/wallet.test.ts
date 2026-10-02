@@ -762,6 +762,25 @@ describe("ServiceWorkerWallet", () => {
         }
     });
 
+    it("maps an older worker's unknown-message reply to OnchainCosignUnsupportedError", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error("Unknown message"),
+        }));
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        for (const call of [
+            wallet.cosignOnchainTx("cHNidP8="),
+            wallet.sendOnchain({ outputs: [], sweepTo: "bc1-dest" }),
+        ]) {
+            const err = await call.catch((e) => e);
+            expect(err).toBeInstanceOf(OnchainCosignUnsupportedError);
+            expect(isCosignFallback(err)).toBe(true);
+        }
+    });
+
     it("passes unrelated worker errors through unchanged", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,
