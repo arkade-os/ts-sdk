@@ -982,6 +982,7 @@ export {
     isSpendable,
     isVirtualCoin,
     normalizeVtxo,
+    requiresForfeit,
     toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,

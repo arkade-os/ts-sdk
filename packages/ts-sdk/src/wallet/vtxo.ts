@@ -416,6 +416,17 @@ export function canSweepOnchain(vtxo: VirtualCoin): boolean {
     return !isVtxoSpent(n) && !!n.isUnrolled;
 }
 
+/**
+ * Whether arkd expects a forfeit for this virtual output in a batch: its `Vtxo.RequiresForfeit()`
+ * minus `IsNote()`, since arknotes are not `VirtualCoin`s. Keyed on the operator's `isSwept`, never
+ * on expiry, so it is not the complement of {@link canRecoverOnchain}: an output past expiry that
+ * arkd has not swept still needs one.
+ */
+export function requiresForfeit(vtxo: VirtualCoin): boolean {
+    const n = normalizeVtxo(vtxo);
+    return !n.isSwept && !n.isUnrolled;
+}
+
 // --- fee estimation ----------------------------------------------------------------------------
 
 /**

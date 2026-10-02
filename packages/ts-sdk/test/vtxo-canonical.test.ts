@@ -16,6 +16,7 @@ import {
     normalizeVtxo,
     parseLegacyExpiry,
     parseWireExpiry,
+    requiresForfeit,
     resolveTimeHeight,
     toBatchExpiry,
     toVirtualStatus,
@@ -272,6 +273,14 @@ describe("truth table", () => {
             ].filter(Boolean);
             expect(claims).toHaveLength(1);
         }
+    });
+
+    it("requiresForfeit tracks the operator's swept fact, not expiry", () => {
+        expect(requiresForfeit(coin())).toBe(true);
+        expect(requiresForfeit(coin({ expiresAt: PAST }))).toBe(true);
+        expect(requiresForfeit(coin({ isSwept: true }))).toBe(false);
+        expect(requiresForfeit(coin({ isUnrolled: true }))).toBe(false);
+        expect(canRecoverOnchain(coin({ expiresAt: PAST }), now)).toBe(true);
     });
 });
 

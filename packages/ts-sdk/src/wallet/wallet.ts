@@ -35,9 +35,11 @@ import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     isVtxoSpent,
+    isPastExpiry,
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
+    requiresForfeit,
     resolveTimeHeight,
     toBatchExpiry,
     toOffchainInputFeeParams,
@@ -132,7 +134,8 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, type ProviderKind } from "../providers/errors";
+import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
+import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -449,6 +452,61 @@ export function filterSnapshotVtxos(
             }
             return true;
         });
+}
+
+/**
+ * Refresh the swept state of settle inputs already past their batch expiry. The delta sync windows
+ * on `created_at`, so it never revisits a coin the operator swept after the cursor passed it, and a
+ * stale `isSwept: false` makes {@link requiresForfeit} build a forfeit the operator allocated no
+ * connector for. Fails closed: a swept state that cannot be confirmed aborts the settlement, since
+ * guessing the obligation fails mid-batch and can get the input's script convicted.
+ */
+async function refreshSweptStateOfExpiredInputs(
+    wallet: Pick<ReadonlyWallet, "getContractManager" | "getVtxos" | "onchainProvider">,
+    inputs: ExtendedCoin[],
+): Promise<ExtendedCoin[]> {
+    const candidates = inputs
+        .filter(isVirtualCoin)
+        .map(normalizeVtxo)
+        .filter((v) => !v.isSwept);
+    if (candidates.length === 0) return inputs;
+
+    // Only a height-encoded expiry needs the tip, so time-based networks make no call.
+    const now = candidates.some((v) => v.expiresAtHeight !== undefined)
+        ? await resolveTimeHeight(wallet.onchainProvider)
+        : { timestamp: new Date() };
+    // An unknown tip must not exempt a height-expiring coin; a needless refresh is harmless.
+    const suspects = candidates.filter(
+        (v) =>
+            isPastExpiry(v, now) || (v.expiresAtHeight !== undefined && now.height === undefined),
+    );
+    if (suspects.length === 0) return inputs;
+
+    let sweptNow: Set<string>;
+    try {
+        const manager = await wallet.getContractManager();
+        await manager.refreshOutpoints(suspects.map(({ txid, vout }) => ({ txid, vout })));
+        const suspectKeys = new Set(suspects.map((v) => `${v.txid}:${v.vout}`));
+        const fresh = await wallet.getVtxos({ withRecoverable: true });
+        sweptNow = new Set(
+            fresh
+                .filter((v) => v.isSwept && suspectKeys.has(`${v.txid}:${v.vout}`))
+                .map((v) => `${v.txid}:${v.vout}`),
+        );
+    } catch (e) {
+        const message =
+            "could not confirm the swept state of expired settlement inputs; retry the settlement";
+        throw isRetryableProviderError(e)
+            ? new ProviderUnavailableError(message, { cause: e })
+            : new Error(message, { cause: e });
+    }
+
+    if (sweptNow.size === 0) return inputs;
+    return inputs.map((input) => {
+        if (!isVirtualCoin(input) || !sweptNow.has(`${input.txid}:${input.vout}`)) return input;
+        const swept = { ...normalizeVtxo(input), isSwept: true };
+        return { ...swept, virtualStatus: toVirtualStatus(swept) };
+    });
 }
 
 /**
@@ -4098,6 +4156,11 @@ export class Wallet
             };
         }
 
+        params = {
+            ...params,
+            inputs: await refreshSweptStateOfExpiredInputs(this, params.inputs),
+        };
+
         const onchainOutputIndexes: number[] = [];
         const outputs: TransactionOutput[] = [];
         let hasOffchainOutputs = false;
@@ -4485,11 +4548,8 @@ export class Wallet
                 continue;
             }
 
-            if (
-                canRecoverOnchain(input, { timestamp: new Date() }) ||
-                isSubdust({ value: input.value }, this.dustAmount)
-            ) {
-                // recoverable or subdust coin, we don't need to create a forfeit tx
+            if (!requiresForfeit(input) || isSubdust({ value: input.value }, this.dustAmount)) {
+                // swept, unrolled or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
 
