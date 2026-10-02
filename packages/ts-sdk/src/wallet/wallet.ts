@@ -197,7 +197,7 @@ import {
     assertCosignable,
     DEFAULT_COSIGN_MARGIN_BLOCKS,
     needsOnchainSweep,
-    csvBlocksOf,
+    exitCsvOf,
     emulatorInputIndexes,
     estimateOnchainCosignFee,
     prepareOwnedInput,
@@ -4952,12 +4952,7 @@ export class Wallet
             })
             .filter(({ coin, contract }) => {
                 try {
-                    assertCosignable(
-                        coin,
-                        csvBlocksOf(contract),
-                        tip.height,
-                        this._cosignMarginBlocks,
-                    );
+                    assertCosignable(coin, exitCsvOf(contract), tip, this._cosignMarginBlocks);
                     return true;
                 } catch (e) {
                     if (e instanceof OnchainCosignPreflightError) {
@@ -5049,7 +5044,7 @@ export class Wallet
                     `no collaborative path for ${vtxoOutpoint(outpoint)}`,
                 );
             }
-            assertCosignable(coin, csvBlocksOf(contract), tip.height, this._cosignMarginBlocks);
+            assertCosignable(coin, exitCsvOf(contract), tip, this._cosignMarginBlocks);
             prepareOwnedInput(tx, { index: i, coin, path, tapTree: script.encode() });
             if (!emulated.has(i)) arkInputs.add(i);
             ownedIndexes.push(i);
@@ -5102,7 +5097,7 @@ export class Wallet
             .filter(
                 ({ coin, contract }) =>
                     !locked.has(vtxoOutpoint(coin)) &&
-                    needsOnchainSweep(coin, contract, tip.height, this._cosignMarginBlocks),
+                    needsOnchainSweep(coin, contract, tip, this._cosignMarginBlocks),
             )
             .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
     }
@@ -6747,7 +6742,11 @@ export class Wallet
                 } catch (e) {
                     console.warn("Settled boarding inputs not marked pending", e);
                 }
-                await cm.syncOnchain([...boardingScripts]);
+                try {
+                    await cm.syncOnchain([...boardingScripts]);
+                } catch (e) {
+                    console.warn("Onchain boarding sync after settle failed", e);
+                }
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);

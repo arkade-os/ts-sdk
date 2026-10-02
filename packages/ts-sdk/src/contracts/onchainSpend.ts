@@ -28,18 +28,19 @@ import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
 import { isOnchainScoped } from "./scope";
 import { sequenceToTimelock } from "../utils/timelock";
+import type { RelativeTimelock } from "../script/tapscript";
 
 export const DEFAULT_COSIGN_MARGIN_BLOCKS = 6;
 
 /** Upper bound on the renew window; short-CSV networks use a quarter of the CSV instead. */
 export const ONCHAIN_RENEW_WINDOW_BLOCKS = 144;
 
-/** Exit CSV in blocks, seconds counted as 600 per block; 0 means no CSV exit path (never cosignable). */
-export function csvBlocksOf(contract: Contract): number {
+export type ChainTip = { height: number; time: number };
+
+/** The contract's exit CSV; undefined means no CSV exit path (never cosignable). */
+export function exitCsvOf(contract: Contract): RelativeTimelock | undefined {
     const sequence = exitSequence(contract);
-    if (sequence === undefined) return 0;
-    const { type, value } = sequenceToTimelock(sequence);
-    return type === "blocks" ? Number(value) : Math.ceil(Number(value) / 600);
+    return sequence === undefined ? undefined : sequenceToTimelock(sequence);
 }
 
 export const ONCHAIN_COSIGN_PREFLIGHT_PREFIX = "Onchain cosign preflight failed: ";
@@ -99,23 +100,44 @@ export function emulatorInputIndexes(tx: Transaction): Set<number> {
     }
 }
 
+const SECONDS_PER_BLOCK = 600;
+
+/** Exit CSV left, in blocks or in seconds against the tip's MTP; undefined if unconfirmed. */
+function untilExitMaturity(
+    coin: VirtualCoin,
+    csv: RelativeTimelock,
+    tip: ChainTip,
+): { remaining: number; perBlock: number; csv: number } | undefined {
+    if (!coin.status.confirmed) return undefined;
+    const value = Number(csv.value);
+    if (csv.type === "blocks") {
+        const at = coin.status.block_height;
+        return at === undefined
+            ? undefined
+            : { remaining: at + value - tip.height, perBlock: 1, csv: value };
+    }
+    // block_time >= its block's MTP, so this errs late; arkd keeps its own margin, refusal falls back.
+    const at = coin.status.block_time;
+    return at === undefined
+        ? undefined
+        : { remaining: at + value - tip.time, perBlock: SECONDS_PER_BLOCK, csv: value };
+}
+
 export function assertCosignable(
     coin: VirtualCoin,
-    csvBlocks: number,
-    tipHeight: number,
+    csv: RelativeTimelock | undefined,
+    tip: ChainTip,
     marginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS,
 ): void {
     const outpoint = `${coin.txid}:${coin.vout}`;
-    const confirmedAt = coin.status.block_height;
-    if (!coin.status.confirmed || confirmedAt === undefined) {
-        throw new OnchainCosignPreflightError(`${outpoint} is unconfirmed`);
-    }
-    if (csvBlocks === 0) {
+    if (!csv) {
         throw new OnchainCosignPreflightError(
             `${outpoint} has no CSV exit path; cosign margin cannot be evaluated`,
         );
     }
-    if (confirmedAt + csvBlocks - tipHeight <= marginBlocks) {
+    const left = untilExitMaturity(coin, csv, tip);
+    if (!left) throw new OnchainCosignPreflightError(`${outpoint} is unconfirmed`);
+    if (left.remaining <= marginBlocks * left.perBlock) {
         throw new OnchainCosignPreflightError(
             `${outpoint} is within ${marginBlocks} blocks of exit maturity`,
         );
@@ -129,16 +151,16 @@ export function assertCosignable(
 export function needsOnchainSweep(
     coin: VirtualCoin,
     contract: Contract,
-    tipHeight: number,
+    tip: ChainTip,
     marginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS,
 ): boolean {
     if (!isOnchainScoped(contract)) return false;
-    const confirmedAt = coin.status.block_height;
-    if (!coin.status.confirmed || confirmedAt === undefined) return false;
-    const csvBlocks = csvBlocksOf(contract);
-    const window = Math.min(ONCHAIN_RENEW_WINDOW_BLOCKS, Math.floor(csvBlocks / 4));
-    const remaining = confirmedAt + csvBlocks - tipHeight;
-    return remaining > marginBlocks && remaining <= marginBlocks + window;
+    const csv = exitCsvOf(contract);
+    const left = csv && untilExitMaturity(coin, csv, tip);
+    if (!left) return false;
+    const margin = marginBlocks * left.perBlock;
+    const window = Math.min(ONCHAIN_RENEW_WINDOW_BLOCKS * left.perBlock, Math.floor(left.csv / 4));
+    return left.remaining > margin && left.remaining <= margin + window;
 }
 
 /** scure's finalizeIdx cannot place a ConditionWitness, so those inputs are laid out here. */

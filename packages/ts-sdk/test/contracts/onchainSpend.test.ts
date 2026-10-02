@@ -127,27 +127,50 @@ describe("prepareOwnedInput", () => {
 });
 
 describe("assertCosignable", () => {
+    const blocks = (value: number) => ({ type: "blocks" as const, value: BigInt(value) });
+    const seconds = (value: number) => ({ type: "seconds" as const, value: BigInt(value) });
+    const tip = (height: number, time = 0) => ({ height, time });
+
     it("rejects unconfirmed", () => {
-        expect(() => assertCosignable({ ...coin, status: { confirmed: false } }, 144, 120)).toThrow(
-            OnchainCosignPreflightError,
-        );
+        expect(() =>
+            assertCosignable({ ...coin, status: { confirmed: false } }, blocks(144), tip(120)),
+        ).toThrow(OnchainCosignPreflightError);
     });
     it("rejects within the margin of CSV maturity", () => {
-        expect(() => assertCosignable(coin, 144, 238)).toThrow(/maturity/);
+        expect(() => assertCosignable(coin, blocks(144), tip(238))).toThrow(/maturity/);
     });
     it("accepts one block beyond the margin", () => {
-        expect(() => assertCosignable(coin, 144, 237)).not.toThrow();
+        expect(() => assertCosignable(coin, blocks(144), tip(237))).not.toThrow();
     });
     it("takes the margin as a parameter", () => {
-        expect(() => assertCosignable(coin, 144, 101, 143)).toThrow(/maturity/);
+        expect(() => assertCosignable(coin, blocks(144), tip(101), 143)).toThrow(/maturity/);
     });
     it("accepts when far from maturity", () => {
-        expect(() => assertCosignable(coin, 1008, 101)).not.toThrow();
+        expect(() => assertCosignable(coin, blocks(1008), tip(101))).not.toThrow();
     });
     it("rejects a coin with no CSV exit path under its own reason", () => {
-        expect(() => assertCosignable(coin, 0, 101)).toThrow(
+        expect(() => assertCosignable(coin, undefined, tip(101))).toThrow(
             `${coin.txid}:${coin.vout} has no CSV exit path; cosign margin cannot be evaluated`,
         );
+    });
+
+    describe("seconds CSV, judged against the tip's median time", () => {
+        const T = 1_700_000_000;
+        const timed = { ...coin, status: { ...coin.status, block_time: T } };
+        const csv = seconds(604_672);
+
+        it("accepts far from maturity whatever the height says", () => {
+            expect(() => assertCosignable(timed, csv, tip(100 + 1008, T + 1_000))).not.toThrow();
+        });
+        it("rejects within marginBlocks × 600 seconds of maturity", () => {
+            expect(() => assertCosignable(timed, csv, tip(101, T + 604_672 - 3_600))).toThrow(
+                `${coin.txid}:${coin.vout} is within 6 blocks of exit maturity`,
+            );
+            expect(() => assertCosignable(timed, csv, tip(101, T + 604_672 - 3_601))).not.toThrow();
+        });
+        it("treats a confirmed coin without block_time as unconfirmed", () => {
+            expect(() => assertCosignable(coin, csv, tip(101, T))).toThrow(/is unconfirmed/);
+        });
     });
 });
 

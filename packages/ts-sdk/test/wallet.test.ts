@@ -2024,6 +2024,69 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 
+    it("resolves a committed settle and still rotates boarding when the onchain sync fails", async () => {
+        const boardingScript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const boardingInput = {
+            ...input,
+            forfeitTapLeafScript: boardingScript.forfeit(),
+            intentTapLeafScript: boardingScript.forfeit(),
+            tapTree: boardingScript.encode(),
+        } as ExtendedCoin;
+        const stream = {
+            next: vi.fn().mockResolvedValue({ done: false, value: { type: "batch_started" } }),
+            return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+        const batchJoinSpy = vi.spyOn(Batch, "join").mockResolvedValue("commitment-txid");
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent: vi.fn().mockResolvedValue(undefined),
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+                annotateVtxos: vi.fn().mockResolvedValue([]),
+                markOnchainSpendPending: vi.fn().mockResolvedValue(undefined),
+                syncOnchain: vi.fn().mockRejectedValue(new Error("subscribe failed")),
+            }),
+            safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
+            createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
+            updateDbAfterSettle: (Wallet.prototype as any).updateDbAfterSettle,
+            maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
+            persistIntentSnapshot: vi.fn().mockResolvedValue(undefined),
+        };
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(thisArg, {
+                inputs: [boardingInput],
+                outputs: [],
+            }),
+        ).resolves.toBe("commitment-txid");
+        expect(thisArg.maybeRotateBoardingAfterBoard).toHaveBeenCalledWith([boardingInput]);
+        warn.mockRestore();
+        batchJoinSpy.mockRestore();
+    });
+
     // Regression coverage for the no-params (auto-select) settle branch, which
     // selects all spendable inputs itself and applies MAX_VTXOS_PER_SETTLEMENT.
     describe("no-params auto-select cap", () => {

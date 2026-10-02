@@ -14,6 +14,7 @@ import {
 import { OnchainCosignAmbiguousError, RestArkProvider } from "../../src/providers/ark";
 import { Ramps } from "../../src/wallet/ramps";
 import { convertVtxo } from "../../src/wallet/vtxo";
+import { timelockToSequence } from "../../src/utils/timelock";
 import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -21,6 +22,12 @@ const CHECKPOINT_TAPSCRIPT =
     "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac";
 const COSIGNED = "ff".repeat(32);
 const externalAddress = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
+// The boarding coin confirms at height 100 / time 1700000000; the tip's MTP advances 600s per block.
+const tipAt = (height: number) => ({
+    height,
+    time: 1_700_000_000 + (height - 100) * 600,
+    hash: "",
+});
 
 async function makeWallet(
     coinOverrides: Record<string, unknown> = {},
@@ -67,7 +74,7 @@ async function makeWallet(
         getTransactions: vi.fn(async () => []),
         getTxOutspends: vi.fn(async () => [{ spent: false, txid: "" }]),
         getTxStatus: vi.fn(async () => ({ confirmed: false })),
-        getChainTip: vi.fn(async () => ({ height: 110, time: 0, hash: "" })),
+        getChainTip: vi.fn(async () => tipAt(110)),
         getFeeRate: vi.fn(async () => 2),
         broadcastTransaction: vi.fn(async () => "broadcast"),
         getRawTransaction: vi.fn(),
@@ -287,7 +294,7 @@ describe("sendOnchain with explicit inputs", () => {
 
     it("names each dropped input and why", async () => {
         const { wallet, onchainProvider, boardingCoin } = await makeWallet();
-        onchainProvider.getChainTip.mockResolvedValue({ height: 1103, time: 0, hash: "" });
+        onchainProvider.getChainTip.mockResolvedValue(tipAt(1103));
         const unknown = { txid: "99".repeat(32), vout: 3 };
         const send = wallet.sendOnchain({
             outputs: [],
@@ -397,7 +404,7 @@ describe("wallet.cosignOnchainTx", () => {
 describe("wallet.getOnchainSweepInputs", () => {
     const outpoint = { txid: "ab".repeat(32), vout: 1 };
     const atTip = (onchainProvider: any, height: number) =>
-        onchainProvider.getChainTip.mockResolvedValue({ height, time: 0, hash: "" });
+        onchainProvider.getChainTip.mockResolvedValue(tipAt(height));
 
     it("leaves a fresh boarding coin far from maturity alone", async () => {
         const { wallet } = await makeWallet();
@@ -463,7 +470,7 @@ describe("needsOnchainSweep", () => {
 
     it("never takes an unrolled coin of an offchain-scoped contract", () => {
         const contract = { type: "default", scope: "offchain" } as any;
-        expect(needsOnchainSweep(coin, contract, 100)).toBe(false);
+        expect(needsOnchainSweep(coin, contract, { height: 100, time: 0 })).toBe(false);
     });
 
     it("caps the renew window at 144 blocks on a 1008-block CSV", () => {
@@ -472,10 +479,27 @@ describe("needsOnchainSweep", () => {
             scope: "onchain",
             params: { csvTimelock: "1008" },
         } as any;
-        const at = (tip: number) => needsOnchainSweep(coin, contract, tip);
+        const at = (tip: number) => needsOnchainSweep(coin, contract, { height: tip, time: 0 });
         expect(at(1108 - 151)).toBe(false);
         expect(at(1108 - 150)).toBe(true);
         expect(at(1108 - 7)).toBe(true);
         expect(at(1108 - 6)).toBe(false);
+    });
+
+    it("measures a seconds CSV's renew window and margin in seconds", () => {
+        const T = 1_700_000_000;
+        const timed = { status: { confirmed: true, block_height: 100, block_time: T } } as any;
+        const sequence = timelockToSequence({ type: "seconds", value: 604_672n });
+        const contract = {
+            type: "default",
+            scope: "onchain",
+            params: { csvTimelock: String(sequence) },
+        } as any;
+        const maturity = T + 604_672;
+        const at = (time: number) => needsOnchainSweep(timed, contract, { height: 100, time });
+        expect(at(maturity - 3_600 - 86_400 - 1)).toBe(false);
+        expect(at(maturity - 3_600 - 86_400)).toBe(true);
+        expect(at(maturity - 3_601)).toBe(true);
+        expect(at(maturity - 3_600)).toBe(false);
     });
 });
