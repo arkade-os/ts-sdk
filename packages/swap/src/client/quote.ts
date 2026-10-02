@@ -167,7 +167,12 @@ export interface Quote {
      * asset swaps (an offer covenant never expires); corridor quotes without it are refused.
      */
     readonly refundLocktime?: number;
-    /** The one thing a counterparty must see, when this route has one. */
+    /**
+     * The one thing a counterparty must see, when this route has one.
+     *
+     * Do not show it until `accept()` has resolved: a Lightning receive's invoice is minted here,
+     * but its preimage secrets are persisted only by `accept()`. `receive()` does both.
+     */
     readonly artifact?: Artifact;
     /** The spread, plus any deposit carrier the payout does not return, on the leg where it is exact. */
     readonly fee: { readonly amount: bigint; readonly asset: AssetId };
