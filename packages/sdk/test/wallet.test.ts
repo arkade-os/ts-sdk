@@ -1,3 +1,5 @@
+import { collectVtxos } from "../src/repositories/walletRepository";
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -847,7 +849,7 @@ describe("Wallet", () => {
             expect(vtxos[0].isPreconfirmed).toBe(false);
             expect(vtxos[0].isSpent).toBe(false);
 
-            const cached = await walletRepository.getVtxos(await wallet.getAddress());
+            const cached = await collectVtxos(walletRepository, await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].isPreconfirmed).toBe(false);
         });
@@ -874,7 +876,7 @@ describe("Wallet", () => {
 
             expect(await wallet.getVtxos()).toEqual([]);
 
-            const cached = await walletRepository.getVtxos(await wallet.getAddress());
+            const cached = await collectVtxos(walletRepository, await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
@@ -903,7 +905,7 @@ describe("Wallet", () => {
 
             expect(await wallet.getVtxos()).toEqual([]);
 
-            const cached = await walletRepository.getVtxos(await wallet.getAddress());
+            const cached = await collectVtxos(walletRepository, await wallet.getAddress());
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
@@ -1028,13 +1030,13 @@ describe("Wallet", () => {
             const address = await wallet.getAddress();
 
             expect(await wallet.getVtxos()).toHaveLength(1);
-            expect(await walletRepository.getVtxos(address)).toHaveLength(1);
-            expect((await contractRepository.getContracts()).length).toBeGreaterThan(0);
+            expect(await collectVtxos(walletRepository, address)).toHaveLength(1);
+            expect((await collectContracts(contractRepository)).length).toBeGreaterThan(0);
 
             await wallet.clear();
 
-            expect(await walletRepository.getVtxos(address)).toEqual([]);
-            expect(await contractRepository.getContracts()).toEqual([]);
+            expect(await collectVtxos(walletRepository, address)).toEqual([]);
+            expect(await collectContracts(contractRepository)).toEqual([]);
         });
     });
 
@@ -2656,7 +2658,7 @@ describe("Wallet.updateDbAfterSettle", () => {
                     saveVtxos,
                     saveUtxos,
                     deleteUtxos,
-                    getUtxos,
+                    getUtxosPage: async (address: string) => ({ items: await getUtxos(address) }),
                 },
                 getContractManager,
                 getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),

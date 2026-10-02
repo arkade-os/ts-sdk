@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { collectContracts } from "../src/repositories/contractRepository";
 import {
     ArkadeContractHandler,
     BoardingContractHandler,
@@ -304,7 +305,7 @@ describe("getSpendableVtxos", () => {
         const { wallet, contractRepository, defaultScript } = await seededWallet({
             indexerProvider: indexer,
         });
-        const [marked] = await contractRepository.getContracts({ script: MARKED_SCRIPT });
+        const [marked] = await collectContracts(contractRepository, { script: MARKED_SCRIPT });
         await contractRepository.saveContract({ ...marked, watch: "retained" });
 
         getVtxos.mockClear();

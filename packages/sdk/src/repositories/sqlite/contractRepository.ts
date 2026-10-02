@@ -1,5 +1,10 @@
 import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
-import { ContractFilter, ContractRepository } from "../contractRepository";
+import {
+    contractFilterMatchesNothing,
+    ContractFilter,
+    ContractRepository,
+} from "../contractRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
 import { sanitizeTablePrefix } from "./prefix";
 
@@ -88,26 +93,31 @@ export class SQLiteContractRepository implements ContractRepository {
 
     // ── Contract management ────────────────────────────────────────────
 
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
         await this.ensureInit();
-
+        if (contractFilterMatchesNothing(filter)) return { items: [] };
         const conditions: string[] = [];
         const params: unknown[] = [];
-
         if (filter) {
             this.addFilterCondition(conditions, params, "script", filter.script);
             this.addFilterCondition(conditions, params, "state", filter.state);
             this.addFilterCondition(conditions, params, "type", filter.type);
             this.addWatchCondition(conditions, params, filter.watch);
         }
-
-        let sql = `SELECT * FROM ${this.table}`;
-        if (conditions.length > 0) {
-            sql += ` WHERE ${conditions.join(" AND ")}`;
+        if (page.after !== undefined) {
+            conditions.push("script > ?");
+            params.push(page.after);
         }
-
-        const rows = await this.db.all<ContractRow>(sql, params);
-        return rows.map(contractRowToDomain);
+        const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+        const rows = await this.db.all<ContractRow>(
+            `SELECT * FROM ${this.table}${where} ORDER BY script LIMIT ?`,
+            [...params, page.limit + 1],
+        );
+        return pageResult(rows.map(contractRowToDomain), page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {

@@ -1,3 +1,4 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * The Node storage default: where the database goes, and who closes it.
  *
@@ -165,12 +166,12 @@ describe("the Node repository default", () => {
     it("closes the connection it opened, unlike every injected backend", async () => {
         const path = join(scratch, "swaps.sqlite");
         const repository = nodeSwapRepository({ network: "regtest", path });
-        await repository.getAllSwapRecords();
+        await collectSwapRecords(repository);
         await repository[Symbol.asyncDispose]();
 
         // Disposal closed the handle this repository opened — an injected one
         // is the caller's to close, which is why every other backend's
         // disposal is a no-op.
-        await expect(repository.getAllSwapRecords()).rejects.toThrow();
+        await expect(collectSwapRecords(repository)).rejects.toThrow();
     });
 });

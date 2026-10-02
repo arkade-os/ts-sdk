@@ -1,3 +1,4 @@
+import { collectContracts } from "../../src/repositories/contractRepository";
 import { describe, it, expect, vi } from "vitest";
 import { Wallet } from "../../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
@@ -170,7 +171,7 @@ describe("boarding contract: persistence through the contract-manager path", () 
         const { wallet } = await makeWallet();
         await wallet.getContractManager();
 
-        const fromRepo = await wallet.contractRepository.getContracts({ type: ["boarding"] });
+        const fromRepo = await collectContracts(wallet.contractRepository, { type: ["boarding"] });
         expect(fromRepo).toHaveLength(1);
         expect(fromRepo[0].script).toEqual(hex.encode(wallet.boardingTapscript.pkScript));
     });
@@ -218,7 +219,7 @@ describe("boarding contract: VTXO annotation and spend paths", () => {
         };
 
         // Sanity: the persisted boarding contract is keyed by exactly this script.
-        const persisted = await wallet.contractRepository.getContracts({ type: ["boarding"] });
+        const persisted = await collectContracts(wallet.contractRepository, { type: ["boarding"] });
         expect(persisted.map((c) => c.script)).toContain(boardingScript);
 
         const annotated = await manager.annotateVtxos([vtxo as any]);

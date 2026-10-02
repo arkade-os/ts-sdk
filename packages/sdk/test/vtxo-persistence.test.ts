@@ -1,3 +1,4 @@
+import { collectVtxos } from "../src/repositories/walletRepository";
 import { describe, expect, it } from "vitest";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
@@ -62,14 +63,14 @@ describe("canonical facts survive save to load", () => {
     it("InMemory stores by reference and preserves canonical fields", async () => {
         await using repo = new InMemoryWalletRepository();
         await repo.saveVtxos(ADDRESS, [makeVtxo()]);
-        const [loaded] = await repo.getVtxos(ADDRESS);
+        const [loaded] = await collectVtxos(repo, ADDRESS);
         expectCanonical(loaded);
     });
 
     it("IndexedDB structured clone preserves canonical fields and Dates", async () => {
         await using repo = new IndexedDBWalletRepository(`vtxo-canon-${Date.now()}`);
         await repo.saveVtxos(ADDRESS, [makeVtxo()]);
-        const [loaded] = await repo.getVtxos(ADDRESS);
+        const [loaded] = await collectVtxos(repo, ADDRESS);
         expectCanonical(loaded);
     });
 });
@@ -128,7 +129,7 @@ describe("normalization is implementation-agnostic", () => {
             expiresAt: undefined,
         }) as ExtendedVirtualCoin;
         const repo = {
-            getVtxos: async () => [partial],
+            getVtxosPage: async () => ({ items: [partial] }),
         } as unknown as WalletRepository;
 
         const [loaded] = await getVtxosForContract(repo, { script: SCRIPT, address: ADDRESS });

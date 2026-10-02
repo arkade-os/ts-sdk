@@ -1,4 +1,5 @@
 export * from "./walletRepository";
+export * from "./page";
 export * from "./contractRepository";
 export * from "./intentRepository";
 export * from "./virtualTxRepository";

@@ -1,3 +1,4 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * The three verbs, through the real client.
  *
@@ -117,7 +118,7 @@ describe("pay", () => {
             expect(result).toEqual({ kind: "payment", txid: expect.any(String) });
             expect(wallet.sent).toEqual([{ address: ARK_ADDRESS, amount: 1_000 }]);
             // Same asset, same rail, rate 1: there is nothing to record.
-            expect(await repository.getAllSwapRecords()).toEqual([]);
+            expect(await collectSwapRecords(repository)).toEqual([]);
         });
 
         it("reads the address out of a unified BIP21 URI too", async () => {
@@ -209,7 +210,7 @@ describe("the fee ceiling", () => {
             quoteId: expect.any(String),
         });
         // Between `quote` and `accept`: nothing persisted, nothing funded.
-        expect(await repository.getAllSwapRecords()).toEqual([]);
+        expect(await collectSwapRecords(repository)).toEqual([]);
         expect(wallet.sent).toEqual([]);
     });
 

@@ -10,6 +10,11 @@ import {
     unspentFlag,
 } from "../src/repositories/indexedDB/schema";
 import { isVtxoSpent } from "../src/wallet/vtxo";
+import {
+    collectScriptVtxos,
+    type ScriptVtxoCursor,
+    type ScriptVtxoPageOptions,
+} from "../src/repositories/walletRepository";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../src/wallet";
 
 // `unspentOnly` reads come from the `scriptUnspent` index. The oracle for
@@ -73,10 +78,16 @@ async function seed(rows: Row[]): Promise<{ repo: IndexedDBWalletRepository; nam
 const ids = (vtxos: ExtendedVirtualCoin[]) =>
     vtxos.map((v) => `${v.script}:${v.txid}:${v.vout}@${v.spentBy ?? ""}`).sort();
 
+const read = async (
+    repo: IndexedDBWalletRepository,
+    scripts: string[],
+    options?: ScriptVtxoPageOptions,
+) => (await Promise.all(scripts.map((script) => collectScriptVtxos(repo, script, options)))).flat();
+
 async function expectMatchesOracle(repo: IndexedDBWalletRepository, scripts: string[]) {
-    const full = await repo.getVtxosForScripts(scripts);
+    const full = await read(repo, scripts);
     const oracle = full.filter((v) => !isVtxoSpent(v));
-    const actual = await repo.getVtxosForScripts(scripts, { unspentOnly: true });
+    const actual = await read(repo, scripts, { unspentOnly: true });
     expect(ids(actual)).toEqual(ids(oracle));
     // Same winning copy per outpoint, not just the same outpoint set.
     expect([...actual].sort((x, y) => (x.txid < y.txid ? -1 : 1))).toEqual(
@@ -127,7 +138,7 @@ describe("IndexedDB unspentOnly reads", () => {
             ]);
             // 14 seeded rows -> 10 outpoints: three are duplicate buckets and
             // the row with no `script` is in no index.
-            expect(await repo.getVtxosForScripts([SCRIPT_A, SCRIPT_B])).toHaveLength(10);
+            expect(await read(repo, [SCRIPT_A, SCRIPT_B])).toHaveLength(10);
         } finally {
             await repo[Symbol.asyncDispose]();
             await closeDatabase(name);
@@ -189,6 +200,32 @@ describe("IndexedDB unspentOnly reads", () => {
         }
     });
 
+    it("pages unspent rows across cursor continuations", async () => {
+        const { repo, name } = await seed([
+            row(A, "a1", { spentBy: "" }),
+            row(A, "a2", { isSpent: true, spentBy: "spender" }),
+            row(B, "b1", { spentBy: "" }),
+            row(B, "b2", { spentBy: "" }),
+        ]);
+        try {
+            const seen: string[] = [];
+            let after: ScriptVtxoCursor | undefined;
+            do {
+                const page = await repo.getVtxosForScriptPage(
+                    SCRIPT_A,
+                    { limit: 1, after },
+                    { unspentOnly: true },
+                );
+                seen.push(...page.items.map((stored) => stored.vtxo.txid));
+                after = page.nextCursor;
+            } while (after);
+            expect(seen.sort()).toEqual(["a1", "b1", "b2"]);
+        } finally {
+            await repo[Symbol.asyncDispose]();
+            await closeDatabase(name);
+        }
+    });
+
     it("reads the unspent index and candidate txids, never the script history", async () => {
         const rows: Row[] = [row(A, "live", { spentBy: "" })];
         for (let i = 0; i < 40; i++) {
@@ -198,35 +235,37 @@ describe("IndexedDB unspentOnly reads", () => {
         const db = await openDatabase(name, DB_VERSION, initDatabase);
         const proto = Object.getPrototypeOf(
             db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS).index("script"),
-        ) as { getAll: (...args: unknown[]) => unknown };
-        const original = proto.getAll;
+        ) as Record<"getAll" | "openCursor", (...args: unknown[]) => unknown>;
+        const originals = { getAll: proto.getAll, openCursor: proto.openCursor };
         const indexes: string[] = [];
-        proto.getAll = function (this: IDBIndex, ...args: unknown[]) {
-            indexes.push(this.name);
-            return original.apply(this, args);
-        };
+        for (const method of ["getAll", "openCursor"] as const) {
+            proto[method] = function (this: IDBIndex, ...args: unknown[]) {
+                indexes.push(`${method}:${this.name}`);
+                return originals[method].apply(this, args);
+            };
+        }
         try {
-            const live = await repo.getVtxosForScripts([SCRIPT_A], { unspentOnly: true });
+            const live = await collectScriptVtxos(repo, SCRIPT_A, { unspentOnly: true });
             expect(live.map((v) => v.txid)).toEqual(["live"]);
             expect(live[0]).not.toHaveProperty("unspent");
         } finally {
-            proto.getAll = original;
+            Object.assign(proto, originals);
             await closeDatabase(name);
             await repo[Symbol.asyncDispose]();
         }
-        expect(indexes).toEqual(["scriptUnspent", "txid"]);
+        expect(indexes).toEqual(["getAll:scriptUnspent", "getAll:txid"]);
     });
 
-    it("keeps the single-script read delegating with master's empty-script behaviour", async () => {
+    it("keeps master's empty-script behaviour on the script page read", async () => {
         const { repo, name } = await seed([
             row(A, "live", { spentBy: "" }),
             row(A, "empty-script", { script: "", spentBy: "" }),
         ]);
         try {
-            expect((await repo.getVtxosForScript(SCRIPT_A)).map((v) => v.txid)).toEqual(["live"]);
+            expect((await collectScriptVtxos(repo, SCRIPT_A)).map((v) => v.txid)).toEqual(["live"]);
             // An empty stored script is a real index key, and the read derives
             // the returned script from the address, exactly as before.
-            const empty = await repo.getVtxosForScript("");
+            const empty = await collectScriptVtxos(repo, "");
             expect(empty.map((v) => v.txid)).toEqual(["empty-script"]);
             expect(empty[0].script).toBe(SCRIPT_A);
         } finally {

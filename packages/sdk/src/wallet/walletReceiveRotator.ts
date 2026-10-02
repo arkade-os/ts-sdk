@@ -1,3 +1,4 @@
+import { collectContracts } from "../repositories/contractRepository";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
@@ -521,7 +522,7 @@ async function pickActiveReceive(
     serverPubKey: Uint8Array,
     expectedType?: "default" | "delegate",
 ): Promise<{ pubKey: Uint8Array; script: string } | undefined> {
-    const candidates = await contractRepository.getContracts({
+    const candidates = await collectContracts(contractRepository, {
         type: expectedType ? [expectedType] : ["default", "delegate"],
         state: "active",
     });

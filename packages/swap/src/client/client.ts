@@ -7,7 +7,7 @@
  */
 import { hex } from "@scure/base";
 import type { IWallet } from "@arkade-os/sdk";
-import type { AssetSwapRepository } from "../repository";
+import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
 import { corridorSet, type CorridorSet } from "./corridors/registry";
@@ -442,7 +442,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (repository === undefined) return [];
             const drive = driving();
             await drive.ready;
-            const records = await repository.getAllSwapRecords();
+            const records = await collectSwapRecords(repository);
             const swaps: Swap[] = [];
             for (const record of records) {
                 if (!readableRecord(record)) continue;

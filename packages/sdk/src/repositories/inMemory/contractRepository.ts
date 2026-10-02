@@ -1,5 +1,6 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { Contract, watchStateOf } from "../../contracts";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 /**
  * In-memory implementation of ContractRepository.
@@ -13,34 +14,27 @@ export class InMemoryContractRepository implements ContractRepository {
         this.contractsByScript.clear();
     }
 
-    // Contract entity management methods
-
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        const contracts = this.contractsByScript.values();
-
-        if (!filter) {
-            return [...contracts];
-        }
-
-        const matches = <T>(value: T, criterion?: T | T[]) => {
-            if (criterion === undefined) {
-                return true;
-            }
-            return Array.isArray(criterion) ? criterion.includes(value) : value === criterion;
-        };
-
-        const results: Contract[] = [];
-        for (const contract of contracts) {
-            if (
-                matches(contract.script, filter.script) &&
-                matches(contract.state, filter.state) &&
-                matches(contract.type, filter.type) &&
-                matches(watchStateOf(contract), filter.watch)
-            ) {
-                results.push(contract);
-            }
-        }
-        return results;
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        const matches = <T>(value: T, criterion?: T | T[]) =>
+            criterion === undefined ||
+            (Array.isArray(criterion) ? criterion.includes(value) : value === criterion);
+        const rows = [...this.contractsByScript.values()]
+            .filter((contract) => page.after === undefined || contract.script > page.after)
+            .filter(
+                (contract) =>
+                    !filter ||
+                    (matches(contract.script, filter.script) &&
+                        matches(contract.state, filter.state) &&
+                        matches(contract.type, filter.type) &&
+                        matches(watchStateOf(contract), filter.watch)),
+            )
+            .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0))
+            .slice(0, page.limit + 1);
+        return pageResult(rows, page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {

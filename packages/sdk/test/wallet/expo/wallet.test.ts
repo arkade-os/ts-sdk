@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { InMemoryTaskQueue } from "../../../src/worker/expo/taskQueue";
 import { CONTRACT_POLL_TASK_TYPE } from "../../../src/worker/expo/processors";
 
-const walletCreateMock = vi.fn();
-const runTasksMock = vi.fn();
+const { walletCreateMock, runTasksMock } = vi.hoisted(() => ({
+    walletCreateMock: vi.fn(),
+    runTasksMock: vi.fn(),
+}));
 
 vi.mock("../../../src/wallet/wallet", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../src/wallet/wallet")>();

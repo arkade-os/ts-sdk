@@ -1,5 +1,17 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import type { Outpoint } from "../../wallet";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type StoredVtxo,
+    type ScriptVtxoPageOptions,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -115,16 +127,28 @@ export class SQLiteWalletRepository implements WalletRepository {
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`,
         );
         await this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_live_script ON ${this.tables.vtxos} (script)
-             WHERE (is_spent IS NULL OR is_spent = 0)
-               AND (spent_by IS NULL OR spent_by = '')
-               AND (settled_by IS NULL OR settled_by = '')`,
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script_page ON ${this.tables.vtxos} (script, address, txid, vout)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address_page ON ${this.tables.vtxos} (address, txid, vout)`,
+        );
+        // Replaced by the paged partial index below, which serves the same reads in page order.
+        await this.db.run(`DROP INDEX IF EXISTS idx_${this.prefix}vtxos_live_script`);
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_live_script_page ON ${this.tables.vtxos} (script, address, txid, vout)
+             WHERE ${UNSPENT_VTXO_PREDICATE}`,
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
         );
         await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address_page ON ${this.tables.utxos} (address, txid, vout)`,
+        );
+        await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_history ON ${this.tables.transactions} (address, created_at, boarding_txid, commitment_txid, ark_txid)`,
         );
     }
 
@@ -331,13 +355,11 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     // ── VTXO management ────────────────────────────────────────────────
 
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<VtxoRow>(
-            `SELECT * FROM ${this.tables.vtxos} WHERE address = ?`,
-            [address],
-        );
-        return rows.map(vtxoRowToDomain);
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return this.pageByAddress(this.tables.vtxos, address, page, vtxoRowToDomain);
     }
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -393,39 +415,40 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE address = ?`, [address]);
     }
 
-    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
         await this.ensureInit();
+        const after = page.after;
         const rows = await this.db.all<VtxoRow>(
-            `SELECT * FROM ${this.tables.vtxos} WHERE script = ?`,
-            [script],
+            `SELECT * FROM ${this.tables.vtxos} WHERE script = ?
+             ${options?.unspentOnly ? `AND ${UNSPENT_VTXO_PREDICATE}` : ""}
+             ${after ? "AND (address > ? OR (address = ? AND (txid > ? OR (txid = ? AND vout > ?))))" : ""}
+             ORDER BY address, txid, vout LIMIT ?`,
+            after
+                ? [
+                      script,
+                      after.address,
+                      after.address,
+                      after.txid,
+                      after.txid,
+                      after.vout,
+                      page.limit + 1,
+                  ]
+                : [script, page.limit + 1],
         );
-        return rows.map(vtxoRowToDomain);
-    }
-
-    async getVtxosForScripts(
-        scripts: string[],
-        options?: { unspentOnly?: boolean },
-    ): Promise<ExtendedVirtualCoin[]> {
-        if (scripts.length === 0) return [];
-        await this.ensureInit();
-        const unique = [...new Set(scripts)];
-        const result: ExtendedVirtualCoin[] = [];
-        for (let i = 0; i < unique.length; i += 500) {
-            const chunk = unique.slice(i, i + 500);
-            const rows = await this.db.all<VtxoRow>(
-                `SELECT * FROM ${this.tables.vtxos} WHERE script IN (${chunk.map(() => "?").join(",")})${
-                    options?.unspentOnly
-                        ? " AND (is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')"
-                        : ""
-                }`,
-                chunk,
-            );
-            const decoded = rows.map(vtxoRowToDomain);
-            result.push(
-                ...(options?.unspentOnly ? decoded.filter((vtxo) => !isVtxoSpent(vtxo)) : decoded),
-            );
-        }
-        return result;
+        const result = pageResult(
+            rows.map((row) => ({ address: row.address, vtxo: vtxoRowToDomain(row) })),
+            page.limit,
+            (row) => ({ address: row.address, txid: row.vtxo.txid, vout: row.vtxo.vout }),
+        );
+        // Legacy facts decoded from the row can still mark it spent.
+        return options?.unspentOnly
+            ? { ...result, items: result.items.filter((row) => !isVtxoSpent(row.vtxo)) }
+            : result;
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -439,13 +462,28 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     // ── UTXO management ────────────────────────────────────────────────
 
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return this.pageByAddress(this.tables.utxos, address, page, utxoRowToDomain);
+    }
+
+    private async pageByAddress<Row extends Outpoint, Item>(
+        table: string,
+        address: string,
+        page: PageRequest<Outpoint>,
+        deserialize: (row: Row) => Item,
+    ): Promise<PageResult<Item, Outpoint>> {
+        assertPageRequest(page);
         await this.ensureInit();
-        const rows = await this.db.all<UtxoRow>(
-            `SELECT * FROM ${this.tables.utxos} WHERE address = ?`,
-            [address],
+        const rows = await this.db.all<Row>(
+            `SELECT * FROM ${table} WHERE address = ? AND (txid, vout) > (?, ?)
+             ORDER BY txid, vout LIMIT ?`,
+            [address, page.after?.txid ?? "", page.after?.vout ?? -1, page.limit + 1],
         );
-        return rows.map(utxoRowToDomain);
+        const result = pageResult(rows, page.limit, ({ txid, vout }) => ({ txid, vout }));
+        return { items: result.items.map(deserialize), nextCursor: result.nextCursor };
     }
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
@@ -484,13 +522,39 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     // ── Transaction history ────────────────────────────────────────────
 
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
         await this.ensureInit();
+        const conditions = ["address = ?"];
+        const params: unknown[] = [filter.address];
+        if (filter.since !== undefined) {
+            conditions.push("created_at >= ?");
+            params.push(filter.since);
+        }
+        if (page.after !== undefined) {
+            conditions.push(
+                "(created_at, boarding_txid, commitment_txid, ark_txid) > (?, ?, ?, ?)",
+            );
+            params.push(
+                page.after.createdAt,
+                page.after.key.boardingTxid,
+                page.after.key.commitmentTxid,
+                page.after.key.arkTxid,
+            );
+        }
         const rows = await this.db.all<TransactionRow>(
-            `SELECT * FROM ${this.tables.transactions} WHERE address = ? ORDER BY created_at ASC`,
-            [address],
+            `SELECT * FROM ${this.tables.transactions} WHERE ${conditions.join(" AND ")}
+             ORDER BY created_at, boarding_txid, commitment_txid, ark_txid LIMIT ?`,
+            [...params, page.limit + 1],
         );
-        return rows.map(txRowToDomain);
+        return pageResult(rows.map(txRowToDomain), page.limit, (tx) => ({
+            createdAt: tx.createdAt,
+            key: tx.key,
+        }));
     }
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
@@ -615,6 +679,10 @@ interface WalletStateRow {
     settings_json: string | null;
     last_sync_time: number | null;
 }
+
+// The page query repeats the index predicate verbatim so SQLite can use the partial index.
+const UNSPENT_VTXO_PREDICATE =
+    "(is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')";
 
 // ── Row → Domain converters ────────────────────────────────────────────
 

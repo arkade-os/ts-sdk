@@ -1,3 +1,4 @@
+import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi } from "vitest";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
@@ -58,7 +59,7 @@ function baseHandler(overrides: Partial<Batch.Handler> = {}): Batch.Handler {
 }
 
 const stateOf = (repo: InMemoryIntentRepository) =>
-    repo.getIntents({ intentTxIds: [intentTxId] }).then((r) => r[0]);
+    collectIntents(repo, { intentTxIds: [intentTxId] }).then((r) => r[0]);
 
 describe("wrapHandlerWithIntentPersistence", () => {
     it("advances to batch_in_progress on a started (non-skipped) batch", async () => {
@@ -132,7 +133,7 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("swallows a repo write failure on finalized (money flow unaffected)", async () => {
         const repo = {
-            getIntents: async () => [{ state: "waiting_for_batch" } as ArkIntent],
+            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
             saveIntent: async () => {
                 throw new Error("db down");
             },
@@ -147,7 +148,7 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("still re-propagates the reason on failed when the repo write fails", async () => {
         const repo = {
-            getIntents: async () => [{ state: "waiting_for_batch" } as ArkIntent],
+            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
             saveIntent: async () => {
                 throw new Error("db down");
             },

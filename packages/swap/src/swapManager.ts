@@ -48,6 +48,7 @@ import {
     type LockupVtxo,
 } from "./refund";
 import { lockupContractParams, registerLockupContract } from "./lockupContract";
+import { collectRfqSwaps, type AssetSwapRepository } from "./repository";
 import {
     assertSameSwap,
     createRfqSwapRecord,
@@ -423,12 +424,7 @@ export type SwapContractRegistry = Pick<
 export interface RfqSwapRecordStore {
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
-    getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
-    getRfqSwapsPage?(
-        state: RfqSwapState,
-        afterId: string | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]>;
+    getRfqSwapsPage: AssetSwapRepository["getRfqSwapsPage"];
     removeRfqSwap(rfqId: string): Promise<void>;
 }
 
@@ -701,33 +697,10 @@ export class RfqSwapManager {
             restored.push(swap);
         };
 
-        if (repository.getRfqSwapsPage && !options.includeTerminal) {
-            for (const state of RFQ_SWAP_ACTIVE_STATES) {
-                let afterId: string | undefined;
-                for (;;) {
-                    const page = await repository.getRfqSwapsPage(state, afterId, 256);
-                    if (page.length === 0) break;
-                    if (page.length > 256)
-                        throw new Error("getRfqSwapsPage exceeded its requested limit");
-                    let cursor = afterId ?? "";
-                    for (const record of page) {
-                        if (record.state !== state || record.rfqId <= cursor) {
-                            throw new Error(
-                                "getRfqSwapsPage returned an unordered or mismatched page",
-                            );
-                        }
-                        cursor = record.rfqId;
-                        await restore(record);
-                    }
-                    afterId = cursor;
-                    if (page.length < 256) break;
-                }
-            }
-        } else {
-            const records = await repository.getAllRfqSwaps();
-            for (const record of records) {
+        const states = options.includeTerminal ? [undefined] : RFQ_SWAP_ACTIVE_STATES;
+        for (const state of states) {
+            for (const record of await collectRfqSwaps(repository, { state }))
                 await restore(record);
-            }
         }
 
         if (this.running) {
@@ -744,7 +717,7 @@ export class RfqSwapManager {
     async pruneRetiredSwaps(): Promise<string[]> {
         const repository = this.deps.repository;
         if (!repository) return [];
-        return this.dropRetired(repository, await repository.getAllRfqSwaps());
+        return this.dropRetired(repository, await collectRfqSwaps(repository));
     }
 
     private async dropRetired(

@@ -1111,6 +1111,33 @@ examples.
 Use repository implementations via `StorageConfig`. If you omit `storage`, the
 SDK uses IndexedDB repositories with the default database name.
 
+#### Paged repository reads
+
+Collection repositories expose `getVtxosPage`, `getVtxosForScriptPage`, `getUtxosPage`,
+`getTransactionHistoryPage`, `getContractsPage`, and `getIntentsPage`.
+Each accepts `{ limit, after? }` and returns
+`{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
+Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;
+`since` is inclusive Unix milliseconds. Contract and intent pages are ordered
+by their script and intent transaction ID. Filters must stay the same across
+pages. Repository collection reads use pages directly; `collectVtxos`,
+`collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
+`collectIntents` traverse all pages when a complete snapshot is required.
+Wallet spending paths consume every VTXO or UTXO page before coin selection.
+In `@arkade-os/swap`, RFQ page `since` values use Unix seconds instead.
+
+```ts
+let after;
+do {
+  const page = await walletRepo.getTransactionHistoryPage(
+    { address, since: Date.now() - 86_400_000 },
+    { limit: 100, after },
+  );
+  for (const transaction of page.items) handle(transaction);
+  after = page.nextCursor;
+} while (after);
+```
+
 #### Repository Versioning
 
 `WalletRepository`, `ContractRepository`, `IntentRepository`,
@@ -1134,6 +1161,8 @@ class MyWalletRepository implements WalletRepository {
 For Node.js or React Native environments, use the SQLite repository with any
 SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
 driver, the SDK handles the schema.
+Paged wallet reads require SQLite 3.15.0 or newer because they use
+[row-value comparisons](https://sqlite.org/rowvalue.html#backwards_compatibility).
 
 See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
 a full working example using `better-sqlite3`.
@@ -1497,14 +1526,16 @@ versions keep the coverage they have today.
 Most users don't need to touch repositories directly — `Wallet` reads through them and `ContractManager` owns VTXO/contract synchronization into them. They are documented here for advanced integrations (custom storage backends, offline-first apps, repository inspection).
 
 ```typescript
+import { collectContracts, collectTransactionHistory, collectUtxos, collectVtxos } from '@arkade-os/sdk'
+
 // Wallet repository — VTXOs, UTXOs, transaction history, settings
 const addr = await wallet.getAddress()
-const vtxos = await wallet.walletRepository.getVtxos(addr)
-const utxos = await wallet.walletRepository.getUtxos(addr)
-const history = await wallet.walletRepository.getTransactionHistory(addr)
+const vtxos = await collectVtxos(wallet.walletRepository, addr)
+const utxos = await collectUtxos(wallet.walletRepository, addr)
+const history = await collectTransactionHistory(wallet.walletRepository, addr)
 
 // Contract repository — script-keyed contracts (default address, VHTLCs, etc.)
-const contracts = await wallet.contractRepository.getContracts({ type: 'vhtlc' })
+const contracts = await collectContracts(wallet.contractRepository, { type: 'vhtlc' })
 await wallet.contractRepository.saveContract(myContract)
 await wallet.contractRepository.deleteContract(myContract.script)
 ```

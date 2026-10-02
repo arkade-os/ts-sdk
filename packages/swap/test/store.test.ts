@@ -7,6 +7,7 @@ import {
     AssetSwap,
 } from "../src/store";
 import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/repository";
+import { pageResult } from "@arkade-os/sdk";
 
 const swap = (id: string): AssetSwap => ({
     id,
@@ -77,14 +78,19 @@ describe("asset swap store", () => {
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
-            getAllSwaps: async () => existing,
+            getAssetSwapsPage: async (page) =>
+                pageResult(
+                    existing.filter((s) => !page.after || s.id > page.after),
+                    page.limit,
+                    (s) => s.id,
+                ),
             saveRfqSwap: async () => {},
             getRfqSwap: async () => undefined,
-            getAllRfqSwaps: async () => [],
+            getRfqSwapsPage: async () => ({ items: [] }),
             removeRfqSwap: async () => {},
             saveSwapRecord: async () => {},
             getSwapRecord: async () => undefined,
-            getAllSwapRecords: async () => [],
+            getSwapRecordsPage: async () => ({ items: [] }),
             removeSwapRecord: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
@@ -117,16 +123,16 @@ describe("asset swap store", () => {
         const broken: AssetSwapRepository = {
             version: 5,
             saveSwap: async () => {},
-            getAllSwaps: async () => {
+            getAssetSwapsPage: async () => {
                 throw new Error("backend gone");
             },
             saveRfqSwap: async () => {},
             getRfqSwap: async () => undefined,
-            getAllRfqSwaps: async () => [],
+            getRfqSwapsPage: async () => ({ items: [] }),
             removeRfqSwap: async () => {},
             saveSwapRecord: async () => {},
             getSwapRecord: async () => undefined,
-            getAllSwapRecords: async () => [],
+            getSwapRecordsPage: async () => ({ items: [] }),
             removeSwapRecord: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},

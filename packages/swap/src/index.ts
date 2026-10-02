@@ -200,6 +200,8 @@ export type { RecoveryResult } from "./client/drive";
 export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
+    type RfqSwapPageFilter,
+    type RfqSwapPageCursor,
     InMemoryAssetSwapRepository,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";

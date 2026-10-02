@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import type { ArkTransaction } from "@arkade-os/sdk";
 import {
     rfqSwapActivityInputs,
-    rfqSwapActivityInputsPage,
-    rfqSwapActivityInputsSincePage,
     swapActivityResolver,
     type SwapActivityInput,
 } from "../src/activity";
@@ -222,73 +220,7 @@ describe("rfqSwapActivityInputs", () => {
         ]);
     });
 
-    it("returns bounded activity pages with an exclusive cursor", async () => {
-        const repository = await storeOf(
-            record({ rfqId: "r3", state: "refunded", fundingTxid: "f3", refundTxid: "x3" }),
-            record({ rfqId: "r1", state: "refunded", fundingTxid: "f1", refundTxid: "x1" }),
-            record({ rfqId: "r2", state: "refunded", fundingTxid: "f2", refundTxid: "x2" }),
-            record({ rfqId: "active", state: "pending" }),
-        );
-
-        const first = await rfqSwapActivityInputsPage({ repository }, "refunded", undefined, 2);
-        expect(first.inputs.map((input) => input.rfqId)).toEqual(["r1", "r2"]);
-        expect(first.nextCursor).toBe("r2");
-        const second = await rfqSwapActivityInputsPage(
-            { repository },
-            "refunded",
-            first.nextCursor,
-            2,
-        );
-        expect(second.inputs.map((input) => input.rfqId)).toEqual(["r3"]);
-        expect(second.nextCursor).toBeUndefined();
-        await expect(
-            rfqSwapActivityInputsPage({ repository }, "refunded", undefined, 501),
-        ).rejects.toThrow(RangeError);
-    });
-
-    it("filters by date and pages equal timestamps without deleting older history", async () => {
-        const repository = await storeOf(
-            record({ rfqId: "old", updatedAt: 1 }),
-            record({ rfqId: "b", updatedAt: 100 }),
-            record({ rfqId: "a", updatedAt: 100 }),
-            record({ rfqId: "c", updatedAt: 101 }),
-        );
-
-        const first = await rfqSwapActivityInputsSincePage(
-            { repository },
-            "settled",
-            100,
-            undefined,
-            2,
-        );
-        expect(first.inputs.map((input) => input.rfqId)).toEqual(["a", "b"]);
-        expect(first.nextCursor).toEqual({ updatedAt: 100, rfqId: "b" });
-        const second = await rfqSwapActivityInputsSincePage(
-            { repository },
-            "settled",
-            100,
-            first.nextCursor,
-            2,
-        );
-        expect(second.inputs.map((input) => input.rfqId)).toEqual(["c"]);
-        expect((await repository.getAllRfqSwaps()).map((row) => row.rfqId)).toContain("old");
-    });
-
-    it("refuses an unpaged repository instead of loading all history", async () => {
-        const readAll = async () => {
-            throw new Error("must not load all records");
-        };
-        await expect(
-            rfqSwapActivityInputsPage(
-                { repository: { getAllRfqSwaps: readAll } },
-                "settled",
-                undefined,
-                10,
-            ),
-        ).rejects.toThrow(/does not support paged/);
-    });
-
-    it("bounds indexer fallbacks within a page", async () => {
+    it("bounds indexer fallbacks", async () => {
         const repository = await storeOf(
             ...Array.from({ length: 40 }, (_, i) =>
                 record({ rfqId: `r${i.toString().padStart(2, "0")}`, fundingTxid: "fund" }),
@@ -306,14 +238,9 @@ describe("rfqSwapActivityInputs", () => {
             },
         } as unknown as LockupSpendIndexer;
 
-        const result = await rfqSwapActivityInputsPage(
-            { repository, indexer },
-            "settled",
-            undefined,
-            40,
-        );
+        const inputs = await rfqSwapActivityInputs({ repository, indexer });
 
-        expect(result.inputs).toHaveLength(40);
+        expect(inputs).toHaveLength(40);
         expect(peak).toBeLessThanOrEqual(16);
     });
 

@@ -1,6 +1,7 @@
 import { Contract, watchStateOf } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
-import { awaitTransaction, getAllByIndexValues, promisifyRequest } from "./idbUtils";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
+import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
 import { DB_VERSION, initDatabase, STORE_CONTRACTS } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
@@ -30,57 +31,50 @@ export class IndexedDBContractRepository implements ContractRepository {
         }
     }
 
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        try {
-            const db = await this.getDB();
-            const store = db
-                .transaction([STORE_CONTRACTS], "readonly")
-                .objectStore(STORE_CONTRACTS);
-
-            if (!filter || Object.keys(filter).length === 0) {
-                return (await promisifyRequest<Contract[]>(store.getAll())) ?? [];
-            }
-
-            const normalizedFilter = normalizeFilter(filter);
-
-            // first by script, primary key
-            if (normalizedFilter.has("script")) {
-                const scripts = normalizedFilter.get("script")!;
-                const contracts = await Promise.all(
-                    scripts.map((script) =>
-                        promisifyRequest<Contract | undefined>(store.get(script)),
-                    ),
-                );
-                return this.applyContractFilter(contracts, normalizedFilter);
-            }
-
-            // by state, still an index
-            if (normalizedFilter.has("state")) {
-                const contracts = await getAllByIndexValues<Contract>(
-                    store,
-                    "state",
-                    normalizedFilter.get("state")!,
-                );
-                return this.applyContractFilter(contracts, normalizedFilter);
-            }
-
-            // by type, still an index
-            if (normalizedFilter.has("type")) {
-                const contracts = await getAllByIndexValues<Contract>(
-                    store,
-                    "type",
-                    normalizedFilter.get("type")!,
-                );
-                return this.applyContractFilter(contracts, normalizedFilter);
-            }
-
-            // any other filtering happens in-memory
-            const allContracts = (await promisifyRequest<Contract[]>(store.getAll())) ?? [];
-            return this.applyContractFilter(allContracts, normalizedFilter);
-        } catch (error) {
-            console.error("Failed to get contracts:", error);
-            return [];
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        const db = await this.getDB();
+        const store = db.transaction([STORE_CONTRACTS], "readonly").objectStore(STORE_CONTRACTS);
+        const normalized = normalizeFilter(filter ?? {});
+        const scripts = normalized.get("script");
+        if (scripts) {
+            const keys = [...new Set(scripts)]
+                .filter((script) => page.after === undefined || script > page.after)
+                .sort();
+            const contracts = await Promise.all(
+                keys.map((script) => promisifyRequest<Contract | undefined>(store.get(script))),
+            );
+            return pageResult(
+                this.applyContractFilter(contracts, normalized),
+                page.limit,
+                (contract) => contract.script,
+            );
         }
+        const range =
+            page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
+        const cursorRequest = store.openCursor(range);
+        return new Promise((resolve, reject) => {
+            const rows: Contract[] = [];
+            cursorRequest.onerror = () => reject(cursorRequest.error);
+            cursorRequest.onsuccess = () => {
+                const cursor = cursorRequest.result;
+                if (!cursor) {
+                    resolve(pageResult(rows, page.limit, (contract) => contract.script));
+                    return;
+                }
+                if (this.applyContractFilter([cursor.value as Contract], normalized).length) {
+                    rows.push(cursor.value as Contract);
+                }
+                if (rows.length > page.limit) {
+                    resolve(pageResult(rows, page.limit, (contract) => contract.script));
+                    return;
+                }
+                cursor.continue();
+            };
+        });
     }
 
     async saveContract(contract: Contract): Promise<void> {

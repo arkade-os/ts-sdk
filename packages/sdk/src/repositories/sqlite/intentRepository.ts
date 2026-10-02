@@ -2,12 +2,12 @@ import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
     ArkIntentState,
-    IntentFilter,
+    IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
-    intentPageBounds,
     isTerminalIntentState,
 } from "../intentRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
 import { runInTransaction } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
@@ -144,15 +144,36 @@ export class SQLiteIntentRepository implements IntentRepository {
         });
     }
 
-    async getIntents(filter?: IntentFilter): Promise<ArkIntent[]> {
+    async getIntentsPage(
+        filter: IntentPageFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<ArkIntent>> {
+        assertPageRequest(page);
         await this.ensureInit();
-        const rows = await this.db.all<IntentRow>(
-            `SELECT * FROM ${this.t} ORDER BY created_at ASC, intent_tx_id ASC`,
-        );
-        let out = rows.map(rowToIntent);
-        if (filter) out = out.filter((i) => intentMatchesFilter(i, filter));
-        const { skip, end } = intentPageBounds(filter, out.length);
-        return out.slice(skip, end);
+        if (filter?.states?.length === 0) return { items: [] };
+        const stateSql = filter?.states
+            ? ` AND state IN (${filter.states.map(() => "?").join(", ")})`
+            : "";
+        const stateParams = filter?.states ?? [];
+        const batchSize = Math.max(64, page.limit + 1);
+        const rows: ArkIntent[] = [];
+        let after = page.after;
+        // SQL narrows by indexed state; the shared filter handles the remaining predicates.
+        while (rows.length <= page.limit) {
+            const batch = await this.db.all<IntentRow>(
+                `SELECT * FROM ${this.t} WHERE intent_tx_id > ?${stateSql} ORDER BY intent_tx_id LIMIT ?`,
+                [after ?? "", ...stateParams, batchSize],
+            );
+            if (batch.length === 0) break;
+            for (const row of batch) {
+                after = row.intent_tx_id;
+                const intent = rowToIntent(row);
+                if (!filter || intentMatchesFilter(intent, filter)) rows.push(intent);
+                if (rows.length > page.limit) break;
+            }
+            if (batch.length < batchSize) break;
+        }
+        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {

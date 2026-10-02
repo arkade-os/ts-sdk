@@ -6,6 +6,7 @@ import {
     DB_VERSION,
     INTENT_DB_VERSION,
     STORE_INTENTS,
+    STORE_TRANSACTIONS,
 } from "../src/repositories/indexedDB/schema";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim);
@@ -36,10 +37,18 @@ function countRows(db: IDBDatabase, store: string): Promise<number> {
 }
 
 describe("IndexedDB schema", () => {
-    it("keeps the shared schema at v4 without the intent/virtualtx stores", async () => {
-        expect(DB_VERSION).toBe(4);
+    // The shared wallet/contract schema adds a history index at v5 but does
+    // not activate the opt-in intent-persistence stores.
+    it("keeps intent/virtualtx stores out of the shared v5 schema", async () => {
+        expect(DB_VERSION).toBe(5);
         const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
+        expect(
+            db
+                .transaction(STORE_TRANSACTIONS, "readonly")
+                .objectStore(STORE_TRANSACTIONS)
+                .indexNames.contains("addressCreatedAt"),
+        ).toBe(true);
         expect(names).not.toContain("intents");
         expect(names).not.toContain("virtualTxs");
         expect(names).not.toContain("vtxoBranches");

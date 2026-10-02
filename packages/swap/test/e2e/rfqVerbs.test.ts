@@ -1,3 +1,4 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * The verbs and the `lightning` rail against the real regtest stack.
  *
@@ -278,7 +279,7 @@ describe("the verbs (regtest)", () => {
 
     it("refuses to fund a quote over the ceiling, before anything moves", async () => {
         const client = clientOn();
-        const before = (await repository.getAllSwapRecords()).length;
+        const before = (await collectSwapRecords(repository)).length;
         // The stub's spread is LOCKUP_SATS - INVOICE_SATS, on the give leg.
         const maxFee = { amount: 1n, asset: btcOn("arkade", "regtest") };
 
@@ -287,14 +288,14 @@ describe("the verbs (regtest)", () => {
             fee: BigInt(LOCKUP_SATS - INVOICE_SATS),
             maxFee: 1n,
         });
-        expect(await repository.getAllSwapRecords()).toHaveLength(before);
+        expect(await collectSwapRecords(repository)).toHaveLength(before);
 
         await client[Symbol.asyncDispose]();
     }, 120_000);
 
     it("sends a plain Arkade address through the wallet, with no swap behind it", async () => {
         const client = clientOn();
-        const before = (await repository.getAllSwapRecords()).length;
+        const before = (await collectSwapRecords(repository)).length;
         const destination = await wallet.getAddress();
 
         const result = await client.pay(destination, { amount: 500n });
@@ -303,7 +304,7 @@ describe("the verbs (regtest)", () => {
         if (result.kind !== "payment") return;
         expect(result.txid).toMatch(/^[0-9a-f]{64}$/);
         // Same asset, same rail, rate 1: nothing was recorded.
-        expect(await repository.getAllSwapRecords()).toHaveLength(before);
+        expect(await collectSwapRecords(repository)).toHaveLength(before);
 
         await client[Symbol.asyncDispose]();
     }, 120_000);

@@ -576,7 +576,7 @@ describe("InputSignerRouter", async () => {
                 }),
             );
             // Spy after seeding so only the canBatch lookup is counted.
-            const getContracts = vi.spyOn(contractRepo, "getContracts");
+            const getContracts = vi.spyOn(contractRepo, "getContractsPage");
 
             const router = createRouter({ contractRepository: contractRepo });
 
@@ -631,22 +631,24 @@ describe("InputSignerRouter", async () => {
 
         const firstDescriptor = "tr(first)";
         const stubRepo: ContractRepository = {
-            version: 1,
+            version: 2,
             clear: async () => {},
-            getContracts: async () => [
-                makeContract({
-                    script: scriptHex,
-                    type: "default",
-                    params: { pubKey: ROTATED_A_PUBKEY },
-                    metadata: { signingDescriptor: firstDescriptor },
-                }),
-                makeContract({
-                    script: scriptHex,
-                    type: "default",
-                    params: { pubKey: ROTATED_A_PUBKEY },
-                    metadata: { signingDescriptor: "tr(second)" },
-                }),
-            ],
+            getContractsPage: async () => ({
+                items: [
+                    makeContract({
+                        script: scriptHex,
+                        type: "default",
+                        params: { pubKey: ROTATED_A_PUBKEY },
+                        metadata: { signingDescriptor: firstDescriptor },
+                    }),
+                    makeContract({
+                        script: scriptHex,
+                        type: "default",
+                        params: { pubKey: ROTATED_A_PUBKEY },
+                        metadata: { signingDescriptor: "tr(second)" },
+                    }),
+                ],
+            }),
             saveContract: async () => {},
             deleteContract: async () => {},
             [Symbol.asyncDispose]: async () => {},

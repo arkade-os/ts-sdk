@@ -1,3 +1,4 @@
+import { collectContracts } from "../repositories/contractRepository";
 import { hex } from "@scure/base";
 import { IndexerProvider } from "../providers/indexer";
 import { isRetryableProviderError } from "../providers/availability";
@@ -31,7 +32,6 @@ import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    isVtxoSpent,
     isVirtualCoin,
     normalizeVtxo,
     type NormalizedExtendedVirtualCoin,
@@ -54,6 +54,7 @@ import {
 import {
     applyRecordedSpends,
     getVtxosForContract,
+    hasVtxosForContract,
     inVtxoWriteOrder,
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
@@ -751,7 +752,7 @@ export class ContractManager implements IContractManager {
         this.disposed = false;
 
         // Register persisted contracts BEFORE the first sync so it scopes to the real watched set.
-        const contracts = await this.config.contractRepository.getContracts();
+        const contracts = await collectContracts(this.config.contractRepository);
         for (const contract of contracts) {
             await this.watcher.addContract(contract);
         }
@@ -913,7 +914,7 @@ export class ContractManager implements IContractManager {
 
         // One coalesced subscription update, not N growing POSTs.
         await this.watcher.withCoalescedSubscription(async () => {
-            const persisted = await this.config.contractRepository.getContracts({
+            const persisted = await collectContracts(this.config.contractRepository, {
                 script: [...band.keys()],
             });
             const persistedScripts = new Set(persisted.map((c) => c.script));
@@ -940,7 +941,9 @@ export class ContractManager implements IContractManager {
             const stale = [...this.lookAheadEntries.keys()].filter((s) => !band.has(s));
             if (stale.length > 0) {
                 // A script that gained a repository row meanwhile must keep its subscription.
-                const rows = await this.config.contractRepository.getContracts({ script: stale });
+                const rows = await collectContracts(this.config.contractRepository, {
+                    script: stale,
+                });
                 const nowPersisted = new Set(rows.map((c) => c.script));
                 for (const script of stale) {
                     this.lookAheadEntries.delete(script);
@@ -1326,7 +1329,7 @@ export class ContractManager implements IContractManager {
      */
     async getContracts(filter?: GetContractsFilter): Promise<Contract[]> {
         const dbFilter = this.buildContractsDbFilter(filter ?? {});
-        return await this.config.contractRepository.getContracts(dbFilter);
+        return await collectContracts(this.config.contractRepository, dbFilter);
     }
 
     async getContractsWithVtxos(
@@ -1381,7 +1384,7 @@ export class ContractManager implements IContractManager {
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
 
         const byScript = new Map<string, Contract>();
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: scripts,
         });
         for (const contract of contracts) {
@@ -1402,7 +1405,7 @@ export class ContractManager implements IContractManager {
         vtxos: readonly { txid: string; vout: number; script: string }[],
     ): Promise<void> {
         if (vtxos.length === 0) return;
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
         });
         const { scripts, failures } = annotatableIn(
@@ -1448,7 +1451,7 @@ export class ContractManager implements IContractManager {
     ): Promise<Map<string, string>> {
         const refused = new Map<string, string>();
         if (vtxos.length === 0) return refused;
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
         });
         const byScript = new Map(contracts.map((contract) => [contract.script, contract]));
@@ -1529,10 +1532,7 @@ export class ContractManager implements IContractManager {
         script: string,
         update: (existing: Contract) => Contract,
     ): Promise<Contract> {
-        const contracts = await this.config.contractRepository.getContracts({
-            script,
-        });
-        const existing = contracts[0];
+        const [existing] = await collectContracts(this.config.contractRepository, { script });
         if (!existing) {
             throw new Error(`Contract ${script} not found`);
         }
@@ -1709,7 +1709,7 @@ export class ContractManager implements IContractManager {
         if (vtxos.length === 0) return;
 
         const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
-        const contracts = await this.config.contractRepository.getContracts({
+        const contracts = await collectContracts(this.config.contractRepository, {
             script: scripts,
         });
         const scriptToContract = new Map(contracts.map((c) => [c.script, c]));
@@ -1821,30 +1821,19 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         options?: { unspentOnly?: boolean },
     ): Promise<ExtendedContractVtxo[]> {
-        if (contracts.length === 0) return [];
-        let rows: ExtendedContractVtxo[];
-        if (this.config.walletRepository.getVtxosForScripts) {
-            const byScript = new Set(contracts.map((contract) => contract.script));
-            rows = (await this.config.walletRepository.getVtxosForScripts([...byScript], options))
-                .filter((vtxo) => vtxo.script !== undefined && byScript.has(vtxo.script))
-                .map((vtxo) => ({ ...normalizeVtxo(vtxo), contractScript: vtxo.script! }));
-        } else {
-            const res = await Promise.all(
-                contracts.map((contract) =>
-                    getVtxosForContract(this.config.walletRepository, contract).then((vtxos) =>
-                        vtxos.map(
-                            (vtxo): ExtendedContractVtxo => ({
-                                ...vtxo,
-                                contractScript: contract.script,
-                            }),
-                        ),
+        const res = await Promise.all(
+            contracts.map((contract) =>
+                getVtxosForContract(this.config.walletRepository, contract, options).then((vtxos) =>
+                    vtxos.map(
+                        (vtxo): ExtendedContractVtxo => ({
+                            ...vtxo,
+                            contractScript: contract.script,
+                        }),
                     ),
                 ),
-            );
-            rows = res.flat();
-        }
-        // Custom repositories may ignore the optional query hint.
-        return options?.unspentOnly ? rows.filter((vtxo) => !isVtxoSpent(vtxo)) : rows;
+            ),
+        );
+        return res.flat();
     }
 
     /** Sync virtual outputs for the given contracts (default: the watched set). */
@@ -1870,7 +1859,7 @@ export class ContractManager implements IContractManager {
         const contracts =
             options.contracts ??
             (options.includeInactive
-                ? await this.config.contractRepository.getContracts({})
+                ? await collectContracts(this.config.contractRepository, {})
                 : this.watcher.getWatchedContracts());
 
         const requestStartedAt = Date.now();
@@ -1914,8 +1903,7 @@ export class ContractManager implements IContractManager {
 
         for (const contract of awaiting) {
             try {
-                const vtxos = await getVtxosForContract(this.config.walletRepository, contract);
-                if (vtxos.length === 0) continue;
+                if (!(await hasVtxosForContract(this.config.walletRepository, contract))) continue;
                 await this.setContractWatchState(contract.script, "retained");
             } catch (err) {
                 console.warn(

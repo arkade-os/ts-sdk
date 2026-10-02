@@ -1,5 +1,10 @@
 import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
-import { ContractFilter, ContractRepository } from "../contractRepository";
+import {
+    contractFilterMatchesNothing,
+    ContractFilter,
+    ContractRepository,
+} from "../contractRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { RealmLike } from "./types";
 
 /**
@@ -37,46 +42,33 @@ export class RealmContractRepository implements ContractRepository {
 
     // ── Contract management ────────────────────────────────────────────
 
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        await this.ensureInit();
-
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        if (contractFilterMatchesNothing(filter)) return { items: [] };
         let results = this.realm.objects("ArkContract");
-
+        const parts: string[] = [];
+        const args: unknown[] = [];
+        let argIndex = 0;
         if (filter) {
-            const filterParts: string[] = [];
-            const filterArgs: unknown[] = [];
-
-            let argIndex = 0;
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "script",
-                filter.script,
-                argIndex,
-            );
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "state",
-                filter.state,
-                argIndex,
-            );
-            argIndex = this.addFilterCondition(
-                filterParts,
-                filterArgs,
-                "type",
-                filter.type,
-                argIndex,
-            );
-            argIndex = this.addWatchCondition(filterParts, filterArgs, filter.watch, argIndex);
-
-            if (filterParts.length > 0) {
-                const query = filterParts.join(" AND ");
-                results = results.filtered(query, ...filterArgs);
-            }
+            argIndex = this.addFilterCondition(parts, args, "script", filter.script, argIndex);
+            argIndex = this.addFilterCondition(parts, args, "state", filter.state, argIndex);
+            argIndex = this.addFilterCondition(parts, args, "type", filter.type, argIndex);
+            argIndex = this.addWatchCondition(parts, args, filter.watch, argIndex);
         }
-
-        return [...results].map(contractObjectToDomain);
+        if (page.after !== undefined) {
+            parts.push(`script > $${argIndex}`);
+            args.push(page.after);
+        }
+        if (parts.length) results = results.filtered(parts.join(" AND "), ...args);
+        const rows: Contract[] = [];
+        for (const row of results.sorted("script")) {
+            rows.push(contractObjectToDomain(row));
+            if (rows.length > page.limit) break;
+        }
+        return pageResult(rows, page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {

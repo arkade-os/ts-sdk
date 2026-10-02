@@ -1,7 +1,9 @@
+import { collectVtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
     ContractManager,
+    type ContractWithVtxos,
     DefaultContractHandler,
     DefaultVtxo,
     IndexerProvider,
@@ -237,7 +239,7 @@ describe("ContractManager", () => {
         expect(bootstrapCall[0].spendableOnly).toBeUndefined();
 
         // Both settled and spent VTXOs should be in the repo
-        const repoVtxos = await walletRepo.getVtxos("address");
+        const repoVtxos = await collectVtxos(walletRepo, "address");
         expect(repoVtxos).toHaveLength(2);
     });
 
@@ -272,7 +274,7 @@ describe("ContractManager", () => {
             walletRepository: walletRepo,
         });
 
-        const savedVtxos = await walletRepo.getVtxos("contract-address");
+        const savedVtxos = await collectVtxos(walletRepo, "contract-address");
         expect(savedVtxos).toHaveLength(2);
         const states = savedVtxos.map((v) => v.virtualStatus.state);
         expect(states).toContain("settled");
@@ -354,44 +356,32 @@ describe("ContractManager", () => {
             row(second.script, "dd"),
         ]);
 
+        const txidsByScript = (rows: ContractWithVtxos[]) =>
+            Object.fromEntries(
+                rows.map(({ contract, vtxos }) => [contract.script, vtxos.map(({ txid }) => txid)]),
+            );
+        const expected = {
+            [first.script]: ["aa".repeat(32), "bb".repeat(32)],
+            [second.script]: ["cc".repeat(32), "dd".repeat(32)],
+            [empty.script]: [],
+        };
+
         const result = await localManager.getContractsWithVtxos();
 
-        expect(result.map(({ contract }) => contract.script)).toEqual([
-            first.script,
-            second.script,
-            empty.script,
-        ]);
-        expect(result.map(({ vtxos }) => vtxos.map(({ txid }) => txid))).toEqual([
-            ["aa".repeat(32), "bb".repeat(32)],
-            ["cc".repeat(32), "dd".repeat(32)],
-            [],
-        ]);
-
-        const bulk = vi.fn(async (scripts: string[]) =>
-            [
-                row(first.script, "aa"),
-                row(first.script, "bb"),
-                { ...row(first.script, "ee"), isSpent: true },
-                row(second.script, "cc"),
-                row(second.script, "dd"),
-                row("5120" + "ff".repeat(32), "ee"),
-            ].filter((vtxo) => scripts.includes(vtxo.script!)),
+        expect(result.map(({ contract }) => contract.script)).toEqual(
+            (await localManager.getContracts()).map(({ script }) => script),
         );
-        (
-            walletRepo as InMemoryWalletRepository & { getVtxosForScripts: typeof bulk }
-        ).getVtxosForScripts = bulk;
-        const perScript = vi.spyOn(walletRepo, "getVtxosForScript");
-        const batched = await localManager.getContractsWithVtxos();
-        expect(bulk).toHaveBeenCalledTimes(1);
-        expect(perScript).not.toHaveBeenCalled();
-        expect(batched.map(({ vtxos }) => vtxos.length)).toEqual([3, 2, 0]);
+        expect(txidsByScript(result)).toEqual(expected);
+
+        await walletRepo.saveVtxos(first.address, [{ ...row(first.script, "ee"), isSpent: true }]);
+        const pages = vi.spyOn(walletRepo, "getVtxosForScriptPage");
+        const all = await localManager.getContractsWithVtxos();
+        expect(txidsByScript(all)[first.script]).toHaveLength(3);
         const unspent = await localManager.getContractsWithVtxos(undefined, undefined, {
             unspentOnly: true,
         });
-        expect(unspent.map(({ vtxos }) => vtxos.length)).toEqual([2, 2, 0]);
-        expect(bulk).toHaveBeenLastCalledWith([first.script, second.script, empty.script], {
-            unspentOnly: true,
-        });
+        expect(txidsByScript(unspent)).toEqual(expected);
+        expect(pages).toHaveBeenCalledWith(first.script, expect.anything(), { unspentOnly: true });
 
         vi.spyOn(localManager, "getContracts").mockResolvedValue([first, first]);
         const duplicate = await localManager.getContractsWithVtxos();
@@ -661,7 +651,7 @@ describe("ContractManager", () => {
                 });
 
                 expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(true);
-                const stored = await walletRepo.getVtxos("retired-address");
+                const stored = await collectVtxos(walletRepo, "retired-address");
                 expect(stored.map((v) => v.txid)).toContain(incoming.txid);
             } finally {
                 await mgr.dispose();
@@ -807,7 +797,7 @@ describe("ContractManager", () => {
                 await mgr.refreshVtxos();
 
                 expect(
-                    (await walletRepo.getVtxos("awaiting-address")).map((v) => v.txid),
+                    (await collectVtxos(walletRepo, "awaiting-address")).map((v) => v.txid),
                 ).toContain(incoming.txid);
                 expect((await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0]?.watch).toBe(
                     "retained",
@@ -1032,7 +1022,7 @@ describe("ContractManager", () => {
             });
 
             // The wallet repo now reflects the spent flag for this address.
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             const found = stored.find((v) => v.txid === spent.txid && v.vout === spent.vout);
             expect(found).toBeDefined();
             expect(found!.isSpent).toBe(true);
@@ -1065,7 +1055,7 @@ describe("ContractManager", () => {
             await localManager.refreshOutpoints([{ txid: "aa".repeat(32), vout: 0 }]);
 
             expect(mockIndexer.getVtxos).toHaveBeenCalled();
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             expect(stored).toEqual([]);
         });
 
@@ -1207,7 +1197,7 @@ describe("ContractManager", () => {
                 expect(args[0]?.after).toBe(0);
             }
 
-            const stored = await repo.getVtxos("address");
+            const stored = await collectVtxos(repo, "address");
             expect(stored).toHaveLength(1);
             expect(stored[0].createdAt).toEqual(ancient);
 
@@ -1259,7 +1249,7 @@ describe("ContractManager", () => {
             });
 
             // The wallet repo now reflects the spent flag for this address.
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             const found = stored.find((v) => v.txid === spent.txid && v.vout === spent.vout);
             expect(found).toBeDefined();
             expect(found!.isSpent).toBe(true);
@@ -1292,7 +1282,7 @@ describe("ContractManager", () => {
             await localManager.refreshOutpoints([{ txid: "aa".repeat(32), vout: 0 }]);
 
             expect(mockIndexer.getVtxos).toHaveBeenCalled();
-            const stored = await walletRepo.getVtxos("address");
+            const stored = await collectVtxos(walletRepo, "address");
             expect(stored).toEqual([]);
         });
 
@@ -1429,7 +1419,7 @@ describe("ContractManager", () => {
             }),
         ).resolves.toBeDefined();
 
-        const saved = await walletRepo.getVtxos("contract-addr");
+        const saved = await collectVtxos(walletRepo, "contract-addr");
         // The badVtxo must have been filtered out; the good one persists.
         expect(saved.find((v) => v.txid === "aa".repeat(32))).toBeDefined();
         expect(saved.find((v) => v.txid === "bb".repeat(32))).toBeUndefined();

@@ -21,11 +21,13 @@ export const STORE_VTXO_BRANCHES = "vtxoBranches";
 //        at read time. Matches the `script` indexing already in place for
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
 //   v4 — add the `scriptUnspent` index; existing rows are backfilled.
-// An older SDK cannot reopen a v4 database. The intent ladder below runs on a
-// dedicated DB name: its v4/v5 are not this v4.
-export const DB_VERSION = 4;
+//   v5 — add the `(address, createdAt)` history index; existing rows are
+//        indexed without changing their stored values.
+// An older SDK cannot reopen a newer database. The intent ladder below runs on a
+// dedicated DB name: its v4/v5 are not these.
+export const DB_VERSION = 5;
 
-//   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
+//   dedicated-DB v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
 //   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
 //        "unique when present" contract enforced by the other backends.
@@ -96,7 +98,9 @@ export function initDatabase(
                 unique: false,
             });
         }
-        vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
+        if (!vtxosStore.indexNames.contains("scriptUnspent")) {
+            vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
+        }
     }
 
     if (!db.objectStoreNames.contains(STORE_UTXOS)) {
@@ -152,6 +156,11 @@ export function initDatabase(
                 unique: false,
             });
         }
+        if (!transactionsStore.indexNames.contains("addressCreatedAt")) {
+            transactionsStore.createIndex("addressCreatedAt", ["address", "createdAt"], {
+                unique: false,
+            });
+        }
         if (!transactionsStore.indexNames.contains("arkTxid")) {
             transactionsStore.createIndex("arkTxid", "key.arkTxid", {
                 unique: false,
@@ -194,6 +203,15 @@ export function initDatabase(
             vtxosStore.createIndex("scriptUnspent", ["script", "unspent"], { unique: false });
         }
         backfillVtxoIndexFields(transaction);
+    }
+
+    if (oldVersion > 0 && transaction) {
+        const transactionsStore = transaction.objectStore(STORE_TRANSACTIONS);
+        if (!transactionsStore.indexNames.contains("addressCreatedAt")) {
+            transactionsStore.createIndex("addressCreatedAt", ["address", "createdAt"], {
+                unique: false,
+            });
+        }
     }
 }
 

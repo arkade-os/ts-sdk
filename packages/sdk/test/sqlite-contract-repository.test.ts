@@ -1,3 +1,4 @@
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
 import type { SQLExecutor } from "../src/repositories/sqlite/types";
@@ -317,7 +318,7 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(contract1);
             await repository.saveContract(contract2);
 
-            const retrieved = await repository.getContracts();
+            const retrieved = await collectContracts(repository);
             expect(retrieved).toHaveLength(2);
 
             const scripts = retrieved.map((c) => c.script).sort();
@@ -337,7 +338,7 @@ describe("SQLiteContractRepository", () => {
             });
 
             await repository.saveContract(contract);
-            const [retrieved] = await repository.getContracts();
+            const [retrieved] = await collectContracts(repository);
 
             expect(retrieved.script).toBe("script-full");
             expect(retrieved.address).toBe("addr-full");
@@ -363,7 +364,7 @@ describe("SQLiteContractRepository", () => {
             });
 
             await repository.saveContract(contract);
-            const [retrieved] = await repository.getContracts();
+            const [retrieved] = await collectContracts(repository);
 
             expect(retrieved.label).toBeUndefined();
             expect(retrieved.metadata).toBeUndefined();
@@ -393,11 +394,11 @@ describe("SQLiteContractRepository", () => {
                 }),
             );
 
-            const active = await repository.getContracts({ state: "active" });
+            const active = await collectContracts(repository, { state: "active" });
             expect(active).toHaveLength(2);
             expect(active.every((c) => c.state === "active")).toBe(true);
 
-            const inactive = await repository.getContracts({
+            const inactive = await collectContracts(repository, {
                 state: "inactive",
             });
             expect(inactive).toHaveLength(1);
@@ -408,7 +409,7 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s1", state: "active" }));
             await repository.saveContract(createMockContract({ script: "s2", state: "inactive" }));
 
-            const both = await repository.getContracts({
+            const both = await collectContracts(repository, {
                 state: ["active", "inactive"],
             });
             expect(both).toHaveLength(2);
@@ -423,7 +424,7 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
             await repository.saveContract(createMockContract({ script: "s3", type: "vhtlc" }));
 
-            const vhtlc = await repository.getContracts({ type: "vhtlc" });
+            const vhtlc = await collectContracts(repository, { type: "vhtlc" });
             expect(vhtlc).toHaveLength(2);
             expect(vhtlc.every((c) => c.type === "vhtlc")).toBe(true);
         });
@@ -433,7 +434,7 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
             await repository.saveContract(createMockContract({ script: "s3", type: "custom" }));
 
-            const filtered = await repository.getContracts({
+            const filtered = await collectContracts(repository, {
                 type: ["default", "vhtlc"],
             });
             expect(filtered).toHaveLength(2);
@@ -450,9 +451,9 @@ describe("SQLiteContractRepository", () => {
                 createMockContract({ script: "s2", watch: "awaiting-funds" }),
             );
 
-            const [retained] = await repository.getContracts({ script: "s1" });
+            const [retained] = await collectContracts(repository, { script: "s1" });
             expect(retained.watch).toBe("retained");
-            const [awaiting] = await repository.getContracts({ script: "s2" });
+            const [awaiting] = await collectContracts(repository, { script: "s2" });
             expect(awaiting.watch).toBe("awaiting-funds");
         });
 
@@ -463,13 +464,15 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s1", watch: "watched" }));
             await repository.saveContract(createMockContract({ script: "s2", watch: "retained" }));
 
-            const watched = await repository.getContracts({ watch: "watched" });
+            const watched = await collectContracts(repository, { watch: "watched" });
             expect(watched.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
 
-            const retained = await repository.getContracts({ watch: "retained" });
+            const retained = await collectContracts(repository, { watch: "retained" });
             expect(retained.map((c) => c.script)).toEqual(["s2"]);
 
-            const live = await repository.getContracts({ watch: ["watched", "awaiting-funds"] });
+            const live = await collectContracts(repository, {
+                watch: ["watched", "awaiting-funds"],
+            });
             expect(live.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
         });
 
@@ -496,14 +499,14 @@ describe("SQLiteContractRepository", () => {
             );
 
             const migrated = new SQLiteContractRepository(legacyDb);
-            const [row] = await migrated.getContracts({ script: "legacy" });
+            const [row] = await collectContracts(migrated, { script: "legacy" });
             expect(row.watch).toBeUndefined();
 
             // The pre-existing row keeps the coverage it has today...
-            expect(await migrated.getContracts({ watch: "watched" })).toHaveLength(1);
+            expect(await collectContracts(migrated, { watch: "watched" })).toHaveLength(1);
             // ...and the column is now writable.
             await migrated.saveContract(createMockContract({ script: "s1", watch: "retained" }));
-            expect((await migrated.getContracts({ script: "s1" }))[0].watch).toBe("retained");
+            expect((await collectContracts(migrated, { script: "s1" }))[0].watch).toBe("retained");
         });
     });
 
@@ -514,7 +517,7 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s1" }));
             await repository.saveContract(createMockContract({ script: "s2" }));
 
-            const result = await repository.getContracts({ script: "s1" });
+            const result = await collectContracts(repository, { script: "s1" });
             expect(result).toHaveLength(1);
             expect(result[0].script).toBe("s1");
         });
@@ -524,7 +527,7 @@ describe("SQLiteContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s2" }));
             await repository.saveContract(createMockContract({ script: "s3" }));
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 script: ["s1", "s3"],
             });
             expect(result).toHaveLength(2);
@@ -534,7 +537,7 @@ describe("SQLiteContractRepository", () => {
         it("should return empty array when script does not exist", async () => {
             await repository.saveContract(createMockContract({ script: "s1" }));
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 script: "nonexistent",
             });
             expect(result).toEqual([]);
@@ -567,7 +570,7 @@ describe("SQLiteContractRepository", () => {
                 }),
             );
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 state: "active",
                 type: "vhtlc",
             });
@@ -605,7 +608,7 @@ describe("SQLiteContractRepository", () => {
                 }),
             );
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 state: ["active", "inactive"],
                 type: "vhtlc",
             });
@@ -623,7 +626,7 @@ describe("SQLiteContractRepository", () => {
 
             await repository.deleteContract("s1");
 
-            const remaining = await repository.getContracts();
+            const remaining = await collectContracts(repository);
             expect(remaining).toHaveLength(1);
             expect(remaining[0].script).toBe("s2");
         });
@@ -651,7 +654,7 @@ describe("SQLiteContractRepository", () => {
             });
             await repository.saveContract(updated);
 
-            const contracts = await repository.getContracts();
+            const contracts = await collectContracts(repository);
             expect(contracts).toHaveLength(1);
             expect(contracts[0].state).toBe("inactive");
             expect(contracts[0].label).toBe("Updated");
@@ -668,7 +671,7 @@ describe("SQLiteContractRepository", () => {
 
             await repository.clear();
 
-            const contracts = await repository.getContracts();
+            const contracts = await collectContracts(repository);
             expect(contracts).toEqual([]);
         });
     });
@@ -683,8 +686,8 @@ describe("SQLiteContractRepository", () => {
             await repoA.saveContract(createMockContract({ script: "s-a", address: "addr-a" }));
             await repoB.saveContract(createMockContract({ script: "s-b", address: "addr-b" }));
 
-            const fromA = await repoA.getContracts();
-            const fromB = await repoB.getContracts();
+            const fromA = await collectContracts(repoA);
+            const fromB = await collectContracts(repoB);
 
             expect(fromA).toHaveLength(1);
             expect(fromA[0].script).toBe("s-a");

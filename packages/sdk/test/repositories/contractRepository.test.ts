@@ -1,3 +1,4 @@
+import { collectContracts } from "../../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import {
@@ -45,7 +46,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         };
 
         await repository.saveContract(contract);
-        const contracts = await repository.getContracts({
+        const contracts = await collectContracts(repository, {
             script: "script-hex",
         });
 
@@ -75,10 +76,10 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         await repository.saveContract(activeContract);
         await repository.saveContract(inactiveContract);
 
-        const activeContracts = await repository.getContracts({
+        const activeContracts = await collectContracts(repository, {
             state: "active",
         });
-        const inactiveContracts = await repository.getContracts({
+        const inactiveContracts = await collectContracts(repository, {
             state: "inactive",
         });
 
@@ -120,13 +121,13 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
             await repository.saveContract(contract);
         }
 
-        const byScripts = await repository.getContracts({
+        const byScripts = await collectContracts(repository, {
             script: ["script-1", "script-3"],
         });
-        const byStates = await repository.getContracts({
+        const byStates = await collectContracts(repository, {
             state: ["inactive"],
         });
-        const byTypes = await repository.getContracts({
+        const byTypes = await collectContracts(repository, {
             type: ["vhtlc"],
         });
 
@@ -151,7 +152,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         // Update state by saving modified contract
         await repository.saveContract({ ...contract, state: "inactive" });
 
-        const contracts = await repository.getContracts({
+        const contracts = await collectContracts(repository, {
             script: "script-hex",
         });
         expect(contracts[0]?.state).toBe("inactive");
@@ -176,7 +177,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
             params: { ...contract.params, preimage: "secret" },
         });
 
-        const contracts = await repository.getContracts({
+        const contracts = await collectContracts(repository, {
             script: "script-hex",
         });
         expect(contracts[0]?.params).toEqual({
@@ -198,7 +199,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         await repository.saveContract(contract);
         await repository.deleteContract("script-hex");
 
-        const contracts = await repository.getContracts({
+        const contracts = await collectContracts(repository, {
             script: "script-hex",
         });
         expect(contracts).toHaveLength(0);
@@ -215,7 +216,7 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         };
 
         await repository.saveContract(contract);
-        const contracts = await repository.getContracts({
+        const contracts = await collectContracts(repository, {
             script: "unique-script-hex",
         });
 

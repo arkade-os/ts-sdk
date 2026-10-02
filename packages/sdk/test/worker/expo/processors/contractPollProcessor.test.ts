@@ -37,7 +37,7 @@ describe("contractPollProcessor", () => {
         const secondPageVtxos = [{ txid: "tx-100", vout: 100, script: "script-a" }];
 
         const contractRepository = {
-            getContracts: vi.fn().mockResolvedValue([contractA, contractB]),
+            getContractsPage: vi.fn().mockResolvedValue({ items: [contractA, contractB] }),
         };
         const walletRepository = {
             saveVtxos: vi.fn().mockResolvedValue(undefined),

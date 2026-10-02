@@ -1,5 +1,20 @@
 import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction } from "../../wallet";
-import { WalletRepository, WalletState, VtxoRepositoryKey } from "../walletRepository";
+import type { Outpoint } from "../../wallet";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    compareHistoryCursors,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type ScriptVtxoPageOptions,
+    type StoredVtxo,
+    compareScriptVtxoCursors,
+    unspentScriptVtxos,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -22,7 +37,6 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyFactsOfRow } from "../legacyVtxoFacts";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
-import { isVtxoSpent } from "../../wallet/vtxo";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -52,22 +66,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
         await this.connection[Symbol.asyncDispose]();
     }
 
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        try {
-            const db = await this.getDB();
-            const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-            const results = await promisifyRequest<(SerializedVtxo & { address: string })[]>(
-                store.index("address").getAll(address),
-            );
-            // A bad row (e.g. a legacy VTXO whose address can't be decoded
-            // during backfill) throws here, in ordinary async code, so the
-            // outer catch reports it rather than it being lost inside an IDB
-            // event handler.
-            return (results || []).map(deserializeVtxoWithBackfill);
-        } catch (error) {
-            console.error(`Failed to get VTXOs for address ${address}:`, error);
-            return [];
-        }
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return this.pageByAddress(STORE_VTXOS, address, page, deserializeVtxoWithBackfill);
     }
 
     async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -98,63 +101,72 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
-        return this.getVtxosForScripts([script]);
-    }
-
-    async getVtxosForScripts(
-        scripts: string[],
-        options?: { unspentOnly?: boolean },
-    ): Promise<ExtendedVirtualCoin[]> {
-        const unique = [...new Set(scripts)];
-        if (unique.length === 0) return [];
-        try {
-            const db = await this.getDB();
-            const rows = options?.unspentOnly
-                ? await getAllByIndexValues<RawVtxoRow>(
-                      this.vtxoStore(db),
-                      "scriptUnspent",
-                      unique.map((script) => [script, 1]),
-                  )
-                : await getAllByIndexValues<RawVtxoRow>(this.vtxoStore(db), "script", unique);
-
-            const selected = new Set(unique);
-            const byOutpoint = new Map<string, RawVtxoRow>();
-            for (const row of rows) {
-                if (!selected.has(row.script!)) continue;
-                const key = `${row.script}:${row.txid}:${row.vout}`;
-                const existing = byOutpoint.get(key);
-                if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
+        const db = await this.getDB();
+        const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
+        // Unspent rows carry `unspent: 1`, so this index never touches spent history.
+        const indexKey: IDBValidKey = options?.unspentOnly ? [script, 1] : script;
+        const index = store.index(options?.unspentOnly ? "scriptUnspent" : "script");
+        return new Promise((resolve, reject) => {
+            // Called from a request callback, so the duplicate recheck reuses this transaction.
+            const finish = (rows: RawVtxoRow[]) => {
+                const result = pageResult(rows.map(storedVtxoOf), page.limit, scriptVtxoCursorOf);
+                if (!options?.unspentOnly || result.items.length === 0) return resolve(result);
+                // A newer spent copy in another address bucket is absent from `scriptUnspent`.
+                const txids = [...new Set(result.items.map((row) => row.vtxo.txid))];
+                getAllByIndexValues<RawVtxoRow>(store, "txid", txids).then((raws) => {
+                    const copies = raws
+                        .map(storedVtxoOf)
+                        .filter((copy) => copy.vtxo.script === script);
+                    resolve({ ...result, items: unspentScriptVtxos(result.items, copies) });
+                }, reject);
+            };
+            const after = page.after;
+            if (!after) {
+                const request = index.getAll(IDBKeyRange.only(indexKey), page.limit + 1);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    try {
+                        finish(request.result as RawVtxoRow[]);
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                return;
             }
-            if (options?.unspentOnly && byOutpoint.size > 0) {
-                // A newer terminal copy in another address bucket is not in the index.
-                const txids = [...new Set([...byOutpoint.values()].map((row) => row.txid))];
-                const store = this.vtxoStore(db);
-                for (const row of await getAllByIndexValues<RawVtxoRow>(store, "txid", txids)) {
-                    const key = `${row.script}:${row.txid}:${row.vout}`;
-                    const existing = byOutpoint.get(key);
-                    if (existing && shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+            const rows: RawVtxoRow[] = [];
+            const request = index.openCursor(IDBKeyRange.only(indexKey));
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                try {
+                    const cursor = request.result;
+                    if (!cursor) return finish(rows);
+                    const row = cursor.value as RawVtxoRow;
+                    const order = compareScriptVtxoCursors(
+                        { address: row.address, txid: row.txid, vout: row.vout },
+                        after,
+                    );
+                    if (order < 0) {
+                        cursor.continuePrimaryKey(indexKey, [
+                            after.address,
+                            after.txid,
+                            after.vout,
+                        ]);
+                        return;
+                    }
+                    if (order > 0) rows.push(row);
+                    if (rows.length > page.limit) return finish(rows);
+                    cursor.continue();
+                } catch (error) {
+                    reject(error);
                 }
-            }
-
-            const result: ExtendedVirtualCoin[] = [];
-            for (const row of byOutpoint.values()) {
-                // After the dedup, not before: another bucket's terminal row can win.
-                if (options?.unspentOnly && (row.isSpent || row.spentBy || row.settledBy)) {
-                    continue;
-                }
-                const vtxo = deserializeVtxoWithBackfill(row);
-                if (!options?.unspentOnly || !isVtxoSpent(vtxo)) result.push(vtxo);
-            }
-            return result;
-        } catch (error) {
-            console.error("Failed to get VTXOs for scripts:", error);
-            throw error;
-        }
-    }
-
-    private vtxoStore(db: IDBDatabase): IDBObjectStore {
-        return db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
+            };
+        });
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -176,16 +188,54 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
-        try {
-            const db = await this.getDB();
-            const store = db.transaction([STORE_UTXOS], "readonly").objectStore(STORE_UTXOS);
-            const results = await promisifyRequest(store.index("address").getAll(address));
-            return (results || []).map(deserializeUtxo);
-        } catch (error) {
-            console.error(`Failed to get UTXOs for address ${address}:`, error);
-            return [];
-        }
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return this.pageByAddress(STORE_UTXOS, address, page, deserializeUtxo);
+    }
+
+    private async pageByAddress<Item>(
+        name: string,
+        address: string,
+        page: PageRequest<Outpoint>,
+        deserialize: (row: any) => Item,
+    ): Promise<PageResult<Item, Outpoint>> {
+        assertPageRequest(page);
+        const db = await this.getDB();
+        const store = db.transaction([name], "readonly").objectStore(name);
+        const key = page.after ? [address, page.after.txid, page.after.vout] : [address];
+        const request = store.openCursor(IDBKeyRange.lowerBound(key, page.after !== undefined));
+        return new Promise((resolve, reject) => {
+            const rows: { key: Outpoint; item: Item }[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                try {
+                    const cursor = request.result;
+                    if (!cursor || (cursor.key as unknown[])[0] !== address) {
+                        const result = pageResult(rows, page.limit, (row) => row.key);
+                        resolve({
+                            items: result.items.map((row) => row.item),
+                            nextCursor: result.nextCursor,
+                        });
+                        return;
+                    }
+                    const [, txid, vout] = cursor.key as [string, string, number];
+                    rows.push({ key: { txid, vout }, item: deserialize(cursor.value) });
+                    if (rows.length > page.limit) {
+                        const result = pageResult(rows, page.limit, (row) => row.key);
+                        resolve({
+                            items: result.items.map((row) => row.item),
+                            nextCursor: result.nextCursor,
+                        });
+                        return;
+                    }
+                    cursor.continue();
+                } catch (error) {
+                    reject(error);
+                }
+            };
+        });
     }
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
@@ -213,20 +263,64 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        try {
-            const db = await this.getDB();
-            const store = db
-                .transaction([STORE_TRANSACTIONS], "readonly")
-                .objectStore(STORE_TRANSACTIONS);
-            const results = await promisifyRequest<ArkTransaction[]>(
-                store.index("address").getAll(address),
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
+        const db = await this.getDB();
+        const store = db
+            .transaction([STORE_TRANSACTIONS], "readonly")
+            .objectStore(STORE_TRANSACTIONS);
+        const since = Math.max(filter.since ?? 0, page.after?.createdAt ?? 0);
+        const request = store
+            .index("addressCreatedAt")
+            .openCursor(
+                IDBKeyRange.bound(
+                    [filter.address, since],
+                    [filter.address, Number.MAX_SAFE_INTEGER],
+                ),
             );
-            return (results || []).sort((a, b) => a.createdAt - b.createdAt);
-        } catch (error) {
-            console.error(`Failed to get transaction history for address ${address}:`, error);
-            return [];
-        }
+        return new Promise((resolve, reject) => {
+            const rows: ArkTransaction[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                try {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        resolve(
+                            pageResult(rows, page.limit, (tx) => ({
+                                createdAt: tx.createdAt,
+                                key: tx.key,
+                            })),
+                        );
+                        return;
+                    }
+                    const tx = cursor.value as ArkTransaction;
+                    if (
+                        page.after === undefined ||
+                        compareHistoryCursors(
+                            { createdAt: tx.createdAt, key: tx.key },
+                            page.after,
+                        ) > 0
+                    )
+                        rows.push(tx);
+                    if (rows.length > page.limit) {
+                        resolve(
+                            pageResult(rows, page.limit, (tx) => ({
+                                createdAt: tx.createdAt,
+                                key: tx.key,
+                            })),
+                        );
+                        return;
+                    }
+                    cursor.continue();
+                } catch (error) {
+                    reject(error);
+                }
+            };
+        });
     }
 
     async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
@@ -323,39 +417,15 @@ function deserializeVtxoWithBackfill({ unspent: _unspent, ...o }: RawVtxoRow): E
     return deserializeVtxo(o);
 }
 
+const storedVtxoOf = (raw: RawVtxoRow): StoredVtxo => ({
+    address: raw.address,
+    vtxo: deserializeVtxoWithBackfill(raw),
+});
+
+const scriptVtxoCursorOf = (row: StoredVtxo): ScriptVtxoCursor => ({
+    address: row.address,
+    txid: row.vtxo.txid,
+    vout: row.vtxo.vout,
+});
+
 type RawVtxoRow = SerializedVtxo & { address: string; unspent?: 1 };
-
-function isCanonicalRow(row: RawVtxoRow): boolean {
-    try {
-        return scriptFromArkAddress(row.address) === row.script;
-    } catch {
-        return false;
-    }
-}
-
-function shouldReplaceVtxo(existing: RawVtxoRow, incoming: RawVtxoRow): boolean {
-    const existingCanonical = isCanonicalRow(existing);
-    const incomingCanonical = isCanonicalRow(incoming);
-
-    if (incomingCanonical && !existingCanonical) return true;
-    if (existingCanonical && !incomingCanonical) return false;
-
-    // Tie on canonicality, check lifecycle completeness
-    const existingWeight = getLifecycleWeight(existing);
-    const incomingWeight = getLifecycleWeight(incoming);
-
-    if (incomingWeight > existingWeight) return true;
-    if (existingWeight > incomingWeight) return false;
-
-    // Tie on weight, stable sort by address
-    return incoming.address < existing.address;
-}
-
-function getLifecycleWeight(v: RawVtxoRow): number {
-    let weight = 0;
-    if (v.isSpent !== undefined) weight += 1;
-    if (v.spentBy) weight += 2;
-    if (v.settledBy) weight += 2;
-    if (v.arkTxId) weight += 2;
-    return weight;
-}

@@ -444,6 +444,7 @@ import type {
     ArkIntent,
     ArkIntentState,
     IntentFilter,
+    IntentPageFilter,
 } from "./repositories/intentRepository";
 import type {
     VirtualTxRepository,
@@ -451,11 +452,34 @@ import type {
     VtxoBranch,
 } from "./repositories/virtualTxRepository";
 import { ChainedTxType } from "./repositories/virtualTxRepository";
-import type { WalletRepository } from "./repositories/walletRepository";
-import type { ContractRepository } from "./repositories/contractRepository";
+import type {
+    WalletRepository,
+    TransactionHistoryPageFilter,
+    TransactionHistoryPageCursor,
+    ScriptVtxoCursor,
+    ScriptVtxoPageOptions,
+    StoredVtxo,
+} from "./repositories/walletRepository";
+import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 
 export * from "./arkfee";
+export {
+    MAX_PAGE_SIZE,
+    assertPageRequest,
+    pageResult,
+    iteratePages,
+    collectPages,
+} from "./repositories/page";
+export type { PageRequest, PageResult } from "./repositories/page";
+export {
+    collectVtxos,
+    collectUtxos,
+    collectScriptVtxos,
+    collectTransactionHistory,
+} from "./repositories/walletRepository";
+export { collectContracts } from "./repositories/contractRepository";
+export { collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -1082,11 +1106,18 @@ export type {
     // Repositories
     ManagedConnection,
     WalletRepository,
+    TransactionHistoryPageFilter,
+    TransactionHistoryPageCursor,
+    ScriptVtxoCursor,
+    ScriptVtxoPageOptions,
+    StoredVtxo,
     ContractRepository,
+    ContractFilter,
     IntentRepository,
     ArkIntent,
     ArkIntentState,
     IntentFilter,
+    IntentPageFilter,
     VirtualTxRepository,
     VirtualTx,
     VtxoBranch,

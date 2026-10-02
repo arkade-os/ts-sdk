@@ -1,3 +1,7 @@
+import { collectScriptVtxos } from "../src/repositories/walletRepository";
+import { collectTransactionHistory } from "../src/repositories/walletRepository";
+import { collectVtxos } from "../src/repositories/walletRepository";
+import { collectUtxos } from "../src/repositories/walletRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
@@ -148,7 +152,7 @@ describe("SQLiteWalletRepository", () => {
 
     describe("VTXO management", () => {
         it("should return empty array when no VTXOs exist", async () => {
-            const vtxos = await repository.getVtxos(testAddress);
+            const vtxos = await collectVtxos(repository, testAddress);
             expect(vtxos).toEqual([]);
         });
 
@@ -157,7 +161,7 @@ describe("SQLiteWalletRepository", () => {
             const vtxo2 = createMockVtxo("tx2", 1, 20000);
 
             await repository.saveVtxos(testAddress, [vtxo1, vtxo2]);
-            const retrieved = await repository.getVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
 
             expect(retrieved).toHaveLength(2);
             expect(retrieved[0].txid).toBe("tx1");
@@ -171,7 +175,7 @@ describe("SQLiteWalletRepository", () => {
         it("should round-trip VTXOs with all optional fields", async () => {
             const vtxo = createMockVtxoWithExtras("tx-full", 0, 50000);
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             expect(retrieved.txid).toBe("tx-full");
             expect(retrieved.value).toBe(50000);
@@ -197,7 +201,7 @@ describe("SQLiteWalletRepository", () => {
         it("should round-trip tap tree and leaf scripts", async () => {
             const vtxo = createMockVtxo("tx-tap", 0, 5000);
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             // tapTree should survive serialization
             expect(retrieved.tapTree).toBeInstanceOf(Uint8Array);
@@ -222,7 +226,7 @@ describe("SQLiteWalletRepository", () => {
             const vtxo1Updated = createMockVtxo("tx1", 0, 15000);
             await repository.saveVtxos(testAddress, [vtxo1Updated]);
 
-            const retrieved = await repository.getVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].value).toBe(15000);
         });
@@ -232,7 +236,7 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveVtxos(testAddress, [vtxo1]);
 
             await repository.deleteVtxos(testAddress);
-            const retrieved = await repository.getVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -246,8 +250,8 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveVtxos(address1, [vtxo1]);
             await repository.saveVtxos(address2, [vtxo2]);
 
-            const retrieved1 = await repository.getVtxos(address1);
-            const retrieved2 = await repository.getVtxos(address2);
+            const retrieved1 = await collectVtxos(repository, address1);
+            const retrieved2 = await collectVtxos(repository, address2);
 
             expect(retrieved1).toHaveLength(1);
             expect(retrieved1[0].txid).toBe("tx1");
@@ -263,8 +267,8 @@ describe("SQLiteWalletRepository", () => {
 
             await repository.deleteVtxos(address1);
 
-            expect(await repository.getVtxos(address1)).toEqual([]);
-            expect(await repository.getVtxos(address2)).toHaveLength(1);
+            expect(await collectVtxos(repository, address1)).toEqual([]);
+            expect(await collectVtxos(repository, address2)).toHaveLength(1);
         });
 
         it("should preserve createdAt date through round-trip", async () => {
@@ -272,7 +276,7 @@ describe("SQLiteWalletRepository", () => {
             vtxo.createdAt = new Date("2024-06-15T10:30:00.000Z");
 
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             expect(retrieved.createdAt).toBeInstanceOf(Date);
             expect(retrieved.createdAt.toISOString()).toBe("2024-06-15T10:30:00.000Z");
@@ -285,7 +289,7 @@ describe("SQLiteWalletRepository", () => {
             (vtxo as any).isSpent = undefined;
 
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             // The fixture is preconfirmed, so the derivation says "not spent".
             expect(retrieved.isSpent).toBe(false);
@@ -298,7 +302,7 @@ describe("SQLiteWalletRepository", () => {
             vtxo.spentBy = "spent-by-tx";
 
             await repository.saveVtxos(testAddress, [vtxo]);
-            const [retrieved] = await repository.getVtxos(testAddress);
+            const [retrieved] = await collectVtxos(repository, testAddress);
 
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.spentBy).toBe("spent-by-tx");
@@ -307,7 +311,7 @@ describe("SQLiteWalletRepository", () => {
 
         describe("Script-scoped VTXO management", () => {
             it("should return empty array when no VTXOs exist for script", async () => {
-                const vtxos = await repository.getVtxosForScript("script1");
+                const vtxos = await collectScriptVtxos(repository, "script1");
                 expect(vtxos).toEqual([]);
             });
 
@@ -322,7 +326,7 @@ describe("SQLiteWalletRepository", () => {
                 await repository.saveVtxosForScript({ script: script1, address: address1 }, [
                     vtxo1,
                 ]);
-                const retrieved = await repository.getVtxosForScript(script1);
+                const retrieved = await collectScriptVtxos(repository, script1);
 
                 expect(retrieved).toHaveLength(1);
                 expect(retrieved[0].txid).toBe("tx1");
@@ -353,7 +357,7 @@ describe("SQLiteWalletRepository", () => {
                 await repository.saveVtxos(address1, [vtxo1]);
                 await repository.deleteVtxosForScript(script1);
 
-                expect(await repository.getVtxosForScript(script1)).toEqual([]);
+                expect(await collectScriptVtxos(repository, script1)).toEqual([]);
             });
 
             it("should read by script, not address", async () => {
@@ -371,8 +375,8 @@ describe("SQLiteWalletRepository", () => {
 
                 await repository.saveVtxos(address1, [vtxoA, vtxoB]);
 
-                const resultA = await repository.getVtxosForScript(scriptA);
-                const resultB = await repository.getVtxosForScript(scriptB);
+                const resultA = await collectScriptVtxos(repository, scriptA);
+                const resultB = await collectScriptVtxos(repository, scriptB);
 
                 expect(resultA).toHaveLength(1);
                 expect(resultA[0].txid).toBe("tx1");
@@ -380,31 +384,37 @@ describe("SQLiteWalletRepository", () => {
                 expect(resultB[0].txid).toBe("tx2");
             });
 
-            it("getVtxosForScripts returns only matching rows across the SQLite parameter limit", async () => {
-                // The regex SQL mock cannot evaluate IN lists, so this needs a real SQLite handle.
+            it("unspent-only script reads drop every terminal shape", async () => {
+                // The regex SQL mock cannot evaluate the unspent predicate, so this needs a real SQLite handle.
                 const sqlite = new SQLiteWalletRepository(createNodeSQLExecutor());
-                const scripts = Array.from(
-                    { length: 501 },
-                    (_, i) => "5120" + i.toString(16).padStart(64, "0"),
-                );
-                const rows = [scripts[0], scripts[500], "5120" + "ff".repeat(32)].map(
-                    (script, i) => ({
-                        ...createMockVtxo(i.toString(16).padStart(64, "0"), 0, 1000),
-                        script,
-                    }),
-                );
-                rows.push(
-                    { ...rows[0], txid: "03".padStart(64, "0"), isSpent: true },
-                    { ...rows[0], txid: "04".padStart(64, "0"), spentBy: "spent" },
-                    { ...rows[0], txid: "05".padStart(64, "0"), settledBy: "settled" },
-                );
-                await sqlite.saveVtxos("address", rows);
+                const script = "5120" + "00".repeat(32);
+                const live = { ...createMockVtxo("00".repeat(32), 0, 1000), script };
+                await sqlite.saveVtxos("address", [
+                    live,
+                    { ...live, txid: "03".padStart(64, "0"), isSpent: true },
+                    { ...live, txid: "04".padStart(64, "0"), spentBy: "spent" },
+                    { ...live, txid: "05".padStart(64, "0"), settledBy: "settled" },
+                    { ...live, txid: "06".padStart(64, "0"), script: "5120" + "ff".repeat(32) },
+                ]);
 
-                expect(await sqlite.getVtxosForScripts([])).toEqual([]);
-                const result = await sqlite.getVtxosForScripts(scripts);
-                expect(result).toHaveLength(5);
-                const live = await sqlite.getVtxosForScripts(scripts, { unspentOnly: true });
-                expect(live.map((row) => row.script)).toEqual([scripts[0], scripts[500]]);
+                expect(await collectScriptVtxos(sqlite, script)).toHaveLength(4);
+                const unspent = await collectScriptVtxos(sqlite, script, { unspentOnly: true });
+                expect(unspent.map((row) => row.txid)).toEqual([live.txid]);
+            });
+
+            it("unspent-only script reads match the full read across address buckets", async () => {
+                // VTXOs are keyed by outpoint, so no spent copy can hide in another bucket.
+                const sqlite = new SQLiteWalletRepository(createNodeSQLExecutor());
+                const script = "5120" + "00".repeat(32);
+                const live = { ...createMockVtxo("00".repeat(32), 0, 1000), script };
+                await sqlite.saveVtxos("address-a", [live]);
+                await sqlite.saveVtxos("address-b", [
+                    { ...live, isSpent: true, spentBy: "spender" },
+                ]);
+
+                const full = await collectScriptVtxos(sqlite, script);
+                const unspent = await collectScriptVtxos(sqlite, script, { unspentOnly: true });
+                expect(unspent).toEqual(full.filter((vtxo) => !isVtxoSpent(vtxo)));
             });
         });
     });
@@ -413,7 +423,7 @@ describe("SQLiteWalletRepository", () => {
 
     describe("UTXO management", () => {
         it("should return empty array when no UTXOs exist", async () => {
-            const utxos = await repository.getUtxos(testAddress);
+            const utxos = await collectUtxos(repository, testAddress);
             expect(utxos).toEqual([]);
         });
 
@@ -422,7 +432,7 @@ describe("SQLiteWalletRepository", () => {
             const utxo2 = createMockUtxo("tx2", 1, 20000);
 
             await repository.saveUtxos(testAddress, [utxo1, utxo2]);
-            const retrieved = await repository.getUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
 
             expect(retrieved).toHaveLength(2);
             expect(retrieved[0].txid).toBe("tx1");
@@ -433,7 +443,7 @@ describe("SQLiteWalletRepository", () => {
         it("should round-trip UTXOs with extraWitness", async () => {
             const utxo = createMockUtxoWithExtras("tx-extra", 0, 30000);
             await repository.saveUtxos(testAddress, [utxo]);
-            const [retrieved] = await repository.getUtxos(testAddress);
+            const [retrieved] = await collectUtxos(repository, testAddress);
 
             expect(retrieved.txid).toBe("tx-extra");
             expect(retrieved.value).toBe(30000);
@@ -449,7 +459,7 @@ describe("SQLiteWalletRepository", () => {
             const utxo1Updated = createMockUtxo("tx1", 0, 15000);
             await repository.saveUtxos(testAddress, [utxo1Updated]);
 
-            const retrieved = await repository.getUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].value).toBe(15000);
         });
@@ -459,7 +469,7 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveUtxos(testAddress, [utxo1]);
 
             await repository.deleteUtxos(testAddress);
-            const retrieved = await repository.getUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -470,8 +480,8 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveUtxos(address1, [createMockUtxo("tx1", 0, 10000)]);
             await repository.saveUtxos(address2, [createMockUtxo("tx2", 0, 20000)]);
 
-            const retrieved1 = await repository.getUtxos(address1);
-            const retrieved2 = await repository.getUtxos(address2);
+            const retrieved1 = await collectUtxos(repository, address1);
+            const retrieved2 = await collectUtxos(repository, address2);
 
             expect(retrieved1).toHaveLength(1);
             expect(retrieved1[0].txid).toBe("tx1");
@@ -482,7 +492,7 @@ describe("SQLiteWalletRepository", () => {
         it("should round-trip tap tree and leaf scripts for UTXOs", async () => {
             const utxo = createMockUtxo("tx-tap-utxo", 0, 7000);
             await repository.saveUtxos(testAddress, [utxo]);
-            const [retrieved] = await repository.getUtxos(testAddress);
+            const [retrieved] = await collectUtxos(repository, testAddress);
 
             expect(retrieved.tapTree).toBeInstanceOf(Uint8Array);
             expect(hex.encode(retrieved.tapTree)).toBe(hex.encode(utxo.tapTree));
@@ -496,7 +506,7 @@ describe("SQLiteWalletRepository", () => {
 
     describe("Transaction history", () => {
         it("should return empty array when no transactions exist", async () => {
-            const txs = await repository.getTransactionHistory(testAddress);
+            const txs = await collectTransactionHistory(repository, testAddress);
             expect(txs).toEqual([]);
         });
 
@@ -516,7 +526,7 @@ describe("SQLiteWalletRepository", () => {
             );
 
             await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved).toHaveLength(3);
             expect(retrieved[0].key.arkTxid).toBe("atx1");
@@ -543,7 +553,7 @@ describe("SQLiteWalletRepository", () => {
             const tx3 = createMockTransaction({ arkTxid: "atx-mid" }, "SENT" as TxType, 3000, 2000);
 
             await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved).toHaveLength(3);
             expect(retrieved[0].key.arkTxid).toBe("atx-early");
@@ -563,7 +573,7 @@ describe("SQLiteWalletRepository", () => {
             );
             await repository.saveTransactions(testAddress, [tx1Updated]);
 
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
             expect(retrieved).toHaveLength(1);
             expect(retrieved[0].amount).toBe(15000);
         });
@@ -573,7 +583,7 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveTransactions(testAddress, [tx1]);
 
             await repository.deleteTransactions(testAddress);
-            const retrieved = await repository.getTransactionHistory(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved).toEqual([]);
         });
@@ -596,7 +606,7 @@ describe("SQLiteWalletRepository", () => {
             };
 
             await repository.saveTransactions(testAddress, [tx]);
-            const [retrieved] = await repository.getTransactionHistory(testAddress);
+            const [retrieved] = await collectTransactionHistory(repository, testAddress);
 
             expect(retrieved.settled).toBe(true);
             expect(retrieved.assets).toEqual([
@@ -620,8 +630,8 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveTransactions(address1, [tx1]);
             await repository.saveTransactions(address2, [tx2]);
 
-            const retrieved1 = await repository.getTransactionHistory(address1);
-            const retrieved2 = await repository.getTransactionHistory(address2);
+            const retrieved1 = await collectTransactionHistory(repository, address1);
+            const retrieved2 = await collectTransactionHistory(repository, address2);
 
             expect(retrieved1).toHaveLength(1);
             expect(retrieved1[0].key.arkTxid).toBe("atx1");
@@ -690,9 +700,9 @@ describe("SQLiteWalletRepository", () => {
             ]);
             await repository.clear();
 
-            expect(await repository.getVtxos(testAddress)).toEqual([]);
-            expect(await repository.getUtxos(testAddress)).toEqual([]);
-            expect(await repository.getTransactionHistory(testAddress)).toEqual([]);
+            expect(await collectVtxos(repository, testAddress)).toEqual([]);
+            expect(await collectUtxos(repository, testAddress)).toEqual([]);
+            expect(await collectTransactionHistory(repository, testAddress)).toEqual([]);
             expect(await repository.getWalletState()).toBeNull();
         });
     });
@@ -707,8 +717,8 @@ describe("SQLiteWalletRepository", () => {
             await repoA.saveVtxos(testAddress, [createMockVtxo("tx-a", 0, 1000)]);
             await repoB.saveVtxos(testAddress, [createMockVtxo("tx-b", 0, 2000)]);
 
-            const fromA = await repoA.getVtxos(testAddress);
-            const fromB = await repoB.getVtxos(testAddress);
+            const fromA = await collectVtxos(repoA, testAddress);
+            const fromB = await collectVtxos(repoB, testAddress);
 
             expect(fromA).toHaveLength(1);
             expect(fromA[0].txid).toBe("tx-a");

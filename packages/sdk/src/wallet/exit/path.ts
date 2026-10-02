@@ -1,3 +1,4 @@
+import { collectContracts } from "../../repositories/contractRepository";
 import { hex } from "@scure/base";
 import { contractHandlers } from "../../contracts/handlers";
 import { PathSelection } from "../../contracts/types";
@@ -46,7 +47,7 @@ export async function resolveUnilateralPath(params: {
     const { vtxo, scriptHex, contractRepository } = params;
 
     const contract = contractRepository
-        ? (await contractRepository.getContracts({ script: scriptHex }))[0]
+        ? (await collectContracts(contractRepository, { script: scriptHex }))[0]
         : undefined;
 
     if (contract) {

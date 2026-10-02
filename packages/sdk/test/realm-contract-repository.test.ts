@@ -1,147 +1,8 @@
+import { createMockRealm as mockRealm } from "../../../config/test-helpers/mockRealm";
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { RealmContractRepository } from "../src/repositories/realm/contractRepository";
 import type { Contract, ContractState } from "../src/contracts/types";
-
-// ── Mock Realm ──────────────────────────────────────────────────────────
-// A lightweight in-memory mock that simulates the Realm API surface
-// used by RealmContractRepository.
-
-function createMockRealm() {
-    // schema name -> (primary key value -> object)
-    const store = new Map<string, Map<string, any>>();
-
-    // Map schema names to their PK fields
-    const pkFields: Record<string, string> = {
-        ArkVtxo: "pk",
-        ArkUtxo: "pk",
-        ArkTransaction: "pk",
-        ArkWalletState: "key",
-        ArkContract: "script",
-    };
-
-    function getSchemaStore(schemaName: string): Map<string, any> {
-        if (!store.has(schemaName)) {
-            store.set(schemaName, new Map());
-        }
-        return store.get(schemaName)!;
-    }
-
-    function getPk(schemaName: string, obj: any): string {
-        const field = pkFields[schemaName] ?? "pk";
-        return String(obj[field]);
-    }
-
-    /**
-     * Parse a Realm-style filter string and evaluate it against an object.
-     * Supports: `field == $N`, `AND`, `OR`, and parentheses grouping.
-     */
-    function matchesFilter(obj: any, query: string, args: any[]): boolean {
-        const andParts = splitTopLevel(query, " AND ");
-        return andParts.every((part) => {
-            const trimmed = part.trim();
-            // Handle OR groups like (field == $0 OR field == $1)
-            if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
-                const inner = trimmed.slice(1, -1);
-                const orParts = inner.split(" OR ");
-                return orParts.some((orPart) => evaluateCondition(obj, orPart.trim(), args));
-            }
-            return evaluateCondition(obj, trimmed, args);
-        });
-    }
-
-    function splitTopLevel(str: string, delimiter: string): string[] {
-        const parts: string[] = [];
-        let depth = 0;
-        let current = "";
-        let i = 0;
-        while (i < str.length) {
-            if (str[i] === "(") depth++;
-            if (str[i] === ")") depth--;
-            if (depth === 0 && str.substring(i, i + delimiter.length) === delimiter) {
-                parts.push(current);
-                current = "";
-                i += delimiter.length;
-                continue;
-            }
-            current += str[i];
-            i++;
-        }
-        if (current) parts.push(current);
-        return parts;
-    }
-
-    function evaluateCondition(obj: any, condition: string, args: any[]): boolean {
-        // `field == null` — how a nullable column (e.g. `watch` on rows
-        // written before it existed) is matched.
-        const nullMatch = condition.match(/(\w+)\s*==\s*null/);
-        if (nullMatch) {
-            const value = obj[nullMatch[1]];
-            return value === null || value === undefined;
-        }
-        const match = condition.match(/(\w+)\s*==\s*\$(\d+)/);
-        if (!match) return true; // skip unknown conditions
-        const field = match[1];
-        const argIdx = parseInt(match[2], 10);
-        return obj[field] === args[argIdx];
-    }
-
-    function createFilteredResult(items: any[], schemaName: string) {
-        const result: any = {
-            filtered(query: string, ...args: any[]) {
-                const filtered = items.filter((item) => matchesFilter(item, query, args));
-                return createFilteredResult(filtered, schemaName);
-            },
-            [Symbol.iterator]: () => items[Symbol.iterator](),
-            length: items.length,
-            snapshot() {
-                return [...items];
-            },
-        };
-        return result;
-    }
-
-    const realm = {
-        write(callback: () => void) {
-            callback();
-        },
-
-        create(schemaName: string, obj: any, mode?: string) {
-            const schemaStore = getSchemaStore(schemaName);
-            const pk = getPk(schemaName, obj);
-            if (mode === "modified") {
-                const existing = schemaStore.get(pk);
-                if (existing) {
-                    schemaStore.set(pk, { ...existing, ...obj });
-                } else {
-                    schemaStore.set(pk, { ...obj });
-                }
-            } else {
-                schemaStore.set(pk, { ...obj });
-            }
-        },
-
-        objects(schemaName: string) {
-            const schemaStore = getSchemaStore(schemaName);
-            const items = [...schemaStore.values()];
-            return createFilteredResult(items, schemaName);
-        },
-
-        delete(objects: any) {
-            const toRemove = [...objects];
-            for (const [schemaName, schemaStore] of store) {
-                const pkField = pkFields[schemaName] ?? "pk";
-                for (const item of toRemove) {
-                    const pk = String(item[pkField]);
-                    if (schemaStore.has(pk)) {
-                        schemaStore.delete(pk);
-                    }
-                }
-            }
-        },
-    };
-
-    return realm;
-}
 
 // ── Test fixtures ───────────────────────────────────────────────────────
 
@@ -160,11 +21,17 @@ function createMockContract(overrides: Partial<Contract> = {}): Contract {
 // ── Tests ───────────────────────────────────────────────────────────────
 
 describe("RealmContractRepository", () => {
-    let realm: ReturnType<typeof createMockRealm>;
+    let realm: ReturnType<typeof mockRealm>;
     let repository: RealmContractRepository;
 
     beforeEach(() => {
-        realm = createMockRealm();
+        realm = mockRealm({
+            ArkVtxo: "pk",
+            ArkUtxo: "pk",
+            ArkTransaction: "pk",
+            ArkWalletState: "key",
+            ArkContract: "script",
+        });
         repository = new RealmContractRepository(realm);
     });
 
@@ -191,7 +58,7 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(contract1);
             await repository.saveContract(contract2);
 
-            const retrieved = await repository.getContracts();
+            const retrieved = await collectContracts(repository);
             expect(retrieved).toHaveLength(2);
 
             const scripts = retrieved.map((c) => c.script).sort();
@@ -211,7 +78,7 @@ describe("RealmContractRepository", () => {
             });
 
             await repository.saveContract(contract);
-            const [retrieved] = await repository.getContracts();
+            const [retrieved] = await collectContracts(repository);
 
             expect(retrieved.script).toBe("script-full");
             expect(retrieved.address).toBe("addr-full");
@@ -237,7 +104,7 @@ describe("RealmContractRepository", () => {
             });
 
             await repository.saveContract(contract);
-            const [retrieved] = await repository.getContracts();
+            const [retrieved] = await collectContracts(repository);
 
             expect(retrieved.label).toBeUndefined();
             expect(retrieved.metadata).toBeUndefined();
@@ -267,11 +134,11 @@ describe("RealmContractRepository", () => {
                 }),
             );
 
-            const active = await repository.getContracts({ state: "active" });
+            const active = await collectContracts(repository, { state: "active" });
             expect(active).toHaveLength(2);
             expect(active.every((c) => c.state === "active")).toBe(true);
 
-            const inactive = await repository.getContracts({
+            const inactive = await collectContracts(repository, {
                 state: "inactive",
             });
             expect(inactive).toHaveLength(1);
@@ -282,7 +149,7 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s1", state: "active" }));
             await repository.saveContract(createMockContract({ script: "s2", state: "inactive" }));
 
-            const both = await repository.getContracts({
+            const both = await collectContracts(repository, {
                 state: ["active", "inactive"],
             });
             expect(both).toHaveLength(2);
@@ -297,7 +164,7 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
             await repository.saveContract(createMockContract({ script: "s3", type: "vhtlc" }));
 
-            const vhtlc = await repository.getContracts({ type: "vhtlc" });
+            const vhtlc = await collectContracts(repository, { type: "vhtlc" });
             expect(vhtlc).toHaveLength(2);
             expect(vhtlc.every((c) => c.type === "vhtlc")).toBe(true);
         });
@@ -307,7 +174,7 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s2", type: "vhtlc" }));
             await repository.saveContract(createMockContract({ script: "s3", type: "custom" }));
 
-            const filtered = await repository.getContracts({
+            const filtered = await collectContracts(repository, {
                 type: ["default", "vhtlc"],
             });
             expect(filtered).toHaveLength(2);
@@ -324,8 +191,10 @@ describe("RealmContractRepository", () => {
                 createMockContract({ script: "s2", watch: "awaiting-funds" }),
             );
 
-            expect((await repository.getContracts({ script: "s1" }))[0].watch).toBe("retained");
-            expect((await repository.getContracts({ script: "s2" }))[0].watch).toBe(
+            expect((await collectContracts(repository, { script: "s1" }))[0].watch).toBe(
+                "retained",
+            );
+            expect((await collectContracts(repository, { script: "s2" }))[0].watch).toBe(
                 "awaiting-funds",
             );
         });
@@ -337,10 +206,10 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s1", watch: "watched" }));
             await repository.saveContract(createMockContract({ script: "s2", watch: "retained" }));
 
-            const watched = await repository.getContracts({ watch: "watched" });
+            const watched = await collectContracts(repository, { watch: "watched" });
             expect(watched.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
 
-            const retained = await repository.getContracts({ watch: "retained" });
+            const retained = await collectContracts(repository, { watch: "retained" });
             expect(retained.map((c) => c.script)).toEqual(["s2"]);
         });
     });
@@ -352,7 +221,7 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s1" }));
             await repository.saveContract(createMockContract({ script: "s2" }));
 
-            const result = await repository.getContracts({ script: "s1" });
+            const result = await collectContracts(repository, { script: "s1" });
             expect(result).toHaveLength(1);
             expect(result[0].script).toBe("s1");
         });
@@ -362,7 +231,7 @@ describe("RealmContractRepository", () => {
             await repository.saveContract(createMockContract({ script: "s2" }));
             await repository.saveContract(createMockContract({ script: "s3" }));
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 script: ["s1", "s3"],
             });
             expect(result).toHaveLength(2);
@@ -372,7 +241,7 @@ describe("RealmContractRepository", () => {
         it("should return empty array when script does not exist", async () => {
             await repository.saveContract(createMockContract({ script: "s1" }));
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 script: "nonexistent",
             });
             expect(result).toEqual([]);
@@ -405,7 +274,7 @@ describe("RealmContractRepository", () => {
                 }),
             );
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 state: "active",
                 type: "vhtlc",
             });
@@ -443,7 +312,7 @@ describe("RealmContractRepository", () => {
                 }),
             );
 
-            const result = await repository.getContracts({
+            const result = await collectContracts(repository, {
                 state: ["active", "inactive"],
                 type: "vhtlc",
             });
@@ -461,7 +330,7 @@ describe("RealmContractRepository", () => {
 
             await repository.deleteContract("s1");
 
-            const remaining = await repository.getContracts();
+            const remaining = await collectContracts(repository);
             expect(remaining).toHaveLength(1);
             expect(remaining[0].script).toBe("s2");
         });
@@ -489,7 +358,7 @@ describe("RealmContractRepository", () => {
             });
             await repository.saveContract(updated);
 
-            const contracts = await repository.getContracts();
+            const contracts = await collectContracts(repository);
             expect(contracts).toHaveLength(1);
             expect(contracts[0].state).toBe("inactive");
             expect(contracts[0].label).toBe("Updated");
@@ -506,7 +375,7 @@ describe("RealmContractRepository", () => {
 
             await repository.clear();
 
-            const contracts = await repository.getContracts();
+            const contracts = await collectContracts(repository);
             expect(contracts).toEqual([]);
         });
     });

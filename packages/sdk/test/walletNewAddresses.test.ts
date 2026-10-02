@@ -1,3 +1,4 @@
+import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     Wallet,
@@ -252,7 +253,7 @@ describe("Wallet.getNewAddresses", () => {
 
             const [minted] = await wallet.getNewAddresses();
 
-            const row = (await contractRepo.getContracts({})).find(
+            const row = (await collectContracts(contractRepo, {})).find(
                 (c) => c.script === minted.contract.script,
             );
             expect(row).toBeDefined();
@@ -541,7 +542,7 @@ describe("Wallet.getNewAddresses", () => {
             // before it exists would compare against an empty repository and
             // prove nothing.
             await wallet.getContractManager();
-            const before = await contractRepo.getContracts({});
+            const before = await collectContracts(contractRepo, {});
             expect(before.length).toBeGreaterThan(0);
             const beforeByScript = new Map(before.map((c) => [c.script, c.createdAt]));
 
@@ -552,7 +553,7 @@ describe("Wallet.getNewAddresses", () => {
             // `createdAt`, and no new row written.
             expect(beforeByScript.has(minted.contract.script)).toBe(true);
             expect(minted.contract.createdAt).toBe(beforeByScript.get(minted.contract.script));
-            expect(await contractRepo.getContracts({})).toHaveLength(before.length);
+            expect(await collectContracts(contractRepo, {})).toHaveLength(before.length);
             expect(minted.contract.state).toBe("active");
 
             await wallet.dispose();

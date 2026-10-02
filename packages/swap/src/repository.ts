@@ -1,31 +1,15 @@
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
+import {
+    assertPageRequest,
+    collectPages,
+    pageResult,
+    type PageRequest,
+    type PageResult,
+} from "@arkade-os/sdk";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
-import type { SwapRecord } from "./client/record";
 import type { RfqSwapState } from "./rfqSwapState";
-
-/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
-export const RFQ_SWAP_MAX_PAGE_SIZE = 500;
-
-/** @deprecated Read swap history with `client.swaps()`. Moved off the package root to `@arkade-os/swap/protocol`. */
-export interface RfqHistoryCursor {
-    updatedAt: number;
-    rfqId: string;
-}
-
-export function assertRfqSwapPageLimit(limit: number): void {
-    if (!Number.isInteger(limit) || limit < 1 || limit > RFQ_SWAP_MAX_PAGE_SIZE) {
-        throw new RangeError(
-            `RFQ swap page limit must be an integer from 1 to ${RFQ_SWAP_MAX_PAGE_SIZE}`,
-        );
-    }
-}
-
-export function assertRfqSwapSince(since: number): void {
-    if (!Number.isSafeInteger(since) || since < 0) {
-        throw new RangeError("RFQ history since must be a non-negative Unix timestamp in seconds");
-    }
-}
+import type { SwapRecord } from "./client/record";
 
 /** A cached registry discovery result. Refetchable, but must survive a cold boot:
  * serving it stale keeps quoting alive while a registry is down. */
@@ -39,15 +23,29 @@ export interface MarketsCacheEntry {
 export const marketsCacheKey = (network: string, registry: string) =>
     `arkade-intents-markets-${network}-${registry}`;
 
+export interface RfqSwapPageFilter {
+    state?: RfqSwapState;
+    /** Inclusive Unix seconds. */
+    since?: number;
+}
+
+export interface RfqSwapPageCursor {
+    updatedAt: number;
+    rfqId: string;
+}
+
+export function assertRfqSwapPageFilter(filter: RfqSwapPageFilter): void {
+    if (filter.since !== undefined && (!Number.isSafeInteger(filter.since) || filter.since < 0)) {
+        throw new RangeError("RFQ history since must be non-negative Unix seconds");
+    }
+}
+
 /**
  * Everything the package persists: versioned interface, AsyncDisposable, one backend
  * per platform. Durable records and rebuildable state (scan cursor, markets cache) share
  * one store because they share a lifetime: one wallet on one device.
  *
- * ponytail: no query filters — every consumer reads all swaps and filters
- * in memory; add a filter type when a consumer needs subset queries.
- * RFQ history also has an optional state-scoped cursor read. Custom stores
- * without it keep the legacy all-record fallback.
+ * Collection reads are paged. RFQ reads may filter by state and date.
  */
 export interface AssetSwapRepository extends AsyncDisposable {
     /** Bumped on every shape change (5: v2 swap-record store) so an implementor built
@@ -61,9 +59,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
      * comes back a string, a `Set`/`Map` empty, and a `bigint` throws — unlike
      * IndexedDB's structured clone. Keep consumer-added fields JSON-safe. */
     saveSwap(swap: AssetSwap): Promise<void>;
-    /** All stored swaps, in no particular order — `getAssetSwaps` is the
-     * canonical newest-first read. */
-    getAllSwaps(): Promise<AssetSwap[]>;
+    getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>>;
 
     /**
      * Insert or replace a monitored RFQ swap by `rfqId`.
@@ -74,20 +70,10 @@ export interface AssetSwapRepository extends AsyncDisposable {
     saveRfqSwap(record: RfqSwapRecord): Promise<void>;
     /** One record by key. */
     getRfqSwap(rfqId: string): Promise<RfqSwapRecord | undefined>;
-    /** Every stored RFQ swap record, in no particular order. Unbounded. */
-    getAllRfqSwaps(): Promise<RfqSwapRecord[]>;
-    /** Optional keyset page, ordered by rfqId within one state. `afterId` is exclusive; limit 1–500. */
-    getRfqSwapsPage?(
-        state: RfqSwapState,
-        afterId: string | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]>;
-    getRfqSwapsUpdatedPage?(
-        state: RfqSwapState,
-        since: number,
-        after: RfqHistoryCursor | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]>;
+    getRfqSwapsPage(
+        filter: RfqSwapPageFilter,
+        page: PageRequest<RfqSwapPageCursor>,
+    ): Promise<PageResult<RfqSwapRecord, RfqSwapPageCursor>>;
     /** Drop one record. Only explicit pruning calls this; restore keeps history. */
     removeRfqSwap(rfqId: string): Promise<void>;
 
@@ -104,8 +90,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
     /** `undefined` on a miss — the ordinary answer for a first `accept()`, and what
      * makes it idempotent. */
     getSwapRecord(id: string): Promise<SwapRecord | undefined>;
-    /** Every stored v2 record, in no particular order. */
-    getAllSwapRecords(): Promise<SwapRecord[]>;
+    getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>>;
     /** Drop one, once it is past retention. */
     removeSwapRecord(id: string): Promise<void>;
 
@@ -137,8 +122,8 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         this.swaps.set(swap.id, swap);
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        return [...this.swaps.values()];
+    async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
+        return pageMap(this.swaps, page);
     }
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
@@ -149,48 +134,32 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         return this.rfqSwaps.get(rfqId);
     }
 
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        return [...this.rfqSwaps.values()];
-    }
-
     async getRfqSwapsPage(
-        state: RfqSwapState,
-        afterId: string | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]> {
-        assertRfqSwapPageLimit(limit);
-        return [...this.rfqSwaps.values()]
+        filter: RfqSwapPageFilter,
+        page: PageRequest<RfqSwapPageCursor>,
+    ): Promise<PageResult<RfqSwapRecord, RfqSwapPageCursor>> {
+        assertPageRequest(page);
+        assertRfqSwapPageFilter(filter);
+        const rows = [...this.rfqSwaps.values()]
             .filter(
                 (record) =>
-                    record.state === state && (afterId === undefined || record.rfqId > afterId),
-            )
-            .sort((a, b) => (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0))
-            .slice(0, limit);
-    }
-
-    async getRfqSwapsUpdatedPage(
-        state: RfqSwapState,
-        since: number,
-        after: RfqHistoryCursor | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]> {
-        assertRfqSwapPageLimit(limit);
-        assertRfqSwapSince(since);
-        return [...this.rfqSwaps.values()]
-            .filter(
-                (record) =>
-                    record.state === state &&
-                    record.updatedAt >= since &&
-                    (!after ||
-                        record.updatedAt > after.updatedAt ||
-                        (record.updatedAt === after.updatedAt && record.rfqId > after.rfqId)),
+                    (filter.state === undefined || record.state === filter.state) &&
+                    (filter.since === undefined || record.updatedAt >= filter.since) &&
+                    (!page.after ||
+                        record.updatedAt > page.after.updatedAt ||
+                        (record.updatedAt === page.after.updatedAt &&
+                            record.rfqId > page.after.rfqId)),
             )
             .sort(
                 (a, b) =>
                     a.updatedAt - b.updatedAt ||
                     (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0),
             )
-            .slice(0, limit);
+            .slice(0, page.limit + 1);
+        return pageResult(rows, page.limit, (record) => ({
+            updatedAt: record.updatedAt,
+            rfqId: record.rfqId,
+        }));
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
@@ -205,8 +174,8 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         return this.records.get(id);
     }
 
-    async getAllSwapRecords(): Promise<SwapRecord[]> {
-        return [...this.records.values()];
+    async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {
+        return pageMap(this.records, page);
     }
 
     async removeSwapRecord(id: string): Promise<void> {
@@ -249,3 +218,30 @@ export class InMemoryAssetSwapRepository implements AssetSwapRepository {
         // durability on every backend. Callers wanting deletion call clear().
     }
 }
+
+function pageMap<Item>(records: Map<string, Item>, page: PageRequest): PageResult<Item> {
+    assertPageRequest(page);
+    const rows = [...records]
+        .filter(([id]) => page.after === undefined || id > page.after)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .slice(0, page.limit + 1);
+    const result = pageResult(rows, page.limit, ([id]) => id);
+    return {
+        items: result.items.map(([, item]) => item),
+        ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+    };
+}
+
+export const collectAssetSwaps = (repository: Pick<AssetSwapRepository, "getAssetSwapsPage">) =>
+    collectPages((page: PageRequest<string>) => repository.getAssetSwapsPage(page));
+
+export const collectRfqSwaps = (
+    repository: Pick<AssetSwapRepository, "getRfqSwapsPage">,
+    filter: RfqSwapPageFilter = {},
+) =>
+    collectPages((page: PageRequest<RfqSwapPageCursor>) =>
+        repository.getRfqSwapsPage(filter, page),
+    );
+
+export const collectSwapRecords = (repository: Pick<AssetSwapRepository, "getSwapRecordsPage">) =>
+    collectPages((page: PageRequest<string>) => repository.getSwapRecordsPage(page));

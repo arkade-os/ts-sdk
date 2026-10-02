@@ -45,7 +45,7 @@ import { isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps } from "../restore";
 import { toRestoreTx } from "../registerRestore";
 import { preimageForSwapRecord } from "../store";
-import type { AssetSwapRepository } from "../repository";
+import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import {
     RfqSwapManager,
     isRfqConfigurationRefusal,
@@ -305,7 +305,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             remember,
             // Terminal records stay readable but are excluded from the manager's read, sparing
             // a rebuild per record just to file it `finished`. The index still learns their
-            // `rfqId` (see `getAllRfqSwaps`).
+            // `rfqId` (see `getRfqSwapsPage`).
             (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
         ));
 
@@ -668,7 +668,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         });
 
         // After the scan: a record `accept()` persisted meanwhile is matched, not rebuilt.
-        const { offer } = splitRecords(await store.getAllSwapRecords());
+        const { offer } = splitRecords(await collectSwapRecords(store));
         const current = new Map(offer.map((record) => [record.id, record]));
         const byDeposit = new Map(
             offer
@@ -783,7 +783,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     const restore = async (): Promise<void> => {
         if (!repository) return;
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
-        const all = await repository.getAllSwapRecords();
+        const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
         for (const record of [...corridor, ...offer]) records.set(record.id, record);
 

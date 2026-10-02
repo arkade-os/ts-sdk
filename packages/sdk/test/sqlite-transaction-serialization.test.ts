@@ -1,3 +1,4 @@
+import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
@@ -53,7 +54,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
         const db = createNodeSQLExecutor();
         const intents = new SQLiteIntentRepository(db);
         const vtxs = new SQLiteVirtualTxRepository(db);
-        await intents.getIntents(); // init
+        await collectIntents(intents); // init
         await vtxs.getVirtualTx("x"); // init
 
         await Promise.all([
@@ -63,7 +64,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
             vtxs.upsertVirtualTxs([vtx("t2")]),
         ]);
 
-        expect((await intents.getIntents()).map((i) => i.intentTxId).sort()).toEqual(["a", "b"]);
+        expect((await collectIntents(intents)).map((i) => i.intentTxId).sort()).toEqual(["a", "b"]);
         expect(await vtxs.getVirtualTx("t1")).not.toBeNull();
         expect(await vtxs.getVirtualTx("t2")).not.toBeNull();
     });
@@ -71,12 +72,12 @@ describe("SQLite transaction serialization (shared connection)", () => {
     it("serializes concurrent saveIntent on one repository", async () => {
         const db = createNodeSQLExecutor();
         const intents = new SQLiteIntentRepository(db);
-        await intents.getIntents();
+        await collectIntents(intents);
 
         const ids = Array.from({ length: 8 }, (_, i) => `i${i}`);
         await Promise.all(ids.map((id) => intents.saveIntent(intent(id))));
 
-        expect((await intents.getIntents()).map((i) => i.intentTxId).sort()).toEqual(
+        expect((await collectIntents(intents)).map((i) => i.intentTxId).sort()).toEqual(
             [...ids].sort(),
         );
     });
@@ -105,7 +106,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
         await db.run(LEGACY_VTXOS);
         const wallet = new SQLiteWalletRepository(db);
         const intents = new SQLiteIntentRepository(db);
-        await intents.getIntents();
+        await collectIntents(intents);
 
         // getWalletState triggers the migration transaction; race it against an
         // intent transaction on the same connection.
@@ -115,7 +116,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
             "PRAGMA table_info(ark_vtxos)",
         );
         expect(cols.find((c) => c.name === "script")?.notnull).toBe(1); // migrated
-        expect((await intents.getIntents()).map((i) => i.intentTxId)).toContain("z");
+        expect((await collectIntents(intents)).map((i) => i.intentTxId)).toContain("z");
     });
 
     it("serializes two wallet-repo migrations on a legacy table without a script column", async () => {

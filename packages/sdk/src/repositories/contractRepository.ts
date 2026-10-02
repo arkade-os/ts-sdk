@@ -1,4 +1,5 @@
 import { Contract, ContractState, ContractWatchState } from "../contracts/types";
+import { collectPages, type PageRequest, type PageResult } from "./page";
 
 /**
  * Filter options for querying contracts.
@@ -30,11 +31,11 @@ export interface ContractRepository extends AsyncDisposable {
      */
     clear(): Promise<void>;
 
-    /**
-     * Get contracts with optional filter.
-     * Returns all contracts if no filter provided.
-     */
-    getContracts(filter?: ContractFilter): Promise<Contract[]>;
+    /** Bounded contracts in script order; `after` is exclusive. */
+    getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>>;
 
     /**
      * Save or update a contract.
@@ -46,3 +47,16 @@ export interface ContractRepository extends AsyncDisposable {
      */
     deleteContract(script: string): Promise<void>;
 }
+
+/** No row satisfies an empty array, so a backend building a predicate must
+ * short-circuit rather than omit the clause and match everything. */
+export function contractFilterMatchesNothing(filter?: ContractFilter): boolean {
+    return [filter?.script, filter?.state, filter?.type, filter?.watch].some(
+        (value) => Array.isArray(value) && value.length === 0,
+    );
+}
+
+export const collectContracts = (
+    repository: Pick<ContractRepository, "getContractsPage">,
+    filter?: ContractFilter,
+) => collectPages((page: PageRequest) => repository.getContractsPage(filter, page));

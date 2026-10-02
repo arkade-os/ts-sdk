@@ -1,4 +1,51 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, type Outpoint } from "../wallet";
+import type { TxKey } from "../wallet";
+import {
+    assertCursorAdvanced,
+    collectPages,
+    MAX_COLLECT_PAGES,
+    MAX_PAGE_SIZE,
+    type PageRequest,
+    type PageResult,
+} from "./page";
+import { scriptFromArkAddress } from "./scriptFromAddress";
+import { isVtxoSpent } from "../wallet/vtxo";
+
+export interface TransactionHistoryPageFilter {
+    address: string;
+    /** Inclusive milliseconds since epoch. */
+    since?: number;
+}
+
+export interface TransactionHistoryPageCursor {
+    createdAt: number;
+    key: TxKey;
+}
+
+export function compareTxKeys(a: TxKey, b: TxKey): number {
+    for (const field of ["boardingTxid", "commitmentTxid", "arkTxid"] as const) {
+        if (a[field] < b[field]) return -1;
+        if (a[field] > b[field]) return 1;
+    }
+    return 0;
+}
+
+export function compareHistoryCursors(
+    a: TransactionHistoryPageCursor,
+    b: TransactionHistoryPageCursor,
+): number {
+    return a.createdAt - b.createdAt || compareTxKeys(a.key, b.key);
+}
+
+export function compareOutpoints(a: Outpoint, b: Outpoint): number {
+    return a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : a.vout - b.vout;
+}
+
+export function assertHistoryPageFilter(filter: TransactionHistoryPageFilter): void {
+    if (filter.since !== undefined && (!Number.isSafeInteger(filter.since) || filter.since < 0)) {
+        throw new RangeError("history since must be non-negative Unix milliseconds");
+    }
+}
 
 export interface WalletState {
     /** Arbitrary stored wallet settings. */
@@ -23,6 +70,25 @@ export interface VtxoRepositoryKey {
     address?: string;
 }
 
+export interface ScriptVtxoCursor extends Outpoint {
+    address: string;
+}
+
+export interface StoredVtxo {
+    address: string;
+    vtxo: ExtendedVirtualCoin;
+}
+
+export function compareScriptVtxoCursors(a: ScriptVtxoCursor, b: ScriptVtxoCursor): number {
+    return a.address < b.address ? -1 : a.address > b.address ? 1 : compareOutpoints(a, b);
+}
+
+/** `unspentOnly` omits spent outputs. A page may then hold fewer than `limit`
+ * items and still carry `nextCursor`. */
+export interface ScriptVtxoPageOptions {
+    unspentOnly?: boolean;
+}
+
 export interface WalletRepository extends AsyncDisposable {
     readonly version: 1;
 
@@ -31,8 +97,10 @@ export interface WalletRepository extends AsyncDisposable {
      */
     clear(): Promise<void>;
 
-    /** Fetch stored virtual outputs for an address. */
-    getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
+    getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>>;
     /** Save virtual outputs for an address. */
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
     /** Delete stored virtual outputs for an address. */
@@ -40,15 +108,15 @@ export interface WalletRepository extends AsyncDisposable {
 
     /**
      * Fetch stored virtual outputs for a script.
+     * An outpoint may appear more than once across address buckets, including
+     * within one page. Deduplicate by outpoint or use collectScriptVtxos.
      * @optional SDK backends implement this; custom backends fall back to Tier 1.
      */
-    getVtxosForScript?(script: string): Promise<ExtendedVirtualCoin[]>;
-
-    /** Fetch a script set without one read per contract; `unspentOnly` omits spent rows. */
-    getVtxosForScripts?(
-        scripts: string[],
-        options?: { unspentOnly?: boolean },
-    ): Promise<ExtendedVirtualCoin[]>;
+    getVtxosForScriptPage?(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>>;
 
     /**
      * Save virtual outputs for a script.
@@ -62,15 +130,20 @@ export interface WalletRepository extends AsyncDisposable {
      */
     deleteVtxosForScript?(script: string): Promise<void>;
 
-    /** Fetch stored boarding inputs for an address. */
-    getUtxos(address: string): Promise<ExtendedCoin[]>;
+    getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>>;
     /** Save boarding inputs for an address. */
     saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
     /** Delete stored boarding inputs for an address. */
     deleteUtxos(address: string): Promise<void>;
 
-    /** Fetch stored transaction history for an address. */
-    getTransactionHistory(address: string): Promise<ArkTransaction[]>;
+    /** History in ascending creation time and transaction-key order; `after` is exclusive. */
+    getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>>;
     /** Save transaction history for an address. */
     saveTransactions(address: string, txs: ArkTransaction[]): Promise<void>;
     /** Delete stored transaction history for an address. */
@@ -80,4 +153,95 @@ export interface WalletRepository extends AsyncDisposable {
     getWalletState(): Promise<WalletState | null>;
     /** Save wallet state. */
     saveWalletState(state: WalletState): Promise<void>;
+}
+
+export const collectVtxos = (repository: Pick<WalletRepository, "getVtxosPage">, address: string) =>
+    collectPages((page: PageRequest<Outpoint>) => repository.getVtxosPage(address, page));
+
+export const collectUtxos = (repository: Pick<WalletRepository, "getUtxosPage">, address: string) =>
+    collectPages((page: PageRequest<Outpoint>) => repository.getUtxosPage(address, page));
+
+export const collectTransactionHistory = (
+    repository: Pick<WalletRepository, "getTransactionHistoryPage">,
+    address: string,
+) =>
+    collectPages((page: PageRequest<TransactionHistoryPageCursor>) =>
+        repository.getTransactionHistoryPage({ address }, page),
+    );
+
+export async function collectScriptVtxos(
+    repository: WalletRepository,
+    script: string,
+    options?: ScriptVtxoPageOptions,
+): Promise<ExtendedVirtualCoin[]> {
+    if (!repository.getVtxosForScriptPage) {
+        throw new Error(
+            "script VTXO paging is unavailable; use collectVtxos with a known address and filter by script",
+        );
+    }
+    const byOutpoint = new Map<string, StoredVtxo>();
+    let after: ScriptVtxoCursor | undefined;
+    let pages = 0;
+    do {
+        if (++pages > MAX_COLLECT_PAGES) {
+            throw new Error("collectScriptVtxos: page limit exceeded");
+        }
+        const page = await repository.getVtxosForScriptPage(
+            script,
+            { limit: MAX_PAGE_SIZE, after },
+            options,
+        );
+        assertCursorAdvanced(after, page.nextCursor);
+        for (const row of page.items) {
+            const key = `${row.vtxo.txid}:${row.vtxo.vout}`;
+            const previous = byOutpoint.get(key);
+            if (!previous || shouldReplaceScriptVtxo(previous, row)) byOutpoint.set(key, row);
+        }
+        after = page.nextCursor;
+    } while (after !== undefined);
+    return [...byOutpoint.values()].map((row) => row.vtxo);
+}
+
+/** Unspent `rows` that no spent copy of the same outpoint in `copies` outranks, so
+ * collecting them matches collecting everything and dropping spent winners. */
+export function unspentScriptVtxos(rows: StoredVtxo[], copies: StoredVtxo[]): StoredVtxo[] {
+    const spent = copies.filter((copy) => isVtxoSpent(copy.vtxo));
+    return rows.filter(
+        (row) =>
+            !isVtxoSpent(row.vtxo) &&
+            !spent.some(
+                (copy) =>
+                    copy.address !== row.address &&
+                    copy.vtxo.txid === row.vtxo.txid &&
+                    copy.vtxo.vout === row.vtxo.vout &&
+                    shouldReplaceScriptVtxo(row, copy),
+            ),
+    );
+}
+
+function shouldReplaceScriptVtxo(existing: StoredVtxo, incoming: StoredVtxo): boolean {
+    const canonical = (row: StoredVtxo) => {
+        try {
+            return scriptFromArkAddress(row.address) === row.vtxo.script;
+        } catch {
+            return false;
+        }
+    };
+    if (canonical(incoming) !== canonical(existing)) return canonical(incoming);
+    // A recorded spend wins over an unspent duplicate of the same outpoint.
+    if (
+        existing.vtxo.isSpent !== incoming.vtxo.isSpent &&
+        (existing.vtxo.isSpent === true || incoming.vtxo.isSpent === true)
+    ) {
+        return incoming.vtxo.isSpent === true;
+    }
+    const weight = (row: StoredVtxo) =>
+        Number(row.vtxo.isSpent !== undefined) +
+        2 * Number(!!row.vtxo.spentBy) +
+        2 * Number(!!row.vtxo.settledBy) +
+        2 * Number(!!row.vtxo.arkTxId);
+    return (
+        weight(incoming) > weight(existing) ||
+        (weight(incoming) === weight(existing) && incoming.address < existing.address)
+    );
 }

@@ -1,3 +1,4 @@
+import { collectVtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
@@ -273,7 +274,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
 
         const db = await openDatabase(dbName, DB_VERSION, initDatabase);
         try {
-            expect(db.version).toBe(4);
+            expect(db.version).toBe(DB_VERSION);
             const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
             const [unspent, all] = await Promise.all(
                 [
@@ -464,7 +465,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             // Release the extra ref we took via openDatabase.
             await closeDatabase(dbName);
 
-            const [retrieved] = await repo.getVtxos(TEST_ARK_ADDRESS);
+            const [retrieved] = await collectVtxos(repo, TEST_ARK_ADDRESS);
             expect(retrieved.script).toBe(EXPECTED_PK_SCRIPT_HEX);
         } finally {
             await repo[Symbol.asyncDispose]();
@@ -497,7 +498,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                 } as unknown as ExtendedVirtualCoin,
             ]);
 
-            const [retrieved] = await repo.getVtxos(TEST_ARK_ADDRESS);
+            const [retrieved] = await collectVtxos(repo, TEST_ARK_ADDRESS);
             expect(retrieved.isSwept).toBe(true);
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.commitmentTxIds).toEqual(["c1"]);
@@ -531,7 +532,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                 } as unknown as ExtendedVirtualCoin,
             ]);
 
-            const [retrieved] = await repo.getVtxos(TEST_ARK_ADDRESS);
+            const [retrieved] = await collectVtxos(repo, TEST_ARK_ADDRESS);
             expect(retrieved.isSwept).toBe(false);
             expect(retrieved.isPreconfirmed).toBe(true);
         } finally {
@@ -540,7 +541,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
     });
 
     it("creates the `script` index and populates it via backfill", async () => {
-        // Covers two things: (1) opening at DB_VERSION=3 creates a `script`
+        // Covers two things: (1) opening at v3 creates a `script`
         // index on the vtxos store, (2) rows inserted without `script` are
         // added to the index automatically when the backfill's
         // `cursor.update()` sets the field.
@@ -992,7 +993,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
         insertV0Row(db, "valid", TEST_ARK_ADDRESS);
         insertV0Row(db, "bad", "not-a-real-address");
 
-        await expect(repo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow();
+        await expect(collectVtxos(repo, TEST_ARK_ADDRESS)).rejects.toThrow();
 
         // Original rows intact, schema unchanged, no orphan tmp table.
         const rows = db.prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`).all() as Array<{
@@ -1023,7 +1024,9 @@ describe("SQLite migration: migrateVtxosTable", () => {
         };
         const crashingRepo = new SQLiteWalletRepository(crashingExecutor);
 
-        await expect(crashingRepo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow(/simulated crash/);
+        await expect(crashingRepo.getVtxosPage(TEST_ARK_ADDRESS, { limit: 1 })).rejects.toThrow(
+            /simulated crash/,
+        );
 
         // Data and schema restored exactly as they were pre-migration.
         const rows = db.prepare(`SELECT txid, address FROM ark_vtxos`).all() as Array<{
