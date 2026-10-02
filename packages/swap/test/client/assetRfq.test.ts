@@ -15,7 +15,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { createSwapClient } from "../../src/client/client";
-import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
+import {
+    collectSwapRecords,
+    InMemoryAssetSwapRepository,
+    type AssetSwapRepository,
+} from "../../src/repository";
 import {
     MaxFeeExceeded,
     QuoteExpired,
@@ -227,7 +231,7 @@ describe("quote() on a negotiated asset market", () => {
         // The wallet double throws from `getContractManager`, so reaching here
         // is the assertion that nothing was registered — and the store is the
         // assertion that nothing was persisted.
-        expect(await repository.getAllSwapRecords()).toEqual([]);
+        expect(await collectSwapRecords(repository)).toEqual([]);
     });
 
     it("prices from the card's feed when it names no rendezvous", async () => {
