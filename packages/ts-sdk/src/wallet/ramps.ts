@@ -324,8 +324,7 @@ export class Ramps {
      * `boardingUtxos`. Omitted, every spendable one is spent — merging the whole
      * off-chain balance into a single change output. Taken as given like
      * `settle({ inputs })`: an `amount` these cannot cover is an error, not a top-up.
-     * @returns The Arkade transaction id created by settlement; the onchain txid when
-     * onchain coins alone covered `amount` and were spent via arkd cosigning.
+     * @returns The Arkade transaction id created by settlement
      * @throws Error if no virtual outputs remain after fee deduction or the destination address cannot be decoded
      * @see IWallet.getSpendableVtxos
      * @see IWallet.settle
@@ -344,10 +343,6 @@ export class Ramps {
         vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
         const named = vtxos !== undefined;
-        if (!named && amount) {
-            const txid = await this.tryCosign(destinationAddress, amount);
-            if (txid) return txid;
-        }
         if (vtxos) reportUngatedInputs(this.wallet, vtxos);
         const spendable =
             vtxos ??
@@ -394,6 +389,9 @@ export class Ramps {
      * fee on that output rather than on a grossed-up figure. {@link offboard} keeps
      * the other anchor, which needs `g - fee(g) = amount` solved — impossible for
      * a program charging the whole output.
+     *
+     * Returns the onchain txid instead when onchain coins alone cover `amount`
+     * and were spent via arkd cosigning.
      */
     async offboardExact(params: {
         destinationAddress: string;

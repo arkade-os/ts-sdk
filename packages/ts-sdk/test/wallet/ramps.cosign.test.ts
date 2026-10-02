@@ -30,13 +30,10 @@ const expectCosigned = (w: any, txid: unknown) => {
     expect(w.settle).not.toHaveBeenCalled();
 };
 
-describe.each([
-    ["offboard", (r: Ramps) => r.offboard(DEST, fees, 5_000n)],
-    [
-        "offboardExact",
-        (r: Ramps) => r.offboardExact({ destinationAddress: DEST, feeInfo: fees, amount: 5_000n }),
-    ],
-])("Ramps.%s cosign path", (_name, run) => {
+const run = (r: Ramps) =>
+    r.offboardExact({ destinationAddress: DEST, feeInfo: fees, amount: 5_000n });
+
+describe("Ramps.offboardExact cosign path", () => {
     it("spends onchain coins in one cosigned tx and skips settle", async () => {
         const w = wallet(vi.fn().mockResolvedValue("txONCHAIN"));
         expectCosigned(w, await run(new Ramps(w)));
@@ -61,22 +58,21 @@ describe.each([
 });
 
 describe("Ramps cosign path is skipped", () => {
-    it("when VTXO inputs are named", async () => {
+    it("by offboard, whose amount is net of the exit fee", async () => {
         const w = wallet(vi.fn());
-        await new Ramps(w).offboard(DEST, fees, 5_000n, undefined, [vtxo] as any);
+        await new Ramps(w).offboard(DEST, fees, 5_000n);
+        expect(w.sendOnchain).not.toHaveBeenCalled();
+        expect(w.settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("by offboardExact when VTXO inputs are named", async () => {
+        const w = wallet(vi.fn());
         await new Ramps(w).offboardExact({
             destinationAddress: DEST,
             feeInfo: fees,
             amount: 5_000n,
             vtxos: [vtxo] as any,
         });
-        expect(w.sendOnchain).not.toHaveBeenCalled();
-        expect(w.settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("when no amount is given", async () => {
-        const w = wallet(vi.fn());
-        await new Ramps(w).offboard(DEST, fees);
         expect(w.sendOnchain).not.toHaveBeenCalled();
         expect(w.settle).toHaveBeenCalledTimes(1);
     });
