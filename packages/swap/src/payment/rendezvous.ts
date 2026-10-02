@@ -73,8 +73,10 @@ export const solverRendezvous = (
     // pair, so a corridor-only match bounds sats against another asset's
     // limits and burns — and leaks — a negotiation the solver refuses.
     const quoteCorridor = payoutCorridor === "lightning" ? "bolt11" : "bitcoin";
+    // Either coin type: card ids are validated per network by discovery (`slip44:0` mainnet,
+    // `slip44:1` elsewhere), and this function is not told the network.
     const isBtc = (id: string | undefined): boolean =>
-        id === "btc" || /^\w+:[^/]+\/slip44:(?:0|1)$/.test(id ?? "");
+        id === "btc" || /^(?:arkade|bolt11|bitcoin):[^/]+\/slip44:(?:0|1)$/.test(id ?? "");
     const candidates = markets.filter(
         (market) =>
             marketCorridor(market, "base") === "arkade" &&

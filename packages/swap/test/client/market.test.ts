@@ -24,17 +24,17 @@ const snapshotOf = (markets: DiscoveredMarket[]): DiscoverySnapshot => ({
 const ARKADE_BTC = {
     corridor: "arkade",
     assetId: "btc",
-    marketId: "arkade:regtest/slip44:0",
+    marketId: "arkade:regtest/slip44:1",
 } as const;
 const LIGHTNING_BTC = {
     corridor: "lightning",
     assetId: "btc",
-    marketId: "bolt11:regtest/slip44:0",
+    marketId: "bolt11:regtest/slip44:1",
 } as const;
 const ONCHAIN_BTC = {
     corridor: "onchain",
     assetId: "btc",
-    marketId: "bitcoin:regtest/slip44:0",
+    marketId: "bitcoin:regtest/slip44:1",
 } as const;
 const ARKADE_USD = {
     corridor: "arkade",

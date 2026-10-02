@@ -11,19 +11,19 @@ const wallet: Instrument = { kind: "wallet" };
 
 export const arkadeBtc: Ep<"arkade"> = {
     corridor: "arkade",
-    asset: "arkade:regtest/slip44:0",
+    asset: "arkade:regtest/slip44:1",
     instrument: wallet,
 };
 
 export const lightningBtc: Ep<"lightning"> = {
     corridor: "lightning",
-    asset: "bolt11:regtest/slip44:0",
+    asset: "bolt11:regtest/slip44:1",
     instrument: wallet,
 };
 
 export const onchainBtc: Ep<"onchain"> = {
     corridor: "onchain",
-    asset: "bitcoin:regtest/slip44:0",
+    asset: "bitcoin:regtest/slip44:1",
     instrument: wallet,
 };
 
@@ -41,7 +41,7 @@ const lightningToOnchain = { give: lightningBtc, take: onchainBtc };
 // @ts-expect-error no route crosses two non-arkade corridors
 export const crossCorridor: Route = lightningToOnchain;
 
-const l1Btc: AssetId = "bitcoin:regtest/slip44:0";
+const l1Btc: AssetId = "bitcoin:regtest/slip44:1";
 // @ts-expect-error an endpoint's corridor and its asset's rail cannot disagree
 export const crossedRail: Ep<"arkade">["asset"] = l1Btc;
 
@@ -63,7 +63,7 @@ export const anyEndpoint: Endpoint = arkadeBtc;
 // @ts-expect-error the corridor is arkade and the asset is on the bitcoin rail
 export const bareEndpointCrossed: Endpoint = {
     corridor: "arkade",
-    asset: "bitcoin:regtest/slip44:0",
+    asset: "bitcoin:regtest/slip44:1",
     instrument: wallet,
 };
 
@@ -71,7 +71,7 @@ export const crossedDeposit: Artifact = {
     kind: "deposit",
     corridor: "onchain",
     // @ts-expect-error same crossing, reached through the deposit artifact
-    asset: "arkade:regtest/slip44:0",
+    asset: "arkade:regtest/slip44:1",
     address: "bcrt1qexample",
     amount: 1_000n,
     expiresAt: undefined,
@@ -80,7 +80,7 @@ export const crossedDeposit: Artifact = {
 export const deposit: Artifact = {
     kind: "deposit",
     corridor: "onchain",
-    asset: "bitcoin:regtest/slip44:0",
+    asset: "bitcoin:regtest/slip44:1",
     address: "bcrt1qexample",
     amount: 1_000n,
 };

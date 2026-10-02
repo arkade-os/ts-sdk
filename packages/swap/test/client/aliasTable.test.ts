@@ -12,21 +12,21 @@ describe("the alias table across card schemas", () => {
             quote_corridor: undefined,
             base_asset: {
                 ...lightningCard.base_asset,
-                id: "arkade:regtest/slip44:0",
+                id: "arkade:regtest/slip44:1",
             },
             quote_asset: {
                 ...lightningCard.quote_asset,
-                id: "bolt11:regtest/slip44:0",
+                id: "bolt11:regtest/slip44:1",
             },
         } as DiscoveredMarket;
 
         expect(aliasTableFrom([canonical], "regtest").assets).toEqual([
-            { id: "arkade:regtest/slip44:0", ticker: "BTC" },
-            { id: "bolt11:regtest/slip44:0", ticker: "BTC" },
+            { id: "arkade:regtest/slip44:1", ticker: "BTC" },
+            { id: "bolt11:regtest/slip44:1", ticker: "BTC" },
         ]);
         expect(aliasTableFrom([lightningCard], "regtest").assets).toEqual([
-            { id: "arkade:regtest/slip44:0", ticker: "BTC" },
-            { id: "bolt11:regtest/slip44:0", ticker: "BTC" },
+            { id: "arkade:regtest/slip44:1", ticker: "BTC" },
+            { id: "bolt11:regtest/slip44:1", ticker: "BTC" },
         ]);
     });
 });

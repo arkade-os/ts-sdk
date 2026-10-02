@@ -35,7 +35,7 @@ import { onchainSendProfile } from "../rfqCorridors";
 import { rfqSecretsProfile } from "../rfqProfileParts";
 import { BTC_ASSET_ID } from "../store";
 import type { AssetSwapRepository } from "../repository";
-import { assetPartOf, BTC_ASSET_PART } from "./assetId";
+import { isBtcAsset, isBtcAssetLenient } from "./assetId";
 import { toDiscoveryLeg } from "./aliases";
 import type { CorridorSet } from "./corridors/registry";
 import type { SwapDrive } from "./drive";
@@ -212,11 +212,10 @@ const marketSourceOf = (market: Quote["market"]): string | undefined =>
 const assertFundable = async (wallet: IWallet, quote: Quote): Promise<void> => {
     const give = quote.give;
     const balance = await wallet.getBalance();
-    // On the asset part: `arkade:…/slip44:0` and `bitcoin:…/slip44:0` are one coin.
-    const available =
-        assetPartOf(give.asset) === BTC_ASSET_PART
-            ? BigInt(balance.available)
-            : (balance.availableAssets.find((a) => give.asset.endsWith(a.assetId))?.amount ?? 0n);
+    // BTC on any rail is one coin. Strict: the quote was just minted with the network's own id.
+    const available = isBtcAsset(give.asset)
+        ? BigInt(balance.available)
+        : (balance.availableAssets.find((a) => give.asset.endsWith(a.assetId))?.amount ?? 0n);
     if (available < give.amount) {
         throw new InsufficientFunds(give.asset, give.amount, available);
     }
@@ -485,7 +484,9 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
     const { wallet } = input;
     if (record.family === "offer") {
         const amount = fromAtomicDecimal(record.give.amount);
-        const depositIsBtc = assetPartOf(record.route.give.asset) === BTC_ASSET_PART;
+        // Lenient: a record written before BTC's asset part depended on the network still names
+        // `slip44:0` on a test network, and reading it as an asset would send the wrong thing.
+        const depositIsBtc = isBtcAssetLenient(record.route.give.asset);
         return wallet.send({
             address: record.swapAddress,
             // An asset deposit rides a dust-sat carrier: the solver's published one when the record
@@ -554,7 +555,8 @@ const depositMatches = (
     expected: bigint,
 ): boolean => {
     const giveAsset = record.route.give.asset;
-    if (assetPartOf(giveAsset) === BTC_ASSET_PART) {
+    // Lenient for the same reason as `fund`: the record may predate the per-network id.
+    if (isBtcAssetLenient(giveAsset)) {
         return BigInt(vtxo.value) === expected;
     }
     return (vtxo.assets ?? []).some(

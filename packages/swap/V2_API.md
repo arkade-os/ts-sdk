@@ -76,9 +76,15 @@ Examples:
 arkade:bitcoin/slip44:0
 bolt11:bitcoin/slip44:0
 bitcoin:bitcoin/slip44:0
+arkade:mutinynet/slip44:1
 arkade:regtest/asset:<68 lowercase hex chars>
 eip155:1/erc20:0xdac17f958d2ee523a2206206994597c13d831ec7
 ```
+
+BTC's asset part follows SLIP-44: coin type `0` on mainnet, `1` on every other
+network (`testnet`, `signet`, `mutinynet`, `regtest`). Build BTC ids with
+`btcOn(rail, network)` and recognize them with `isBtcAsset`, rather than
+spelling the coin type by hand.
 
 `arkade`, `bolt11` and `bitcoin` are the implemented bitcoin-family rails.
 `eip155` parses as reserved vocabulary for the later EVM corridor; it is not a
@@ -89,7 +95,7 @@ Use the alias layer when accepting human input:
 ```ts
 const asset = canonicalAssetId("BTC", {
     network: "regtest",
-    assets: [{ ticker: "BTC", id: "arkade:regtest/slip44:0" }],
+    assets: [{ ticker: "BTC", id: "arkade:regtest/slip44:1" }],
 });
 ```
 

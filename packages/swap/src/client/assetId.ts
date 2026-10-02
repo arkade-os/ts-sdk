@@ -51,7 +51,12 @@ export type AssetId<R extends Rail = Rail> = R extends BitcoinRail
 /** The `<asset-ns>:<reference>` half of an id — what sameness compares. */
 export type AssetPart = `${string}:${string}`;
 
-/** BTC's asset part on every rail that carries it (SLIP-44 coin type 0). */
+/**
+ * BTC's asset part on mainnet.
+ *
+ * @deprecated BTC's asset part depends on the network; use {@link btcAssetPart}, or
+ * {@link isBtcAsset} to recognize BTC. Kept with its mainnet meaning for one release.
+ */
 export const BTC_ASSET_PART = "slip44:0" satisfies AssetPart;
 
 /** The asset namespace an Arkade-issued asset takes. */
@@ -274,10 +279,42 @@ export const sameAsset = (a: AssetId, b: AssetId): boolean => {
     );
 };
 
+/**
+ * BTC's asset part on a bitcoin network: SLIP-44 coin type 0 ("Bitcoin") on mainnet, coin type 1
+ * ("Testnet (all coins)") on every other network. Discovery's card validator enforces the same
+ * split, so an id minted any other way never matches a card's `caip19_id`.
+ */
+export const btcAssetPart = (network: NetworkRef): AssetPart =>
+    network === "bitcoin" ? "slip44:0" : "slip44:1";
+
 /** BTC on a bitcoin-family rail: the same coin, named once per rail. */
 export const btcOn = <R extends BitcoinRail>(rail: R, network: NetworkRef): AssetId<R> =>
     // TS won't resolve the conditional against an unbound `R`; the cast stays in this expression.
-    `${rail}:${network}/${BTC_ASSET_PART}` as AssetId<R>;
+    `${rail}:${network}/${btcAssetPart(network)}` as AssetId<R>;
+
+/**
+ * Whether `id` is BTC on its own network: `slip44:0` on mainnet, `slip44:1` elsewhere. Strict, so
+ * new input with the wrong coin type for its network is not BTC.
+ */
+export const isBtcAsset = (id: AssetId): boolean => {
+    const { rail, reference, assetNamespace, assetReference } = parseAssetId(id);
+    // `parseAssetId` already refused a non-network reference on a bitcoin-family rail.
+    return (
+        rail !== "eip155" &&
+        `${assetNamespace}:${assetReference}` === btcAssetPart(reference as NetworkRef)
+    );
+};
+
+/**
+ * {@link isBtcAsset}, also accepting `slip44:0` on a test network: the id every network got
+ * before BTC's asset part depended on the network. For ids read back from storage only, so a
+ * record written then still reads as BTC; new input goes through {@link isBtcAsset}.
+ */
+export const isBtcAssetLenient = (id: AssetId): boolean => {
+    if (isBtcAsset(id)) return true;
+    const { rail, assetNamespace, assetReference } = parseAssetId(id);
+    return rail !== "eip155" && assetNamespace === "slip44" && assetReference === "0";
+};
 
 /**
  * An Arkade-issued asset.
