@@ -389,6 +389,55 @@ import { Ramps } from '@arkade-os/sdk'
 const boardingTxId = await new Ramps(wallet).onboard();
 ```
 
+### Onchain cosigning
+
+Boarding UTXOs and unrolled virtual outputs can be spent immediately with a server cosignature, without waiting for the exit timelock or joining a batch. This needs an Arkade server that exposes onchain cosigning (`POST /v1/tx/onchain/cosign`); against older servers the SDK falls back to the previous paths automatically.
+
+```typescript
+// Pay onchain from boarding / unrolled coins
+const txid = await wallet.sendOnchain({
+  outputs: [{ address: 'bc1q...', amount: 50_000 }]
+})
+
+// Sweep every cosignable onchain coin (inputs minus fee) to one address
+await wallet.sendOnchain({ outputs: [], sweepTo: 'bc1q...' })
+
+// Cosign a PSBT built elsewhere; returns the broadcast txid
+await wallet.cosignOnchainTx(psbt) // base64 string or Transaction
+```
+
+For `cosignOnchainTx`, foreign inputs must already be signed: the wallet signs only its own inputs.
+
+Preflight: every wallet input must be confirmed and more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity. Failures surface as `OnchainCosignPreflightError` (name only; the class is not exported, match on `error.name`), `OnchainCosignRejectedError` (server refused) or `OnchainCosignUnsupportedError` (server lacks the endpoint). The automatic paths below treat all three as a signal to fall back.
+
+Contracts carry a `scope`: `"offchain"`, `"onchain"` or `"both"`. It controls whether the contract's onchain coins are watched and spent through cosigning; boarding contracts default to `"onchain"`.
+
+Automatic behaviour:
+
+- `VtxoManager` renews boarding coins that are near expiry, and sweeps unrolled outputs, via cosign, falling back to the CSV path.
+- `Ramps.offboardExact` and the payment router's onchain rail spend onchain coins directly when they alone cover the amount; otherwise they use the batch path. `Ramps.offboard` always uses the batch path.
+
+#### Arkade contracts
+
+Arkade contracts can spend their own onchain UTXOs. Pass an `emulator` (cosigner for covenant leaves) and an `onchain` provider to `connect`:
+
+```typescript
+import { arkade } from '@arkade-os/sdk'
+
+const ark = await arkade.Arkade.connect({ arkade: arkProvider, emulator, onchain })
+const contract = ark.contract(program)
+
+const txid = await contract.functions
+  .claim(/* args */)
+  .from(utxo)
+  .to(destinationScript, 40_000n)
+  .onchainFee(500n)       // required with change(); must not exceed the surplus
+  .change(changeScript)
+  .sendOnchain()          // or .buildOnchain() for the unsigned Transaction
+```
+
+Covenant leaves spent onchain must not include the Arkade server key; the emulator's onchain endpoint refuses them.
+
 ### Checking Balance
 
 ```typescript
