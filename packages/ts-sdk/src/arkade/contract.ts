@@ -891,7 +891,7 @@ function bindInputs(
  * into an existing extension, otherwise insert before the P2A anchor (if any),
  * otherwise append.
  */
-function attachExtension(tx: Transaction, newPackets: ExtensionPacket[]): void {
+export function attachExtension(tx: Transaction, newPackets: ExtensionPacket[]): void {
     for (let i = 0; i < tx.outputsLength; i++) {
         const out = tx.getOutput(i);
         if (!out?.script || !Extension.isExtension(out.script)) continue;
