@@ -408,13 +408,26 @@ await wallet.cosignOnchainTx(psbt) // base64 string or Transaction
 
 For `cosignOnchainTx`, foreign inputs must already be signed: the wallet signs only its own inputs.
 
-Preflight: every wallet input must be confirmed and more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity. Failures surface as `OnchainCosignPreflightError` (name only; the class is not exported, match on `error.name`), `OnchainCosignRejectedError` (server refused) or `OnchainCosignUnsupportedError` (server lacks the endpoint). The automatic paths below treat all three as a signal to fall back.
+Preflight: every wallet input must be confirmed and more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). Use `isCosignFallback(e)` to decide whether paying another way is safe; the automatic paths below do exactly that:
+
+```typescript
+import { isCosignFallback, OnchainCosignAmbiguousError } from '@arkade-os/sdk'
+
+try {
+  await wallet.sendOnchain({ outputs: [{ address, amount }] })
+} catch (e) {
+  if (!isCosignFallback(e)) throw e // includes OnchainCosignAmbiguousError
+  await payThroughABatch()
+}
+```
+
+`OnchainCosignAmbiguousError` means the transaction may have been broadcast (a transport failure, or a server error after submission): do not retry with other coins. The inputs stay pending until the chain resolves.
 
 Contracts carry a `scope`: `"offchain"`, `"onchain"` or `"both"`. It controls whether the contract's onchain coins are watched and spent through cosigning; boarding contracts default to `"onchain"`.
 
 Automatic behaviour:
 
-- `VtxoManager` renews boarding coins that are near expiry, and sweeps unrolled outputs, via cosign, falling back to the CSV path.
+- `VtxoManager` renews boarding coins that are near expiry via cosign, falling back to the CSV path. It never sweeps unrolled outputs (that would undo the exit); spend those with `sendOnchain` or `cosignOnchainTx`.
 - `Ramps.offboardExact` and the payment router's onchain rail spend onchain coins directly when they alone cover the amount; otherwise they use the batch path. `Ramps.offboard` always uses the batch path.
 
 #### Arkade contracts
@@ -431,7 +444,7 @@ const txid = await contract.functions
   .claim(/* args */)
   .from(utxo)
   .to(destinationScript, 40_000n)
-  .onchainFee(500n)       // required with change(); must not exceed the surplus
+  .onchainFee(500n)       // must not exceed the surplus; without change() it must equal it
   .change(changeScript)
   .sendOnchain()          // or .buildOnchain() for the unsigned Transaction
 ```
