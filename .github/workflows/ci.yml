@@ -94,6 +94,7 @@ jobs:
               test/e2e/boardingRotation.test.ts
               test/e2e/non-interactive-delegate.test.ts
               test/e2e/contract-params-change.test.ts
+              test/e2e/contractWatchStateIdempotency.test.ts
               test/e2e/restore.test.ts
               test/e2e/operatorOffline.test.ts
               test/e2e/arkade-script.test.ts

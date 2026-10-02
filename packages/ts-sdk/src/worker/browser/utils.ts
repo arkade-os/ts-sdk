@@ -83,3 +83,51 @@ export async function setupServiceWorker(
 
     return readyRegistration.active;
 }
+
+/** Wait for a replacement in the wallet's own registration, without forcing activation. */
+export async function waitForServiceWorkerReplacement(
+    registration: ServiceWorkerRegistration | undefined,
+    previous: ServiceWorker,
+    timeoutMs: number,
+): Promise<ServiceWorker> {
+    if (!registration) {
+        throw new Error(
+            "Service worker registration unavailable; reload to use the updated worker",
+        );
+    }
+    return new Promise((resolve, reject) => {
+        const workers = new Set<ServiceWorker>();
+        const cleanup = () => {
+            clearTimeout(timer);
+            registration.removeEventListener("updatefound", check);
+            for (const worker of workers) worker.removeEventListener("statechange", check);
+        };
+        const check = () => {
+            for (const worker of [
+                registration.active,
+                registration.waiting,
+                registration.installing,
+            ]) {
+                if (worker && !workers.has(worker)) {
+                    workers.add(worker);
+                    worker.addEventListener("statechange", check);
+                }
+            }
+            const active = registration.active;
+            if (active && active !== previous && active.state === "activated") {
+                cleanup();
+                resolve(active);
+            }
+        };
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(
+                new Error(
+                    `Service worker activation timed out after ${timeoutMs}ms; reload to update`,
+                ),
+            );
+        }, timeoutMs);
+        registration.addEventListener("updatefound", check);
+        check();
+    });
+}

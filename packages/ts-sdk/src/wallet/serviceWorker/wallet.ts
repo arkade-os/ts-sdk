@@ -42,7 +42,7 @@ import { resolveDescriptorSigner } from "../hdWalletCapable";
 import { runWalletRestoreHooks } from "../restoreHooks";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
-import { setupServiceWorker } from "../../worker/browser/utils";
+import { setupServiceWorker, waitForServiceWorkerReplacement } from "../../worker/browser/utils";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../../repositories";
 import {
     RequestClear,
@@ -73,6 +73,7 @@ import {
     RequestSettle,
     ResponseSettle,
     ResponseSettleEvent,
+    RequestSetContractWatchState,
     RequestUpdateContract,
     ResponseAnnotateVtxos,
     ResponseGetAddress,
@@ -266,6 +267,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
     UPDATE_CONTRACT: 30_000,
+    SET_CONTRACT_WATCH_STATE: 30_000,
     // Registering a watch is an in-memory map write plus one subscription
     // update — no indexer round trip on the request path.
     WATCH_SCRIPT: 10_000,
@@ -579,18 +581,39 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
+    private workerUpdatePromise: Promise<void> | null = null;
+    private readonly workerRegistration: Promise<ServiceWorkerRegistration | undefined>;
+
+    get serviceWorker(): ServiceWorker {
+        return this.activeServiceWorker;
+    }
 
     get assetManager(): IReadonlyAssetManager {
         return this._readonlyAssetManager;
     }
 
     protected constructor(
-        public readonly serviceWorker: ServiceWorker,
+        private activeServiceWorker: ServiceWorker,
         identity: ReadonlyIdentity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         protected readonly messageTag: string,
     ) {
+        // Capture the registration while this worker is still active. Looking
+        // it up after activation could lose the old worker's registration.
+        this.workerRegistration =
+            globalThis.navigator?.serviceWorker
+                ?.getRegistrations?.()
+                .then((registrations) =>
+                    registrations.find((registration) =>
+                        [
+                            registration.active,
+                            registration.waiting,
+                            registration.installing,
+                        ].includes(activeServiceWorker),
+                    ),
+                )
+                .catch(() => undefined) ?? Promise.resolve(undefined);
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
@@ -873,6 +896,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             isComplete: (response: WalletUpdaterResponse) => boolean;
         },
     ): Promise<WalletUpdaterResponse> {
+        if (this.reinitPromise) await this.reinitPromise;
         if (this.initConfig) {
             try {
                 await this.pingServiceWorker();
@@ -917,6 +941,35 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      */
     protected async serializeIdentity(): Promise<SerializedIdentity> {
         return serializeReadonlyIdentity(this.identity);
+    }
+
+    /** Rebind and initialize once, only after an old worker rejects an unsupported request. */
+    private async useUpdatedServiceWorker(
+        previous: ServiceWorker,
+        timeoutMs: number,
+    ): Promise<void> {
+        if (this.workerUpdatePromise) return this.workerUpdatePromise;
+        if (this.serviceWorker !== previous) return;
+        this.workerUpdatePromise = (async () => {
+            const replacement = await waitForServiceWorkerReplacement(
+                await this.workerRegistration,
+                previous,
+                timeoutMs,
+            );
+            if (this.reinitPromise) await this.reinitPromise;
+            this.activeServiceWorker = replacement;
+            try {
+                await this.reinitialize();
+            } catch (error) {
+                // A failed identity check must not leave future calls bound to
+                // a worker whose wallet identity we have not verified.
+                this.activeServiceWorker = previous;
+                throw error;
+            }
+        })().finally(() => {
+            this.workerUpdatePromise = null;
+        });
+        return this.workerUpdatePromise;
     }
 
     /**
@@ -1457,17 +1510,32 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
-                const message: RequestUpdateContract = {
-                    type: "UPDATE_CONTRACT",
+                const message: RequestSetContractWatchState = {
+                    type: "SET_CONTRACT_WATCH_STATE",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { script, updates: { watch } },
+                    payload: { script, watch },
                 };
                 try {
-                    await sendContractMessage(message);
+                    const previous = wallet.serviceWorker;
+                    try {
+                        await sendContractMessage(message);
+                    } catch (error) {
+                        // Unknown means this request was not executed. Retrying
+                        // after activation is safe; a generic UPDATE_CONTRACT
+                        // fallback would bypass the manager's no-op check.
+                        if (!(error instanceof Error) || error.message !== "Unknown message") {
+                            throw error;
+                        }
+                        await wallet.useUpdatedServiceWorker(
+                            previous,
+                            wallet.getTimeoutForRequest(message),
+                        );
+                        await sendContractMessage(message);
+                    }
                     return;
                 } catch (e) {
-                    throw new Error("Failed to update contract watch state");
+                    throw new Error(`Failed to update contract watch state: ${e}`, { cause: e });
                 }
             },
 
@@ -1662,7 +1730,7 @@ export class ServiceWorkerWallet
     private _restoreInFlight?: Promise<void>;
 
     protected constructor(
-        public readonly serviceWorker: ServiceWorker,
+        serviceWorker: ServiceWorker,
         identity: Identity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
