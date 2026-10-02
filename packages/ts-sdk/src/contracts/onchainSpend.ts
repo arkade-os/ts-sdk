@@ -26,9 +26,9 @@ import { exitSequence } from "./handlers/helpers";
 import { isOnchainScoped } from "./scope";
 import { sequenceToTimelock } from "../utils/timelock";
 
-export const DEFAULT_COSIGN_MARGIN_BLOCKS = 144;
+export const DEFAULT_COSIGN_MARGIN_BLOCKS = 6;
 
-/** Boarding coins are renewed by cosign during this many blocks before the cosign margin starts. */
+/** Upper bound on the renew window; short-CSV networks use a quarter of the CSV instead. */
 export const ONCHAIN_RENEW_WINDOW_BLOCKS = 144;
 
 /** Exit CSV in blocks, seconds counted as 600 per block; no CSV means the exit is already open (0). */
@@ -106,15 +106,15 @@ export function needsOnchainSweep(
     coin: VirtualCoin,
     contract: Contract,
     tipHeight: number,
+    marginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS,
 ): boolean {
     if (!isOnchainScoped(contract)) return true;
     const confirmedAt = coin.status.block_height;
     if (!coin.status.confirmed || confirmedAt === undefined) return false;
-    const remaining = confirmedAt + csvBlocksOf(contract) - tipHeight;
-    return (
-        remaining > DEFAULT_COSIGN_MARGIN_BLOCKS &&
-        remaining <= DEFAULT_COSIGN_MARGIN_BLOCKS + ONCHAIN_RENEW_WINDOW_BLOCKS
-    );
+    const csvBlocks = csvBlocksOf(contract);
+    const window = Math.min(ONCHAIN_RENEW_WINDOW_BLOCKS, Math.floor(csvBlocks / 4));
+    const remaining = confirmedAt + csvBlocks - tipHeight;
+    return remaining > marginBlocks && remaining <= marginBlocks + window;
 }
 
 /** scure's finalizeIdx cannot place a ConditionWitness, so those inputs are laid out here. */

@@ -194,6 +194,7 @@ import {
 import {
     OnchainCosignPreflightError,
     assertCosignable,
+    DEFAULT_COSIGN_MARGIN_BLOCKS,
     needsOnchainSweep,
     csvBlocksOf,
     emulatorInputIndexes,
@@ -2604,6 +2605,7 @@ export class Wallet
 
     private readonly _signerRouter: InputSignerRouter;
     private _emulator?: EmulatorProvider;
+    private _cosignMarginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS;
 
     /**
      * @internal Sole write path for `offchainTapscript` after construction.
@@ -3699,6 +3701,15 @@ export class Wallet
      * ```
      */
     static async create(config: WalletConfig): Promise<Wallet> {
+        if (
+            config.onchainCosignMarginBlocks !== undefined &&
+            (!Number.isInteger(config.onchainCosignMarginBlocks) ||
+                config.onchainCosignMarginBlocks < 0)
+        ) {
+            throw new Error(
+                `onchainCosignMarginBlocks must be a non-negative integer (got ${String(config.onchainCosignMarginBlocks)})`,
+            );
+        }
         // Programmer error, not an operational one — surface it before any I/O.
         if (
             config.lookAheadWindow !== undefined &&
@@ -3781,6 +3792,8 @@ export class Wallet
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         wallet._emulator = config.emulator;
+        wallet._cosignMarginBlocks =
+            config.onchainCosignMarginBlocks ?? DEFAULT_COSIGN_MARGIN_BLOCKS;
         // The response cleared construction validation — network/signer in
         // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
         // now safe to refresh the cached snapshot from live server-info.
@@ -4907,7 +4920,12 @@ export class Wallet
                 })
                 .filter(({ coin, contract }) => {
                     try {
-                        assertCosignable(coin, csvBlocksOf(contract), tip.height);
+                        assertCosignable(
+                            coin,
+                            csvBlocksOf(contract),
+                            tip.height,
+                            this._cosignMarginBlocks,
+                        );
                         return true;
                     } catch {
                         return false;
@@ -4985,7 +5003,7 @@ export class Wallet
                     `no collaborative path for ${vtxoOutpoint(outpoint)}`,
                 );
             }
-            assertCosignable(coin, csvBlocksOf(contract), tip.height);
+            assertCosignable(coin, csvBlocksOf(contract), tip.height, this._cosignMarginBlocks);
             prepareOwnedInput(tx, { index: i, coin, path, tapTree: script.encode() });
             if (!emulated.has(i)) arkInputs.add(i);
             ownedIndexes.push(i);
@@ -5028,7 +5046,7 @@ export class Wallet
             .filter(
                 ({ coin, contract }) =>
                     !locked.has(vtxoOutpoint(coin)) &&
-                    needsOnchainSweep(coin, contract, tip.height),
+                    needsOnchainSweep(coin, contract, tip.height, this._cosignMarginBlocks),
             )
             .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
     }

@@ -18,7 +18,11 @@ const CHECKPOINT_TAPSCRIPT =
 const COSIGNED = "ff".repeat(32);
 const externalAddress = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
 
-async function makeWallet(coinOverrides: Record<string, unknown> = {}) {
+async function makeWallet(
+    coinOverrides: Record<string, unknown> = {},
+    walletConfig: Record<string, unknown> = {},
+    boardingExitDelay = 604672n,
+) {
     const info = {
         signerPubkey: SERVER_PUBKEY_HEX,
         forfeitPubkey: SERVER_PUBKEY_HEX,
@@ -26,7 +30,7 @@ async function makeWallet(coinOverrides: Record<string, unknown> = {}) {
         batchExpiry: 144n,
         unilateralExitDelay: 144n,
         // seconds timelock: ceil(604672 / 600) = 1008 blocks
-        boardingExitDelay: 604672n,
+        boardingExitDelay,
         roundInterval: 144n,
         dust: 1000n,
         forfeitAddress: externalAddress,
@@ -73,6 +77,7 @@ async function makeWallet(coinOverrides: Record<string, unknown> = {}) {
         indexerProvider,
         onchainProvider,
         storage: { walletRepository, contractRepository: new InMemoryContractRepository() },
+        ...walletConfig,
     });
     const boardingAddress = wallet.boardingTapscript.onchainAddress(wallet.network);
     onchainProvider.getCoins.mockImplementation(async (a: string) =>
@@ -148,6 +153,22 @@ describe("wallet.sendOnchain", () => {
     });
 });
 
+describe("onchainCosignMarginBlocks", () => {
+    it("is respected by the sendOnchain preflight", async () => {
+        const { wallet, arkProvider } = await makeWallet({}, { onchainCosignMarginBlocks: 1000 });
+        await expect(
+            wallet.sendOnchain({ outputs: [{ address: externalAddress, amount: 20_000 }] }),
+        ).rejects.toThrow(/Onchain cosign preflight failed/);
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+    });
+
+    it.each([-1, 1.5, Number.NaN])("rejects invalid value %s at creation", async (value) => {
+        await expect(makeWallet({}, { onchainCosignMarginBlocks: value })).rejects.toThrow(
+            /onchainCosignMarginBlocks/,
+        );
+    });
+});
+
 describe("wallet.cosignOnchainTx", () => {
     it("fills owned inputs of an external PSBT and leaves foreign inputs alone", async () => {
         const { wallet, arkProvider, boardingCoin, externalScript } = await makeWallet();
@@ -210,9 +231,34 @@ describe("wallet.getOnchainSweepInputs", () => {
     it("selects a boarding coin inside the renew window, and not one inside the cosign margin", async () => {
         const { wallet, onchainProvider } = await makeWallet();
         atTip(onchainProvider, 900);
-        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([outpoint]);
-        atTip(onchainProvider, 1000);
         await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+        atTip(onchainProvider, 1000);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([outpoint]);
+        atTip(onchainProvider, 1103);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+    });
+
+    it("uses a 10-block renew window on a 40-block CSV", async () => {
+        const { wallet, onchainProvider } = await makeWallet({}, {}, 40n);
+        for (const [tip, selected] of [
+            [123, false],
+            [124, true],
+            [133, true],
+            [134, false],
+        ] as const) {
+            atTip(onchainProvider, tip);
+            await expect(wallet.getOnchainSweepInputs()).resolves.toEqual(
+                selected ? [outpoint] : [],
+            );
+        }
+    });
+
+    it("honours onchainCosignMarginBlocks in the selection", async () => {
+        const { wallet, onchainProvider } = await makeWallet({}, { onchainCosignMarginBlocks: 20 });
+        atTip(onchainProvider, 1103);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+        atTip(onchainProvider, 1000);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([outpoint]);
     });
 
     it("excludes a coin locked by an intent", async () => {
@@ -229,5 +275,18 @@ describe("needsOnchainSweep", () => {
     it("always takes an unrolled coin of an offchain-scoped contract", () => {
         const contract = { type: "default", scope: "offchain" } as any;
         expect(needsOnchainSweep(coin, contract, 100)).toBe(true);
+    });
+
+    it("caps the renew window at 144 blocks on a 1008-block CSV", () => {
+        const contract = {
+            type: "default",
+            scope: "onchain",
+            params: { csvTimelock: "1008" },
+        } as any;
+        const at = (tip: number) => needsOnchainSweep(coin, contract, tip);
+        expect(at(1108 - 151)).toBe(false);
+        expect(at(1108 - 150)).toBe(true);
+        expect(at(1108 - 7)).toBe(true);
+        expect(at(1108 - 6)).toBe(false);
     });
 });

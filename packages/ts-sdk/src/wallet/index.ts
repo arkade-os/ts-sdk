@@ -313,6 +313,14 @@ export interface WalletConfig extends ReadonlyWalletConfig {
 
     /** Cosigns onchain inputs whose spend carries an emulator packet; no default. */
     emulator?: EmulatorProvider;
+
+    /**
+     * Minimum blocks that must remain before a coin's exit CSV matures for the
+     * client to request an onchain cosign. Non-negative integer.
+     *
+     * @defaultValue 6
+     */
+    onchainCosignMarginBlocks?: number;
 }
 
 /**

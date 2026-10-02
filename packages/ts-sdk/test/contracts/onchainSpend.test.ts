@@ -84,7 +84,13 @@ describe("assertCosignable", () => {
         );
     });
     it("rejects within the margin of CSV maturity", () => {
-        expect(() => assertCosignable(coin, 144, 101)).toThrow(/maturity/);
+        expect(() => assertCosignable(coin, 144, 238)).toThrow(/maturity/);
+    });
+    it("accepts one block beyond the margin", () => {
+        expect(() => assertCosignable(coin, 144, 237)).not.toThrow();
+    });
+    it("takes the margin as a parameter", () => {
+        expect(() => assertCosignable(coin, 144, 101, 143)).toThrow(/maturity/);
     });
     it("accepts when far from maturity", () => {
         expect(() => assertCosignable(coin, 1008, 101)).not.toThrow();
