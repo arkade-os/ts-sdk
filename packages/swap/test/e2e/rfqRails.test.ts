@@ -1,3 +1,4 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * The two ways a payment rail declines, against the real stack. The unit suite
  * asserts both against a `SwapRailClient` stubbed to answer `eligible: 0` — a
@@ -280,7 +281,7 @@ describe("a quote that expires (regtest)", () => {
     it("fails the send with QuoteExpired, having funded nothing", async () => {
         const client = clientOn(2);
         const router = createSwapPaymentRouter(wallet, client, { claimFeeRateSatVb: 2 });
-        const before = (await repository.getAllSwapRecords()).length;
+        const before = (await collectSwapRecords(repository)).length;
 
         const quote = await router.route({ raw: invoice() });
         expect(quote.railId).toBe(LIGHTNING_RAIL);
@@ -302,7 +303,7 @@ describe("a quote that expires (regtest)", () => {
         expect(seen.at(-1)).toMatchObject({ status: "failed" });
         expect((seen.at(-1)?.error as Error).name).toBe("QuoteExpired");
         // The refusal came before persistence, which is the whole point of it.
-        expect(await repository.getAllSwapRecords()).toHaveLength(before);
+        expect(await collectSwapRecords(repository)).toHaveLength(before);
 
         await client[Symbol.asyncDispose]();
     }, 180_000);

@@ -17,6 +17,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
     ArkAddress,
+    collectContracts,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
@@ -351,7 +352,7 @@ describe("a registered lockup, against a real contract manager", () => {
         const { wallet, walletRepository, contractRepository } = await realWallet();
         const swap = await lightningSend(wallet as unknown as IWallet);
 
-        const rows = await contractRepository.getContracts();
+        const rows = await collectContracts(contractRepository);
         const row = rows.find((c) => c.script === hex.encode(swap.swapPkScript));
         expect(row?.type).toBe(SWAP_LOCKUP_CONTRACT_TYPE);
 

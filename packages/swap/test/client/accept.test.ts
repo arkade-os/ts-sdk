@@ -1,3 +1,4 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * `accept()`: the ordering, the crash windows, and what a duplicate does.
  *
@@ -273,7 +274,7 @@ describe("accept() — idempotency by quote id", () => {
 
         expect(second).toEqual(first);
         expect(h.wallet.sent).toHaveLength(route === "lightningReceive" ? 0 : 1);
-        expect(await h.repository.getAllSwapRecords()).toHaveLength(1);
+        expect(await collectSwapRecords(h.repository)).toHaveLength(1);
         // One covenant row, because `createContract` is first-writer-wins and
         // the second accept never reaches a second derivation.
         expect(h.wallet.contracts).toHaveLength(1);
@@ -303,7 +304,7 @@ describe("accept() — idempotency by quote id", () => {
 
         expect(swap.fundingTxid).toBe(FUNDING_TXID);
         expect(h.wallet.sent).toHaveLength(1);
-        expect(await h.repository.getAllSwapRecords()).toHaveLength(1);
+        expect(await collectSwapRecords(h.repository)).toHaveLength(1);
     });
 
     it("still refuses a quote whose preparation was evicted before it was persisted", async () => {

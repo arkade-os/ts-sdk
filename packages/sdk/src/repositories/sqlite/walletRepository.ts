@@ -1,0 +1,765 @@
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import type { Outpoint } from "../../wallet";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+    assertHistoryPageFilter,
+    type TransactionHistoryPageFilter,
+    type TransactionHistoryPageCursor,
+    type ScriptVtxoCursor,
+    type StoredVtxo,
+    type ScriptVtxoPageOptions,
+} from "../walletRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
+import {
+    serializeVtxo,
+    serializeUtxo,
+    deserializeVtxo,
+    deserializeUtxo,
+    serializeAssets,
+    deserializeAssets,
+    SerializedTapLeaf,
+    createdAtToIso,
+} from "../serialization";
+import { scriptFromArkAddress } from "../scriptFromAddress";
+import { legacyVtxoFacts } from "../legacyVtxoFacts";
+import { SQLExecutor } from "./types";
+import { runInTransaction } from "./transaction";
+import { sanitizeTablePrefix } from "./prefix";
+import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
+
+interface SQLiteWalletRepositoryOptions {
+    /** Table name prefix (default: "ark_") */
+    prefix?: string;
+}
+
+/**
+ * SQLite-based implementation of WalletRepository.
+ *
+ * Uses the SQLExecutor interface so consumers can plug in any SQLite driver
+ * (expo-sqlite, better-sqlite3, etc.).
+ *
+ * Tables are created lazily on first operation via `ensureInit()`.
+ * The consumer owns the SQLExecutor lifecycle — `[Symbol.asyncDispose]` is a no-op.
+ */
+export class SQLiteWalletRepository implements WalletRepository {
+    readonly version = 1 as const;
+    private initPromise: Promise<void> | null = null;
+    private readonly prefix: string;
+    private readonly tables: {
+        vtxos: string;
+        utxos: string;
+        transactions: string;
+        walletState: string;
+    };
+
+    constructor(
+        private readonly db: SQLExecutor,
+        options?: SQLiteWalletRepositoryOptions,
+    ) {
+        this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
+        this.tables = {
+            vtxos: `${this.prefix}vtxos`,
+            utxos: `${this.prefix}utxos`,
+            transactions: `${this.prefix}transactions`,
+            walletState: `${this.prefix}wallet_state`,
+        };
+    }
+
+    // ── Lifecycle ──────────────────────────────────────────────────────
+
+    private ensureInit(): Promise<void> {
+        if (!this.initPromise) {
+            this.initPromise = this.init();
+        }
+        return this.initPromise;
+    }
+
+    private async init(): Promise<void> {
+        await this.migrateVtxosTable();
+
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS ${this.tables.utxos} (
+                txid TEXT NOT NULL,
+                vout INTEGER NOT NULL,
+                value INTEGER NOT NULL,
+                address TEXT NOT NULL,
+                tap_tree TEXT NOT NULL,
+                forfeit_cb TEXT NOT NULL,
+                forfeit_s TEXT NOT NULL,
+                intent_cb TEXT NOT NULL,
+                intent_s TEXT NOT NULL,
+                status_json TEXT NOT NULL,
+                extra_witness_json TEXT,
+                PRIMARY KEY (txid, vout)
+            )
+        `);
+
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS ${this.tables.transactions} (
+                address TEXT NOT NULL,
+                boarding_txid TEXT NOT NULL,
+                commitment_txid TEXT NOT NULL,
+                ark_txid TEXT NOT NULL,
+                type TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                settled INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                assets_json TEXT,
+                PRIMARY KEY (address, boarding_txid, commitment_txid, ark_txid)
+            )
+        `);
+
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS ${this.tables.walletState} (
+                key TEXT PRIMARY KEY,
+                settings_json TEXT,
+                last_sync_time INTEGER
+            )
+        `);
+
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address ON ${this.tables.vtxos} (address)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script_page ON ${this.tables.vtxos} (script, address, txid, vout)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address_page ON ${this.tables.vtxos} (address, txid, vout)`,
+        );
+        // Replaced by the paged partial index below, which serves the same reads in page order.
+        await this.db.run(`DROP INDEX IF EXISTS idx_${this.prefix}vtxos_live_script`);
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_live_script_page ON ${this.tables.vtxos} (script, address, txid, vout)
+             WHERE ${UNSPENT_VTXO_PREDICATE}`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address_page ON ${this.tables.utxos} (address, txid, vout)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_history ON ${this.tables.transactions} (address, created_at, boarding_txid, commitment_txid, ark_txid)`,
+        );
+    }
+
+    /**
+     * Bring the `vtxos` table to the current schema (v1 = `script` NOT NULL).
+     *
+     * Four cases:
+     *   - Fresh install: create the v1 schema directly.
+     *   - Legacy install without a `script` column: add it, backfill from
+     *     `address`, then rebuild the table with NOT NULL (SQLite cannot add
+     *     the NOT NULL constraint in place).
+     *   - Legacy install with a nullable `script` column: backfill the NULLs
+     *     and rebuild.
+     *   - 0.4.x install: `script` is already NOT NULL but `virtual_status_json
+     *     NOT NULL` is still there, and `saveVtxos` no longer writes it.
+     *
+     * The backfill derives `script` from the Ark address, matching what the
+     * indexer would have returned — new rows from the indexer always carry a
+     * populated `script`, so the migration is idempotent.
+     *
+     * The whole check-and-migrate runs inside one transaction, not just the
+     * rebuild: the schema inspection is the decision point, so a second
+     * concurrent init on the same connection must not read a pre-migration
+     * schema and then re-run `ADD COLUMN` (duplicate column) after the first
+     * migration already committed. It also guards the crash window between the
+     * `DROP TABLE vtxos` and the `RENAME tmp → vtxos`, which would otherwise
+     * leave the next startup seeing no `vtxos` table.
+     */
+    private async migrateVtxosTable(): Promise<void> {
+        await runInTransaction(this.db, async () => {
+            const tableExists = await this.db.get<{ name: string }>(
+                `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+                [this.tables.vtxos],
+            );
+            if (!tableExists) {
+                await this.db.run(this.vtxosCreateSql(this.tables.vtxos));
+                return;
+            }
+
+            const cols = await this.db.all<{ name: string; notnull: number }>(
+                `PRAGMA table_info(${this.tables.vtxos})`,
+            );
+            const scriptCol = cols.find((c) => c.name === "script");
+            const nullableCanonicalColumns = [
+                ["is_swept", "INTEGER"],
+                ["is_preconfirmed", "INTEGER"],
+                ["commitment_txids_json", "TEXT"],
+                ["expires_at", "TEXT"],
+                ["expires_at_height", "INTEGER"],
+            ] as const;
+            let addedCanonicalColumns = false;
+            for (const [name, type] of nullableCanonicalColumns) {
+                if (!cols.some((c) => c.name === name)) {
+                    await this.db.run(
+                        `ALTER TABLE ${this.tables.vtxos} ADD COLUMN ${name} ${type}`,
+                    );
+                    addedCanonicalColumns = true;
+                }
+            }
+            // Every row this ALTER touched has the canonical columns NULL by construction, and its
+            // state survives only in the legacy blob — which SQLite cannot drop, so it is still
+            // there to read. Without the copy a swept row comes back `isSwept: false`, spendable,
+            // until the first indexer sync. Runs before the rebuild below, whose INSERT…SELECT
+            // carries these columns across.
+            const hasLegacyBlob = cols.some((c) => c.name === "virtual_status_json");
+            if (addedCanonicalColumns && hasLegacyBlob) {
+                await this.backfillCanonicalVtxoColumns();
+            }
+            if (scriptCol && scriptCol.notnull === 1 && !hasLegacyBlob) {
+                // Already on v1 schema.
+                return;
+            }
+
+            if (!scriptCol) {
+                await this.db.run(`ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`);
+            }
+
+            // Backfill any NULL scripts from the owning address. Derivation
+            // is deterministic, so re-running after a rolled-back attempt
+            // produces the same values.
+            const nullRows = await this.db.all<{
+                txid: string;
+                vout: number;
+                address: string;
+            }>(`SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`);
+            for (const row of nullRows) {
+                await this.db.run(
+                    `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
+                    [scriptFromArkAddress(row.address), row.txid, row.vout],
+                );
+            }
+
+            // SQLite can't turn a nullable column into NOT NULL in place —
+            // do the canonical 12-step table rebuild. Drop any stale temp
+            // table from a prior aborted attempt first.
+            const tempName = `${this.tables.vtxos}__migrate_tmp`;
+            await this.db.run(`DROP TABLE IF EXISTS ${tempName}`);
+            await this.db.run(this.vtxosCreateSql(tempName));
+            await this.db.run(`
+                INSERT INTO ${tempName}
+                    (txid, vout, value, address, tap_tree,
+                     forfeit_cb, forfeit_s, intent_cb, intent_s,
+                     status_json, created_at, is_unrolled, is_spent,
+                     is_swept, is_preconfirmed, commitment_txids_json,
+                     expires_at, expires_at_height,
+                     spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script)
+                SELECT txid, vout, value, address, tap_tree,
+                       forfeit_cb, forfeit_s, intent_cb, intent_s,
+                       status_json, created_at, is_unrolled, is_spent,
+                       is_swept, is_preconfirmed, commitment_txids_json,
+                       expires_at, expires_at_height,
+                       spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script
+                FROM ${this.tables.vtxos}
+            `);
+            await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
+            await this.db.run(`ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`);
+        });
+    }
+
+    /**
+     * Copy the canonical VTXO facts out of the legacy `virtual_status_json` blob.
+     *
+     * Scoped to rows that still have `is_swept` NULL, which is what "never backfilled" looks
+     * like: the copy writes 0 or 1 to every row it touches, so a second pass — a later column
+     * addition, say — cannot overwrite what an indexer sync has since corrected. Rows whose blob
+     * is missing or corrupt are left alone: a migration must not be stopped by one bad row, and
+     * the next sync repairs it.
+     */
+    private async backfillCanonicalVtxoColumns(): Promise<void> {
+        const rows = await this.db.all<{
+            txid: string;
+            vout: number;
+            virtual_status_json: string | null;
+        }>(
+            `SELECT txid, vout, virtual_status_json FROM ${this.tables.vtxos}
+             WHERE virtual_status_json IS NOT NULL AND is_swept IS NULL`,
+        );
+        for (const row of rows) {
+            const facts = legacyVtxoFacts(row.virtual_status_json);
+            if (!facts) continue;
+            await this.db.run(
+                `UPDATE ${this.tables.vtxos}
+                 SET is_swept = ?, is_preconfirmed = ?, commitment_txids_json = ?,
+                     expires_at = ?, expires_at_height = ?,
+                     is_spent = COALESCE(is_spent, ?)
+                 WHERE txid = ? AND vout = ?`,
+                [
+                    facts.isSwept ? 1 : 0,
+                    facts.isPreconfirmed ? 1 : 0,
+                    facts.commitmentTxIds ? JSON.stringify(facts.commitmentTxIds) : null,
+                    facts.expiresAt ? facts.expiresAt.toISOString() : null,
+                    facts.expiresAtHeight ?? null,
+                    facts.isSpent ? 1 : 0,
+                    row.txid,
+                    row.vout,
+                ],
+            );
+        }
+    }
+
+    private vtxosCreateSql(tableName: string): string {
+        return `CREATE TABLE ${tableName} (
+            txid TEXT NOT NULL,
+            vout INTEGER NOT NULL,
+            value INTEGER NOT NULL,
+            address TEXT NOT NULL,
+            tap_tree TEXT NOT NULL,
+            forfeit_cb TEXT NOT NULL,
+            forfeit_s TEXT NOT NULL,
+            intent_cb TEXT NOT NULL,
+            intent_s TEXT NOT NULL,
+            status_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_unrolled INTEGER NOT NULL DEFAULT 0,
+            is_spent INTEGER,
+            is_swept INTEGER,
+            is_preconfirmed INTEGER,
+            commitment_txids_json TEXT,
+            expires_at TEXT,
+            expires_at_height INTEGER,
+            spent_by TEXT,
+            settled_by TEXT,
+            ark_tx_id TEXT,
+            extra_witness_json TEXT,
+            assets_json TEXT,
+            script TEXT NOT NULL,
+            PRIMARY KEY (txid, vout)
+        )`;
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        // no-op — consumer owns the SQLExecutor lifecycle
+    }
+
+    // ── Clear ──────────────────────────────────────────────────────────
+
+    async clear(): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(`DELETE FROM ${this.tables.vtxos}`);
+        await this.db.run(`DELETE FROM ${this.tables.utxos}`);
+        await this.db.run(`DELETE FROM ${this.tables.transactions}`);
+        await this.db.run(`DELETE FROM ${this.tables.walletState}`);
+    }
+
+    // ── VTXO management ────────────────────────────────────────────────
+
+    async getVtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+        return this.pageByAddress(this.tables.vtxos, address, page, vtxoRowToDomain);
+    }
+
+    async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
+        await this.ensureInit();
+        for (const vtxo of vtxos) {
+            const s = serializeVtxo(vtxo);
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.tables.vtxos}
+                    (txid, vout, value, address,
+                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+                     status_json, created_at, is_unrolled, is_spent,
+                     is_swept, is_preconfirmed, commitment_txids_json,
+                     expires_at, expires_at_height,
+                     spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script)
+                 VALUES (?, ?, ?, ?,
+                         ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?,
+                         ?, ?, ?,
+                         ?, ?,
+                         ?, ?, ?, ?, ?, ?)`,
+                [
+                    s.txid,
+                    s.vout,
+                    s.value,
+                    address,
+                    s.tapTree,
+                    s.forfeitTapLeafScript.cb,
+                    s.forfeitTapLeafScript.s,
+                    s.intentTapLeafScript.cb,
+                    s.intentTapLeafScript.s,
+                    JSON.stringify(s.status),
+                    createdAtToIso(s.createdAt),
+                    s.isUnrolled ? 1 : 0,
+                    s.isSpent === undefined ? null : s.isSpent ? 1 : 0,
+                    s.isSwept === undefined ? null : s.isSwept ? 1 : 0,
+                    s.isPreconfirmed === undefined ? null : s.isPreconfirmed ? 1 : 0,
+                    s.commitmentTxIds ? JSON.stringify(s.commitmentTxIds) : null,
+                    s.expiresAt === undefined ? null : new Date(s.expiresAt).toISOString(),
+                    s.expiresAtHeight ?? null,
+                    s.spentBy ?? null,
+                    s.settledBy ?? null,
+                    s.arkTxId ?? null,
+                    s.extraWitness ? JSON.stringify(s.extraWitness) : null,
+                    s.assets ? JSON.stringify(s.assets) : null,
+                    s.script ?? null,
+                ],
+            );
+        }
+    }
+
+    async deleteVtxos(address: string): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE address = ?`, [address]);
+    }
+
+    async getVtxosForScriptPage(
+        script: string,
+        page: PageRequest<ScriptVtxoCursor>,
+        options?: ScriptVtxoPageOptions,
+    ): Promise<PageResult<StoredVtxo, ScriptVtxoCursor>> {
+        assertPageRequest(page);
+        await this.ensureInit();
+        const after = page.after;
+        const rows = await this.db.all<VtxoRow>(
+            `SELECT * FROM ${this.tables.vtxos} WHERE script = ?
+             ${options?.unspentOnly ? `AND ${UNSPENT_VTXO_PREDICATE}` : ""}
+             ${after ? "AND (address > ? OR (address = ? AND (txid > ? OR (txid = ? AND vout > ?))))" : ""}
+             ORDER BY address, txid, vout LIMIT ?`,
+            after
+                ? [
+                      script,
+                      after.address,
+                      after.address,
+                      after.txid,
+                      after.txid,
+                      after.vout,
+                      page.limit + 1,
+                  ]
+                : [script, page.limit + 1],
+        );
+        const result = pageResult(
+            rows.map((row) => ({ address: row.address, vtxo: vtxoRowToDomain(row) })),
+            page.limit,
+            (row) => ({ address: row.address, txid: row.vtxo.txid, vout: row.vtxo.vout }),
+        );
+        // Legacy facts decoded from the row can still mark it spent.
+        return options?.unspentOnly
+            ? { ...result, items: result.items.filter((row) => !isVtxoSpent(row.vtxo)) }
+            : result;
+    }
+
+    async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
+        return this.saveVtxos(checkSaveVtxosForScript("SQLiteWalletRepository", key, vtxos), vtxos);
+    }
+
+    async deleteVtxosForScript(script: string): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE script = ?`, [script]);
+    }
+
+    // ── UTXO management ────────────────────────────────────────────────
+
+    async getUtxosPage(
+        address: string,
+        page: PageRequest<Outpoint>,
+    ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+        return this.pageByAddress(this.tables.utxos, address, page, utxoRowToDomain);
+    }
+
+    private async pageByAddress<Row extends Outpoint, Item>(
+        table: string,
+        address: string,
+        page: PageRequest<Outpoint>,
+        deserialize: (row: Row) => Item,
+    ): Promise<PageResult<Item, Outpoint>> {
+        assertPageRequest(page);
+        await this.ensureInit();
+        const rows = await this.db.all<Row>(
+            `SELECT * FROM ${table} WHERE address = ? AND (txid, vout) > (?, ?)
+             ORDER BY txid, vout LIMIT ?`,
+            [address, page.after?.txid ?? "", page.after?.vout ?? -1, page.limit + 1],
+        );
+        const result = pageResult(rows, page.limit, ({ txid, vout }) => ({ txid, vout }));
+        return { items: result.items.map(deserialize), nextCursor: result.nextCursor };
+    }
+
+    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+        await this.ensureInit();
+        for (const utxo of utxos) {
+            const s = serializeUtxo(utxo);
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.tables.utxos}
+                    (txid, vout, value, address,
+                     tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
+                     status_json, extra_witness_json)
+                 VALUES (?, ?, ?, ?,
+                         ?, ?, ?, ?, ?,
+                         ?, ?)`,
+                [
+                    s.txid,
+                    s.vout,
+                    s.value,
+                    address,
+                    s.tapTree,
+                    s.forfeitTapLeafScript.cb,
+                    s.forfeitTapLeafScript.s,
+                    s.intentTapLeafScript.cb,
+                    s.intentTapLeafScript.s,
+                    JSON.stringify(s.status),
+                    s.extraWitness ? JSON.stringify(s.extraWitness) : null,
+                ],
+            );
+        }
+    }
+
+    async deleteUtxos(address: string): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(`DELETE FROM ${this.tables.utxos} WHERE address = ?`, [address]);
+    }
+
+    // ── Transaction history ────────────────────────────────────────────
+
+    async getTransactionHistoryPage(
+        filter: TransactionHistoryPageFilter,
+        page: PageRequest<TransactionHistoryPageCursor>,
+    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+        assertPageRequest(page);
+        assertHistoryPageFilter(filter);
+        await this.ensureInit();
+        const conditions = ["address = ?"];
+        const params: unknown[] = [filter.address];
+        if (filter.since !== undefined) {
+            conditions.push("created_at >= ?");
+            params.push(filter.since);
+        }
+        if (page.after !== undefined) {
+            conditions.push(
+                "(created_at, boarding_txid, commitment_txid, ark_txid) > (?, ?, ?, ?)",
+            );
+            params.push(
+                page.after.createdAt,
+                page.after.key.boardingTxid,
+                page.after.key.commitmentTxid,
+                page.after.key.arkTxid,
+            );
+        }
+        const rows = await this.db.all<TransactionRow>(
+            `SELECT * FROM ${this.tables.transactions} WHERE ${conditions.join(" AND ")}
+             ORDER BY created_at, boarding_txid, commitment_txid, ark_txid LIMIT ?`,
+            [...params, page.limit + 1],
+        );
+        return pageResult(rows.map(txRowToDomain), page.limit, (tx) => ({
+            createdAt: tx.createdAt,
+            key: tx.key,
+        }));
+    }
+
+    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
+        await this.ensureInit();
+        for (const tx of txs) {
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.tables.transactions}
+                    (address, boarding_txid, commitment_txid, ark_txid,
+                     type, amount, settled, created_at, assets_json)
+                 VALUES (?, ?, ?, ?,
+                         ?, ?, ?, ?, ?)`,
+                [
+                    address,
+                    tx.key.boardingTxid,
+                    tx.key.commitmentTxid,
+                    tx.key.arkTxid,
+                    tx.type,
+                    tx.amount,
+                    tx.settled ? 1 : 0,
+                    tx.createdAt,
+                    tx.assets ? JSON.stringify(serializeAssets(tx.assets)) : null,
+                ],
+            );
+        }
+    }
+
+    async deleteTransactions(address: string): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(`DELETE FROM ${this.tables.transactions} WHERE address = ?`, [address]);
+    }
+
+    // ── Wallet state ───────────────────────────────────────────────────
+
+    async getWalletState(): Promise<WalletState | null> {
+        await this.ensureInit();
+        const row = await this.db.get<WalletStateRow>(
+            `SELECT * FROM ${this.tables.walletState} WHERE key = ?`,
+            ["state"],
+        );
+        if (!row) return null;
+
+        const state: WalletState = {};
+        if (row.settings_json) {
+            state.settings = JSON.parse(row.settings_json);
+        }
+        state.lastSyncTime = row.last_sync_time ?? undefined;
+        return state;
+    }
+
+    async saveWalletState(state: WalletState): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(
+            `INSERT OR REPLACE INTO ${this.tables.walletState}
+                (key, settings_json, last_sync_time)
+             VALUES (?, ?, ?)`,
+            [
+                "state",
+                state.settings ? JSON.stringify(state.settings) : null,
+                state.lastSyncTime ?? null,
+            ],
+        );
+    }
+}
+
+// ── Row types ──────────────────────────────────────────────────────────
+
+interface VtxoRow {
+    txid: string;
+    vout: number;
+    value: number;
+    address: string;
+    tap_tree: string;
+    forfeit_cb: string;
+    forfeit_s: string;
+    intent_cb: string;
+    intent_s: string;
+    status_json: string;
+    created_at: string;
+    is_unrolled: number;
+    is_spent: number | null;
+    is_swept?: number | null;
+    is_preconfirmed?: number | null;
+    commitment_txids_json?: string | null;
+    expires_at?: string | null;
+    expires_at_height?: number | null;
+    spent_by: string | null;
+    settled_by: string | null;
+    ark_tx_id: string | null;
+    extra_witness_json: string | null;
+    assets_json: string | null;
+    script: string | null;
+}
+
+interface UtxoRow {
+    txid: string;
+    vout: number;
+    value: number;
+    address: string;
+    tap_tree: string;
+    forfeit_cb: string;
+    forfeit_s: string;
+    intent_cb: string;
+    intent_s: string;
+    status_json: string;
+    extra_witness_json: string | null;
+}
+
+interface TransactionRow {
+    address: string;
+    boarding_txid: string;
+    commitment_txid: string;
+    ark_txid: string;
+    type: string;
+    amount: number;
+    settled: number;
+    created_at: number;
+    assets_json: string | null;
+}
+
+interface WalletStateRow {
+    key: string;
+    settings_json: string | null;
+    last_sync_time: number | null;
+}
+
+// The page query repeats the index predicate verbatim so SQLite can use the partial index.
+const UNSPENT_VTXO_PREDICATE =
+    "(is_spent IS NULL OR is_spent = 0) AND (spent_by IS NULL OR spent_by = '') AND (settled_by IS NULL OR settled_by = '')";
+
+// ── Row → Domain converters ────────────────────────────────────────────
+
+function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
+    const serialized = {
+        txid: row.txid,
+        vout: row.vout,
+        value: row.value,
+        tapTree: row.tap_tree,
+        forfeitTapLeafScript: {
+            cb: row.forfeit_cb,
+            s: row.forfeit_s,
+        } as SerializedTapLeaf,
+        intentTapLeafScript: {
+            cb: row.intent_cb,
+            s: row.intent_s,
+        } as SerializedTapLeaf,
+        status: JSON.parse(row.status_json),
+        createdAt: new Date(row.created_at),
+        isUnrolled: row.is_unrolled === 1,
+        isSpent: row.is_spent === null ? undefined : row.is_spent === 1,
+        isSwept: row.is_swept == null ? undefined : row.is_swept === 1,
+        isPreconfirmed: row.is_preconfirmed == null ? undefined : row.is_preconfirmed === 1,
+        commitmentTxIds: row.commitment_txids_json
+            ? JSON.parse(row.commitment_txids_json)
+            : undefined,
+        expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
+        expiresAtHeight: row.expires_at_height ?? undefined,
+        spentBy: row.spent_by ?? undefined,
+        settledBy: row.settled_by ?? undefined,
+        arkTxId: row.ark_tx_id ?? undefined,
+        extraWitness: row.extra_witness_json ? JSON.parse(row.extra_witness_json) : undefined,
+        assets: row.assets_json ? JSON.parse(row.assets_json) : undefined,
+        // Post-migration every row has `script`, but the backfill is
+        // idempotent: derive from `address` if the legacy column is still
+        // null (e.g. the migration hasn't run yet on this handle).
+        script: row.script ?? scriptFromArkAddress(row.address),
+    };
+
+    return deserializeVtxo(serialized);
+}
+
+function utxoRowToDomain(row: UtxoRow): ExtendedCoin {
+    const serialized = {
+        txid: row.txid,
+        vout: row.vout,
+        value: row.value,
+        tapTree: row.tap_tree,
+        forfeitTapLeafScript: {
+            cb: row.forfeit_cb,
+            s: row.forfeit_s,
+        } as SerializedTapLeaf,
+        intentTapLeafScript: {
+            cb: row.intent_cb,
+            s: row.intent_s,
+        } as SerializedTapLeaf,
+        status: JSON.parse(row.status_json),
+        extraWitness: row.extra_witness_json ? JSON.parse(row.extra_witness_json) : undefined,
+    };
+
+    return deserializeUtxo(serialized);
+}
+
+function txRowToDomain(row: TransactionRow): ArkTransaction {
+    const tx: ArkTransaction = {
+        key: {
+            boardingTxid: row.boarding_txid,
+            commitmentTxid: row.commitment_txid,
+            arkTxid: row.ark_txid,
+        },
+        type: row.type as ArkTransaction["type"],
+        amount: row.amount,
+        settled: row.settled === 1,
+        createdAt: row.created_at,
+    };
+    if (row.assets_json) {
+        tx.assets = deserializeAssets(JSON.parse(row.assets_json));
+    }
+    return tx;
+}

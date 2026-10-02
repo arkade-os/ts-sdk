@@ -17,14 +17,14 @@
 # the block stack, so a new seconds-typed suite that forgets the prefix fails on
 # a server it cannot quote against — name it `rfq*`.
 #
-# Usage: scripts/regtest.sh <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
+# Usage: scripts/regtest.sh <sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
 #   setup  – run the package's test/setup waiter
 #   test   – run the package's vitest e2e suite or selected files (assumes stack is up)
 #   cycle  – reset + up + setup + test (full integration run)
-#   groups – ts-sdk only: run each CI group in turn, on a fresh stack per group
+#   groups – sdk only: run each CI group in turn, on a fresh stack per group
 #
 # `cycle` runs every e2e file in ONE vitest process against ONE long-lived stack.
 # CI never does that — it splits the suite into groups, each with its own stack —
@@ -38,7 +38,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <ts-sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
+  echo "Usage: $0 <sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
   exit 1
 }
 
@@ -57,8 +57,8 @@ TEST_FILES=("$@")
 # A profile resolves to a package directory plus an env-file suffix; a plain
 # package name is the profile with no suffix.
 case "$PKG" in
-  ts-sdk|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
-  swap-rfq)    PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
+  sdk|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
+  swap-rfq) PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
   *) usage ;;
 esac
 
@@ -89,8 +89,8 @@ cmd_reset() {
 
 cmd_setup() {
   case "$PKG_DIR" in
-    ts-sdk)
-      pnpm -C "$ROOT_DIR/packages/ts-sdk" exec node test/setup.mjs
+    sdk)
+      pnpm -C "$ROOT_DIR/packages/sdk" exec node test/setup.mjs
       ;;
     swap)
       pnpm -C "$ROOT_DIR/packages/swap" exec node test/e2e/setup.mjs
@@ -100,11 +100,11 @@ cmd_setup() {
 
 cmd_test() {
   case "$PKG" in
-    ts-sdk)
+    sdk)
       if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run "${TEST_FILES[@]}"
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run "${TEST_FILES[@]}"
       else
-        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" run test:integration
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" run test:integration
       fi
       ;;
     swap)
@@ -128,8 +128,8 @@ cmd_test() {
 # Keeps going after a failing group so one bad group does not hide the rest;
 # exits non-zero if any failed.
 cmd_groups() {
-  if [ "$PKG" != "ts-sdk" ]; then
-    echo "groups: only defined for ts-sdk" >&2
+  if [ "$PKG" != "sdk" ]; then
+    echo "groups: only defined for sdk" >&2
     exit 1
   fi
   # Read the list before looping so a discovery failure is fatal: piped straight
@@ -153,7 +153,7 @@ cmd_groups() {
     fi
     # $files is a deliberate word-split file list.
     # shellcheck disable=SC2086
-    if ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/ts-sdk" exec vitest run $files; then
+    if ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run $files; then
       echo "=== group $name: PASS ==="
     else
       echo "=== group $name: FAIL ===" >&2

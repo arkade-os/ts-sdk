@@ -29,7 +29,7 @@ import {
 } from "../offer";
 import { classifyDepositSpend, spendTxidsOf } from "../restore";
 import { offerOutcome } from "./outcome";
-import type { AssetSwapRepository } from "../repository";
+import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import type { LockupSpendIndexer } from "../refund";
 import type { SwapDrive } from "./drive";
 import { offerFactsOf, splitRecords } from "./driveRecords";
@@ -217,7 +217,7 @@ const retireOfferScripts = async (
     record: OfferSwapRecord,
 ): Promise<void> => {
     try {
-        const { offer } = splitRecords(await repository.getAllSwapRecords());
+        const { offer } = splitRecords(await collectSwapRecords(repository));
         await retireOfferContract(
             await wallet.getContractManager(),
             offer.map(offerFactsOf),

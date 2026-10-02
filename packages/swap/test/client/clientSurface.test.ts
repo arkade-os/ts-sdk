@@ -1,3 +1,4 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * The rest of the v2 client surface: `swaps()`, `markets()`, cancel's refusals
  * and the disposal gate.
@@ -125,7 +126,7 @@ describe("swaps()", () => {
     });
 
     it("filters family and outcome in memory", async () => {
-        const h = await harness();
+        const h = await harness({ drive: "readonly" });
         const { offer, rfq } = await bothFamilies(h);
 
         expect((await h.client.swaps({ family: "offer" })).map((s) => s.id)).toEqual([offer]);
@@ -280,6 +281,6 @@ describe("ClientDisposed", () => {
         await expect(h.client[Symbol.asyncDispose]()).resolves.toBeUndefined();
 
         // The repository is the caller's, and it outlives the client.
-        expect(await h.repository.getAllSwapRecords()).toHaveLength(1);
+        expect(await collectSwapRecords(h.repository)).toHaveLength(1);
     });
 });

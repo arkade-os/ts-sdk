@@ -33,10 +33,6 @@
 export {
     type RfqSwapActivityDeps,
     rfqSwapActivityInputs,
-    rfqSwapActivityInputsPage,
-    rfqSwapActivityInputsSincePage,
-    type RfqSwapActivityPage,
-    type RfqSwapDatedActivityPage,
     type SwapActivityInput,
     swapActivityResolver,
 } from "./activity";
@@ -239,7 +235,6 @@ export {
     shouldRetainRfqSwap,
     updateRfqSwapRecord,
 } from "./rfqRecord";
-export { RFQ_SWAP_MAX_PAGE_SIZE, type RfqHistoryCursor } from "./repository";
 export {
     addAssetSwap,
     type AssetSwapStatus,

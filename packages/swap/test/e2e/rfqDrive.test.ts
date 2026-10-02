@@ -1,10 +1,11 @@
+import { collectSwapRecords } from "../../src/repository";
 /**
  * The v2 client's drive against the real regtest stack.
  *
  * What the unit suite cannot prove, and this can: the record bridge works
  * against a real repository, a real contract row and a real indexer. `accept()`
  * writes into the v2 keyspace, and `RfqSwapManager.restoreFromRepository` reads
- * `getAllRfqSwaps()` — two stores that `repository.ts` rules disjoint by design.
+ * `getRfqSwapsPage()` — two stores that `repository.ts` rules disjoint by design.
  * So a SECOND client built on the same storage either finds the swap and drives
  * it to an outcome, or the whole lifecycle is standing on an empty set.
  *
@@ -260,7 +261,7 @@ describe("the v2 drive (regtest)", () => {
 
     it("finds that swap again from a second client's construction restore", async () => {
         // The bridge, end to end. `accept()` wrote `saveSwapRecord`; the manager
-        // restores from `getAllRfqSwaps()`; and the two stores are disjoint by
+        // restores from `getRfqSwapsPage()`; and the two stores are disjoint by
         // design — so without the adapter this client sees nothing at all.
         const client = clientOn();
         const seen: SwapUpdate[] = [];
@@ -299,7 +300,7 @@ describe("the v2 drive (regtest)", () => {
 
         // One record, and it is still the one `accept()` wrote: the manager's
         // mutable half is merged onto the v2 record rather than replacing it.
-        const records = await repository.getAllSwapRecords();
+        const records = await collectSwapRecords(repository);
         expect(records.filter((r) => r.id === quoteId)).toHaveLength(1);
         const stored = (await repository.getSwapRecord(quoteId)) as CorridorSwapRecord;
         expect(stored.lockupPkScript).toBe(lockupScript);

@@ -3,6 +3,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     asset,
+    collectContracts,
     CSVMultisigTapscript,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -463,7 +464,7 @@ describe("an offer at a script an earlier offer retired", () => {
         // promotion is the only thing that can restore coverage here
         await create(wallet);
 
-        const row = (await contractRepository.getContracts()).find((c) => c.script === script);
+        const row = (await collectContracts(contractRepository)).find((c) => c.script === script);
         expect(row?.watch).toBe("watched");
     });
 });

@@ -1,3 +1,4 @@
+import { collectAssetSwaps } from "../src/repository";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IWallet } from "@arkade-os/sdk";
 import { InMemoryAssetSwapRepository } from "../src/repository";
@@ -112,7 +113,7 @@ describe("restoreAssetSwapRepository", () => {
             { previous: open, current: resolved },
             { current: rebuilt },
         ]);
-        expect(result.swaps).toEqual([open, rebuilt].map((s) => (s.id === "open" ? resolved : s)));
+        expect(result.swaps).toEqual([rebuilt, resolved]);
     });
 
     it("lets a consumer decorate only newly rebuilt records before persistence", async () => {
@@ -155,7 +156,7 @@ describe("restoreAssetSwapRepository", () => {
 
         const result = await run(repository);
 
-        expect(await repository.getAllSwaps()).toEqual([rebuilt]);
+        expect(await collectAssetSwaps(repository)).toEqual([rebuilt]);
         expect(await repository.getScannedTxids()).toEqual(new Set(["new"]));
         expect(result.coverageError).toBe(unavailable);
     });
@@ -201,7 +202,7 @@ describe("restoreAssetSwapRepository", () => {
         const result = await run(repository, { signal: controller.signal });
 
         expect(result.aborted).toBe(true);
-        expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
         expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
     });

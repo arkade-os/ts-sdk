@@ -56,7 +56,7 @@ importers:
     dependencies:
       '@arkade-os/sdk':
         specifier: workspace:*
-        version: link:../ts-sdk
+        version: link:../sdk
       '@arkade-os/solver-discovery':
         specifier: 0.2.7
         version: 0.2.7
@@ -86,7 +86,7 @@ importers:
         specifier: ^2.12.0
         version: 2.24.1(typescript@5.9.2)
 
-  packages/ts-sdk:
+  packages/sdk:
     dependencies:
       '@bitcoinerlab/descriptors-scure':
         specifier: 3.1.7

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// The ts-sdk e2e groups, read straight out of the CI matrix.
+// The sdk e2e groups, read straight out of the CI matrix.
 //
 // CI is the only place the grouping is defined; this reader exists so the local
-// runner (`scripts/regtest.sh ts-sdk groups`) executes exactly what CI executes,
+// runner (`scripts/regtest.sh sdk groups`) executes exactly what CI executes,
 // and so `--check` can fail when a new e2e file belongs to no group. Running all
 // files in one process against one long-lived arkd is NOT the supported shape:
 // the groups exist because each gets its own fresh stack.
@@ -14,9 +14,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const E2E_DIR = join(ROOT, "packages", "ts-sdk", "test", "e2e");
+const E2E_DIR = join(ROOT, "packages", "sdk", "test", "e2e");
 
-/** Group name -> test files, for matrix entries whose `package` is ts-sdk. */
+/** Group name -> test files, for matrix entries whose `package` is sdk. */
 export function readGroups() {
     const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
     const groups = [];
@@ -24,16 +24,16 @@ export function readGroups() {
     // inline path or a `>-` folded scalar holding one path per line.
     for (const entry of ci.split(/^\s*- package:/m).slice(1)) {
         const [, pkg] = entry.match(/^\s*(\S+)/) ?? [];
-        if (pkg !== "ts-sdk") continue;
+        if (pkg !== "sdk") continue;
         const [, name] = entry.match(/^\s*group:\s*(\S+)/m) ?? [];
         const files = entry.match(/test\/e2e\/\S+\.test\.ts/g) ?? [];
         if (!name || files.length === 0) {
-            throw new Error(`e2e-groups: unparsable ts-sdk matrix entry near "${name ?? "?"}"`);
+            throw new Error(`e2e-groups: unparsable sdk matrix entry near "${name ?? "?"}"`);
         }
         groups.push({ name, files });
     }
     if (groups.length === 0) {
-        throw new Error("e2e-groups: found no ts-sdk groups in .github/workflows/ci.yml");
+        throw new Error("e2e-groups: found no sdk groups in .github/workflows/ci.yml");
     }
     return groups;
 }

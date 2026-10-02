@@ -21,6 +21,7 @@ import {
     VHTLCV2ContractHandler,
     buildOffchainTx,
     setArkPsbtField,
+    pageResult,
     type Contract,
     type ContractEvent,
     type CreateContractParams,
@@ -55,6 +56,7 @@ import {
     RfqSwapManager,
     RfqSwapOriginRequired,
     isRfqSwapTerminal,
+    RFQ_SWAP_ACTIVE_STATES,
     nextOnchainAction,
     type ArkadeRefundResult,
     type LightningReceiveSwap,
@@ -3153,9 +3155,24 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 if (store.failRead) throw new Error("record store unavailable");
                 return store.records.get(rfqId);
             },
-            async getAllRfqSwaps() {
+            async getRfqSwapsPage(filter, page) {
                 if (store.failRead) throw new Error("record store unavailable");
-                return [...store.records.values()];
+                const rows = [...store.records.values()]
+                    .filter(
+                        (row) =>
+                            (filter.state === undefined || row.state === filter.state) &&
+                            (filter.since === undefined || row.updatedAt >= filter.since) &&
+                            (!page.after ||
+                                row.updatedAt > page.after.updatedAt ||
+                                (row.updatedAt === page.after.updatedAt &&
+                                    row.rfqId > page.after.rfqId)),
+                    )
+                    .sort((a, b) => a.updatedAt - b.updatedAt || a.rfqId.localeCompare(b.rfqId))
+                    .slice(0, page.limit + 1);
+                return pageResult(rows, page.limit, (row) => ({
+                    updatedAt: row.updatedAt,
+                    rfqId: row.rfqId,
+                }));
             },
             async removeRfqSwap(rfqId) {
                 store.removed.push(rfqId);
@@ -3485,15 +3502,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 storedSend(),
                 storedSend({ rfqId: terminalId, state: "settled", updatedAt: SAFE_NOW - 1 }),
             ]);
-            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
-                [...store.records.values()]
-                    .filter(
-                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
-                    )
-                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
-                    .slice(0, limit),
-            );
-            const readAll = vi.spyOn(store, "getAllRfqSwaps");
+            const pages = vi.spyOn(store, "getRfqSwapsPage");
             const m = manager({
                 contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
                 repository: store,
@@ -3505,7 +3514,9 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
             expect(result.failed).toEqual([]);
-            expect(readAll).not.toHaveBeenCalled();
+            expect(pages.mock.calls.map(([filter]) => filter.state)).toEqual([
+                ...RFQ_SWAP_ACTIVE_STATES,
+            ]);
             expect((await m.getStats()).finishedSwaps).toBe(0);
             await expect(m.waitForSwapCompletion(terminalId)).resolves.toEqual({
                 state: "settled",
@@ -3517,14 +3528,6 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
         it("never replaces a live swap when paging returns it again", async () => {
             const store = fakeStore([storedSend()]);
-            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
-                [...store.records.values()]
-                    .filter(
-                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
-                    )
-                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
-                    .slice(0, limit),
-            );
             const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
             const params = async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
 
