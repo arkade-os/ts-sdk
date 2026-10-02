@@ -5598,7 +5598,11 @@ export class Wallet
         return this._withTxLock(() => this._sendImpl(params));
     }
 
-    private async _sendImpl({ recipients: args, selectedVtxos }: SendParams): Promise<string> {
+    private async _sendImpl({
+        recipients: args,
+        selectedVtxos,
+        maxChangeFee,
+    }: SendParams): Promise<string> {
         if (args.length === 0) {
             // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
@@ -5607,6 +5611,12 @@ export class Wallet
             // Distinct from `undefined`, which means "choose for me": a caller that
             // meant to name inputs and named none is not asking the wallet to pick.
             throw new Error("send({ selectedVtxos }): no inputs");
+        }
+        if (
+            maxChangeFee !== undefined &&
+            (!Number.isSafeInteger(maxChangeFee) || maxChangeFee < 0)
+        ) {
+            throw new Error("send({ maxChangeFee }): expected a non-negative safe integer");
         }
         if (selectedVtxos) {
             // Naming inputs skips the generic-spending gate, as it does on
@@ -5810,15 +5820,25 @@ export class Wallet
             );
         }
 
-        const vtxoMinAmount =
+        const info =
             changeAmount > 0 || assetChanges.size > 0
-                ? ((await this.arkProvider.getInfo()).vtxoMinAmount ?? 0n)
-                : 0n;
+                ? await this.arkProvider.getInfo()
+                : undefined;
+        const vtxoMinAmount = info?.vtxoMinAmount ?? 0n;
+        const canPayChangeAsFee = () =>
+            assetChanges.size === 0 &&
+            changeAmount > 0 &&
+            BigInt(changeAmount) < vtxoMinAmount &&
+            (maxChangeFee === undefined || changeAmount <= maxChangeFee);
         if (selectedVtxos && changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) {
-            throw new Error(
-                `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
-                    `the operator minimum of ${vtxoMinAmount} sats`,
-            );
+            if (canPayChangeAsFee()) {
+                changeAmount = 0;
+            } else {
+                throw new Error(
+                    `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
+                        `the operator minimum of ${vtxoMinAmount} sats`,
+                );
+            }
         }
 
         const selectedOutpoints = new Set(selectedCoins.map(vtxoOutpoint));
@@ -5871,6 +5891,10 @@ export class Wallet
                         changeAmount = 0;
                         break;
                     }
+                }
+                if (canPayChangeAsFee()) {
+                    changeAmount = 0;
+                    break;
                 }
                 throw new Error(`Cannot form minimum change amount of ${minimumChange} sats`);
             }

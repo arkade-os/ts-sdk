@@ -470,14 +470,20 @@ describe("Wallet", () => {
             return { thisArg, submit, coins };
         }
 
-        async function send(thisArg: any, amount: number, selectedVtxos?: any[]) {
+        async function send(
+            thisArg: any,
+            amount: number,
+            selectedVtxos?: any[],
+            maxChangeFee?: number,
+        ) {
             return (Wallet.prototype as any)._sendImpl.call(thisArg, {
                 recipients: [{ address, amount }],
                 selectedVtxos,
+                maxChangeFee,
             });
         }
 
-        it("adds another coin when a Lightning funding send would create change below the operator minimum", async () => {
+        it("adds another coin instead of donating when a Lightning funding send would create change below the operator minimum", async () => {
             const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
 
             await send(thisArg, 505);
@@ -547,18 +553,69 @@ describe("Wallet", () => {
             expect(submit.mock.calls[0][1][1].amount).toBe(111n);
         });
 
-        it("fails before submission if no valid change can be formed", async () => {
+        it("turns unavoidable BTC-only change into a bounded offchain fee", async () => {
             const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await send(thisArg, 505);
+
+            expect(submit).toHaveBeenCalledOnce();
+            expect(
+                submit.mock.calls[0][1].map((output: { amount: bigint }) => output.amount),
+            ).toEqual([505n]);
+            expect(submit.mock.calls[0][2].changeAmount).toBe(0n);
+        });
+
+        it("honors a smaller per-send fee cap", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await expect(send(thisArg, 505, undefined, 110)).rejects.toThrow(
+                "minimum change amount of 330 sats",
+            );
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("disables change fees when the per-send cap is zero", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await expect(send(thisArg, 505, undefined, 0)).rejects.toThrow(
+                "minimum change amount of 330 sats",
+            );
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("rejects an invalid fee cap before reading coins", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n);
+
+            await expect(send(thisArg, 505, undefined, -1)).rejects.toThrow(
+                "expected a non-negative safe integer",
+            );
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("never discards asset change as a fee", async () => {
+            const { thisArg, submit } = sendWithCoins([616], 330n, [0]);
 
             await expect(send(thisArg, 505)).rejects.toThrow("minimum change amount of 330 sats");
             expect(submit).not.toHaveBeenCalled();
+        });
+
+        it("can donate bounded change from caller-selected inputs without adding coins", async () => {
+            const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
+            thisArg.logUngatedInputs = vi.fn();
+
+            await send(thisArg, 505, [coins[0]], 111);
+
+            expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
+            expect(submit.mock.calls[0][1]).toHaveLength(1);
+            expect(submit.mock.calls[0][2].changeAmount).toBe(0n);
         });
 
         it("does not add inputs when the caller selected them", async () => {
             const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
             thisArg.logUngatedInputs = vi.fn();
 
-            await expect(send(thisArg, 505, [coins[0]])).rejects.toThrow(
+            await expect(send(thisArg, 505, [coins[0]], 0)).rejects.toThrow(
                 "111 sats of change is below the operator minimum of 330 sats",
             );
             expect(thisArg.getSpendableVtxos).not.toHaveBeenCalled();
