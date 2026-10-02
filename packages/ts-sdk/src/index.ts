@@ -228,6 +228,7 @@ import {
     DigestMismatchError,
     OnchainCosignUnsupportedError,
     OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
@@ -516,6 +517,7 @@ import {
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
 import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
+import { OnchainCosignPreflightError, isCosignFallback } from "./contracts/onchainSpend";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -530,6 +532,7 @@ import type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,
@@ -650,6 +653,7 @@ export {
     DigestMismatchError,
     OnchainCosignUnsupportedError,
     OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     FetchError,
     READ_TIMEOUT_MS,
     RestIndexerProvider,
@@ -803,6 +807,8 @@ export {
     ArkErrorName,
     isArkError,
     maybeArkError,
+    OnchainCosignPreflightError,
+    isCosignFallback,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     isRetryableProviderError,
@@ -1053,6 +1059,7 @@ export type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,

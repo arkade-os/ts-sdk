@@ -3,7 +3,11 @@ import { p2tr } from "@scure/btc-signer";
 import { pubSchnorr } from "@scure/btc-signer/utils.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OnchainCosignPreflightError } from "../../src/contracts/onchainSpend";
-import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../../src/providers/ark";
+import {
+    OnchainCosignAmbiguousError,
+    OnchainCosignRejectedError,
+    OnchainCosignUnsupportedError,
+} from "../../src/providers/ark";
 import { Transaction } from "../../src/utils/transaction";
 import { VtxoScript } from "../../src/script/base";
 import { CSVMultisigTapscript } from "../../src/script/tapscript";
@@ -117,7 +121,9 @@ describe("VtxoManager cosign-first sweeps", () => {
     it("falls back on Rejected and warns", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const wallet = makeWallet({
-            sendOnchain: vi.fn().mockRejectedValue(new OnchainCosignRejectedError("nope")),
+            sendOnchain: vi
+                .fn()
+                .mockRejectedValue(new OnchainCosignRejectedError("nope", "INVALID_ARK_PSBT")),
         });
         const m = manager(wallet);
         await expect(m.sweepOnchainCoins()).resolves.toBeUndefined();
@@ -136,6 +142,16 @@ describe("VtxoManager cosign-first sweeps", () => {
         await expect(m.sweepOnchainCoins()).resolves.toBeUndefined();
         await expect(m.sweepExpiredBoardingUtxos()).resolves.toBe("csv-txid");
         expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("rethrows an ambiguous outcome instead of building a CSV tx", async () => {
+        const wallet = makeWallet({
+            sendOnchain: vi.fn().mockRejectedValue(new OnchainCosignAmbiguousError("500")),
+        });
+        await expect(manager(wallet).sweepOnchainCoins()).rejects.toBeInstanceOf(
+            OnchainCosignAmbiguousError,
+        );
+        expect(wallet.signOnchainBoardingTx).not.toHaveBeenCalled();
     });
 
     it("rethrows any other error", async () => {

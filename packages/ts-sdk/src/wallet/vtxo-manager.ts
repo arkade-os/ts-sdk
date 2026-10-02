@@ -1868,8 +1868,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Renew the onchain coins that need it (unrolled outputs, and boarding coins
-     * nearing cosign cut-off) through an arkd cosignature. Returns the txid, or
+     * Renew the boarding coins nearing cosign cut-off through an arkd
+     * cosignature; unrolled outputs are never swept here. Returns the txid, or
      * undefined when nothing qualified or the cosign path is unavailable.
      */
     async sweepOnchainCoins(): Promise<string | undefined> {

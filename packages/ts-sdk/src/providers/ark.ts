@@ -48,10 +48,30 @@ export class OnchainCosignUnsupportedError extends Error {
     }
 }
 
+/** arkd's structured error name is carried in the message as `[NAME] ` so it survives structured clone. */
 export class OnchainCosignRejectedError extends Error {
-    constructor(readonly serverMessage: string) {
-        super(`${ONCHAIN_COSIGN_REJECTED_PREFIX}${serverMessage}`);
+    constructor(
+        readonly serverMessage: string,
+        readonly arkErrorName?: string,
+    ) {
+        super(
+            `${ONCHAIN_COSIGN_REJECTED_PREFIX}${arkErrorName ? `[${arkErrorName}] ` : ""}${serverMessage}`,
+        );
         this.name = "OnchainCosignRejectedError";
+    }
+}
+
+export const ONCHAIN_COSIGN_AMBIGUOUS_PREFIX =
+    "Onchain cosign outcome unknown, the transaction may have been broadcast: ";
+
+/** The cosign request may have broadcast the tx: never retry the payment with other coins. */
+export class OnchainCosignAmbiguousError extends Error {
+    constructor(
+        readonly detail: string,
+        options?: { cause?: unknown },
+    ) {
+        super(`${ONCHAIN_COSIGN_AMBIGUOUS_PREFIX}${detail}`, options);
+        this.name = "OnchainCosignAmbiguousError";
     }
 }
 
@@ -298,7 +318,7 @@ export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
 
     /** Cosign and broadcast an onchain tx spending server-cosigned UTXOs; returns the txid. */
-    cosignOnchainTx(psbtB64: string): Promise<string>;
+    cosignOnchainTx?(psbtB64: string): Promise<string>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
@@ -619,22 +639,34 @@ export class RestArkProvider implements ArkProvider {
 
     async cosignOnchainTx(psbtB64: string): Promise<string> {
         if (this._onchainCosignUnsupported) throw new OnchainCosignUnsupportedError();
-        const response = await this.authedFetch(`${this.serverUrl}/v1/tx/onchain/cosign`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tx: psbtB64 }),
-        });
-        if (response.status === 404 || response.status === 501) {
+        let response: Response;
+        let text: string;
+        try {
+            response = await this.authedFetch(`${this.serverUrl}/v1/tx/onchain/cosign`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tx: psbtB64 }),
+            });
+            if (response.ok) return (await response.json()).txid;
+            text = await response.text();
+        } catch (e) {
+            if (e instanceof DigestMismatchError) throw e;
+            throw new OnchainCosignAmbiguousError(e instanceof Error ? e.message : String(e), {
+                cause: e,
+            });
+        }
+        const arkError = maybeArkError(new Error(text));
+        if (!arkError && (response.status === 404 || response.status === 501)) {
             this._onchainCosignUnsupported = true;
             throw new OnchainCosignUnsupportedError();
         }
-        if (!response.ok) {
-            const text = await response.text();
-            const arkError = maybeArkError(new Error(text));
-            throw new OnchainCosignRejectedError(arkError?.message ?? text);
+        // arkd answers INTERNAL_ERROR even after a successful broadcast (failed db write).
+        if (!arkError || arkError.name === ArkErrorName.INTERNAL_ERROR) {
+            throw new OnchainCosignAmbiguousError(
+                arkError?.message ?? `${response.status} ${text}`,
+            );
         }
-        const data = await response.json();
-        return data.txid;
+        throw new OnchainCosignRejectedError(arkError.message, arkError.name);
     }
 
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {

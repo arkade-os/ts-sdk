@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     CachingArkProvider,
+    FetchError,
+    OnchainCosignAmbiguousError,
     OnchainCosignRejectedError,
     OnchainCosignUnsupportedError,
     RestArkProvider,
@@ -8,6 +10,22 @@ import {
 
 const okJson = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+const arkErrorBody = (name: string, message: string, code = 3) => ({
+    code,
+    message,
+    details: [{ "@type": "type.googleapis.com/ark.v1.ErrorDetails", code, name, message }],
+});
+
+const cosignWith = (response: Response | Error) => {
+    const fetchMock =
+        response instanceof Error
+            ? vi.fn().mockRejectedValue(response)
+            : vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new RestArkProvider("http://ark");
+    return { fetchMock, provider, err: provider.cosignOnchainTx("x").catch((e) => e) };
+};
 
 describe("RestArkProvider.cosignOnchainTx", () => {
     afterEach(() => vi.unstubAllGlobals());
@@ -38,17 +56,44 @@ describe("RestArkProvider.cosignOnchainTx", () => {
         },
     );
 
-    it("maps a structured arkd rejection to OnchainCosignRejectedError", async () => {
-        const body = { code: 3, message: "input exit path too close to maturity", details: [] };
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson(body, 400)));
-        const err = await new RestArkProvider("http://ark").cosignOnchainTx("x").catch((e) => e);
-        expect(err).toBeInstanceOf(OnchainCosignRejectedError);
-        expect(err.serverMessage).toContain("too close to maturity");
+    it("maps a structured arkd rejection to OnchainCosignRejectedError carrying its name", async () => {
+        const { err } = cosignWith(okJson(arkErrorBody("INVALID_ARK_PSBT", "too close"), 400));
+        const e = await err;
+        expect(e).toBeInstanceOf(OnchainCosignRejectedError);
+        expect(e.serverMessage).toBe("too close");
+        expect(e.arkErrorName).toBe("INVALID_ARK_PSBT");
+    });
+
+    it("treats a structured NOT_FOUND as a rejection, not as unsupported", async () => {
+        const { provider, fetchMock, err } = cosignWith(
+            okJson(arkErrorBody("VTXO_NOT_FOUND", "no such vtxo", 30), 404),
+        );
+        expect(await err).toBeInstanceOf(OnchainCosignRejectedError);
+        fetchMock.mockResolvedValue(okJson({ txid: "t" }));
+        await expect(provider.cosignOnchainTx("x")).resolves.toBe("t");
+    });
+
+    it.each([
+        [
+            "a structured INTERNAL_ERROR",
+            () => okJson(arkErrorBody("INTERNAL_ERROR", "retry", 0), 500),
+        ],
+        ["an unstructured 500", () => new Response("bad gateway", { status: 500 })],
+        ["an unstructured 400", () => new Response("bad request", { status: 400 })],
+        ["a FetchError", () => new FetchError("down", { url: "http://ark" })],
+        ["a raw fetch rejection", () => new TypeError("network")],
+    ])("maps %s to OnchainCosignAmbiguousError", async (_name, make) => {
+        const { err } = cosignWith(make());
+        expect(await err).toBeInstanceOf(OnchainCosignAmbiguousError);
     });
 
     it("CachingArkProvider forwards", async () => {
         const inner = { cosignOnchainTx: vi.fn().mockResolvedValue("t") } as any;
-        expect(await new CachingArkProvider(inner).cosignOnchainTx("p")).toBe("t");
+        expect(await new CachingArkProvider(inner).cosignOnchainTx!("p")).toBe("t");
         expect(inner.cosignOnchainTx).toHaveBeenCalledWith("p");
+    });
+
+    it("CachingArkProvider omits cosignOnchainTx when the inner provider lacks it", () => {
+        expect(new CachingArkProvider({} as any).cosignOnchainTx).toBeUndefined();
     });
 });

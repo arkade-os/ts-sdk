@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Address, OutScript } from "@scure/btc-signer";
 import { Wallet } from "../../src/wallet/wallet";
@@ -11,6 +11,8 @@ import {
     estimateOnchainCosignFee,
     needsOnchainSweep,
 } from "../../src/contracts/onchainSpend";
+import { OnchainCosignAmbiguousError, RestArkProvider } from "../../src/providers/ark";
+import { Ramps } from "../../src/wallet/ramps";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
@@ -153,6 +155,90 @@ describe("wallet.sendOnchain", () => {
     });
 });
 
+describe("cosign outcomes through Ramps.offboardExact", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    const arkdReplies = (arkProvider: any, status: number, name: string) => {
+        const details = [
+            { "@type": "type.googleapis.com/ark.v1.ErrorDetails", code: 0, name, message: "m" },
+        ];
+        const body = JSON.stringify({ code: 13, message: "m", details });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(body, { status })),
+        );
+        const rest = new RestArkProvider("http://ark");
+        arkProvider.cosignOnchainTx.mockImplementation((psbt: string) =>
+            rest.cosignOnchainTx(psbt),
+        );
+    };
+
+    const offboard = (wallet: Wallet) => {
+        const vtxo = { txid: "11".repeat(32), vout: 0, value: 50_000, createdAt: new Date() };
+        vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue([vtxo] as any);
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("txSETTLE");
+        const result = new Ramps(wallet)
+            .offboardExact({
+                destinationAddress: externalAddress,
+                feeInfo: { intentFee: {}, txFeeRate: "1" } as any,
+                amount: 5_000n,
+            })
+            .catch((e) => e);
+        return { settle, result };
+    };
+
+    it("an arkd INTERNAL_ERROR rethrows, skips settle and leaves the coins pending", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
+        arkdReplies(arkProvider, 500, "INTERNAL_ERROR");
+        const { settle, result } = offboard(wallet);
+        expect(await result).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(settle).not.toHaveBeenCalled();
+        const [row] = await walletRepository.getVtxosForScript!(boardingScriptHex);
+        expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
+    });
+
+    it("an arkd INVALID_ARK_PSBT falls back to settle", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
+        arkdReplies(arkProvider, 400, "INVALID_ARK_PSBT");
+        const { settle, result } = offboard(wallet);
+        expect(await result).toBe("txSETTLE");
+        expect(settle).toHaveBeenCalledTimes(1);
+        const [row] = await walletRepository.getVtxosForScript!(boardingScriptHex);
+        expect(row.spentBy).toBeFalsy();
+    });
+
+    it("a fee-rate failure before submission falls back to settle", async () => {
+        const { wallet, arkProvider, onchainProvider } = await makeWallet();
+        const down = new Error("esplora down");
+        onchainProvider.getFeeRate.mockRejectedValue(down);
+        const direct = await wallet
+            .sendOnchain({ outputs: [{ address: externalAddress, amount: 5_000 }] })
+            .catch((e) => e);
+        expect(direct).toBeInstanceOf(OnchainCosignPreflightError);
+        expect(direct.cause).toBe(down);
+        expect(direct.message).toContain("esplora down");
+        const { result } = offboard(wallet);
+        expect(await result).toBe("txSETTLE");
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+    });
+});
+
+describe("sendOnchain with explicit inputs", () => {
+    it("does not resync the onchain store", async () => {
+        const { wallet, boardingCoin } = await makeWallet();
+        const manager = await wallet.getContractManager();
+        await manager.syncOnchain();
+        const sync = vi.spyOn(manager, "syncOnchain");
+        const txid = await wallet.sendOnchain({
+            outputs: [],
+            inputs: [{ txid: boardingCoin.txid, vout: boardingCoin.vout }],
+            sweepTo: externalAddress,
+        });
+        expect(txid).toBe(COSIGNED);
+        expect(sync).not.toHaveBeenCalled();
+    });
+});
+
 describe("onchainCosignMarginBlocks", () => {
     it("is respected by the sendOnchain preflight", async () => {
         const { wallet, arkProvider } = await makeWallet({}, { onchainCosignMarginBlocks: 1000 });
@@ -261,6 +347,19 @@ describe("wallet.getOnchainSweepInputs", () => {
         await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([outpoint]);
     });
 
+    it("never auto-selects an unrolled output, only a boarding coin in the window", async () => {
+        const { wallet, onchainProvider } = await makeWallet();
+        atTip(onchainProvider, 1000);
+        const [boarding] = await (wallet as any).onchainCoins(await wallet.getContractManager());
+        const unrolled = {
+            ...boarding,
+            coin: { ...boarding.coin, txid: "cd".repeat(32) },
+            contract: { ...boarding.contract, scope: "offchain" },
+        };
+        vi.spyOn(wallet as any, "onchainCoins").mockResolvedValue([unrolled, boarding]);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([outpoint]);
+    });
+
     it("excludes a coin locked by an intent", async () => {
         const { wallet, onchainProvider } = await makeWallet();
         atTip(onchainProvider, 900);
@@ -272,9 +371,9 @@ describe("wallet.getOnchainSweepInputs", () => {
 describe("needsOnchainSweep", () => {
     const coin = { status: { confirmed: true, block_height: 100 } } as any;
 
-    it("always takes an unrolled coin of an offchain-scoped contract", () => {
+    it("never takes an unrolled coin of an offchain-scoped contract", () => {
         const contract = { type: "default", scope: "offchain" } as any;
-        expect(needsOnchainSweep(coin, contract, 100)).toBe(true);
+        expect(needsOnchainSweep(coin, contract, 100)).toBe(false);
     });
 
     it("caps the renew window at 144 blocks on a 1008-block CSV", () => {

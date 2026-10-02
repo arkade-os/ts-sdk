@@ -16,7 +16,11 @@ import { mnemonicToSeedSync } from "@scure/bip39";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../../src/utils/transaction";
 import { OnchainCosignPreflightError, isCosignFallback } from "../../src/contracts/onchainSpend";
-import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../../src/providers/ark";
+import {
+    OnchainCosignAmbiguousError,
+    OnchainCosignRejectedError,
+    OnchainCosignUnsupportedError,
+} from "../../src/providers/ark";
 import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
@@ -724,10 +728,21 @@ describe("ServiceWorkerWallet", () => {
     });
 
     it.each([
-        ["Rejected", new OnchainCosignRejectedError("too late"), OnchainCosignRejectedError],
-        ["Preflight", new OnchainCosignPreflightError("nothing"), OnchainCosignPreflightError],
-        ["Unsupported", new OnchainCosignUnsupportedError(), OnchainCosignUnsupportedError],
-    ])("rehydrates a cloned %s error from the worker", async (_name, error, cls) => {
+        [
+            "Rejected",
+            new OnchainCosignRejectedError("too late", "INVALID_ARK_PSBT"),
+            OnchainCosignRejectedError,
+            true,
+        ],
+        [
+            "Preflight",
+            new OnchainCosignPreflightError("nothing"),
+            OnchainCosignPreflightError,
+            true,
+        ],
+        ["Unsupported", new OnchainCosignUnsupportedError(), OnchainCosignUnsupportedError, true],
+        ["Ambiguous", new OnchainCosignAmbiguousError("500"), OnchainCosignAmbiguousError, false],
+    ])("rehydrates a cloned %s error from the worker", async (_name, error, cls, fallback) => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,
             tag: messageTag,
@@ -742,8 +757,8 @@ describe("ServiceWorkerWallet", () => {
         ]) {
             const err = await call.catch((e) => e);
             expect(err).toBeInstanceOf(cls);
-            expect(isCosignFallback(err)).toBe(true);
-            expect(err.message).toBe(error.message);
+            expect(isCosignFallback(err)).toBe(fallback);
+            expect(err).toEqual(error);
         }
     });
 

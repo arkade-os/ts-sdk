@@ -5,11 +5,14 @@ import { scriptFromTapLeafScript } from "../script/base";
 import { Extension, ExtensionNotFoundError } from "../extension";
 import type { ArkProvider } from "../providers/ark";
 import {
+    ONCHAIN_COSIGN_AMBIGUOUS_PREFIX,
     ONCHAIN_COSIGN_REJECTED_PREFIX,
     ONCHAIN_COSIGN_UNSUPPORTED_PREFIX,
+    OnchainCosignAmbiguousError,
     OnchainCosignRejectedError,
     OnchainCosignUnsupportedError,
 } from "../providers/ark";
+import { ArkErrorName } from "../providers/errors";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
@@ -42,8 +45,11 @@ export function csvBlocksOf(contract: Contract): number {
 export const ONCHAIN_COSIGN_PREFLIGHT_PREFIX = "Onchain cosign preflight failed: ";
 
 export class OnchainCosignPreflightError extends Error {
-    constructor(readonly reason: string) {
-        super(`${ONCHAIN_COSIGN_PREFLIGHT_PREFIX}${reason}`);
+    constructor(
+        readonly reason: string,
+        options?: { cause?: unknown },
+    ) {
+        super(`${ONCHAIN_COSIGN_PREFLIGHT_PREFIX}${reason}`, options);
         this.name = "OnchainCosignPreflightError";
     }
 }
@@ -59,6 +65,12 @@ export function prepareOwnedInput(
     tx: Transaction,
     { index, coin, path, tapTree }: OwnedOnchainInput,
 ): void {
+    // scure merges key maps, and arkd requires exactly one leaf. Dropping PSBT-only
+    // fields leaves the tx, and so other inputs' signatures, untouched.
+    const { tapLeafScript, tapScriptSig } = tx.getInput(index);
+    if (tapLeafScript || tapScriptSig) {
+        tx.updateInput(index, { tapLeafScript: undefined, tapScriptSig: undefined }, true);
+    }
     tx.updateInput(index, {
         witnessUtxo: { amount: BigInt(coin.value), script: hex.decode(coin.script) },
         tapLeafScript: [path.leaf],
@@ -101,14 +113,17 @@ export function assertCosignable(
     }
 }
 
-/** Automatic sweeps take unrolled coins always, and boarding coins only in the last stretch before cosign is refused. */
+/**
+ * Automatic sweeps take boarding coins only, in the last stretch before cosign is refused.
+ * Unrolled outputs are a user's exit: re-boarding them would undo it, so they stay manual.
+ */
 export function needsOnchainSweep(
     coin: VirtualCoin,
     contract: Contract,
     tipHeight: number,
     marginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS,
 ): boolean {
-    if (!isOnchainScoped(contract)) return true;
+    if (!isOnchainScoped(contract)) return false;
     const confirmedAt = coin.status.block_height;
     if (!coin.status.confirmed || confirmedAt === undefined) return false;
     const csvBlocks = csvBlocksOf(contract);
@@ -143,20 +158,37 @@ function finalizeOwnedInput(tx: Transaction, index: number): void {
     });
 }
 
+/** True only when the coins were definitely not spent, so paying another way is safe. */
 export function isCosignFallback(e: unknown): boolean {
-    return (
-        e instanceof OnchainCosignUnsupportedError ||
-        e instanceof OnchainCosignRejectedError ||
-        e instanceof OnchainCosignPreflightError
-    );
+    if (e instanceof OnchainCosignRejectedError) {
+        return !!e.arkErrorName && e.arkErrorName !== ArkErrorName.INTERNAL_ERROR;
+    }
+    return e instanceof OnchainCosignUnsupportedError || e instanceof OnchainCosignPreflightError;
 }
 
 /** Structured clone across the service-worker bus strips error classes; restore them by message prefix. */
 export function rehydrateCosignError(e: unknown): unknown {
-    if (!(e instanceof Error) || isCosignFallback(e)) return e;
+    if (
+        !(e instanceof Error) ||
+        e instanceof OnchainCosignRejectedError ||
+        e instanceof OnchainCosignAmbiguousError ||
+        e instanceof OnchainCosignUnsupportedError ||
+        e instanceof OnchainCosignPreflightError
+    ) {
+        return e;
+    }
     const { message } = e;
     if (message.startsWith(ONCHAIN_COSIGN_REJECTED_PREFIX)) {
-        return new OnchainCosignRejectedError(message.slice(ONCHAIN_COSIGN_REJECTED_PREFIX.length));
+        const rest = message.slice(ONCHAIN_COSIGN_REJECTED_PREFIX.length);
+        const named = rest.match(/^\[([A-Z0-9_]+)\] ([\s\S]*)$/);
+        return named
+            ? new OnchainCosignRejectedError(named[2], named[1])
+            : new OnchainCosignRejectedError(rest);
+    }
+    if (message.startsWith(ONCHAIN_COSIGN_AMBIGUOUS_PREFIX)) {
+        return new OnchainCosignAmbiguousError(
+            message.slice(ONCHAIN_COSIGN_AMBIGUOUS_PREFIX.length),
+        );
     }
     if (message.startsWith(ONCHAIN_COSIGN_PREFLIGHT_PREFIX)) {
         return new OnchainCosignPreflightError(
@@ -200,10 +232,11 @@ export async function submitOnchainSpend(
         if (!deps.arkProvider) {
             throw new Error("arkd-cosigned inputs present but no arkProvider configured");
         }
+        if (!deps.arkProvider.cosignOnchainTx) throw new OnchainCosignUnsupportedError();
         return deps.arkProvider.cosignOnchainTx(base64.encode(tx.toPSBT()));
     }
     for (let i = 0; i < tx.inputsLength; i++) {
-        if (!tx.getInput(i).finalScriptWitness) tx.finalizeIdx(i);
+        if (!tx.getInput(i).finalScriptWitness) finalizeOwnedInput(tx, i);
     }
     return deps.onchainProvider.broadcastTransaction(hex.encode(tx.extract()));
 }

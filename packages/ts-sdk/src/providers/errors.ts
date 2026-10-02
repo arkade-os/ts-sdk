@@ -31,6 +31,7 @@ export const ArkErrorName = {
      * so a spend attempted promptly at maturity is rejected until a later block lands.
      */
     FORFEIT_CLOSURE_LOCKED: "FORFEIT_CLOSURE_LOCKED",
+    INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;
 
 export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];

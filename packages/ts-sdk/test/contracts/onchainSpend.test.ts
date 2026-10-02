@@ -21,7 +21,11 @@ import {
     submitOnchainSpend,
 } from "../../src/contracts/onchainSpend";
 import { TxWeightEstimator } from "../../src/utils/txSizeEstimator";
-import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../../src/providers/ark";
+import {
+    OnchainCosignAmbiguousError,
+    OnchainCosignRejectedError,
+    OnchainCosignUnsupportedError,
+} from "../../src/providers/ark";
 import { ConditionMultisigTapscript } from "../../src/script/tapscript";
 import { VtxoScript, scriptFromTapLeafScript } from "../../src/script/base";
 import { ConditionWitness, VtxoTaprootTree, getArkPsbtFields } from "../../src/utils/unknownFields";
@@ -75,6 +79,24 @@ describe("prepareOwnedInput", () => {
         });
         expect(getArkPsbtFields(tx, 0, ConditionWitness)[0]).toEqual([preimage]);
     });
+
+    it("replaces leaves and signatures already listed on the input", () => {
+        const tx = txWithInput();
+        const stale = new Uint8Array(64).fill(5);
+        const pubKey = schnorr.getPublicKey(new Uint8Array(32).fill(1));
+        tx.updateInput(0, {
+            tapLeafScript: [script.forfeit(), script.exit()],
+            tapScriptSig: [[{ pubKey, leafHash: new Uint8Array(32) }, stale]],
+        });
+        prepareOwnedInput(tx, {
+            index: 0,
+            coin,
+            path: { leaf: script.forfeit() },
+            tapTree: script.encode(),
+        });
+        expect(tx.getInput(0).tapLeafScript).toEqual([script.forfeit()]);
+        expect(tx.getInput(0).tapScriptSig).toBeUndefined();
+    });
 });
 
 describe("assertCosignable", () => {
@@ -98,10 +120,15 @@ describe("assertCosignable", () => {
 });
 
 describe("isCosignFallback", () => {
-    it("matches the three cosign failures only", () => {
+    it("falls back only when the coins were definitely not spent", () => {
         expect(isCosignFallback(new OnchainCosignUnsupportedError())).toBe(true);
-        expect(isCosignFallback(new OnchainCosignRejectedError("x"))).toBe(true);
+        expect(isCosignFallback(new OnchainCosignRejectedError("x", "INVALID_ARK_PSBT"))).toBe(
+            true,
+        );
         expect(isCosignFallback(new OnchainCosignPreflightError("x"))).toBe(true);
+        expect(isCosignFallback(new OnchainCosignRejectedError("x"))).toBe(false);
+        expect(isCosignFallback(new OnchainCosignRejectedError("x", "INTERNAL_ERROR"))).toBe(false);
+        expect(isCosignFallback(new OnchainCosignAmbiguousError("x"))).toBe(false);
         expect(isCosignFallback(new Error("x"))).toBe(false);
     });
 });
@@ -131,9 +158,14 @@ describe("rehydrateCosignError", () => {
     const cloned = (e: Error) => new Error(e.message);
 
     it("restores each fallback class from a structured-cloned message", () => {
-        const rejected = rehydrateCosignError(cloned(new OnchainCosignRejectedError("too late")));
-        expect(rejected).toBeInstanceOf(OnchainCosignRejectedError);
-        expect((rejected as OnchainCosignRejectedError).serverMessage).toBe("too late");
+        const original = new OnchainCosignRejectedError("too late", "INVALID_ARK_PSBT");
+        expect(rehydrateCosignError(cloned(original))).toEqual(original);
+        const unnamed = new OnchainCosignRejectedError("[not a name");
+        expect(rehydrateCosignError(cloned(unnamed))).toEqual(unnamed);
+        const ambiguous = new OnchainCosignAmbiguousError("500 bad gateway");
+        const restored = rehydrateCosignError(cloned(ambiguous));
+        expect(restored).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(restored).toEqual(ambiguous);
         const preflight = new OnchainCosignPreflightError("nothing to sweep");
         expect(rehydrateCosignError(cloned(preflight))).toEqual(preflight);
         expect(rehydrateCosignError(cloned(new OnchainCosignUnsupportedError()))).toBeInstanceOf(
@@ -168,6 +200,12 @@ describe("submitOnchainSpend routing", () => {
         await expect(
             submitOnchainSpend(txWithInput(), new Set([0]), { onchainProvider }),
         ).rejects.toThrow(/arkProvider/);
+    });
+
+    it("treats an arkProvider without cosignOnchainTx as unsupported", async () => {
+        await expect(
+            submitOnchainSpend(txWithInput(), new Set([0]), { arkProvider: {}, onchainProvider }),
+        ).rejects.toBeInstanceOf(OnchainCosignUnsupportedError);
     });
 
     it("routes emulator inputs to the emulator and broadcasts the finalized tx", async () => {
@@ -274,6 +312,31 @@ describe("emulator inputs", () => {
             scriptFromTapLeafScript(vtxo.leaves[0]),
             TaprootControlBlock.encode(vtxo.leaves[0][0]),
         ]);
+    });
+
+    it("finalizes a condition leaf on the direct broadcast path too", async () => {
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(coin.txid), index: 0 });
+        tx.addOutput({ script: script.pkScript, amount: 9_000n });
+        prepareOwnedInput(tx, {
+            index: 0,
+            coin: { value: 10_000, script: hex.encode(vtxo.pkScript) },
+            path: { leaf: vtxo.leaves[0], extraWitness: [preimage] },
+            tapTree: vtxo.encode(),
+        });
+        const sig = new Uint8Array(64).fill(0xaa);
+        tx.updateInput(0, {
+            tapScriptSig: [
+                [{ pubKey: keyA, leafHash: new Uint8Array(32) }, sig],
+                [{ pubKey: keyB, leafHash: new Uint8Array(32) }, sig],
+            ],
+        });
+        const broadcast = vi.fn(async (_: string) => "direct");
+        await submitOnchainSpend(tx, new Set(), {
+            onchainProvider: { broadcastTransaction: broadcast, getRawTransaction: vi.fn() },
+        });
+        const raw = BtcSignerTransaction.fromRaw(hex.decode(broadcast.mock.calls[0][0]));
+        expect(raw.getInput(0).finalScriptWitness?.[2]).toEqual(preimage);
     });
 
     it("propagates a malformed extension instead of reporting no emulator inputs", () => {

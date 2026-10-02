@@ -28,6 +28,7 @@ export class CachingArkProvider implements ArkProvider {
     /** Bumped on every event-driven cache write; see {@link getInfo}. */
     private generation = 0;
     private readonly unsubscribe: () => void;
+    readonly cosignOnchainTx?: (psbtB64: string) => Promise<string>;
 
     constructor(
         private readonly inner: ArkProvider,
@@ -39,6 +40,8 @@ export class CachingArkProvider implements ArkProvider {
                 this.expiresAt = Date.now() + this.ttlMs;
                 this.generation++;
             }) ?? (() => {});
+        const cosign = inner.cosignOnchainTx;
+        if (cosign) this.cosignOnchainTx = (psbtB64) => cosign.call(inner, psbtB64);
     }
 
     /** Releases the inner provider's server-info subscription. */
@@ -76,10 +79,6 @@ export class CachingArkProvider implements ArkProvider {
 
     submitTx(signedArkTx: string, checkpointTxs: string[]) {
         return this.inner.submitTx(signedArkTx, checkpointTxs);
-    }
-
-    cosignOnchainTx(psbtB64: string) {
-        return this.inner.cosignOnchainTx(psbtB64);
     }
 
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]) {

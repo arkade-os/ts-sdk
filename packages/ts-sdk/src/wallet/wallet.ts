@@ -12,6 +12,7 @@ import {
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
+    OnchainCosignAmbiguousError,
     PendingTx,
     RestArkProvider,
     SettlementEvent,
@@ -4905,70 +4906,87 @@ export class Wallet
     }
 
     /** @see IWallet.sendOnchain */
-    async sendOnchain({ outputs, inputs, sweepTo }: SendOnchainParams): Promise<string> {
-        if (sweepTo && outputs.length > 0) {
+    async sendOnchain(params: SendOnchainParams): Promise<string> {
+        if (params.sweepTo && params.outputs.length > 0) {
             throw new Error("sendOnchain: sweepTo requires empty outputs");
         }
         return this._withTxLock(async () => {
-            const manager = await this.getContractManager();
-            await manager.syncOnchain();
-            const tip = await this.onchainProvider.getChainTip();
-            const candidates = (await this.onchainCoins(manager))
-                .filter(({ coin, contract }) => {
-                    if (inputs) return inputs.some((o) => vtxoOutpoint(o) === vtxoOutpoint(coin));
-                    return isContractGenericallySpendable(contract);
-                })
-                .filter(({ coin, contract }) => {
-                    try {
-                        assertCosignable(
-                            coin,
-                            csvBlocksOf(contract),
-                            tip.height,
-                            this._cosignMarginBlocks,
-                        );
-                        return true;
-                    } catch {
-                        return false;
-                    }
-                })
-                .sort((a, b) => b.coin.value - a.coin.value);
-            const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
-            const tx = new SdkTransaction({ version: 2 });
-
-            if (sweepTo) {
-                for (const { coin } of candidates) {
-                    tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
-                }
-                const total = candidates.reduce((sum, { coin }) => sum + coin.value, 0);
-                const amount = total - estimateOnchainCosignFee(candidates.length, 1, feeRate);
-                if (candidates.length === 0 || amount < Number(this.dustAmount)) {
-                    throw new OnchainCosignPreflightError("nothing to sweep");
-                }
-                tx.addOutputAddress(sweepTo, BigInt(amount), this.network);
-                return this._cosignOnchainTxImpl(tx);
-            }
-
-            for (const o of outputs) tx.addOutputAddress(o.address, BigInt(o.amount), this.network);
-            const want = outputs.reduce((sum, o) => sum + o.amount, 0);
-            let have = 0;
-            let fee = 0;
-            for (const { coin } of candidates) {
-                tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
-                have += coin.value;
-                fee = estimateOnchainCosignFee(tx.inputsLength, outputs.length + 1, feeRate);
-                if (have >= want + fee) break;
-            }
-            if (have < want + fee || tx.inputsLength === 0) {
-                throw new OnchainCosignPreflightError(
-                    `insufficient onchain funds: have ${have}, need ${want + fee}`,
-                );
-            }
-            const change = have - want - fee;
-            if (change >= Number(this.dustAmount)) {
-                tx.addOutputAddress(await this.getBoardingAddress(), BigInt(change), this.network);
+            let tx: Transaction;
+            try {
+                tx = await this._buildOnchainSpend(params);
+            } catch (e) {
+                if (e instanceof OnchainCosignPreflightError) throw e;
+                const reason = e instanceof Error ? e.message : String(e);
+                throw new OnchainCosignPreflightError(reason, { cause: e });
             }
             return this._cosignOnchainTxImpl(tx);
         });
+    }
+
+    private async _buildOnchainSpend({
+        outputs,
+        inputs,
+        sweepTo,
+    }: SendOnchainParams): Promise<Transaction> {
+        const manager = await this.getContractManager();
+        // Callers naming inputs (the VtxoManager sweep) synced when they picked them.
+        if (!inputs) await manager.syncOnchain();
+        const tip = await this.onchainProvider.getChainTip();
+        const candidates = (await this.onchainCoins(manager))
+            .filter(({ coin, contract }) => {
+                if (inputs) return inputs.some((o) => vtxoOutpoint(o) === vtxoOutpoint(coin));
+                return isContractGenericallySpendable(contract);
+            })
+            .filter(({ coin, contract }) => {
+                try {
+                    assertCosignable(
+                        coin,
+                        csvBlocksOf(contract),
+                        tip.height,
+                        this._cosignMarginBlocks,
+                    );
+                    return true;
+                } catch {
+                    return false;
+                }
+            })
+            .sort((a, b) => b.coin.value - a.coin.value);
+        const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
+        const tx = new SdkTransaction({ version: 2 });
+
+        if (sweepTo) {
+            for (const { coin } of candidates) {
+                tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
+            }
+            const total = candidates.reduce((sum, { coin }) => sum + coin.value, 0);
+            const amount = total - estimateOnchainCosignFee(candidates.length, 1, feeRate);
+            if (candidates.length === 0 || amount < Number(this.dustAmount)) {
+                throw new OnchainCosignPreflightError("nothing to sweep");
+            }
+            tx.addOutputAddress(sweepTo, BigInt(amount), this.network);
+            return tx;
+        }
+
+        for (const o of outputs) tx.addOutputAddress(o.address, BigInt(o.amount), this.network);
+        const want = outputs.reduce((sum, o) => sum + o.amount, 0);
+        let have = 0;
+        let fee = 0;
+        for (const { coin } of candidates) {
+            tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
+            have += coin.value;
+            fee = estimateOnchainCosignFee(tx.inputsLength, outputs.length + 1, feeRate);
+            if (have >= want + fee) break;
+        }
+        if (have < want + fee || tx.inputsLength === 0) {
+            throw new OnchainCosignPreflightError(
+                `insufficient onchain funds: have ${have}, need ${want + fee}`,
+            );
+        }
+        const change = have - want - fee;
+        if (change >= Number(this.dustAmount)) {
+            tx.addOutputAddress(await this.getBoardingAddress(), BigInt(change), this.network);
+        }
+        return tx;
     }
 
     private async _cosignOnchainTxImpl(tx: Transaction): Promise<string> {
@@ -5020,20 +5038,30 @@ export class Wallet
             this.inputSigningJobsFromWitnessUtxos(tx, ownedIndexes),
             { onUnknownScript: "sign" },
         )) as Transaction;
-        const txid = await submitOnchainSpend(signed, arkInputs, {
-            arkProvider: this.arkProvider,
-            emulator: this._emulator,
-            onchainProvider: this.onchainProvider,
-        });
+        const markPending = async (txid: string) => {
+            try {
+                await manager.markOnchainSpendPending(spent, txid);
+            } catch (e) {
+                console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
+            }
+        };
+        let txid: string;
         try {
-            await manager.markOnchainSpendPending(spent, txid);
+            txid = await submitOnchainSpend(signed, arkInputs, {
+                arkProvider: this.arkProvider,
+                emulator: this._emulator,
+                onchainProvider: this.onchainProvider,
+            });
         } catch (e) {
-            console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
+            // Segwit txids ignore witnesses, so the unsigned id is the one arkd may have broadcast.
+            if (e instanceof OnchainCosignAmbiguousError) await markPending(signed.id);
+            throw e;
         }
+        await markPending(txid);
         return txid;
     }
 
-    /** Outpoints the automatic cosign sweep should renew now; excludes coins an intent has locked. */
+    /** Boarding outpoints the automatic cosign sweep should renew now (never unrolled exits); excludes coins an intent has locked. */
     async getOnchainSweepInputs(): Promise<Outpoint[]> {
         const manager = await this.getContractManager();
         await manager.syncOnchain();
