@@ -6,6 +6,7 @@ import {
     ArkTransaction,
     ExtendedCoin,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     NewAddress,
     StorageConfig,
@@ -1170,7 +1171,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * and falling back to `GET_VTXOS` there would silently spend ungated coins.
      * Fail closed — loud and recoverable — rather than make the gate advisory.
      */
-    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
         const message: RequestGetSpendableVtxos = {
             id: getRandomId(),
             tag: this.messageTag,
@@ -1180,7 +1183,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetSpendableVtxos).payload.vtxos.map(normalizeVtxo);
+            const payload = (response as ResponseGetSpendableVtxos).payload;
+            if (
+                (filter?.watchedOnly ||
+                    filter?.genericallySpendableOnly ||
+                    filter?.requireSynced) &&
+                payload.filterApplied !== true
+            ) {
+                throw new Error(
+                    "Service worker does not support the requested contract scope or freshness check",
+                );
+            }
+            return payload.vtxos.map(normalizeVtxo);
         } catch (error) {
             throw new Error(`Failed to get spendable vtxos: ${error}`);
         }
@@ -1292,15 +1306,27 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            async getContractsWithVtxos(filter: GetContractsFilter): Promise<ContractWithVtxos[]> {
+            async getContractsWithVtxos(
+                filter?: GetContractsFilter,
+                _pageSize?: number,
+                options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
+            ): Promise<ContractWithVtxos[]> {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { filter },
+                    payload: { filter, options },
                 };
                 try {
                     const response = await sendContractMessage(message);
+                    if (
+                        options?.requireSynced &&
+                        (response as ResponseGetContractsWithVtxos).payload.filterApplied !== true
+                    ) {
+                        throw new Error(
+                            "Service worker does not support the requested freshness check",
+                        );
+                    }
                     // A best-effort sync ran on the worker; it may have degraded
                     // to repository data or recovered — refresh the cached view.
                     await refreshSyncState();

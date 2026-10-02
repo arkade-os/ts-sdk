@@ -86,16 +86,31 @@ export interface InputDef {
  */
 export type InputRef = string | InputDef;
 
-/** Reference to a signer key: a `"$param"` reference or literal x-only bytes. */
-export type SignerRef = string | Uint8Array;
+/** Constructor pubkey `$param` tweaked by `fn`'s covenant. */
+export interface TweakedSigner {
+    tweak: string;
+    fn: string;
+}
+
+/** A `"$param"` reference, literal x-only bytes, or a {@link TweakedSigner}. */
+export type SignerRef = string | Uint8Array | TweakedSigner;
 
 /** A witness-stack item: a function-input name, a `"$param"`, a literal number/bigint (minimal script-num), or raw bytes. */
 export type WitnessRef = string | number | bigint | Uint8Array;
 
 /** Bitcoin Script segment of a spending path — enforced on-chain. */
 export interface TapscriptSegment {
-    /** Required signers. The tweaked co-signer is appended automatically when the path has an `arkadeScript`. */
+    /**
+     * Required signers. A path with `arkadeScript` also appends the emulator
+     * co-signer, unless `emulator` is `null`.
+     */
     signers: SignerRef[];
+    /**
+     * Covenant named by `<EMULATOR_KEY:fn>`. `null` when this leaf belongs to a
+     * covenant but signs with a constructor-key tweak instead. Omitted on
+     * hand-written programs, which still append the co-signer.
+     */
+    emulator?: string | null;
     /**
      * Optional standard-opcode condition (e.g. a hashlock), encoded into a
      * ConditionMultisig leaf — or ConditionCSVMultisig when combined with `csv`.
@@ -274,6 +289,7 @@ function collectParamRefs(program: Program): Set<string> {
     const collect = (items: readonly (AsmToken | WitnessRef | SignerRef)[] | undefined) => {
         for (const t of items ?? []) {
             if (typeof t === "string" && t.startsWith("$")) refs.add(t.slice(1));
+            else if (isTweakedSigner(t) && t.tweak.startsWith("$")) refs.add(t.tweak.slice(1));
         }
     };
     for (const fn of Object.values(program.functions)) {
@@ -373,11 +389,20 @@ export interface CompiledProgramFunction {
     tapLeafScript: TapLeafScript;
 }
 
-/** Resolve a {@link SignerRef} to x-only key bytes against the program's constructor args. */
-function resolveSigner(ref: SignerRef, args: Record<string, ArkadeParamValue>): Uint8Array {
+function isTweakedSigner(ref: unknown): ref is TweakedSigner {
+    if (typeof ref !== "object" || ref === null || ref instanceof Uint8Array) return false;
+    const { tweak, fn } = ref as TweakedSigner;
+    return typeof tweak === "string" && typeof fn === "string";
+}
+
+/** Resolve a pubkey signer to x-only key bytes against the program's constructor args. */
+function resolveSigner(
+    ref: string | Uint8Array,
+    args: Record<string, ArkadeParamValue>,
+): Uint8Array {
     if (ref instanceof Uint8Array) return ref;
-    if (!ref.startsWith("$")) {
-        throw new Error(`unknown signer reference '${ref}' — use '$${ref}'`);
+    if (typeof ref !== "string" || !ref.startsWith("$")) {
+        throw new Error(`unknown signer reference '${ref}' — use a '$param' or key bytes`);
     }
     const v = bindValue(args, ref.slice(1));
     if (!(v instanceof Uint8Array)) {
@@ -446,15 +471,27 @@ function compileFunctions(
 
     return defs.map((def, i) => {
         validateTapscript(def.tapscript);
-        const pubkeys = def.tapscript.signers.map((s) => resolveSigner(s, args));
+        const pubkeys = def.tapscript.signers.map((signer) => {
+            if (!isTweakedSigner(signer)) return resolveSigner(signer, args);
+            const asm = functions[signer.fn]?.arkadeScript?.asm;
+            if (!asm) {
+                throw new Error(
+                    `ArkadeContract: function '${names[i]}' tweaks '${signer.fn}', which has no arkade script`,
+                );
+            }
+            return computeArkadeScriptPublicKey(
+                resolveSigner(signer.tweak, args),
+                resolveAsm(asm, args),
+            );
+        });
 
-        // Covenant leaf: bind the emulator's co-signer key to the arkade
-        // script via the tagged-hash tweak, then append it to the leaf's
-        // signer set.
+        // A covenant leaf appends the emulator co-signer. A constructor-key
+        // tweak of that covenant sets `emulator` to null and does not.
         const arkadeScript = def.arkadeScript ? resolveAsm(def.arkadeScript.asm, args) : undefined;
-        const leafPubkeys = arkadeScript
-            ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
-            : pubkeys;
+        const leafPubkeys =
+            arkadeScript && def.tapscript.emulator !== null
+                ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
+                : pubkeys;
         const leafScript = encodeTapscriptSegment(def.tapscript, leafPubkeys, args).script;
         return { name: names[i], def, leafScript, arkadeScript, signerKeys: pubkeys };
     });
@@ -496,34 +533,53 @@ export class ArkadeProgramScript extends VtxoScript {
 // --- Artifact JSON ----------------------------------------------------------
 
 /**
- * Convert a compiler-style JSON artifact into a {@link Program}. Byte values are
+ * Convert a Program JSON artifact into a {@link Program}. Byte values are
  * encoded as `0x`-prefixed hex strings in `asm`/`witness`/`signers`; opcode names,
  * `$param` placeholders and numbers pass through unchanged.
+ *
+ * This is *not* the JSON `arkadec` writes. That artifact lists spend groups in
+ * an array and uses `<param>` placeholders and raw leaf assembly; pass it to
+ * {@link programFromArtifact} instead.
  */
 export function parseArtifact(artifact: {
     version?: number;
     name?: string;
     params?: readonly InputRef[];
-    functions: Record<string, any>;
+    functions: unknown;
 }): Program {
+    // An arkadec ContractJson would otherwise become functions named "0", "1", "2".
+    if (Array.isArray(artifact.functions)) {
+        throw new Error(
+            "parseArtifact: `functions` is an array, which is the arkadec artifact shape, not an SDK program — read it with programFromArtifact instead",
+        );
+    }
+    if (typeof artifact.functions !== "object" || artifact.functions === null) {
+        throw new Error("parseArtifact: `functions` must be an object keyed by function name");
+    }
     const hexToken = (t: unknown): any =>
         typeof t === "string" && t.startsWith("0x") ? hex.decode(t.slice(2)) : t;
+    const signerRef = (s: unknown): SignerRef => {
+        if (s instanceof Uint8Array || typeof s === "string") return hexToken(s);
+        if (isTweakedSigner(s)) return { tweak: s.tweak, fn: s.fn };
+        throw new Error("parseArtifact: a tweaked signer needs string `tweak` and `fn`");
+    };
     // A "$param" timelock stays a reference (resolved at compile time); anything
     // else is a literal.
     const timelockValue = (v: unknown): bigint | string =>
         typeof v === "string" && v.startsWith("$") ? v : BigInt(v as string | number);
 
     const functions: Record<string, ArkadeFunction> = {};
-    for (const [name, fn] of Object.entries(artifact.functions)) {
+    for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
         const tapscript: TapscriptSegment = {
-            signers: (tap.signers ?? []).map(hexToken),
+            signers: (tap.signers ?? []).map(signerRef),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
             ...(tap.csv
                 ? { csv: { type: tap.csv.type, value: timelockValue(tap.csv.value) } }
                 : {}),
             ...(tap.cltv !== undefined ? { cltv: timelockValue(tap.cltv) } : {}),
+            ...("emulator" in tap ? { emulator: tap.emulator as string | null } : {}),
         };
         const arkadeScript = fn.arkadeScript
             ? {
@@ -582,6 +638,7 @@ export function stringifyArtifact(program: Program): string {
                     ? { csv: { type: tap.csv.type, value: tap.csv.value.toString() } }
                     : {}),
                 ...(tap.cltv !== undefined ? { cltv: tap.cltv.toString() } : {}),
+                ...(tap.emulator !== undefined ? { emulator: tap.emulator } : {}),
             },
             ...(fn.arkadeScript
                 ? {

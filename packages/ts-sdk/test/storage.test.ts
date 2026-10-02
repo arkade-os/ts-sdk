@@ -12,6 +12,7 @@ import {
 import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
+import { DB_VERSION } from "../src/repositories/indexedDB/schema";
 import { WalletRepositoryImpl } from "../src/repositories/migrations/walletRepositoryImpl";
 
 export type RepositoryTestItem<T> = {
@@ -341,6 +342,39 @@ describe("migrateWalletRepository in-progress flag", () => {
         expect(callOrder[callOrder.length - 1]).toBe("setItem:done");
 
         vi.restoreAllMocks();
+    });
+});
+
+describe("IndexedDBStorageAdapter default version", () => {
+    const versionOf = (name: string) =>
+        new Promise<number>((resolve, reject) => {
+            const request = indexedDB.open(name);
+            request.onsuccess = () => {
+                resolve(request.result.version);
+                request.result.close();
+            };
+            request.onerror = () => reject(request.error);
+        });
+
+    it("reads an app-owned DB without upgrading it", async () => {
+        const name = getUniqueDbName("adapter-owned");
+        const seeded = new IndexedDBStorageAdapter(name, 3);
+        await seeded.setItem("stash", "kept");
+
+        const adapter = new IndexedDBStorageAdapter(name);
+        expect(await adapter.getItem("stash")).toBe("kept");
+        expect(await versionOf(name)).toBe(3);
+    });
+
+    it("opens the shared wallet DB at its current version", async () => {
+        const name = getUniqueDbName("adapter-shared");
+        const repo = new IndexedDBWalletRepository(name);
+        await repo.getWalletState();
+
+        const adapter = new IndexedDBStorageAdapter(name);
+        expect(await getMigrationStatus("wallet", adapter)).toBe("not-needed");
+        await repo[Symbol.asyncDispose]();
+        expect(await versionOf(name)).toBe(DB_VERSION);
     });
 });
 

@@ -1,5 +1,5 @@
 import type { ExtendedVirtualCoin, NormalizedExtendedVirtualCoin, VirtualCoin } from "../wallet";
-import { normalizeVtxo } from "../wallet/vtxo";
+import { isVtxoSpent, normalizeVtxo } from "../wallet/vtxo";
 import type { WalletRepository } from "../repositories/walletRepository";
 import type { Contract } from "./types";
 
@@ -83,11 +83,17 @@ export function validateVtxosForScript(
 export async function getVtxosForContract(
     repo: WalletRepository,
     contract: Pick<Contract, "script" | "address">,
+    options?: { unspentOnly?: boolean },
 ): Promise<NormalizedExtendedVirtualCoin[]> {
-    const vtxos = repo.getVtxosForScript
-        ? await repo.getVtxosForScript(contract.script)
-        : filterVtxosForScript(await repo.getVtxos(contract.address), contract.script);
-    return vtxos.map(normalizeVtxo);
+    const vtxos =
+        options?.unspentOnly && repo.getVtxosForScripts
+            ? await repo.getVtxosForScripts([contract.script], options)
+            : repo.getVtxosForScript
+              ? await repo.getVtxosForScript(contract.script)
+              : filterVtxosForScript(await repo.getVtxos(contract.address), contract.script);
+    const normalized = vtxos.map(normalizeVtxo);
+    // Also covers backends without the indexed read and rows marked spent only by legacy facts.
+    return options?.unspentOnly ? normalized.filter((vtxo) => !isVtxoSpent(vtxo)) : normalized;
 }
 
 /** Provenance is required, so a bare `isSpent: true` records nothing and stays

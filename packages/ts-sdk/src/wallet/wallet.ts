@@ -34,10 +34,12 @@ import {
     fetchVtxoCreatedAtByTxid,
     getAllNormalizedVtxos,
     getNormalizedVtxos,
-    hasTerminalSpend,
+    isVtxoSpent,
+    isPastExpiry,
     isVirtualCoin,
     normalizeVtxo,
     parseLegacyExpiry,
+    requiresForfeit,
     resolveTimeHeight,
     toBatchExpiry,
     toOffchainInputFeeParams,
@@ -53,6 +55,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     IAssetManager,
     IReadonlyAssetManager,
@@ -131,7 +134,8 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, type ProviderKind } from "../providers/errors";
+import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
+import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -157,7 +161,11 @@ import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
-import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
+import {
+    validateVtxosForScript,
+    saveVtxosForContract,
+    vtxoOutpoint,
+} from "../contracts/vtxoOwnership";
 import {
     WalletReceiveRotator,
     buildReceiveContract,
@@ -179,12 +187,14 @@ import {
     Contract,
     ContractWithVtxos,
     DiscoveryDeps,
+    GetContractsFilter,
     isContractVtxoEvent,
 } from "../contracts/types";
 import {
     gateExclusion,
     gatedContracts,
     gatedFrom,
+    isContractGenericallySpendable,
     isGatedVtxo,
     type GatedContracts,
     logExcludedVtxos,
@@ -434,7 +444,7 @@ export function filterSnapshotVtxos(
             if (vtxo.isUnrolled) {
                 return !!f.withUnrolled;
             }
-            if (hasTerminalSpend(vtxo)) {
+            if (isVtxoSpent(vtxo)) {
                 return false;
             }
             if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
@@ -442,6 +452,61 @@ export function filterSnapshotVtxos(
             }
             return true;
         });
+}
+
+/**
+ * Refresh the swept state of settle inputs already past their batch expiry. The delta sync windows
+ * on `created_at`, so it never revisits a coin the operator swept after the cursor passed it, and a
+ * stale `isSwept: false` makes {@link requiresForfeit} build a forfeit the operator allocated no
+ * connector for. Fails closed: a swept state that cannot be confirmed aborts the settlement, since
+ * guessing the obligation fails mid-batch and can get the input's script convicted.
+ */
+async function refreshSweptStateOfExpiredInputs(
+    wallet: Pick<ReadonlyWallet, "getContractManager" | "getVtxos" | "onchainProvider">,
+    inputs: ExtendedCoin[],
+): Promise<ExtendedCoin[]> {
+    const candidates = inputs
+        .filter(isVirtualCoin)
+        .map(normalizeVtxo)
+        .filter((v) => !v.isSwept);
+    if (candidates.length === 0) return inputs;
+
+    // Only a height-encoded expiry needs the tip, so time-based networks make no call.
+    const now = candidates.some((v) => v.expiresAtHeight !== undefined)
+        ? await resolveTimeHeight(wallet.onchainProvider)
+        : { timestamp: new Date() };
+    // An unknown tip must not exempt a height-expiring coin; a needless refresh is harmless.
+    const suspects = candidates.filter(
+        (v) =>
+            isPastExpiry(v, now) || (v.expiresAtHeight !== undefined && now.height === undefined),
+    );
+    if (suspects.length === 0) return inputs;
+
+    let sweptNow: Set<string>;
+    try {
+        const manager = await wallet.getContractManager();
+        await manager.refreshOutpoints(suspects.map(({ txid, vout }) => ({ txid, vout })));
+        const suspectKeys = new Set(suspects.map((v) => `${v.txid}:${v.vout}`));
+        const fresh = await wallet.getVtxos({ withRecoverable: true });
+        sweptNow = new Set(
+            fresh
+                .filter((v) => v.isSwept && suspectKeys.has(`${v.txid}:${v.vout}`))
+                .map((v) => `${v.txid}:${v.vout}`),
+        );
+    } catch (e) {
+        const message =
+            "could not confirm the swept state of expired settlement inputs; retry the settlement";
+        throw isRetryableProviderError(e)
+            ? new ProviderUnavailableError(message, { cause: e })
+            : new Error(message, { cause: e });
+    }
+
+    if (sweptNow.size === 0) return inputs;
+    return inputs.map((input) => {
+        if (!isVirtualCoin(input) || !sweptNow.has(`${input.txid}:${input.vout}`)) return input;
+        const swept = { ...normalizeVtxo(input), isSwept: true };
+        return { ...swept, virtualStatus: toVirtualStatus(swept) };
+    });
 }
 
 /**
@@ -1219,7 +1284,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, snapshot] = await Promise.all([
             this.getBoardingUtxos(),
-            this.contractSnapshot(),
+            // The bucketer drops every spent coin and the gate reads contracts only.
+            this.contractSnapshot(undefined, { unspentOnly: true }),
         ]);
         // Explicit, not the default filter: the default drops unrolled coins,
         // and `computeOffchainBalance` cannot report a bucket it never sees.
@@ -1283,15 +1349,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
         return filterSnapshotVtxos(
-            await this.contractSnapshot(),
+            // Only an unrolled coin is returned spent, so no other read needs spent rows.
+            await this.contractSnapshot(undefined, { unspentOnly: !filter?.withUnrolled }),
             filter,
             this._pendingSpendOutpoints,
         );
     }
 
     /** @inheritdoc */
-    async getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
-        const snapshot = await this.contractSnapshot();
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        const snapshot = await this.contractSnapshot(filter, {
+            unspentOnly: !filter?.withUnrolled,
+        });
         const vtxos = filterSnapshotVtxos(snapshot, filter, this._pendingSpendOutpoints);
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
@@ -1317,7 +1388,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 "getSpendableVtxos",
                 snapshot
                     .flatMap((contract) => contract.vtxos)
-                    .filter((vtxo) => vtxo.isUnrolled && !hasTerminalSpend(vtxo)),
+                    .filter((vtxo) => vtxo.isUnrolled && !isVtxoSpent(vtxo)),
                 [() => UNROLLED_REASON],
             );
         }
@@ -1413,9 +1484,32 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * otherwise the gate and the pending-recovery set answer about two different
      * points in time, and each read costs another sync.
      */
-    protected async contractSnapshot(): Promise<ContractWithVtxos[]> {
+    protected async contractSnapshot(
+        filter?: GetSpendableVtxosFilter,
+        options?: { unspentOnly?: boolean },
+    ): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
-        return contractManager.getContractsWithVtxos();
+        const scope: GetContractsFilter | undefined = filter?.watchedOnly
+            ? { watch: ["watched", "awaiting-funds"] }
+            : undefined;
+        let query = scope;
+        if (filter?.genericallySpendableOnly) {
+            const scripts = (await contractManager.getContracts(scope))
+                .filter(isContractGenericallySpendable)
+                .map((contract) => contract.script);
+            if (scripts.length === 0) {
+                if (filter.requireSynced) {
+                    throw new Error("No generically spendable contracts to sync");
+                }
+                return [];
+            }
+            query = { ...scope, script: scripts };
+        }
+        return contractManager.getContractsWithVtxos(query, undefined, {
+            maxSyncAgeMs: filter?.maxSyncAgeMs,
+            unspentOnly: options?.unspentOnly,
+            requireSynced: filter?.requireSynced,
+        });
     }
 
     /**
@@ -3986,7 +4080,10 @@ export class Wallet
                 amount += utxo.value - inputFee.satoshis;
             }
 
-            const vtxos = await this.getSpendableVtxos({ withRecoverable: true });
+            const vtxos = await this.getSpendableVtxos({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            });
 
             // Cap the VTXOs per settlement to stay under the server's
             // intent-size limit (MAX_VTXOS_PER_SETTLEMENT inputs) and its
@@ -4058,6 +4155,11 @@ export class Wallet
                 outputs: [output],
             };
         }
+
+        params = {
+            ...params,
+            inputs: await refreshSweptStateOfExpiredInputs(this, params.inputs),
+        };
 
         const onchainOutputIndexes: number[] = [];
         const outputs: TransactionOutput[] = [];
@@ -4446,11 +4548,8 @@ export class Wallet
                 continue;
             }
 
-            if (
-                canRecoverOnchain(input, { timestamp: new Date() }) ||
-                isSubdust({ value: input.value }, this.dustAmount)
-            ) {
-                // recoverable or subdust coin, we don't need to create a forfeit tx
+            if (!requiresForfeit(input) || isSubdust({ value: input.value }, this.dustAmount)) {
+                // swept, unrolled or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
 
@@ -5279,7 +5378,7 @@ export class Wallet
         const unclaimed: ArkadeCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
-            if (hasTerminalSpend(vtxo)) {
+            if (isVtxoSpent(vtxo)) {
                 unclaimed.push(cashReport(vtxo, "already-spent"));
             } else if (vtxo.isUnrolled) {
                 // Exited onchain. The thin sweep is an offchain spend, so it
@@ -5560,6 +5659,7 @@ export class Wallet
         if (!selectedVtxos) {
             virtualCoins = await this.getSpendableVtxos({
                 withRecoverable: false,
+                genericallySpendableOnly: true,
             });
         }
 
@@ -5599,6 +5699,18 @@ export class Wallet
                 }
             }
         } else {
+            // Index asset candidates once. A wallet with many VTXOs and several
+            // asset recipients must not scan the full inventory for each asset
+            // or linearly search every already-selected input on each pass.
+            const coinsByAsset = new Map<string, NormalizedExtendedVirtualCoin[]>();
+            for (const coin of virtualCoins) {
+                for (const assetId of new Set(coin.assets?.map((asset) => asset.assetId))) {
+                    const coins = coinsByAsset.get(assetId) ?? [];
+                    coins.push(coin);
+                    coinsByAsset.set(assetId, coins);
+                }
+            }
+            const selectedOutpoints = new Set<string>();
             // select assets
             for (const recipient of recipients) {
                 if (!recipient.assets) {
@@ -5621,9 +5733,8 @@ export class Wallet
                         assetChanges.delete(receiverAsset.assetId);
                     }
 
-                    const availableCoins = virtualCoins.filter(
-                        (c) =>
-                            !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    const availableCoins = (coinsByAsset.get(receiverAsset.assetId) ?? []).filter(
+                        (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
                     );
 
                     const { selected, totalAssetAmount } = selectCoinsWithAsset(
@@ -5634,6 +5745,7 @@ export class Wallet
 
                     for (const coin of selected) {
                         selectedCoins.push(coin);
+                        selectedOutpoints.add(vtxoOutpoint(coin));
                         // asset coins contain btc, subtract from total amount to select
                         btcAmountToSelect -= coin.value;
                         // coin may contain other assets, add them to asset changes
@@ -5659,7 +5771,7 @@ export class Wallet
             // select remaining btc
             if (btcAmountToSelect > 0) {
                 const availableCoins = virtualCoins.filter(
-                    (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                    (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
                 );
                 const { inputs: btcCoins } = selectVirtualCoins(availableCoins, btcAmountToSelect);
 
@@ -5674,6 +5786,7 @@ export class Wallet
                 }
 
                 selectedCoins = [...selectedCoins, ...btcCoins];
+                for (const coin of btcCoins) selectedOutpoints.add(vtxoOutpoint(coin));
             }
         }
 
@@ -5728,6 +5841,7 @@ export class Wallet
             }
         }
 
+        const selectedOutpoints = new Set(selectedCoins.map(vtxoOutpoint));
         // A positive change output must meet the operator's VTXO minimum.
         // Asset change also needs at least dust to carry the asset packet.
         // Adding a BTC coin can introduce assets, so recheck after each selection.
@@ -5741,7 +5855,7 @@ export class Wallet
                     ? this.dustAmount
                     : vtxoMinAmount;
             const availableCoins = virtualCoins.filter(
-                (c) => !selectedCoins.find((sc) => sc.txid === c.txid && sc.vout === c.vout),
+                (coin) => !selectedOutpoints.has(vtxoOutpoint(coin)),
             );
             let extraCoins: ExtendedVirtualCoin[];
             try {
@@ -5795,6 +5909,7 @@ export class Wallet
             }
 
             selectedCoins = [...selectedCoins, ...extraCoins];
+            for (const coin of extraCoins) selectedOutpoints.add(vtxoOutpoint(coin));
             totalBtcSelected += extraCoins.reduce((sum, c) => sum + c.value, 0);
             changeAmount = totalBtcSelected - totalBtcOutput;
         }

@@ -1735,6 +1735,41 @@ describe("WalletMessageHandler repo-backed reads", () => {
         ]);
     });
 
+    it("GET_BALANCE and GET_VTXOS read no spent rows unless unrolled coins are asked for", async () => {
+        setupHandler();
+        const settled = { value: 50000, virtualStatus: { state: "settled" as const } };
+        const live = createMockExtendedVtxo({ ...settled, txid: "aa".repeat(32) });
+        const spent = createMockExtendedVtxo({
+            ...settled,
+            txid: "bb".repeat(32),
+            isSpent: true,
+            spentBy: "cc".repeat(32),
+        });
+        const exited = createMockExtendedVtxo({
+            ...settled,
+            txid: "dd".repeat(32),
+            isSpent: true,
+            spentBy: "ee".repeat(32),
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [live, spent, exited]);
+        const reads = vi.spyOn(walletRepo, "getVtxosForScripts");
+        const send = (id: string, type: string, payload?: unknown) =>
+            updater.handleMessage({ ...baseMessage(id), type, payload } as any);
+
+        await send("1", "GET_BALANCE");
+        await send("2", "GET_VTXOS", { filter: { withRecoverable: true } });
+        const rowsRead = (await Promise.all(reads.mock.results.map((result) => result.value)))
+            .flat()
+            .map((vtxo) => vtxo.txid);
+        expect(rowsRead).toContain(live.txid);
+        expect(rowsRead).not.toContain(spent.txid);
+
+        const unrolled = await send("3", "GET_VTXOS", { filter: { withUnrolled: true } });
+        expect((unrolled as any).payload.vtxos.map((v: any) => v.txid)).toContain(exited.txid);
+        reads.mockRestore();
+    });
+
     it("GET_VTXOS surfaces unrolled VTXOs the spend-axis tests would have dropped", async () => {
         setupHandler();
         const exitedSwept = createMockExtendedVtxo({
@@ -2197,13 +2232,24 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_SPENDABLE_VTXOS",
-            payload: { filter: { withRecoverable: false } },
+            payload: {
+                filter: {
+                    withRecoverable: false,
+                    watchedOnly: true,
+                    genericallySpendableOnly: true,
+                },
+            },
         } as any);
 
         expect((updater as any).readonlyWallet.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: false,
+            watchedOnly: true,
+            genericallySpendableOnly: true,
         });
-        expect(response).toMatchObject({ type: "SPENDABLE_VTXOS", payload: { vtxos } });
+        expect(response).toMatchObject({
+            type: "SPENDABLE_VTXOS",
+            payload: { vtxos, filterApplied: true },
+        });
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {
@@ -2246,7 +2292,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 20000,
             virtualStatus: { state: "swept" },
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept]);
+        const spent = createMockExtendedVtxo({
+            txid: "dd".repeat(32),
+            value: 10000,
+            virtualStatus: { state: "settled" },
+            isSpent: true,
+            spentBy: "ee".repeat(32),
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept, spent]);
 
         const finalizeSpy = vi.fn().mockResolvedValue({ pending: [], finalized: [] });
         (updater as any).wallet = {
@@ -2258,9 +2311,11 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(finalizeSpy).toHaveBeenCalledOnce();
         const vtxosArg = finalizeSpy.mock.calls[0][0];
-        // Should exclude swept and settled VTXOs
-        expect(vtxosArg).toHaveLength(1);
-        expect(vtxosArg[0].txid).toBe("aa".repeat(32));
+        // Excludes unspent settled and swept VTXOs; a spent one still needs the full read
+        expect(vtxosArg.map((vtxo: { txid: string }) => vtxo.txid).sort()).toEqual([
+            "aa".repeat(32),
+            "dd".repeat(32),
+        ]);
     });
 
     it("boarding cache refresh fans out over the boarding-address set (plan §6-IV.2)", async () => {

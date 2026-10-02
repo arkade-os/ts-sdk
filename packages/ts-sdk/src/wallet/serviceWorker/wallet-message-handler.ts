@@ -22,6 +22,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetNewAddressesOptions,
+    GetSpendableVtxosFilter,
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
@@ -38,11 +39,7 @@ import {
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
-import {
-    fetchVtxoCreatedAtByTxid,
-    hasTerminalSpend,
-    type NormalizedExtendedVirtualCoin,
-} from "../vtxo";
+import { fetchVtxoCreatedAtByTxid, isVtxoSpent, type NormalizedExtendedVirtualCoin } from "../vtxo";
 import {
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
@@ -212,11 +209,11 @@ export type ResponseGetVtxos = ResponseEnvelope & {
 
 export type RequestGetSpendableVtxos = RequestEnvelope & {
     type: "GET_SPENDABLE_VTXOS";
-    payload: { filter?: GetVtxosFilter };
+    payload: { filter?: GetSpendableVtxosFilter };
 };
 export type ResponseGetSpendableVtxos = ResponseEnvelope & {
     type: "SPENDABLE_VTXOS";
-    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>> };
+    payload: { vtxos: Awaited<ReturnType<IWallet["getSpendableVtxos"]>>; filterApplied?: boolean };
 };
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
@@ -298,11 +295,14 @@ export type ResponseGetContracts = ResponseEnvelope & {
 
 export type RequestGetContractsWithVtxos = RequestEnvelope & {
     type: "GET_CONTRACTS_WITH_VTXOS";
-    payload: { filter?: GetContractsFilter };
+    payload: {
+        filter?: GetContractsFilter;
+        options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean };
+    };
 };
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
-    payload: { contracts: ContractWithVtxos[] };
+    payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -1195,7 +1195,7 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "SPENDABLE_VTXOS",
-                        payload: { vtxos },
+                        payload: { vtxos, filterApplied: true },
                     });
                 }
                 case "GET_BOARDING_UTXOS": {
@@ -1279,11 +1279,15 @@ export class WalletMessageHandler
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contracts = await manager.getContractsWithVtxos(message.payload.filter);
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter,
+                        undefined,
+                        message.payload.options,
+                    );
                     return this.tagged({
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
-                        payload: { contracts },
+                        payload: { contracts, filterApplied: true },
                     });
                 }
                 case "WATCH_SCRIPT": {
@@ -1709,7 +1713,8 @@ export class WalletMessageHandler
     private async handleGetBalance(): Promise<WalletBalance> {
         const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.repoSnapshot(),
+            // The bucketer drops every spent coin and the gate reads contracts only.
+            this.repoSnapshot({ unspentOnly: true }),
         ]);
         // Both exclusion sets come off that one snapshot, so they answer about
         // the same instant — and neither costs an indexer round-trip.
@@ -2073,9 +2078,10 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) {
             throw new WalletNotInitializedError();
         }
-        const allVtxos = await this.getVtxosFromRepo();
-        const dustAmount = this.readonlyWallet.dustAmount;
         const withUnrolled = message.payload.filter?.withUnrolled ?? false;
+        // Only an unrolled coin is returned spent.
+        const allVtxos = await this.getVtxosFromRepo({ unspentOnly: !withUnrolled });
+        const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
 
         // Same shape as `filterSnapshotVtxos`: location first, so `withUnrolled`
@@ -2086,7 +2092,7 @@ export class WalletMessageHandler
             if (v.isUnrolled) {
                 return withUnrolled;
             }
-            if (hasTerminalSpend(v)) {
+            if (isVtxoSpent(v)) {
                 return false;
             }
             if (includeRecoverable) {
@@ -2140,8 +2146,10 @@ export class WalletMessageHandler
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      */
-    private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
-        return (await this.repoSnapshot()).vtxos;
+    private async getVtxosFromRepo(options?: {
+        unspentOnly?: boolean;
+    }): Promise<NormalizedExtendedVirtualCoin[]> {
+        return (await this.repoSnapshot(options)).vtxos;
     }
 
     /**
@@ -2157,7 +2165,7 @@ export class WalletMessageHandler
      * what it knows is closed — so the coins of a just-registered escrowed
      * contract would count as available until the next poll.
      */
-    private async repoSnapshot(): Promise<{
+    private async repoSnapshot(options?: { unspentOnly?: boolean }): Promise<{
         // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
         // and the gate and signer classification only read `contract`/`vtxos`.
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
@@ -2190,7 +2198,9 @@ export class WalletMessageHandler
         for (const contract of contracts) {
             snapshot.push({
                 contract,
-                vtxos: addVtxos(await getVtxosForContract(this.walletRepository, contract)),
+                vtxos: addVtxos(
+                    await getVtxosForContract(this.walletRepository, contract, options),
+                ),
             });
         }
 
@@ -2213,10 +2223,11 @@ export class WalletMessageHandler
         // is outside every contract row, so it carries no contract to judge it
         // by — the wallet's own receive address, which is never gated.
         addVtxos(
-            await getVtxosForContract(this.walletRepository, {
-                script: walletScript,
-                address: walletAddress,
-            }),
+            await getVtxosForContract(
+                this.walletRepository,
+                { script: walletScript, address: walletAddress },
+                options,
+            ),
         );
 
         return { snapshot, vtxos: allVtxos };

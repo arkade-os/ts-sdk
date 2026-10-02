@@ -739,7 +739,7 @@ export interface Status {
  * @deprecated Use the canonical facts on {@link VirtualCoin} — `isSwept`, `isPreconfirmed`,
  * `isSpent`, `expiresAt`, `expiresAtHeight`, `commitmentTxIds`, `spentBy`, `settledBy` — and the
  * capability predicates {@link canSpendOffchain}, {@link canRecoverOnchain},
- * {@link hasTerminalSpend}, {@link isPastExpiry}. `state` collapses independent facts into one
+ * {@link isVtxoSpent}, {@link isPastExpiry}. `state` collapses independent facts into one
  * lossy label; this object is retained only as a backward-compatible projection.
  */
 export interface VirtualStatus {
@@ -804,7 +804,7 @@ export interface Coin extends Outpoint {
  * {@link IndexerProvider} and {@link WalletRepository} implementations may hand back coins without
  * them. The SDK normalizes every incoming coin, so coins it returns always carry the facts that are
  * determinable; do not read these fields off a coin the SDK has not returned to you — use
- * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link hasTerminalSpend} /
+ * {@link canSpendOffchain} / {@link canRecoverOnchain} / {@link isVtxoSpent} /
  * {@link isPastExpiry}, which normalize defensively.
  *
  * @see Coin
@@ -978,12 +978,14 @@ export {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
     hasTerminalSpend,
+    isVtxoSpent,
     isExpired,
     isPastExpiry,
     isRecoverable,
     isSpendable,
     isVirtualCoin,
     normalizeVtxo,
+    requiresForfeit,
     toVirtualStatus,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
@@ -1024,6 +1026,19 @@ export type GetVtxosFilter = {
      * `Unroll.prepareUnrollTransaction`, the flag's main consumer, does.
      */
     withUnrolled?: boolean;
+};
+
+export type GetSpendableVtxosFilter = GetVtxosFilter & {
+    /** Exclude contracts retained for history from this spendable read. */
+    watchedOnly?: boolean;
+    /** Query only contracts whose handler permits generic spending. */
+    genericallySpendableOnly?: boolean;
+
+    /** Maximum age of a successful sync reused by this read, in milliseconds. Default: 0. */
+    maxSyncAgeMs?: number;
+
+    /** Reject repository fallback when the selected contracts could not be synced. */
+    requireSynced?: boolean;
 };
 
 /**
@@ -1197,10 +1212,10 @@ export interface IReadonlyWallet {
      * Both exclusion sets are derived from one contract snapshot, so they cannot
      * disagree about which VTXOs exist.
      *
-     * @param filter - Same flags, same defaults, as {@link getVtxos}
-     * @see GetVtxosFilter
+     * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
+     * @see GetSpendableVtxosFilter
      */
-    getSpendableVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+    getSpendableVtxos(filter?: GetSpendableVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

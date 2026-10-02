@@ -12,12 +12,13 @@ import {
     SerializedVtxo,
     DB_VERSION,
 } from "./db";
-import { awaitTransaction, deleteByIndex, promisifyRequest } from "./idbUtils";
+import { awaitTransaction, deleteByIndex, getAllByIndexValues, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { initDatabase } from "./schema";
+import { initDatabase, unspentFlag } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { isVtxoForScript } from "../../contracts/vtxoOwnership";
+import { isVtxoSpent } from "../../wallet/vtxo";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -72,7 +73,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             const store = transaction.objectStore(STORE_VTXOS);
             for (const vtxo of vtxos) {
                 const serialized: SerializedVtxo = serializeVtxo(vtxo);
-                store.put({ address, ...serialized });
+                store.put({ address, ...serialized, ...unspentFlag(vtxo) });
             }
             await awaitTransaction(transaction);
         } catch (error) {
@@ -94,35 +95,62 @@ export class IndexedDBWalletRepository implements WalletRepository {
     }
 
     async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+        return this.getVtxosForScripts([script]);
+    }
+
+    async getVtxosForScripts(
+        scripts: string[],
+        options?: { unspentOnly?: boolean },
+    ): Promise<ExtendedVirtualCoin[]> {
+        const unique = [...new Set(scripts)];
+        if (unique.length === 0) return [];
         try {
             const db = await this.getDB();
-            const store = db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
-            const results = await promisifyRequest<(SerializedVtxo & { address: string })[]>(
-                store.index("script").getAll(script),
-            );
+            const rows = options?.unspentOnly
+                ? await getAllByIndexValues<RawVtxoRow>(
+                      this.vtxoStore(db),
+                      "scriptUnspent",
+                      unique.map((script) => [script, 1]),
+                  )
+                : await getAllByIndexValues<RawVtxoRow>(this.vtxoStore(db), "script", unique);
 
-            // Defensive filter: only rows whose script matches.
-            const matching = (results || []).filter((r) => r.script === script);
-
-            // Dedup same outpoint rows across address buckets. Work on raw rows
-            // so the address field is available for the canonicality tiebreaker.
-            const byOutpoint = new Map<string, SerializedVtxo & { address: string }>();
-            for (const row of matching) {
-                const outpoint = `${row.txid}:${row.vout}`;
-                const existing = byOutpoint.get(outpoint);
-                if (!existing) {
-                    byOutpoint.set(outpoint, row);
-                    continue;
-                }
-                if (shouldReplaceVtxo(existing, row)) {
-                    byOutpoint.set(outpoint, row);
+            const selected = new Set(unique);
+            const byOutpoint = new Map<string, RawVtxoRow>();
+            for (const row of rows) {
+                if (!selected.has(row.script!)) continue;
+                const key = `${row.script}:${row.txid}:${row.vout}`;
+                const existing = byOutpoint.get(key);
+                if (!existing || shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
+            }
+            if (options?.unspentOnly && byOutpoint.size > 0) {
+                // A newer terminal copy in another address bucket is not in the index.
+                const txids = [...new Set([...byOutpoint.values()].map((row) => row.txid))];
+                const store = this.vtxoStore(db);
+                for (const row of await getAllByIndexValues<RawVtxoRow>(store, "txid", txids)) {
+                    const key = `${row.script}:${row.txid}:${row.vout}`;
+                    const existing = byOutpoint.get(key);
+                    if (existing && shouldReplaceVtxo(existing, row)) byOutpoint.set(key, row);
                 }
             }
-            return Array.from(byOutpoint.values()).map(deserializeVtxoWithBackfill);
+
+            const result: ExtendedVirtualCoin[] = [];
+            for (const row of byOutpoint.values()) {
+                // After the dedup, not before: another bucket's terminal row can win.
+                if (options?.unspentOnly && (row.isSpent || row.spentBy || row.settledBy)) {
+                    continue;
+                }
+                const vtxo = deserializeVtxoWithBackfill(row);
+                if (!options?.unspentOnly || !isVtxoSpent(vtxo)) result.push(vtxo);
+            }
+            return result;
         } catch (error) {
-            console.error(`Failed to get VTXOs for script ${script}:`, error);
+            console.error("Failed to get VTXOs for scripts:", error);
             throw error;
         }
+    }
+
+    private vtxoStore(db: IDBDatabase): IDBObjectStore {
+        return db.transaction([STORE_VTXOS], "readonly").objectStore(STORE_VTXOS);
     }
 
     async saveVtxosForScript(key: VtxoRepositoryKey, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -273,14 +301,14 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // Post-migration every row has `script`, but the backfill is idempotent: if a
 // legacy row is ever read before the upgrade-path completes, derive `script`
 // from `address` the same way the indexer would have populated it.
-function deserializeVtxoWithBackfill(o: SerializedVtxo & { address: string }): ExtendedVirtualCoin {
+function deserializeVtxoWithBackfill({ unspent: _unspent, ...o }: RawVtxoRow): ExtendedVirtualCoin {
     if (!o.script) {
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
     return deserializeVtxo(o);
 }
 
-type RawVtxoRow = SerializedVtxo & { address: string };
+type RawVtxoRow = SerializedVtxo & { address: string; unspent?: 1 };
 
 function isCanonicalRow(row: RawVtxoRow): boolean {
     try {

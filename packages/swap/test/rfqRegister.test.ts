@@ -334,7 +334,6 @@ const vtxo = (script: string, value: number): ExtendedVirtualCoin =>
         vout: 0,
         value,
         status: { confirmed: true },
-        virtualStatus: { state: "settled" },
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,

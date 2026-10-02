@@ -7,6 +7,7 @@ import {
     convertVtxo,
     getNormalizedVtxos,
     hasTerminalSpend,
+    isVtxoSpent,
     isExpired,
     isPastExpiry,
     isRecoverable,
@@ -15,6 +16,7 @@ import {
     normalizeVtxo,
     parseLegacyExpiry,
     parseWireExpiry,
+    requiresForfeit,
     resolveTimeHeight,
     toBatchExpiry,
     toVirtualStatus,
@@ -156,7 +158,7 @@ describe("truth table", () => {
 
     it("row 1: preconfirmed, unspent → spendable", () => {
         const v = coin({ isPreconfirmed: true });
-        expect(hasTerminalSpend(v)).toBe(false);
+        expect(isVtxoSpent(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(true);
         expect(canRecoverOnchain(v, now)).toBe(false);
         expect(v.virtualStatus.state).toBe("preconfirmed");
@@ -181,14 +183,14 @@ describe("truth table", () => {
         // counted it as available while the send path refused to spend it.
         const v = coin({ expiresAt: PAST });
         expect(v.virtualStatus.state).toBe("settled");
-        expect(hasTerminalSpend(v)).toBe(false);
+        expect(isVtxoSpent(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(true);
     });
 
     it("row 5: spent with a spentBy → terminal", () => {
         const v = coin({ isSpent: true, spentBy: "33".repeat(32) });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
@@ -197,7 +199,7 @@ describe("truth table", () => {
         // Unreachable from arkd v0.9.14 (settlement writes spent=true and settled_by in the same
         // statement), but reachable from a consumer-implemented provider. Defense in depth.
         const v = coin({ isSpent: false, spentBy: "", settledBy: "44".repeat(32) });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
@@ -205,27 +207,27 @@ describe("truth table", () => {
     it("row 7: spent outranks swept in the legacy projection", () => {
         const v = coin({ isSpent: true, isSwept: true, spentBy: "33".repeat(32) });
         expect(v.virtualStatus.state).toBe("spent");
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
 
     it("row 8: isSpent true with an EMPTY spentBy → terminal", () => {
-        // The row that kills `hasTerminalSpend = !!spentBy || !!settledBy`: public spentBy is "",
+        // The row that kills `isVtxoSpent = !!spentBy || !!settledBy`: public spentBy is "",
         // so that definition would call a spent VTXO spendable. arkd settles no-forfeit inputs
         // (swept/expired/notes/unrolled) with exactly this empty spentBy.
         const v = coin({ isSpent: true, spentBy: "" });
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
     });
 
     it("row 9: unrolled without isSpent → onchain, not terminal", () => {
-        // The location axis. `hasTerminalSpend` mirrors NArk's `IsSpent()` and
+        // The location axis. `isVtxoSpent` mirrors NArk's `IsSpent()` and
         // says nothing about where the output lives, so it stays false — but no
         // batch and no offchain spend can reach the coin, so both capability
         // predicates refuse it and `canSweepOnchain` claims it instead.
         const v = coin({ isUnrolled: true, isSpent: false, spentBy: "" });
-        expect(hasTerminalSpend(v)).toBe(false);
+        expect(isVtxoSpent(v)).toBe(false);
         expect(canSpendOffchain(v, now)).toBe(false);
         expect(canRecoverOnchain(v, now)).toBe(false);
         expect(canSweepOnchain(v)).toBe(true);
@@ -249,7 +251,7 @@ describe("truth table", () => {
             { settledBy: "44".repeat(32) },
         ]) {
             const v = coin({ isUnrolled: true, ...over });
-            expect(hasTerminalSpend(v)).toBe(true);
+            expect(isVtxoSpent(v)).toBe(true);
             expect(canSweepOnchain(v)).toBe(false);
             expect(canSpendOffchain(v, now)).toBe(false);
             expect(canRecoverOnchain(v, now)).toBe(false);
@@ -272,6 +274,14 @@ describe("truth table", () => {
             expect(claims).toHaveLength(1);
         }
     });
+
+    it("requiresForfeit tracks the operator's swept fact, not expiry", () => {
+        expect(requiresForfeit(coin())).toBe(true);
+        expect(requiresForfeit(coin({ expiresAt: PAST }))).toBe(true);
+        expect(requiresForfeit(coin({ isSwept: true }))).toBe(false);
+        expect(requiresForfeit(coin({ isUnrolled: true }))).toBe(false);
+        expect(canRecoverOnchain(coin({ expiresAt: PAST }), now)).toBe(true);
+    });
 });
 
 describe("normalization", () => {
@@ -291,7 +301,7 @@ describe("normalization", () => {
         // spendable, on the one fact that decides spendability.
         const n = normalizeVtxo(legacyCoin("spent", { isSpent: undefined }));
         expect(n.isSpent).toBe(true);
-        expect(hasTerminalSpend(n)).toBe(true);
+        expect(isVtxoSpent(n)).toBe(true);
     });
 
     it("reads isSwept/isPreconfirmed as false for a spent legacy coin", () => {
@@ -340,7 +350,7 @@ describe("normalization", () => {
         for (const state of ["settled", "swept", "preconfirmed", "spent"] as const) {
             const legacy = legacyCoin(state);
             const canonical = normalizeVtxo(legacy);
-            expect(hasTerminalSpend(legacy)).toBe(hasTerminalSpend(canonical));
+            expect(isVtxoSpent(legacy)).toBe(isVtxoSpent(canonical));
             expect(isPastExpiry(legacy, now)).toBe(isPastExpiry(canonical, now));
             expect(canSpendOffchain(legacy, now)).toBe(canSpendOffchain(canonical, now));
             expect(canRecoverOnchain(legacy, now)).toBe(canRecoverOnchain(canonical, now));
@@ -369,6 +379,20 @@ describe("height-based expiry", () => {
 });
 
 describe("deprecated compatibility wrappers", () => {
+    it("hasTerminalSpend aliases isVtxoSpent across canonical, legacy, and unwrapped inputs", () => {
+        for (const state of ["settled", "spent", "swept", "preconfirmed"] as const) {
+            const legacy = legacyCoin(state);
+            expect(hasTerminalSpend(legacy)).toBe(isVtxoSpent(legacy));
+        }
+        expect(hasTerminalSpend(coin({ isSpent: true }))).toBe(true);
+        expect(hasTerminalSpend(coin())).toBe(false);
+
+        // JS callers can hand over raw storage rows with no virtualStatus at all; the alias
+        // normalizes the same way the canonical predicate does, as it wraps it.
+        const unwrapped = { ...coin(), virtualStatus: undefined, isSpent: true } as never;
+        expect(hasTerminalSpend(unwrapped)).toBe(isVtxoSpent(unwrapped));
+    });
+
     it("isRecoverable stays swept-only and is NOT canRecoverOnchain", () => {
         const expiredUnswept = coin({ expiresAt: PAST });
         expect(isRecoverable(expiredUnswept)).toBe(false);
@@ -461,7 +485,7 @@ describe("convertVtxo", () => {
         // ExpoIndexerProvider used to omit the spent branch entirely.
         const v = convertVtxo({ ...wire, isSpent: true, spentBy: "33".repeat(32) });
         expect(v.virtualStatus.state).toBe("spent");
-        expect(hasTerminalSpend(v)).toBe(true);
+        expect(isVtxoSpent(v)).toBe(true);
     });
 
     it("routes a height-encoded wire expiry to expiresAtHeight", () => {

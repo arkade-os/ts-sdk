@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 import { ArkAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
 import {
@@ -23,6 +24,7 @@ const keys = {
 };
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
 const EXIT_BLOCKS: RelativeTimelock = { type: "blocks", value: BigInt(144) };
+type ContractArtifact = Parameters<typeof arkade.programFromArtifact>[0];
 
 // hand-built TLV records: encodeOffer now rejects malformed offers, so the
 // decode-side coverage below assembles its foreign payloads from raw records
@@ -59,6 +61,34 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 ];
 
 describe("swap offer", () => {
+    it("compiles an arkadec artifact byte-identically to the hand-written asset program", () => {
+        const compilerArtifact: ContractArtifact = JSON.parse(
+            readFileSync(
+                new URL("./fixtures/arkadec/banco-btc-to-asset.artifact.json", import.meta.url),
+                "utf8",
+            ),
+        );
+        const binding = swapProgramBinding(
+            { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
+            server,
+        );
+        const generated = arkade.programFromArtifact(compilerArtifact);
+        expect(generated.params?.map((p) => (typeof p === "string" ? p : p.name))).toEqual([
+            ...compilerArtifact.constructorInputs.map((input) => input.name),
+            "server",
+        ]);
+        const packed = (script: arkade.ArkadeProgramScript) =>
+            [
+                script.compiled.map((fn) => hex.encode(fn.leafScript)),
+                script.compiled.map((fn) => (fn.arkadeScript ? hex.encode(fn.arkadeScript) : "")),
+                hex.encode(script.encode()),
+                hex.encode(script.pkScript),
+            ].join("|");
+        expect(packed(new arkade.ArkadeProgramScript(generated, binding.args, binding.keys))).toBe(
+            packed(new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys)),
+        );
+    });
+
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
             const script = offerVtxoScript(offer, server);

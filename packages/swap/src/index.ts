@@ -49,6 +49,8 @@ export {
     type AssetSwapRepository,
     type MarketsCacheEntry,
     InMemoryAssetSwapRepository,
+    RFQ_SWAP_MAX_PAGE_SIZE,
+    type RfqHistoryCursor,
 } from "./repository";
 export { IndexedDbAssetSwapRepository } from "./indexedDbRepository";
 export {
@@ -263,6 +265,7 @@ export {
     type LockupContractWriter,
 } from "./lockupContract";
 export {
+    RFQ_SWAP_ACTIVE_STATES,
     RFQ_SWAP_TERMINAL_STATES,
     RfqSwapManager,
     RfqSwapOriginRequired,
@@ -291,7 +294,11 @@ export {
 } from "./swapManager";
 export {
     rfqSwapActivityInputs,
+    rfqSwapActivityInputsPage,
+    rfqSwapActivityInputsSincePage,
     swapActivityResolver,
     type RfqSwapActivityDeps,
+    type RfqSwapActivityPage,
+    type RfqSwapDatedActivityPage,
     type SwapActivityInput,
 } from "./activity";
