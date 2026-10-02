@@ -761,6 +761,7 @@ export {
     isPastExpiry,
     isVirtualCoin,
     normalizeVtxo,
+    requiresForfeit,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type NormalizedVtxoPage,

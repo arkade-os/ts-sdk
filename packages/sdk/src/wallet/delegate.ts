@@ -24,6 +24,7 @@ import {
 import {
     canRecoverOnchain,
     normalizeVtxo,
+    requiresForfeit,
     toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
 } from "./vtxo";
@@ -320,7 +321,7 @@ async function delegate(
 
     const forfeits = await Promise.all(
         vtxos
-            .filter((v) => !canRecoverOnchain(v, { timestamp: new Date() }))
+            .filter((v) => requiresForfeit(v))
             .map(async (coin) => {
                 const forfeit = await makeDelegateForfeitTx(
                     coin,

@@ -91,8 +91,8 @@ export function computeOffchainBalance(
     };
 
     for (const vtxo of vtxos) {
-        // Load-bearing: `Wallet.getBalance` passes `withUnrolled: true`, so unrolled coins arrive
-        // without a terminal-spend check and this is what drops the spent ones.
+        // Both balance reads pass unspent rows only. Kept so a spent coin is never
+        // counted from a snapshot that still carries one.
         if (isVtxoSpent(vtxo)) continue;
         addAssets(owned, vtxo);
 

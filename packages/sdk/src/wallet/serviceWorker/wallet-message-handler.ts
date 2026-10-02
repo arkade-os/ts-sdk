@@ -1806,7 +1806,8 @@ export class WalletMessageHandler
     private async handleGetBalance(): Promise<WalletBalance> {
         const [boardingUtxos, { snapshot, vtxos: allVtxos }] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.repoSnapshot(),
+            // The bucketer drops every spent coin and the gate reads contracts only.
+            this.repoSnapshot({ unspentOnly: true }),
         ]);
         // Both exclusion sets come off that one snapshot, so they answer about
         // the same instant — and neither costs an indexer round-trip.
@@ -2129,9 +2130,10 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) {
             throw new WalletNotInitializedError();
         }
-        const allVtxos = await this.getVtxosFromRepo();
-        const dustAmount = this.readonlyWallet.dustAmount;
         const withUnrolled = message.payload.filter?.withUnrolled ?? false;
+        // Only an unrolled coin is returned spent.
+        const allVtxos = await this.getVtxosFromRepo({ unspentOnly: !withUnrolled });
+        const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
 
         // Same shape as `filterSnapshotVtxos`: location first, so `withUnrolled`
@@ -2190,8 +2192,10 @@ export class WalletMessageHandler
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      */
-    private async getVtxosFromRepo(): Promise<NormalizedExtendedVirtualCoin[]> {
-        return (await this.repoSnapshot()).vtxos;
+    private async getVtxosFromRepo(options?: {
+        unspentOnly?: boolean;
+    }): Promise<NormalizedExtendedVirtualCoin[]> {
+        return (await this.repoSnapshot(options)).vtxos;
     }
 
     /**
@@ -2207,7 +2211,7 @@ export class WalletMessageHandler
      * what it knows is closed — so the coins of a just-registered escrowed
      * contract would count as available until the next poll.
      */
-    private async repoSnapshot(): Promise<{
+    private async repoSnapshot(options?: { unspentOnly?: boolean }): Promise<{
         // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
         // and the gate and signer classification only read `contract`/`vtxos`.
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
@@ -2240,7 +2244,9 @@ export class WalletMessageHandler
         for (const contract of contracts) {
             snapshot.push({
                 contract,
-                vtxos: addVtxos(await getVtxosForContract(this.walletRepository, contract)),
+                vtxos: addVtxos(
+                    await getVtxosForContract(this.walletRepository, contract, options),
+                ),
             });
         }
 
@@ -2263,10 +2269,11 @@ export class WalletMessageHandler
         // is outside every contract row, so it carries no contract to judge it
         // by — the wallet's own receive address, which is never gated.
         addVtxos(
-            await getVtxosForContract(this.walletRepository, {
-                script: walletScript,
-                address: walletAddress,
-            }),
+            await getVtxosForContract(
+                this.walletRepository,
+                { script: walletScript, address: walletAddress },
+                options,
+            ),
         );
 
         return { snapshot, vtxos: allVtxos };
