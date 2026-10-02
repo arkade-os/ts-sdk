@@ -19,6 +19,7 @@ import { getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const COIN = { txid: "ab".repeat(32), vout: 1, value: 10_000 };
 const AMOUNT = 9_000n;
+const FEE = BigInt(COIN.value) - AMOUNT;
 
 const payTo = [
     "DUP",
@@ -120,7 +121,12 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
     it("buildOnchain assembles a covenant spend with packet and prevout tx", async () => {
         const { contract } = await setup();
         const fn = contract.compiled.find((f) => f.name === "covenant")!;
-        const tx = await contract.functions.covenant().from(COIN).to(out, AMOUNT).buildOnchain();
+        const tx = await contract.functions
+            .covenant()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .buildOnchain();
 
         expect(tx.inputsLength).toBe(1);
         const input = tx.getInput(0);
@@ -135,7 +141,12 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
 
     it("covenant non-server leaf: emulator cosigns, then finalize and broadcast", async () => {
         const { contract, submitOnchainTx, cosignOnchainTx, broadcastTransaction } = await setup();
-        const txid = await contract.functions.covenant().from(COIN).to(out, AMOUNT).sendOnchain();
+        const txid = await contract.functions
+            .covenant()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .sendOnchain();
         expect(txid).toBe("broadcast-txid");
         expect(submitOnchainTx).toHaveBeenCalledTimes(1);
         expect(cosignOnchainTx).not.toHaveBeenCalled();
@@ -146,13 +157,23 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
     it("rejects a covenant leaf containing the server key", async () => {
         const { contract } = await setup();
         await expect(
-            contract.functions.covenantServer().from(COIN).to(out, AMOUNT).buildOnchain(),
+            contract.functions
+                .covenantServer()
+                .from(COIN)
+                .to(out, AMOUNT)
+                .onchainFee(FEE)
+                .buildOnchain(),
         ).rejects.toThrow(/without the Arkade server key/);
     });
 
     it("user-only leaf is finalized and broadcast without arkd", async () => {
         const { contract, cosignOnchainTx, submitOnchainTx, broadcastTransaction } = await setup();
-        const txid = await contract.functions.timed().from(COIN).to(out, AMOUNT).sendOnchain();
+        const txid = await contract.functions
+            .timed()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .sendOnchain();
         expect(txid).toBe("broadcast-txid");
         expect(cosignOnchainTx).not.toHaveBeenCalled();
         expect(submitOnchainTx).not.toHaveBeenCalled();
@@ -162,7 +183,12 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
 
     it("server leaf goes to arkd with the user signature on input 0", async () => {
         const { contract, cosignOnchainTx, broadcastTransaction, userKey } = await setup();
-        const txid = await contract.functions.collab().from(COIN).to(out, AMOUNT).sendOnchain();
+        const txid = await contract.functions
+            .collab()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .sendOnchain();
         expect(txid).toBe("arkd-txid");
         expect(broadcastTransaction).not.toHaveBeenCalled();
         const sent = Transaction.fromPSBT(base64.decode(cosignOnchainTx.mock.calls[0][0]));
@@ -187,10 +213,25 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         );
     });
 
-    it("surplus without change is the whole fee", async () => {
+    it("surplus without change is the declared onchainFee", async () => {
         const { contract } = await setup();
-        const tx = await contract.functions.collab().from(COIN).to(out, AMOUNT).buildOnchain();
+        const tx = await contract.functions
+            .collab()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .buildOnchain();
         expect(tx.outputsLength).toBe(1);
+    });
+
+    it.each([
+        ["no onchainFee", undefined],
+        ["an onchainFee below the surplus", FEE - 1n],
+    ])("surplus without change and %s throws", async (_n, fee) => {
+        const { contract } = await setup();
+        const b = contract.functions.collab().from(COIN).to(out, AMOUNT);
+        if (fee !== undefined) b.onchainFee(fee);
+        await expect(b.buildOnchain()).rejects.toThrow(/without .change/);
     });
 
     it("change takes surplus minus onchainFee", async () => {
@@ -218,7 +259,12 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
 
     it("CLTV leaf sets lockTime and a non-final sequence", async () => {
         const { contract } = await setup();
-        const tx = await contract.functions.timed().from(COIN).to(out, AMOUNT).buildOnchain();
+        const tx = await contract.functions
+            .timed()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .buildOnchain();
         expect(tx.lockTime).toBe(800_000);
         expect(tx.getInput(0).sequence).toBeLessThan(0xffffffff);
     });

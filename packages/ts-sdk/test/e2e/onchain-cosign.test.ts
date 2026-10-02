@@ -256,6 +256,7 @@ describe("onchain cosign", () => {
             .spend()
             .from(utxo)
             .to(receiverScript, COVENANT_SPEND)
+            .onchainFee(BigInt(utxo.value) - COVENANT_SPEND)
             .sendOnchain();
         await confirm(txid);
 
@@ -276,6 +277,7 @@ describe("onchain cosign", () => {
             .spend()
             .from(utxo)
             .to(receiverScript, COVENANT_SPEND)
+            .onchainFee(BigInt(utxo.value) - COVENANT_SPEND)
             .buildOnchain();
         tx.addInput({
             txid: hex.decode(coin.txid),

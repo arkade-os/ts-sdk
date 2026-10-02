@@ -647,7 +647,7 @@ export class ArkadeTransactionBuilder {
         return this;
     }
 
-    /** Onchain only: the fee taken out of the surplus before the change output. */
+    /** Onchain only: the fee taken out of the surplus; without `.change()` it must equal the surplus. */
     onchainFee(sats: bigint): this {
         this.feeSats = sats;
         return this;
@@ -795,6 +795,10 @@ export class ArkadeTransactionBuilder {
                 throw new Error(`onchain change ${changeAmount} is below dust`);
             }
             outputs.push({ script: this.changeScript, amount: changeAmount });
+        } else if (this.feeSats !== surplus) {
+            throw new Error(
+                `onchain surplus ${surplus} without .change() must equal .onchainFee() (got ${this.feeSats})`,
+            );
         }
         const { sequence, lockTime } = this.leafTimelocks();
 
@@ -821,9 +825,8 @@ export class ArkadeTransactionBuilder {
         const tx = await this.buildOnchain();
         const client = this.contract.client;
         const signed = await this.signArk(tx, this.userInputIndexes());
-        const { cosignOnchainTx } = client.arkProvider;
         return submitOnchainSpend(signed, this.serverSigns() ? new Set([0]) : new Set(), {
-            arkProvider: cosignOnchainTx ? { cosignOnchainTx } : undefined,
+            arkProvider: client.arkProvider,
             emulator: client.emulator,
             onchainProvider: client.onchain!,
         });
