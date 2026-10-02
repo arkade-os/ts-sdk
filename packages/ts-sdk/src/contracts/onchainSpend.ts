@@ -202,6 +202,8 @@ export async function submitOnchainSpend(
         }
         return deps.arkProvider.cosignOnchainTx(base64.encode(tx.toPSBT()));
     }
-    tx.finalize();
+    for (let i = 0; i < tx.inputsLength; i++) {
+        if (!tx.getInput(i).finalScriptWitness) tx.finalizeIdx(i);
+    }
     return deps.onchainProvider.broadcastTransaction(hex.encode(tx.extract()));
 }

@@ -82,7 +82,12 @@ import type { OnchainProvider } from "../providers/onchain";
 import type { Identity } from "../identity";
 import type { VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
-import { CSVMultisigTapscript } from "../script/tapscript";
+import {
+    CLTVMultisigTapscript,
+    ConditionCSVMultisigTapscript,
+    CSVMultisigTapscript,
+    decodeTapscript,
+} from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
 import {
@@ -94,12 +99,9 @@ import {
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
 import { attachPrevArkTxs, attachPrevoutTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { prepareOwnedInput, submitOnchainSpend } from "../contracts/onchainSpend";
-import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
-import { CHILD_DUST_AMOUNT } from "../utils/anchor";
-import type { RelativeTimelock } from "../script/tapscript";
 import { timelockToSequence } from "../utils/timelock";
 import { Transaction } from "../utils/transaction";
-import { ANCHOR_PKSCRIPT } from "../utils/anchor";
+import { ANCHOR_PKSCRIPT, CHILD_DUST_AMOUNT } from "../utils/anchor";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
 import type { ExtensionPacket } from "../extension/packet";
@@ -773,6 +775,11 @@ export class ArkadeTransactionBuilder {
         if (!onchain) {
             throw new Error("onchain spends require an `onchain` provider on the Arkade client");
         }
+        if (this.fn.arkadeScript && this.serverSigns()) {
+            throw new Error(
+                "covenant onchain spends require a leaf without the Arkade server key (the emulator's onchain endpoint refuses leaves containing it)",
+            );
+        }
         const coin = this.coin;
         if (!coin) throw new Error("onchain spends require an explicit from(coin)");
         const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
@@ -815,11 +822,16 @@ export class ArkadeTransactionBuilder {
         const client = this.contract.client;
         const signed = await this.signArk(tx, this.userInputIndexes());
         const { cosignOnchainTx } = client.arkProvider;
-        return submitOnchainSpend(signed, this.fn.arkadeScript ? new Set() : new Set([0]), {
+        return submitOnchainSpend(signed, this.serverSigns() ? new Set([0]) : new Set(), {
             arkProvider: cosignOnchainTx ? { cosignOnchainTx } : undefined,
             emulator: client.emulator,
             onchainProvider: client.onchain!,
         });
+    }
+
+    private serverSigns(): boolean {
+        const { serverKey } = this.contract.client;
+        return this.fn.signerKeys.some((k) => equalBytes(k, serverKey));
     }
 
     private emulatorPacket(script: Uint8Array): ExtensionPacket {
@@ -837,8 +849,10 @@ export class ArkadeTransactionBuilder {
                 lockTime: Number(tapscript.params.absoluteTimelock),
             };
         }
-        const timelock = (tapscript.params as { timelock?: RelativeTimelock }).timelock;
-        return { sequence: timelock ? timelockToSequence(timelock) : undefined, lockTime: 0 };
+        if (CSVMultisigTapscript.is(tapscript) || ConditionCSVMultisigTapscript.is(tapscript)) {
+            return { sequence: timelockToSequence(tapscript.params.timelock), lockTime: 0 };
+        }
+        return { lockTime: 0 };
     }
 
     /** Build, submit and return the finalized transaction. */
