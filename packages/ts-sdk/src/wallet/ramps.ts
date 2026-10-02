@@ -7,6 +7,7 @@ import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import { getDustAmount } from "./utils";
+import { isCosignFallback } from "../contracts/onchainSpend";
 
 /**
  * Thrown when a collaborative-exit / offboard would leave a change VTXO below
@@ -323,7 +324,8 @@ export class Ramps {
      * `boardingUtxos`. Omitted, every spendable one is spent — merging the whole
      * off-chain balance into a single change output. Taken as given like
      * `settle({ inputs })`: an `amount` these cannot cover is an error, not a top-up.
-     * @returns The Arkade transaction id created by settlement
+     * @returns The Arkade transaction id created by settlement; the onchain txid when
+     * onchain coins alone covered `amount` and were spent via arkd cosigning.
      * @throws Error if no virtual outputs remain after fee deduction or the destination address cannot be decoded
      * @see IWallet.getSpendableVtxos
      * @see IWallet.settle
@@ -342,6 +344,10 @@ export class Ramps {
         vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
         const named = vtxos !== undefined;
+        if (!named && amount) {
+            const txid = await this.tryCosign(destinationAddress, amount);
+            if (txid) return txid;
+        }
         if (vtxos) reportUngatedInputs(this.wallet, vtxos);
         const spendable =
             vtxos ??
@@ -403,6 +409,10 @@ export class Ramps {
         }
 
         const named = vtxos !== undefined;
+        if (!named) {
+            const txid = await this.tryCosign(destinationAddress, amount);
+            if (txid) return txid;
+        }
         if (vtxos) reportUngatedInputs(this.wallet, vtxos);
         const spendable =
             vtxos ??
@@ -434,6 +444,18 @@ export class Ramps {
         const outputs = [{ address: destinationAddress, amount }];
         if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
         return this.wallet.settle({ inputs, outputs }, eventCallback);
+    }
+
+    private async tryCosign(address: string, amount: bigint): Promise<string | undefined> {
+        if (!("sendOnchain" in this.wallet)) return undefined;
+        try {
+            return await this.wallet.sendOnchain({
+                outputs: [{ address, amount: Number(amount) }],
+            });
+        } catch (e) {
+            if (!isCosignFallback(e)) throw e;
+            return undefined;
+        }
     }
 
     /** Fund the change output: pay its own fee, then judge it against both
