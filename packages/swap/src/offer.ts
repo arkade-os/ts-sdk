@@ -548,20 +548,7 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
  */
 export async function createOffer(
     wallet: IWallet,
-    params: {
-        wantAmount: bigint;
-        wantAsset?: asset.AssetId;
-        offerAsset?: asset.AssetId;
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
-        emulatorPubkey?: string;
-        /** Override the exit closure's delay. Defaults to the server's own
-         * `unilateralExitDelay`, which is the delay solverd uses too. */
-        exitDelay?: RelativeTimelock;
-        /** Publish without the exit closure, leaving `cancel` — which needs the
-         * server — as the only way back out. See the note on this function. */
-        noExit?: boolean;
-    },
+    params: OfferParams,
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input `cancelOffer` needs to
      * rebuild the covenant. */
@@ -575,15 +562,86 @@ export async function createOffer(
      * deposit and its later spend (`AssetSwap.swapPkScript`). */
     swapPkScript: Uint8Array;
 }> {
+    const derived = await deriveOffer(wallet, params);
+    await registerDerivedOffer(wallet, derived);
+    return {
+        offerHex: derived.offerHex,
+        extension: derived.extension,
+        address: derived.address,
+        swapPkScript: derived.swapPkScript,
+    };
+}
+
+export interface OfferParams {
+    wantAmount: bigint;
+    wantAsset?: asset.AssetId;
+    offerAsset?: asset.AssetId;
+    /** Co-signer key override (33-byte compressed hex); see
+     * {@link resolveEmulatorPubkey}. */
+    emulatorPubkey?: string;
+    /** Override the exit closure's delay. Defaults to the server's own
+     * `unilateralExitDelay`, which is the delay solverd uses too. */
+    exitDelay?: RelativeTimelock;
+    /** Publish without the exit closure, leaving `cancel` — which needs the
+     * server — as the only way back out. See the note on {@link createOffer}. */
+    noExit?: boolean;
+    /**
+     * A live `getArkadeInfo` the caller already made.
+     *
+     * Passing it is what lets one live read bind both the derivation and the
+     * registration that follows it; omitting it makes the read here. It must be
+     * live for the reason {@link createOffer} reads live — the info's
+     * `signerPubkey` ends up in a covenant leaf.
+     */
+    info?: ArkadeInfo;
+    /**
+     * The maker position, when the caller already read it.
+     *
+     * The RFQ path reads it BEFORE it sends the request — the profile commits
+     * to this script and this key — so re-reading it here would let an address
+     * rotation between the two reads derive a covenant the solver never quoted.
+     */
+    maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
+}
+
+/**
+ * Everything an offer commits to, derived and encoded, with nothing written.
+ *
+ * The split exists because `quote()` must derive the covenant it verifies the
+ * solver's `offer_address` against while persisting and registering nothing,
+ * and `accept()` must register **that** derivation rather than a second one
+ * built from the same terms. So the tree's own parameters travel on this value:
+ * two derivations that can disagree is the failure the hand-off deletes.
+ */
+export interface DerivedOffer {
+    readonly offerHex: string;
+    readonly extension: { readonly type: number; readonly payload: Uint8Array };
+    readonly address: string;
+    readonly swapPkScript: Uint8Array;
+    /** The covenant's parameters — {@link registerDerivedOffer}'s only input. */
+    readonly binding: Readonly<Omit<Offer, "swapPkScript">>;
+    /** The live info this covenant is bound to. */
+    readonly info: ArkadeInfo;
+    readonly operatorPubkey: Uint8Array;
+}
+
+/** Derive and encode an offer. Writes nothing, locally or remotely. */
+export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise<DerivedOffer> {
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
-    const [info, makerAddress, makerPublicKey] = await Promise.all([
+    const [info, maker] = await Promise.all([
         // requireLive: this binds signerPubkey into the covenant, and a snapshot could derive an
         // address the operator no longer co-signs for — fail closed instead
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-        wallet.identity.xOnlyPublicKey(),
+        params.info ?? wallet.getArkadeInfo({ requireLive: true }),
+        params.maker ??
+            (async () => {
+                const [address, publicKey] = await Promise.all([
+                    wallet.getAddress(),
+                    wallet.identity.xOnlyPublicKey(),
+                ]);
+                return { pkScript: ArkAddress.decode(address).pkScript, publicKey };
+            })(),
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const network = networkFromArkadeInfo(info);
@@ -593,12 +651,12 @@ export async function createOffer(
 
     // the script derives from every other field, so build the binding first — an Offer value never
     // exists with an empty swapPkScript
-    const binding = {
+    const binding = Object.freeze({
         wantAmount: params.wantAmount,
         wantAsset: params.wantAsset,
         offerAsset: params.offerAsset,
-        makerPkScript: ArkAddress.decode(makerAddress).pkScript,
-        makerPublicKey,
+        makerPkScript: maker.pkScript,
+        makerPublicKey: maker.publicKey,
         emulatorPubkey: emuKey,
         // checked before registration below. @see assertExitDelay
         exitDelay: params.noExit
@@ -606,21 +664,36 @@ export async function createOffer(
             : params.exitDelay
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
-    };
+    });
     const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
-
-    await registerOfferContract(wallet, info, binding, operatorPubKey, script.pkScript);
-
     const payload = encodeOffer(offer);
-    return {
+    // frozen because `SwapClient.preparationOf` hands this very value out, and `accept()` registers it
+    return Object.freeze({
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
         // the contract's .address() builds the address; assembling an ArkAddress
         // from tweakedPublicKey here would silently miss any future step it gains
         address: script.address(network.hrp, operatorPubKey).encode(),
         swapPkScript: script.pkScript,
-    };
+        binding,
+        info,
+        operatorPubkey: operatorPubKey,
+    });
+}
+
+/**
+ * Register a derived offer's covenant, so the deposit is watched and marked as
+ * escrow before anything funds it. See {@link registerOfferContract}.
+ */
+export async function registerDerivedOffer(wallet: IWallet, derived: DerivedOffer): Promise<void> {
+    await registerOfferContract(
+        wallet,
+        derived.info,
+        derived.binding,
+        derived.operatorPubkey,
+        derived.swapPkScript,
+    );
 }
 
 /**

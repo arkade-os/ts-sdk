@@ -169,7 +169,7 @@ export interface Quote {
     readonly refundLocktime?: number;
     /** The one thing a counterparty must see, when this route has one. */
     readonly artifact?: Artifact;
-    /** The spread, denominated on the leg where it is exact. */
+    /** The spread, plus any deposit carrier the payout does not return, on the leg where it is exact. */
     readonly fee: { readonly amount: bigint; readonly asset: AssetId };
 }
 

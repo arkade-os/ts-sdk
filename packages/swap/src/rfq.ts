@@ -280,7 +280,8 @@ export interface RfqQuote {
      * solver). */
     from_amount: number | string;
     to_amount: number | string;
-    /** Dust an asset rides on. NOT a fee — already netted into the amounts above. */
+    /** Dust an asset deposit rides on, kept by the filler. Expected back in `to_amount`; the
+     * client counts any shortfall as fee. */
     carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
@@ -337,7 +338,7 @@ export const lightningSendRequest = (input: {
  *
  * Matches the reference solver's strict `AssetRfqRequest`: `amount` is a canonical decimal string
  * of atomic units (never a JSON number: an asset's precision is unknowable client-side), and
- * `profile` carries the trader's covenant position — the fill pays `maker_pk_script`, and `cancel`
+ * `amount_side` is `"from"` or `"to"`, and `profile` carries the trader's covenant position — the fill pays `maker_pk_script`, and `cancel`
  * is signed by `maker_public_key`. */
 export const arkadeSwapRequest = (input: {
     rfqId: string;
@@ -1302,9 +1303,22 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
     }
 };
 
-/** Falls back on absent AND non-positive: zero would fund an asset with no carrier. */
-const quoteCarrierSats = (quote: RfqQuote): bigint => {
-    const published = quote.carrier_sats === undefined ? 0n : BigInt(quote.carrier_sats);
+/** Falls back on absent AND zero: zero would fund an asset with no carrier. Throws a gate
+ * error (`carrier_malformed`) on anything but a non-negative integer. */
+export const quoteCarrierSats = (quote: RfqQuote): bigint => {
+    const raw = quote.carrier_sats;
+    if (raw === undefined) return ASSET_CARRIER_SATS;
+    const canonical =
+        typeof raw === "number"
+            ? Number.isSafeInteger(raw) && raw >= 0
+            : /^(0|[1-9][0-9]*)$/.test(raw);
+    if (!canonical) {
+        throw gateError(
+            "carrier_malformed",
+            `quote carrier_sats ${String(raw)} is not a non-negative integer`,
+        );
+    }
+    const published = BigInt(raw);
     return published > 0n ? published : ASSET_CARRIER_SATS;
 };
 
@@ -1313,9 +1327,18 @@ const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * funds before `quote.valid_until`, then may go offline. No timelock refund: an unfilled offer is
  * cancelled cooperatively (`cancelOffer`).
  *
+ * With `amountSide: "to"` the deposit is the solver's to name: set `maxFromAmount`, or fund
+ * whatever it quotes.
+ *
  * Maker keys are read once here so the request profile and the local `createOffer` derivation
  * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund), or a gate error
  * with a stable `reason`.
+ *
+ * `client.exchange()` now covers this route end to end — it opens the card's
+ * Nostr rendezvous, sends this same request, runs the full verification set,
+ * and registers, persists and funds in one step — so there is nothing left here
+ * that it does not do. What it additionally refuses is a transport that cannot
+ * say who answered, which this function, taking one from its caller, cannot.
  *
  * Funding (caller's job, immediately after, before `valid_until`):
  * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`

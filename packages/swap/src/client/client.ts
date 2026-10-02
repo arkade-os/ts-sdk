@@ -345,7 +345,12 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             const quoteId = mintQuoteId();
             const now = Math.floor(Date.now() / 1000);
 
-            if (resolvedRoute.pair === "arkade->arkade") {
+            // The card decides, and `marketBackendOf` is where it decided: an
+            // asset card naming a rendezvous is negotiated like every other
+            // route, and one advertising a feed and no rendezvous is priced from
+            // the formula it advertises. Never a client switch — see
+            // `marketBackendOf`.
+            if (market.backend === "feed") {
                 const { quote, preparation } = await quoteFromFeed({
                     quoteId,
                     candidate: market,
@@ -366,7 +371,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             const info = await liveArkadeInfo(wallet, { requireLive: true });
             const rendezvous = market.card.discovery_pubkey;
             if (rendezvous === undefined) {
-                // unreachable: `eligibleMarkets` drops corridor cards with no rendezvous
+                // unreachable: `eligibleMarkets` drops a corridor card with no rendezvous, and an asset card without one prices from its feed
                 throw new Error(`card ${market.card.solver} names no discovery key to address`);
             }
             const transport = await (config.transportFor ?? nostrTransportFactory)({
@@ -387,6 +392,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     info,
                     corridors,
                     transport,
+                    feed,
                     ...(config.policy === undefined ? {} : { policy: config.policy }),
                     now,
                 });
