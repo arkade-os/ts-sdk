@@ -1984,6 +1984,8 @@ describe("Wallet.restore", () => {
             const firstGate = new Promise<void>((r) => (releaseFirst = r));
             vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
                 async (addrs: string[]) => {
+                    // ContractManager's own onchain watcher shares this provider.
+                    if ((new Error().stack ?? "").includes("onchainWatcher")) return vi.fn();
                     calls.push(addrs);
                     if (calls.length === 1) {
                         // Block the INITIAL subscribe so we can rotate while it
