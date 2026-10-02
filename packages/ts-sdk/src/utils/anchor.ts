@@ -9,7 +9,7 @@ export const ANCHOR_VALUE = 0n;
 export const ANCHOR_PKSCRIPT = new Uint8Array([0x51, 0x02, 0x4e, 0x73]);
 
 /**
- * A zero-value anchor output.
+ * A zero-value anchor output. An ark tx overrides the amount to carry its fee.
  */
 export const P2A = {
     script: ANCHOR_PKSCRIPT,

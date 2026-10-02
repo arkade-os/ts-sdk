@@ -483,7 +483,7 @@ describe("Wallet", () => {
             });
         }
 
-        it("adds another coin when a Lightning funding send would create change below the operator minimum", async () => {
+        it("adds another coin instead of donating when a Lightning funding send would create change below the operator minimum", async () => {
             const { thisArg, submit, coins } = sendWithCoins([616, 400], 330n);
 
             await send(thisArg, 505);
