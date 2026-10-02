@@ -2509,7 +2509,14 @@ export class ContractManager implements IContractManager {
         for (const row of stored.values()) {
             const key = vtxoOutpoint(row);
             if (!row.isUnrolled || row.isSpent || live.has(key)) continue;
-            const outspend = (await onchainProvider.getTxOutspends(row.txid))[row.vout];
+            let outspend: { spent: boolean; txid?: string } | undefined;
+            try {
+                outspend = (await onchainProvider.getTxOutspends(row.txid))[row.vout];
+            } catch (e) {
+                // e.g. an evicted or reorged funding tx; must not block saving new coins.
+                console.warn(`[contracts] outspends lookup failed for ${key}`, e);
+                continue;
+            }
             if (!outspend?.spent) continue;
             const spentBy = outspend.txid ?? pending[key]?.spender ?? row.spentBy ?? "";
             spent.push({ ...row, isSpent: true, spentBy });

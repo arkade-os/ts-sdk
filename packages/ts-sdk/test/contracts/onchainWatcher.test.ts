@@ -139,6 +139,23 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    it("still saves new coins when a vanished row's outspends lookup fails", async () => {
+        const fresh = { ...coin, txid: "bb".repeat(32), vout: 0 };
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([fresh]);
+        const { manager, walletRepository, onchainProvider } = await setup(getCoins);
+        await manager.syncOnchain();
+        onchainProvider.getTxOutspends.mockRejectedValue(new Error("tx not found"));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await manager.syncOnchain();
+
+        const rows = await walletRepository.getVtxosForScript!(boarding.script);
+        expect(rows.find((r) => r.txid === coin.txid)).toMatchObject({ isSpent: false });
+        expect(rows.find((r) => r.txid === fresh.txid)).toMatchObject({ isUnrolled: true });
+        expect(warn).toHaveBeenCalled();
+        manager.dispose();
+    });
+
     it("survives a getCoins failure", async () => {
         const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockRejectedValue(new Error("down"));
         const { manager, walletRepository } = await setup(getCoins);

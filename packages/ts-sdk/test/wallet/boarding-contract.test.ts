@@ -374,7 +374,24 @@ describe("boarding contract: UTXOs through the merged VTXO store", () => {
         expect(await wallet.getBoardingUtxos()).toEqual([]);
     });
 
-    it("returns the stored coins when the onchain sync fails", async () => {
+    it("returns exactly the fetched coins when a vanished row's outspends lookup fails", async () => {
+        const { wallet, onchainProvider } = await fundedWallet();
+        await wallet.getBoardingUtxos();
+        const fresh = { ...coin, txid: "cd".repeat(32), vout: 0 };
+        onchainProvider.getCoins.mockResolvedValue([fresh]);
+        onchainProvider.getTxOutspends.mockRejectedValue(new Error("tx not found"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        expect(await wallet.getBoardingUtxos()).toEqual([
+            extendCoinWithTapscript(wallet.boardingTapscript, fresh),
+        ]);
+        const rows = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(rows.map((r) => r.txid)).toContain(fresh.txid);
+    });
+
+    it("returns the fetched coins when the onchain sync fails", async () => {
         const { wallet } = await fundedWallet();
         const [stored] = await wallet.getBoardingUtxos();
         const manager = await wallet.getContractManager();

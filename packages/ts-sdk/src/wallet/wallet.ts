@@ -165,7 +165,6 @@ import {
     getVtxosForContract,
     vtxoOutpoint,
 } from "../contracts/vtxoOwnership";
-import { isOnchainScoped } from "../contracts/scope";
 import {
     WalletReceiveRotator,
     buildReceiveContract,
@@ -1792,7 +1791,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * `DefaultVtxo.Script` and its `serverPubKey`/CSV delay).
      *
      * Per group: `getCoins` (a failure throws), then `ContractManager.syncOnchain`,
-     * then the contract's unspent stored rows → {@link extendCoinWithTapscript}.
+     * then the fetched coins minus stored-spent outpoints → {@link extendCoinWithTapscript}.
      * It does not call `getInfo()`; the caller supplies the allowed signer set.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
@@ -1808,7 +1807,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         try {
             await manager.syncOnchain(scripts);
         } catch (e) {
-            console.warn("Onchain boarding sync failed; returning stored coins", e);
+            console.warn("Onchain boarding sync failed; using fetched coins", e);
         }
         const contracts = new Map(
             (await this.contractRepository.getContracts({ script: scripts })).map((c) => [
@@ -1819,19 +1818,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return Promise.all(
             tapscripts.map(async (tapscript, i) => {
                 const contract = contracts.get(scripts[i]);
-                // Coins of a contract the sync does not target come straight from the fetch.
-                const coins: Coin[] =
-                    contract?.state === "active" && isOnchainScoped(contract)
+                // The fetch is the coin list; stored rows only veto spent (incl. pending) outpoints.
+                const spent = new Set(
+                    contract
                         ? (await getVtxosForContract(this.walletRepository, contract))
-                              .filter((v) => v.isUnrolled && !isVtxoSpent(v))
-                              .map(({ txid, vout, value, status }) => ({
-                                  txid,
-                                  vout,
-                                  value,
-                                  status,
-                              }))
-                        : fetched[i];
-                const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
+                              .filter(isVtxoSpent)
+                              .map(vtxoOutpoint)
+                        : [],
+                );
+                const utxos = fetched[i]
+                    .filter((c) => !spent.has(vtxoOutpoint(c)))
+                    .map((utxo) => extendCoinWithTapscript(tapscript, utxo));
                 return {
                     tapscript,
                     // Normalize so the group key matches the axis/contract x-only
