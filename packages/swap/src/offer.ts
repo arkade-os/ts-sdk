@@ -630,6 +630,9 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
         throw new Error("set exactly one of wantAsset (BTC->asset) or offerAsset (asset->BTC)");
     }
+    if (params.wantAmount < BigInt(1)) {
+        throw new Error("wantAmount must be positive: a zero want lets anyone take the deposit");
+    }
     const [info, maker] = await Promise.all([
         // requireLive: this binds signerPubkey into the covenant, and a snapshot could derive an
         // address the operator no longer co-signs for — fail closed instead
