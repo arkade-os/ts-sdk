@@ -20,10 +20,12 @@ import {
     BurnParams,
     Recipient,
     SendParams,
+    SendOnchainParams,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import type { Transaction } from "@scure/btc-signer";
 import {
     Identity,
     ReadonlyIdentity,
@@ -126,6 +128,10 @@ import {
     ResponseGetExpiredBoardingUtxos,
     RequestSweepExpiredBoardingUtxos,
     ResponseSweepExpiredBoardingUtxos,
+    RequestCosignOnchainTx,
+    ResponseCosignOnchainTx,
+    RequestSendOnchain,
+    ResponseSendOnchain,
     RequestMigrateDeprecatedSignerVtxos,
     ResponseMigrateDeprecatedSignerVtxos,
     ResponseMigrateDeprecatedSignerVtxosEvent,
@@ -252,6 +258,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    COSIGN_ONCHAIN_TX: 50_000,
+    SEND_ONCHAIN: 50_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
     // kept for type completeness and is never enforced as an inactivity deadline.
     MIGRATE_DEPRECATED_SIGNER_VTXOS: 50_000,
@@ -2051,6 +2059,28 @@ export class ServiceWorkerWallet
         } catch (error) {
             throw new Error(`Send failed: ${error}`);
         }
+    }
+
+    async cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        const message: RequestCosignOnchainTx = {
+            tag: this.messageTag,
+            type: "COSIGN_ONCHAIN_TX",
+            id: getRandomId(),
+            payload: { psbt: typeof psbt === "string" ? psbt : base64.encode(psbt.toPSBT()) },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseCosignOnchainTx).payload.txid;
+    }
+
+    async sendOnchain(params: SendOnchainParams): Promise<string> {
+        const message: RequestSendOnchain = {
+            tag: this.messageTag,
+            type: "SEND_ONCHAIN",
+            id: getRandomId(),
+            payload: params,
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseSendOnchain).payload.txid;
     }
 
     async getDelegateManager(): Promise<IDelegateManager | undefined> {

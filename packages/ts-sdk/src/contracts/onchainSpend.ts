@@ -16,9 +16,19 @@ import {
     setArkPsbtField,
 } from "../utils/unknownFields";
 import type { VirtualCoin } from "../wallet";
-import type { PathSelection } from "./types";
+import type { Contract, PathSelection } from "./types";
+import { exitSequence } from "./handlers/helpers";
+import { sequenceToTimelock } from "../utils/timelock";
 
 export const DEFAULT_COSIGN_MARGIN_BLOCKS = 144;
+
+/** Exit CSV in blocks, seconds counted as 600 per block; no CSV means the exit is already open (0). */
+export function csvBlocksOf(contract: Contract): number {
+    const sequence = exitSequence(contract);
+    if (sequence === undefined) return 0;
+    const { type, value } = sequenceToTimelock(sequence);
+    return type === "blocks" ? Number(value) : Math.ceil(Number(value) / 600);
+}
 
 export class OnchainCosignPreflightError extends Error {
     constructor(message: string) {

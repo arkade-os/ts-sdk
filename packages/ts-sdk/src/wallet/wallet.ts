@@ -66,6 +66,7 @@ import {
     ReadonlyWalletConfig,
     Recipient,
     SendBitcoinParams,
+    SendOnchainParams,
     SendParams,
     SettleParams,
     TxType,
@@ -186,9 +187,22 @@ import {
     Contract,
     ContractWithVtxos,
     DiscoveryDeps,
+    ExtendedContractVtxo,
     GetContractsFilter,
     isContractVtxoEvent,
 } from "../contracts/types";
+import {
+    OnchainCosignPreflightError,
+    assertCosignable,
+    csvBlocksOf,
+    emulatorInputIndexes,
+    estimateOnchainCosignFee,
+    prepareOwnedInput,
+    submitOnchainSpend,
+} from "../contracts/onchainSpend";
+import { attachPrevoutTxs } from "../utils/prevoutTx";
+import { Transaction as SdkTransaction } from "../utils/transaction";
+import type { EmulatorProvider } from "../providers/emulator";
 import {
     gateExclusion,
     gatedContracts,
@@ -2588,6 +2602,7 @@ export class Wallet
     }
 
     private readonly _signerRouter: InputSignerRouter;
+    private _emulator?: EmulatorProvider;
 
     /**
      * @internal Sole write path for `offchainTapscript` after construction.
@@ -3764,6 +3779,7 @@ export class Wallet
             checkpointExitDelayOverrides,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
+        wallet._emulator = config.emulator;
         // The response cleared construction validation — network/signer in
         // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
         // now safe to refresh the cached snapshot from live server-info.
@@ -4863,6 +4879,153 @@ export class Wallet
     async signOnchainBoardingTx(tx: Transaction): Promise<Transaction> {
         const signed = await this._signerRouter.sign(tx, this.inputSigningJobsFromWitnessUtxos(tx));
         return signed as Transaction;
+    }
+
+    /** @see IWallet.cosignOnchainTx */
+    async cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        const tx = typeof psbt === "string" ? SdkTransaction.fromPSBT(base64.decode(psbt)) : psbt;
+        return this._withTxLock(() => this._cosignOnchainTxImpl(tx));
+    }
+
+    /** @see IWallet.sendOnchain */
+    async sendOnchain({ outputs, inputs, sweepTo }: SendOnchainParams): Promise<string> {
+        if (sweepTo && outputs.length > 0) {
+            throw new Error("sendOnchain: sweepTo requires empty outputs");
+        }
+        return this._withTxLock(async () => {
+            const manager = await this.getContractManager();
+            await manager.syncOnchain();
+            const tip = await this.onchainProvider.getChainTip();
+            const candidates = (await this.onchainCoins(manager))
+                .filter(({ coin, contract }) => {
+                    if (inputs) return inputs.some((o) => vtxoOutpoint(o) === vtxoOutpoint(coin));
+                    return isContractGenericallySpendable(contract);
+                })
+                .filter(({ coin, contract }) => {
+                    try {
+                        assertCosignable(coin, csvBlocksOf(contract), tip.height);
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                })
+                .sort((a, b) => b.coin.value - a.coin.value);
+            const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
+            const tx = new SdkTransaction({ version: 2 });
+
+            if (sweepTo) {
+                for (const { coin } of candidates) {
+                    tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
+                }
+                const total = candidates.reduce((sum, { coin }) => sum + coin.value, 0);
+                const amount = total - estimateOnchainCosignFee(candidates.length, 1, feeRate);
+                if (candidates.length === 0 || amount < Number(this.dustAmount)) {
+                    throw new OnchainCosignPreflightError("nothing to sweep");
+                }
+                tx.addOutputAddress(sweepTo, BigInt(amount), this.network);
+                return this._cosignOnchainTxImpl(tx);
+            }
+
+            for (const o of outputs) tx.addOutputAddress(o.address, BigInt(o.amount), this.network);
+            const want = outputs.reduce((sum, o) => sum + o.amount, 0);
+            let have = 0;
+            let fee = 0;
+            for (const { coin } of candidates) {
+                tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
+                have += coin.value;
+                fee = estimateOnchainCosignFee(tx.inputsLength, outputs.length + 1, feeRate);
+                if (have >= want + fee) break;
+            }
+            if (have < want + fee || tx.inputsLength === 0) {
+                throw new OnchainCosignPreflightError(
+                    `insufficient onchain funds: have ${have}, need ${want + fee}`,
+                );
+            }
+            const change = have - want - fee;
+            if (change >= Number(this.dustAmount)) {
+                tx.addOutputAddress(await this.getBoardingAddress(), BigInt(change), this.network);
+            }
+            return this._cosignOnchainTxImpl(tx);
+        });
+    }
+
+    private async _cosignOnchainTxImpl(tx: Transaction): Promise<string> {
+        const manager = await this.getContractManager();
+        const tip = await this.onchainProvider.getChainTip();
+        const owned = new Map(
+            (await this.onchainCoins(manager)).map((c) => [vtxoOutpoint(c.coin), c]),
+        );
+        const emulated = emulatorInputIndexes(tx);
+        const arkInputs = new Set<number>();
+        const ownedIndexes: number[] = [];
+        const spent: Outpoint[] = [];
+        let inSum = 0n;
+
+        for (let i = 0; i < tx.inputsLength; i++) {
+            const input = tx.getInput(i);
+            const outpoint = { txid: hex.encode(input.txid!), vout: input.index! };
+            const mine = owned.get(vtxoOutpoint(outpoint));
+            if (!mine) {
+                inSum += input.witnessUtxo?.amount ?? 0n;
+                continue;
+            }
+            const { coin, contract, script } = mine;
+            const path = contractHandlers.get(contract.type)!.selectPath(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: tip.height,
+                vtxo: coin,
+            });
+            if (!path) {
+                throw new OnchainCosignPreflightError(
+                    `no collaborative path for ${vtxoOutpoint(outpoint)}`,
+                );
+            }
+            assertCosignable(coin, csvBlocksOf(contract), tip.height);
+            prepareOwnedInput(tx, { index: i, coin, path, tapTree: script.encode() });
+            if (!emulated.has(i)) arkInputs.add(i);
+            ownedIndexes.push(i);
+            spent.push(outpoint);
+            inSum += BigInt(coin.value);
+        }
+        let outSum = 0n;
+        for (let i = 0; i < tx.outputsLength; i++) outSum += tx.getOutput(i).amount ?? 0n;
+        if (outSum > inSum) throw new Error(`outputs ${outSum} exceed inputs ${inSum}`);
+
+        if (emulated.size > 0) await attachPrevoutTxs(tx, this.onchainProvider);
+        const signed = (await this._signerRouter.sign(
+            tx,
+            this.inputSigningJobsFromWitnessUtxos(tx, ownedIndexes),
+            { onUnknownScript: "sign" },
+        )) as Transaction;
+        const txid = await submitOnchainSpend(signed, arkInputs, {
+            arkProvider: this.arkProvider,
+            emulator: this._emulator,
+            onchainProvider: this.onchainProvider,
+        });
+        try {
+            await manager.markOnchainSpendPending(spent, txid);
+        } catch (e) {
+            console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
+        }
+        return txid;
+    }
+
+    /** Unspent onchain coins from the store; the onchain rows are kept fresh by syncOnchain, not the indexer. */
+    private async onchainCoins(
+        manager: ContractManager,
+    ): Promise<{ coin: ExtendedContractVtxo; contract: Contract; script: VtxoScript }[]> {
+        const snapshot = await manager.getContractsWithVtxos(undefined, undefined, {
+            maxSyncAgeMs: Number.MAX_SAFE_INTEGER,
+            unspentOnly: true,
+        });
+        return snapshot.flatMap(({ contract, vtxos }) => {
+            const handler = contractHandlers.get(contract.type);
+            const coins = vtxos.filter((v) => v.isUnrolled && !isVtxoSpent(v));
+            if (!handler || coins.length === 0) return [];
+            const script = handler.createScript(contract.params);
+            return coins.map((coin) => ({ coin, contract, script }));
+        });
     }
 
     async safeRegisterIntent(

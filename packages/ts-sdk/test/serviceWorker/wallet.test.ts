@@ -13,7 +13,8 @@ import {
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { mnemonicToSeedSync } from "@scure/bip39";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import { Transaction } from "../../src/utils/transaction";
 import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
@@ -691,6 +692,33 @@ describe("ServiceWorkerWallet", () => {
                 type: "DELEGATE",
             }),
         );
+    });
+
+    it("cosignOnchainTx sends a Transaction as base64 PSBT and sendOnchain forwards params", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
+            if (message.type === "COSIGN_ONCHAIN_TX" || message.type === "SEND_ONCHAIN") {
+                return {
+                    id: message.id,
+                    tag: messageTag,
+                    type: `${message.type}_SUCCESS`,
+                    payload: { txid: "tx-" + message.type },
+                };
+            }
+            return null;
+        });
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
+
+        await expect(wallet.cosignOnchainTx(tx)).resolves.toBe("tx-COSIGN_ONCHAIN_TX");
+        const params = { outputs: [], sweepTo: "bc1-dest" };
+        await expect(wallet.sendOnchain(params)).resolves.toBe("tx-SEND_ONCHAIN");
+
+        const sent = serviceWorker.postMessage.mock.calls.map((c: any[]) => c[0]);
+        const cosign = sent.find((m: any) => m.type === "COSIGN_ONCHAIN_TX");
+        expect(cosign.payload.psbt).toBe(base64.encode(tx.toPSBT()));
+        expect(sent.find((m: any) => m.type === "SEND_ONCHAIN").payload).toEqual(params);
     });
 
     it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {

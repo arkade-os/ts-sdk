@@ -34,6 +34,7 @@ import {
     Recipient,
     ReissuanceParams,
     SendBitcoinParams,
+    SendOnchainParams,
     SettleParams,
     VirtualCoin,
     WalletBalance,
@@ -635,6 +636,25 @@ export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+export type RequestCosignOnchainTx = RequestEnvelope & {
+    type: "COSIGN_ONCHAIN_TX";
+    /** Base64 PSBT. */
+    payload: { psbt: string };
+};
+export type ResponseCosignOnchainTx = ResponseEnvelope & {
+    type: "COSIGN_ONCHAIN_TX_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestSendOnchain = RequestEnvelope & {
+    type: "SEND_ONCHAIN";
+    payload: SendOnchainParams;
+};
+export type ResponseSendOnchain = ResponseEnvelope & {
+    type: "SEND_ONCHAIN_SUCCESS";
+    payload: { txid: string };
+};
+
 // Deprecated-signer migration. Reports carry `bigint` cutoff dates, which are
 // serialized to strings for transport over the postMessage boundary (mirrors
 // how RECOVERABLE_BALANCE stringifies its bigints) and reconstructed on the
@@ -849,6 +869,8 @@ export type WalletUpdaterRequest =
     | RequestRenewVtxos
     | RequestGetExpiredBoardingUtxos
     | RequestSweepExpiredBoardingUtxos
+    | RequestCosignOnchainTx
+    | RequestSendOnchain
     | RequestMigrateDeprecatedSignerVtxos
     | RequestGetDeprecatedSignerStatus
     | RequestRestoreWallet;
@@ -908,6 +930,8 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRenewVtxosEvent
         | ResponseGetExpiredBoardingUtxos
         | ResponseSweepExpiredBoardingUtxos
+        | ResponseCosignOnchainTx
+        | ResponseSendOnchain
         | ResponseMigrateDeprecatedSignerVtxos
         | ResponseMigrateDeprecatedSignerVtxosEvent
         | ResponseGetDeprecatedSignerStatus
@@ -1112,7 +1136,9 @@ export class WalletMessageHandler
             // HD restore walks the index range with one indexer round-trip per
             // step until it hits gapLimit consecutive unused indices. The bus
             // deadline must not race the scan; liveness stays covered by PING.
-            message.type === "RESTORE_WALLET"
+            message.type === "RESTORE_WALLET" ||
+            message.type === "COSIGN_ONCHAIN_TX" ||
+            message.type === "SEND_ONCHAIN"
         );
     }
 
@@ -1629,6 +1655,24 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "COSIGN_ONCHAIN_TX": {
+                    const { psbt } = (message as RequestCosignOnchainTx).payload;
+                    const txid = await this.requireWallet().cosignOnchainTx(psbt);
+                    return this.tagged({
+                        id,
+                        type: "COSIGN_ONCHAIN_TX_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "SEND_ONCHAIN": {
+                    const params = (message as RequestSendOnchain).payload;
+                    const txid = await this.requireWallet().sendOnchain(params);
+                    return this.tagged({
+                        id,
+                        type: "SEND_ONCHAIN_SUCCESS",
                         payload: { txid },
                     });
                 }

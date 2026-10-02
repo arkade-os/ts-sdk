@@ -1192,6 +1192,48 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles COSIGN_ONCHAIN_TX and SEND_ONCHAIN as long-running wallet calls", async () => {
+        const wallet = {
+            cosignOnchainTx: vi.fn().mockResolvedValue("cosign-txid"),
+            sendOnchain: vi.fn().mockResolvedValue("send-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = wallet;
+        const params = { outputs: [{ address: "bc1-dest", amount: 1_000 }] };
+        const cosign = {
+            ...baseMessage(),
+            type: "COSIGN_ONCHAIN_TX",
+            payload: { psbt: "cHNidP8=" },
+        };
+        const send = { ...baseMessage(), type: "SEND_ONCHAIN", payload: params };
+
+        expect(await updater.handleMessage(cosign as any)).toMatchObject({
+            type: "COSIGN_ONCHAIN_TX_SUCCESS",
+            payload: { txid: "cosign-txid" },
+        });
+        expect(await updater.handleMessage(send as any)).toMatchObject({
+            type: "SEND_ONCHAIN_SUCCESS",
+            payload: { txid: "send-txid" },
+        });
+        expect(wallet.cosignOnchainTx).toHaveBeenCalledWith("cHNidP8=");
+        expect(wallet.sendOnchain).toHaveBeenCalledWith(params);
+        expect(updater.isLongRunning(cosign as any)).toBe(true);
+        expect(updater.isLongRunning(send as any)).toBe(true);
+    });
+
+    it("returns a SEND_ONCHAIN failure as the response error", async () => {
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            sendOnchain: vi.fn().mockRejectedValue(new Error("insufficient onchain funds")),
+        };
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SEND_ONCHAIN",
+            payload: { outputs: [] },
+        } as any);
+        expect(response.error?.message).toBe("insufficient onchain funds");
+    });
+
     // A per-leg migration report (send VTXO leg + settle boarding leg) carrying
     // bigint cutoff dates at every nesting level the wire envelope must reach.
     const perLegReport = {
