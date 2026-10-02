@@ -13,6 +13,8 @@ import {
 } from "../../src/contracts/onchainSpend";
 import { OnchainCosignAmbiguousError, RestArkProvider } from "../../src/providers/ark";
 import { Ramps } from "../../src/wallet/ramps";
+import { convertVtxo } from "../../src/wallet/vtxo";
+import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const CHECKPOINT_TAPSCRIPT =
@@ -224,8 +226,8 @@ describe("cosign outcomes through Ramps.offboardExact", () => {
 });
 
 describe("sendOnchain with explicit inputs", () => {
-    it("does not resync the onchain store", async () => {
-        const { wallet, boardingCoin } = await makeWallet();
+    it("syncs only the contracts owning the named inputs", async () => {
+        const { wallet, boardingCoin, boardingScriptHex } = await makeWallet();
         const manager = await wallet.getContractManager();
         await manager.syncOnchain();
         const sync = vi.spyOn(manager, "syncOnchain");
@@ -235,7 +237,59 @@ describe("sendOnchain with explicit inputs", () => {
             sweepTo: externalAddress,
         });
         expect(txid).toBe(COSIGNED);
-        expect(sync).not.toHaveBeenCalled();
+        expect(sync.mock.calls).toEqual([[[boardingScriptHex]]]);
+    });
+
+    it("sweeps an unrolled VTXO stored by the indexer without a confirmation height", async () => {
+        const { wallet, arkProvider, onchainProvider, walletRepository } = await makeWallet();
+        const manager = await wallet.getContractManager();
+        const script = hex.encode(wallet.offchainTapscript.pkScript);
+        const [contract] = await manager.getContracts({ script });
+        const outpoint = { txid: "cd".repeat(32), vout: 0 };
+        const indexed = convertVtxo({
+            outpoint,
+            createdAt: "1700000000",
+            expiresAt: null,
+            amount: "50000",
+            script,
+            isPreconfirmed: false,
+            isSwept: false,
+            isUnrolled: true,
+            isSpent: false,
+            spentBy: null,
+            commitmentTxids: ["ee".repeat(32)],
+        });
+        expect(indexed.status.block_height).toBeUndefined();
+        await saveVtxosForContract(walletRepository, contract, [indexed]);
+        const unrolledAddress = wallet.offchainTapscript.onchainAddress(wallet.network);
+        const boardingGetCoins = onchainProvider.getCoins.getMockImplementation();
+        onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === unrolledAddress
+                ? [{ ...outpoint, value: 50_000, status: { confirmed: true, block_height: 105 } }]
+                : boardingGetCoins(a),
+        );
+
+        await expect(
+            wallet.sendOnchain({ outputs: [], inputs: [outpoint], sweepTo: externalAddress }),
+        ).resolves.toBe(COSIGNED);
+        const psbt = sentPsbt(arkProvider);
+        expect(psbt.inputsLength).toBe(1);
+        expect(hex.encode(psbt.getInput(0).txid!)).toBe(outpoint.txid);
+    });
+
+    it("names each dropped input and why", async () => {
+        const { wallet, onchainProvider, boardingCoin } = await makeWallet();
+        onchainProvider.getChainTip.mockResolvedValue({ height: 1103, time: 0, hash: "" });
+        const unknown = { txid: "99".repeat(32), vout: 3 };
+        const send = wallet.sendOnchain({
+            outputs: [],
+            inputs: [{ txid: boardingCoin.txid, vout: boardingCoin.vout }, unknown],
+            sweepTo: externalAddress,
+        });
+        await expect(send).rejects.toBeInstanceOf(OnchainCosignPreflightError);
+        await expect(send).rejects.toThrow(
+            `${boardingCoin.txid}:1 is within 6 blocks of exit maturity; ${unknown.txid}:3 is not a known unspent onchain coin`,
+        );
     });
 });
 

@@ -4929,12 +4929,22 @@ export class Wallet
         sweepTo,
     }: SendOnchainParams): Promise<Transaction> {
         const manager = await this.getContractManager();
-        // Callers naming inputs (the VtxoManager sweep) synced when they picked them.
-        if (!inputs) await manager.syncOnchain();
+        const named = inputs && new Set(inputs.map(vtxoOutpoint));
+        if (named) {
+            // Scoped, so the VtxoManager sweep does not repeat its full sync; still needed
+            // because an indexer-written unrolled row carries no confirmation height.
+            const owners = (await this.onchainCoins(manager))
+                .filter(({ coin }) => named.has(vtxoOutpoint(coin)))
+                .map(({ contract }) => contract.script);
+            if (owners.length > 0) await manager.syncOnchain([...new Set(owners)]);
+        } else {
+            await manager.syncOnchain();
+        }
         const tip = await this.onchainProvider.getChainTip();
+        const dropped = new Map<string, string>();
         const candidates = (await this.onchainCoins(manager))
             .filter(({ coin, contract }) => {
-                if (inputs) return inputs.some((o) => vtxoOutpoint(o) === vtxoOutpoint(coin));
+                if (named) return named.has(vtxoOutpoint(coin));
                 return isContractGenericallySpendable(contract);
             })
             .filter(({ coin, contract }) => {
@@ -4946,11 +4956,21 @@ export class Wallet
                         this._cosignMarginBlocks,
                     );
                     return true;
-                } catch {
+                } catch (e) {
+                    if (e instanceof OnchainCosignPreflightError) {
+                        dropped.set(vtxoOutpoint(coin), e.reason);
+                    }
                     return false;
                 }
             })
             .sort((a, b) => b.coin.value - a.coin.value);
+        if (named) {
+            const found = new Set(candidates.map(({ coin }) => vtxoOutpoint(coin)));
+            const reasons = [...named]
+                .filter((o) => !found.has(o))
+                .map((o) => dropped.get(o) ?? `${o} is not a known unspent onchain coin`);
+            if (reasons.length > 0) throw new OnchainCosignPreflightError(reasons.join("; "));
+        }
         const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
         const tx = new SdkTransaction({ version: 2 });
 
