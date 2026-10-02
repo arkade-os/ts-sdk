@@ -26,7 +26,7 @@ import {
     QuoteVerificationFailed,
     UnsupportedRoute,
 } from "../../src/client/errors";
-import { OFFER_PACKET_TYPE } from "../../src/offer";
+import { deriveOffer, OFFER_PACKET_TYPE } from "../../src/offer";
 import type { QuoteInput } from "../../src/client/quote";
 import { quoteIdOfSwapId, type OfferSwapRecord } from "../../src/client/record";
 import {
@@ -54,6 +54,11 @@ import {
     type SolverTransport,
 } from "./fixtures";
 
+vi.mock("../../src/offer", async (original) => {
+    const actual = await original<typeof import("../../src/offer")>();
+    return { ...actual, deriveOffer: vi.fn(actual.deriveOffer) };
+});
+
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const USD = `arkade:regtest/asset:${USD_ASSET_ID}`;
@@ -69,6 +74,7 @@ const setup = async (
         snapshot?: (typeof assetCard)[];
         repository?: AssetSwapRepository;
         wallet?: AcceptWallet;
+        fetchImpl?: typeof fetch;
     } = {},
 ) => {
     const wallet = over.wallet?.wallet ?? (await hdWallet());
@@ -84,7 +90,7 @@ const setup = async (
         discovery: { snapshot: over.snapshot ?? [assetCard] },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         transportFor: () => transport,
-        fetchImpl: feed.fetch,
+        fetchImpl: over.fetchImpl ?? feed.fetch,
     });
     return { client, transport, feed, repository };
 };
@@ -228,6 +234,10 @@ describe("quote() on a negotiated asset market", () => {
         expect(preparation && "offer" in preparation && preparation.offer.address).toMatch(
             /^tark1/,
         );
+        // `accept()` registers this very value, so a caller holding it cannot rewrite it.
+        const offer = preparation && "offer" in preparation ? preparation.offer : undefined;
+        expect(Object.isFrozen(offer)).toBe(true);
+        expect(Object.isFrozen(offer?.binding)).toBe(true);
         // The wallet double throws from `getContractManager`, so reaching here
         // is the assertion that nothing was registered — and the store is the
         // assertion that nothing was persisted.
@@ -329,6 +339,18 @@ describe("quote() refuses before it discloses anything", () => {
 });
 
 describe("quote() verification, one case per check", () => {
+    it("refuses on a failed feed before deriving a covenant", async () => {
+        const { client, transport } = await setup({
+            fetchImpl: (async () => {
+                throw new Error("feed down");
+            }) as unknown as typeof fetch,
+        });
+        vi.mocked(deriveOffer).mockClear();
+        await expect(client.quote(buy())).rejects.toThrow();
+        expect(transport.sent).toHaveLength(1);
+        expect(deriveOffer).not.toHaveBeenCalled();
+    });
+
     const failing = (answer: SolverAnswer) => setup({ answer });
 
     it("refuses a quote for another pair", async () => {

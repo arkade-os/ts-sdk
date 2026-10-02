@@ -614,15 +614,15 @@ export interface OfferParams {
  * two derivations that can disagree is the failure the hand-off deletes.
  */
 export interface DerivedOffer {
-    offerHex: string;
-    extension: { type: number; payload: Uint8Array };
-    address: string;
-    swapPkScript: Uint8Array;
+    readonly offerHex: string;
+    readonly extension: { readonly type: number; readonly payload: Uint8Array };
+    readonly address: string;
+    readonly swapPkScript: Uint8Array;
     /** The covenant's parameters — {@link registerDerivedOffer}'s only input. */
-    binding: Omit<Offer, "swapPkScript">;
+    readonly binding: Readonly<Omit<Offer, "swapPkScript">>;
     /** The live info this covenant is bound to. */
-    info: ArkadeInfo;
-    operatorPubkey: Uint8Array;
+    readonly info: ArkadeInfo;
+    readonly operatorPubkey: Uint8Array;
 }
 
 /** Derive and encode an offer. Writes nothing, locally or remotely. */
@@ -651,7 +651,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
 
     // the script derives from every other field, so build the binding first — an Offer value never
     // exists with an empty swapPkScript
-    const binding = {
+    const binding = Object.freeze({
         wantAmount: params.wantAmount,
         wantAsset: params.wantAsset,
         offerAsset: params.offerAsset,
@@ -664,11 +664,12 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
             : params.exitDelay
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
-    };
+    });
     const script = offerContract(binding, operatorPubKey);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
     const payload = encodeOffer(offer);
-    return {
+    // frozen because `SwapClient.preparationOf` hands this very value out, and `accept()` registers it
+    return Object.freeze({
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
         // the contract's .address() builds the address; assembling an ArkAddress
@@ -678,7 +679,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
         binding,
         info,
         operatorPubkey: operatorPubKey,
-    };
+    });
 }
 
 /**

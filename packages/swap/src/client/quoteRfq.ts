@@ -339,6 +339,15 @@ const quoteArkadeAsset = async (
     // The solver's own carrier, parsed before anything is derived; a card that charges for it
     // prices the reference below with it.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
+    // Before deriving: a failed feed or a mismatched pair refuses with no covenant built.
+    const reference = await quoteOffer(input.candidate.card, {
+        give: input.candidate.give,
+        giveAmount: parsed.give,
+        ...(carrierSats === undefined ? {} : { carrierSats }),
+        ...QUOTE_OPTIONS,
+        fetchImpl: input.feed.fetch,
+    });
+    verifyPlanLegs(reference, input.legs, input.candidate.give);
 
     // The covenant binds what the fill must DELIVER, so the wanted amount is the
     // quote's own `to_amount` and the deposited asset rides the funding VTXO.
@@ -355,15 +364,6 @@ const quoteArkadeAsset = async (
     // is the one the trader derived, and a solver naming another one is refused
     // rather than followed.
     verifyingDerivation(() => verifyOfferAddress(wire, offer));
-
-    const reference = await quoteOffer(input.candidate.card, {
-        give: input.candidate.give,
-        giveAmount: parsed.give,
-        ...(carrierSats === undefined ? {} : { carrierSats }),
-        ...QUOTE_OPTIONS,
-        fetchImpl: input.feed.fetch,
-    });
-    verifyPlanLegs(reference, input.legs, input.candidate.give);
 
     return {
         quote: {

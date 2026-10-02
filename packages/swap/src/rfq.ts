@@ -1327,6 +1327,9 @@ export const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * funds before `quote.valid_until`, then may go offline. No timelock refund: an unfilled offer is
  * cancelled cooperatively (`cancelOffer`).
  *
+ * With `amountSide: "to"` the deposit is the solver's to name: set `maxFromAmount`, or fund
+ * whatever it quotes.
+ *
  * Maker keys are read once here so the request profile and the local `createOffer` derivation
  * cannot diverge. Throws {@link SwapRefusal}, {@link AddressMismatch} (never fund), or a gate error
  * with a stable `reason`.
