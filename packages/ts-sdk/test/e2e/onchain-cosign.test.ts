@@ -1,6 +1,6 @@
 import { expect, describe, it } from "vitest";
 import { hex } from "@scure/base";
-import { p2tr } from "@scure/btc-signer";
+import { Address, OutScript, p2tr } from "@scure/btc-signer";
 import {
     arkade,
     EsploraProvider,
@@ -234,6 +234,15 @@ describe("onchain cosign", () => {
         }
         const [unrolled] = await wallet.getVtxos({ withUnrolled: true });
         expect(unrolled.isUnrolled).toBe(true);
+        // Unroll's DONE reads tx status (Core); address utxos come from Fulcrum, which can lag a block.
+        const unrolledAddress = Address(networks.regtest).encode(
+            OutScript.decode(hex.decode(unrolled.script)),
+        );
+        await waitFor(async () =>
+            (await explorer.getCoins(unrolledAddress)).some(
+                (c) => c.txid === unrolled.txid && c.vout === unrolled.vout && c.status.confirmed,
+            ),
+        );
         const dest = await externalAddress();
 
         const txid = await wallet.sendOnchain({
