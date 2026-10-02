@@ -17,8 +17,10 @@ import {
     estimateOnchainCosignFee,
     isCosignFallback,
     prepareOwnedInput,
+    rehydrateCosignError,
     submitOnchainSpend,
 } from "../../src/contracts/onchainSpend";
+import { TxWeightEstimator } from "../../src/utils/txSizeEstimator";
 import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../../src/providers/ark";
 import { ConditionMultisigTapscript } from "../../src/script/tapscript";
 import { VtxoScript, scriptFromTapLeafScript } from "../../src/script/base";
@@ -104,6 +106,39 @@ describe("estimateOnchainCosignFee", () => {
         expect(base).toBeGreaterThan(0);
         expect(estimateOnchainCosignFee(2, 1, 2)).toBeGreaterThan(base);
         expect(estimateOnchainCosignFee(1, 2, 2)).toBeGreaterThan(base);
+    });
+
+    it("counts both signatures of the 2-of-2 leaf", () => {
+        // version+locktime 10, 2 counts, input 41, P2TR output 43; witness: marker/flag 2,
+        // stack count 1, two 65-byte sigs, script 1+68, control block 1+65.
+        const trueVsize = Math.ceil(((10 + 2 + 41 + 43) * 4 + 2 + 1 + 130 + 69 + 66) / 4);
+        expect(estimateOnchainCosignFee(1, 1, 1)).toBeGreaterThanOrEqual(trueVsize);
+        const oneSig = TxWeightEstimator.create().addTapscriptInput(64, 68, 65).addP2TROutput();
+        // second sig + its length byte = 65 witness bytes = 16.25 vB, rounded per tx
+        const extra = estimateOnchainCosignFee(1, 1, 4) - Number(oneSig.vsize().fee(4n));
+        expect(extra).toBeGreaterThanOrEqual(64);
+        expect(extra).toBeLessThanOrEqual(68);
+    });
+});
+
+describe("rehydrateCosignError", () => {
+    const cloned = (e: Error) => new Error(e.message);
+
+    it("restores each fallback class from a structured-cloned message", () => {
+        const rejected = rehydrateCosignError(cloned(new OnchainCosignRejectedError("too late")));
+        expect(rejected).toBeInstanceOf(OnchainCosignRejectedError);
+        expect((rejected as OnchainCosignRejectedError).serverMessage).toBe("too late");
+        const preflight = new OnchainCosignPreflightError("nothing to sweep");
+        expect(rehydrateCosignError(cloned(preflight))).toEqual(preflight);
+        expect(rehydrateCosignError(cloned(new OnchainCosignUnsupportedError()))).toBeInstanceOf(
+            OnchainCosignUnsupportedError,
+        );
+    });
+
+    it("passes other errors through unchanged", () => {
+        const other = new Error("boom");
+        expect(rehydrateCosignError(other)).toBe(other);
+        expect(rehydrateCosignError("x")).toBe("x");
     });
 });
 

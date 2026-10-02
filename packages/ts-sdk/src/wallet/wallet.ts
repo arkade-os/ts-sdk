@@ -4884,7 +4884,10 @@ export class Wallet
     /** @see IWallet.cosignOnchainTx */
     async cosignOnchainTx(psbt: string | Transaction): Promise<string> {
         const tx = typeof psbt === "string" ? SdkTransaction.fromPSBT(base64.decode(psbt)) : psbt;
-        return this._withTxLock(() => this._cosignOnchainTxImpl(tx));
+        return this._withTxLock(async () => {
+            await (await this.getContractManager()).syncOnchain();
+            return this._cosignOnchainTxImpl(tx);
+        });
     }
 
     /** @see IWallet.sendOnchain */

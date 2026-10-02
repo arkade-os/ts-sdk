@@ -38,16 +38,19 @@ export class DigestMismatchError extends Error {
     }
 }
 
+export const ONCHAIN_COSIGN_UNSUPPORTED_PREFIX = "Arkade server does not support onchain cosigning";
+export const ONCHAIN_COSIGN_REJECTED_PREFIX = "Arkade server refused to cosign onchain tx: ";
+
 export class OnchainCosignUnsupportedError extends Error {
     constructor() {
-        super("Arkade server does not support onchain cosigning");
+        super(ONCHAIN_COSIGN_UNSUPPORTED_PREFIX);
         this.name = "OnchainCosignUnsupportedError";
     }
 }
 
 export class OnchainCosignRejectedError extends Error {
     constructor(readonly serverMessage: string) {
-        super(`Arkade server refused to cosign onchain tx: ${serverMessage}`);
+        super(`${ONCHAIN_COSIGN_REJECTED_PREFIX}${serverMessage}`);
         this.name = "OnchainCosignRejectedError";
     }
 }

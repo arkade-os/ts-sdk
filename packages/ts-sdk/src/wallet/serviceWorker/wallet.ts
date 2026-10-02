@@ -26,6 +26,7 @@ import { SettlementEvent } from "../../providers/ark";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { base64, hex } from "@scure/base";
 import type { Transaction } from "@scure/btc-signer";
+import { rehydrateCosignError } from "../../contracts/onchainSpend";
 import {
     Identity,
     ReadonlyIdentity,
@@ -2068,8 +2069,12 @@ export class ServiceWorkerWallet
             id: getRandomId(),
             payload: { psbt: typeof psbt === "string" ? psbt : base64.encode(psbt.toPSBT()) },
         };
-        const response = await this.sendMessage(message);
-        return (response as ResponseCosignOnchainTx).payload.txid;
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseCosignOnchainTx).payload.txid;
+        } catch (e) {
+            throw rehydrateCosignError(e);
+        }
     }
 
     async sendOnchain(params: SendOnchainParams): Promise<string> {
@@ -2079,8 +2084,12 @@ export class ServiceWorkerWallet
             id: getRandomId(),
             payload: params,
         };
-        const response = await this.sendMessage(message);
-        return (response as ResponseSendOnchain).payload.txid;
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseSendOnchain).payload.txid;
+        } catch (e) {
+            throw rehydrateCosignError(e);
+        }
     }
 
     async getDelegateManager(): Promise<IDelegateManager | undefined> {

@@ -15,6 +15,8 @@ import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../../src/utils/transaction";
+import { OnchainCosignPreflightError, isCosignFallback } from "../../src/contracts/onchainSpend";
+import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../../src/providers/ark";
 import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
@@ -719,6 +721,43 @@ describe("ServiceWorkerWallet", () => {
         const cosign = sent.find((m: any) => m.type === "COSIGN_ONCHAIN_TX");
         expect(cosign.payload.psbt).toBe(base64.encode(tx.toPSBT()));
         expect(sent.find((m: any) => m.type === "SEND_ONCHAIN").payload).toEqual(params);
+    });
+
+    it.each([
+        ["Rejected", new OnchainCosignRejectedError("too late"), OnchainCosignRejectedError],
+        ["Preflight", new OnchainCosignPreflightError("nothing"), OnchainCosignPreflightError],
+        ["Unsupported", new OnchainCosignUnsupportedError(), OnchainCosignUnsupportedError],
+    ])("rehydrates a cloned %s error from the worker", async (_name, error, cls) => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error(error.message),
+        }));
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+        for (const call of [
+            wallet.cosignOnchainTx("cHNidP8="),
+            wallet.sendOnchain({ outputs: [], sweepTo: "bc1-dest" }),
+        ]) {
+            const err = await call.catch((e) => e);
+            expect(err).toBeInstanceOf(cls);
+            expect(isCosignFallback(err)).toBe(true);
+            expect(err.message).toBe(error.message);
+        }
+    });
+
+    it("passes unrelated worker errors through unchanged", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
+            id: message.id,
+            tag: messageTag,
+            error: new Error("boom"),
+        }));
+        vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const err = await wallet.sendOnchain({ outputs: [] }).catch((e) => e);
+        expect(err.message).toBe("boom");
+        expect(isCosignFallback(err)).toBe(false);
     });
 
     it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {

@@ -4,7 +4,12 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 import { scriptFromTapLeafScript } from "../script/base";
 import { Extension, ExtensionNotFoundError } from "../extension";
 import type { ArkProvider } from "../providers/ark";
-import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../providers/ark";
+import {
+    ONCHAIN_COSIGN_REJECTED_PREFIX,
+    ONCHAIN_COSIGN_UNSUPPORTED_PREFIX,
+    OnchainCosignRejectedError,
+    OnchainCosignUnsupportedError,
+} from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
@@ -30,9 +35,11 @@ export function csvBlocksOf(contract: Contract): number {
     return type === "blocks" ? Number(value) : Math.ceil(Number(value) / 600);
 }
 
+export const ONCHAIN_COSIGN_PREFLIGHT_PREFIX = "Onchain cosign preflight failed: ";
+
 export class OnchainCosignPreflightError extends Error {
-    constructor(message: string) {
-        super(message);
+    constructor(readonly reason: string) {
+        super(`${ONCHAIN_COSIGN_PREFLIGHT_PREFIX}${reason}`);
         this.name = "OnchainCosignPreflightError";
     }
 }
@@ -124,9 +131,27 @@ export function isCosignFallback(e: unknown): boolean {
     );
 }
 
+/** Structured clone across the service-worker bus strips error classes; restore them by message prefix. */
+export function rehydrateCosignError(e: unknown): unknown {
+    if (!(e instanceof Error) || isCosignFallback(e)) return e;
+    const { message } = e;
+    if (message.startsWith(ONCHAIN_COSIGN_REJECTED_PREFIX)) {
+        return new OnchainCosignRejectedError(message.slice(ONCHAIN_COSIGN_REJECTED_PREFIX.length));
+    }
+    if (message.startsWith(ONCHAIN_COSIGN_PREFLIGHT_PREFIX)) {
+        return new OnchainCosignPreflightError(
+            message.slice(ONCHAIN_COSIGN_PREFLIGHT_PREFIX.length),
+        );
+    }
+    if (message.startsWith(ONCHAIN_COSIGN_UNSUPPORTED_PREFIX))
+        return new OnchainCosignUnsupportedError();
+    return e;
+}
+
 export function estimateOnchainCosignFee(nIn: number, nOut: number, feeRate: number): number {
     const estimator = TxWeightEstimator.create();
-    for (let i = 0; i < nIn; i++) estimator.addTapscriptInput(64, 68, 65);
+    // 2-of-2 leaf: two 64-byte sigs; the estimator adds the first one's length byte itself.
+    for (let i = 0; i < nIn; i++) estimator.addTapscriptInput(2 * 64 + 1, 68, 65);
     for (let i = 0; i < nOut; i++) estimator.addP2TROutput();
     return Number(estimator.vsize().fee(BigInt(Math.ceil(feeRate))));
 }

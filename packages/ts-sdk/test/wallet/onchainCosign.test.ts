@@ -150,7 +150,6 @@ describe("wallet.sendOnchain", () => {
 describe("wallet.cosignOnchainTx", () => {
     it("fills owned inputs of an external PSBT and leaves foreign inputs alone", async () => {
         const { wallet, arkProvider, boardingCoin, externalScript } = await makeWallet();
-        await wallet.getBoardingUtxos();
         const tx = new Transaction({ version: 2 });
         tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
         tx.addInput({
@@ -168,7 +167,6 @@ describe("wallet.cosignOnchainTx", () => {
 
     it("rejects outputs exceeding inputs", async () => {
         const { wallet, boardingCoin, externalScript } = await makeWallet();
-        await wallet.getBoardingUtxos();
         const tx = new Transaction({ version: 2 });
         tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
         tx.addOutput({ script: externalScript, amount: 60_000n });
@@ -177,7 +175,6 @@ describe("wallet.cosignOnchainTx", () => {
 
     it("returns the txid when marking the spend pending fails after submit", async () => {
         const { wallet, boardingCoin, externalScript } = await makeWallet();
-        await wallet.getBoardingUtxos();
         const manager = await wallet.getContractManager();
         vi.spyOn(manager, "markOnchainSpendPending").mockRejectedValue(new Error("db down"));
         vi.spyOn(console, "error").mockImplementation(() => {});
@@ -185,5 +182,16 @@ describe("wallet.cosignOnchainTx", () => {
         tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
         tx.addOutput({ script: externalScript, amount: 40_000n });
         await expect(wallet.cosignOnchainTx(tx)).resolves.toBe(COSIGNED);
+    });
+
+    it("syncs first so an owned coin not yet stored is signed", async () => {
+        const { wallet, arkProvider, walletRepository, boardingCoin, boardingScriptHex } =
+            await makeWallet();
+        expect(await walletRepository.getVtxosForScript!(boardingScriptHex)).toEqual([]);
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
+        tx.addOutput({ script: hex.decode(boardingScriptHex), amount: 40_000n });
+        await wallet.cosignOnchainTx(tx);
+        expect(sentPsbt(arkProvider).getInput(0).tapScriptSig).toHaveLength(1);
     });
 });
