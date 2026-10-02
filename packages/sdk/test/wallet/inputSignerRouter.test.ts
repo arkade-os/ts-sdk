@@ -631,7 +631,7 @@ describe("InputSignerRouter", async () => {
 
         const firstDescriptor = "tr(first)";
         const stubRepo: ContractRepository = {
-            version: 2,
+            version: 3,
             clear: async () => {},
             getContractsPage: async () => ({
                 items: [

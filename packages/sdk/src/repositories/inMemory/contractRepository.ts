@@ -7,7 +7,7 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
  * Data is ephemeral and scoped to the instance.
  */
 export class InMemoryContractRepository implements ContractRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private readonly contractsByScript = new Map<string, Contract>();
 
     async clear(): Promise<void> {

@@ -1151,7 +1151,7 @@ version is bumped, signaling that a semantic update is required:
 import { WalletRepository } from '@arkade-os/sdk'
 
 class MyWalletRepository implements WalletRepository {
-  readonly version = 1 // must match the interface's literal type
+  readonly version = 2 // must match the interface's literal type
   // ...
 }
 ```

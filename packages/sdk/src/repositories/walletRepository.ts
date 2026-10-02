@@ -90,7 +90,11 @@ export interface ScriptVtxoPageOptions {
 }
 
 export interface WalletRepository extends AsyncDisposable {
-    readonly version: 1;
+    /**
+     * 2 — the unpaged reads (`getVtxos`, `getUtxos`, `getTransactionHistory`,
+     * `getVtxosForScript(s)`) are gone; implement the `*Page` reads instead.
+     */
+    readonly version: 2;
 
     /**
      * Clear all data from storage.

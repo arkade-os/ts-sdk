@@ -12,7 +12,7 @@ import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
  * Data is stored as JSON strings in key/value stores.
  */
 export class IndexedDBContractRepository implements ContractRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {

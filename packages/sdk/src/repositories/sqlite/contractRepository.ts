@@ -23,7 +23,7 @@ interface SQLiteContractRepositoryOptions {
  * The consumer owns the SQLExecutor lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
 export class SQLiteContractRepository implements ContractRepository {
-    readonly version = 2 as const;
+    readonly version = 3 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly table: string;

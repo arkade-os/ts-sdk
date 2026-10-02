@@ -23,8 +23,9 @@ export interface ContractRepository extends AsyncDisposable {
     /**
      * 2 — {@link Contract.watch}. An implementation must persist and
      * round-trip it, and treat a row without one as `"watched"`.
+     * 3 — the unpaged `getContracts` is gone; implement `getContractsPage`.
      */
-    readonly version: 2;
+    readonly version: 3;
 
     /**
      * Clear all data from storage.
