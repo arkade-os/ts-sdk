@@ -3,7 +3,6 @@ import { VtxoScript } from "../../script/base";
 import { buildAnchorChild } from "../../utils/anchor";
 import { Transaction } from "../../utils/transaction";
 import { TxWeightEstimator } from "../../utils/txSizeEstimator";
-import { isCosignFallback } from "../../contracts/onchainSpend";
 import { selectCoins } from "../onchain";
 import { DUST_AMOUNT } from "../utils";
 import {
@@ -49,24 +48,6 @@ export async function prepare(opts: ExitOptions): Promise<ExitPackage> {
     const activeOutpoints = new Set<string>();
     for (const sweep of layout.sweeps) {
         const outpoint = `${sweep.vtxo.txid}:${sweep.vtxo.vout}`;
-        if (opts.cosign) {
-            try {
-                const txid = await opts.cosign(
-                    { txid: sweep.vtxo.txid, vout: sweep.vtxo.vout },
-                    opts.sweepAddress,
-                );
-                const info = layout.infos.find((i) => i.outpoint === outpoint);
-                if (info) {
-                    info.skipped = `already swept via cosign: ${txid}`;
-                    delete info.sweepFee;
-                    delete info.path;
-                    delete info.delay;
-                }
-                continue;
-            } catch (e) {
-                if (!isCosignFallback(e)) throw e;
-            }
-        }
         try {
             const { tx } = await buildSignedSweep({
                 vtxo: {

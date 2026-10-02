@@ -23,9 +23,13 @@ import {
 import type { VirtualCoin } from "../wallet";
 import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
+import { isOnchainScoped } from "./scope";
 import { sequenceToTimelock } from "../utils/timelock";
 
 export const DEFAULT_COSIGN_MARGIN_BLOCKS = 144;
+
+/** Boarding coins are renewed by cosign during this many blocks before the cosign margin starts. */
+export const ONCHAIN_RENEW_WINDOW_BLOCKS = 144;
 
 /** Exit CSV in blocks, seconds counted as 600 per block; no CSV means the exit is already open (0). */
 export function csvBlocksOf(contract: Contract): number {
@@ -95,6 +99,22 @@ export function assertCosignable(
             `${outpoint} is within ${marginBlocks} blocks of exit maturity`,
         );
     }
+}
+
+/** Automatic sweeps take unrolled coins always, and boarding coins only in the last stretch before cosign is refused. */
+export function needsOnchainSweep(
+    coin: VirtualCoin,
+    contract: Contract,
+    tipHeight: number,
+): boolean {
+    if (!isOnchainScoped(contract)) return true;
+    const confirmedAt = coin.status.block_height;
+    if (!coin.status.confirmed || confirmedAt === undefined) return false;
+    const remaining = confirmedAt + csvBlocksOf(contract) - tipHeight;
+    return (
+        remaining > DEFAULT_COSIGN_MARGIN_BLOCKS &&
+        remaining <= DEFAULT_COSIGN_MARGIN_BLOCKS + ONCHAIN_RENEW_WINDOW_BLOCKS
+    );
 }
 
 /** scure's finalizeIdx cannot place a ConditionWitness, so those inputs are laid out here. */

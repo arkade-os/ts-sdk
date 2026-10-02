@@ -194,6 +194,7 @@ import {
 import {
     OnchainCosignPreflightError,
     assertCosignable,
+    needsOnchainSweep,
     csvBlocksOf,
     emulatorInputIndexes,
     estimateOnchainCosignFee,
@@ -1425,7 +1426,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** The intent store's lock set. Fails open, like every other read of it. */
-    private async lockedOutpoints(): Promise<Set<string>> {
+    protected async lockedOutpoints(): Promise<Set<string>> {
         if (!this.intentRepository) return new Set();
         try {
             const locked = await this.intentRepository.getLockedVtxoOutpoints();
@@ -5012,6 +5013,24 @@ export class Wallet
             console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
         }
         return txid;
+    }
+
+    /** Outpoints the automatic cosign sweep should renew now; excludes coins an intent has locked. */
+    async getOnchainSweepInputs(): Promise<Outpoint[]> {
+        const manager = await this.getContractManager();
+        await manager.syncOnchain();
+        const [tip, locked, coins] = await Promise.all([
+            this.onchainProvider.getChainTip(),
+            this.lockedOutpoints(),
+            this.onchainCoins(manager),
+        ]);
+        return coins
+            .filter(
+                ({ coin, contract }) =>
+                    !locked.has(vtxoOutpoint(coin)) &&
+                    needsOnchainSweep(coin, contract, tip.height),
+            )
+            .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
     }
 
     /** Unspent onchain coins from the store; the onchain rows are kept fresh by syncOnchain, not the indexer. */

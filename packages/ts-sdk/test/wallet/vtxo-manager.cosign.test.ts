@@ -28,7 +28,13 @@ const expiredCoin = {
     status: { confirmed: true, block_time: 1000, block_height: 100 },
 } as ExtendedCoin;
 
-function makeWallet(opts: { sendOnchain?: unknown; utxos?: ExtendedCoin[][] }) {
+const SWEEP_INPUTS = [{ txid: "cd".repeat(32), vout: 1 }];
+
+function makeWallet(opts: {
+    sendOnchain?: unknown;
+    utxos?: ExtendedCoin[][];
+    inputs?: { txid: string; vout: number }[];
+}) {
     const utxoCalls = [...(opts.utxos ?? [[expiredCoin]])];
     const contractManager = {
         onContractEvent: vi.fn().mockReturnValue(() => {}),
@@ -73,6 +79,7 @@ function makeWallet(opts: { sendOnchain?: unknown; utxos?: ExtendedCoin[][] }) {
             xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
         },
         signOnchainBoardingTx: vi.fn().mockImplementation((tx: Transaction) => identity.sign(tx)),
+        getOnchainSweepInputs: vi.fn().mockResolvedValue(opts.inputs ?? SWEEP_INPUTS),
         ...(opts.sendOnchain ? { sendOnchain: opts.sendOnchain } : {}),
     } as any;
 }
@@ -87,7 +94,11 @@ describe("VtxoManager cosign-first sweeps", () => {
         const sendOnchain = vi.fn().mockResolvedValue("cosign-txid");
         const wallet = makeWallet({ sendOnchain });
         await expect(manager(wallet).sweepOnchainCoins()).resolves.toBe("cosign-txid");
-        expect(sendOnchain).toHaveBeenCalledWith({ outputs: [], sweepTo: BOARDING });
+        expect(sendOnchain).toHaveBeenCalledWith({
+            outputs: [],
+            inputs: SWEEP_INPUTS,
+            sweepTo: BOARDING,
+        });
         expect(wallet.signOnchainBoardingTx).not.toHaveBeenCalled();
     });
 
@@ -130,6 +141,23 @@ describe("VtxoManager cosign-first sweeps", () => {
     it("rethrows any other error", async () => {
         const wallet = makeWallet({ sendOnchain: vi.fn().mockRejectedValue(new Error("boom")) });
         await expect(manager(wallet).sweepOnchainCoins()).rejects.toThrow("boom");
+    });
+
+    it("does not call sendOnchain when no coin needs a sweep", async () => {
+        const sendOnchain = vi.fn();
+        const wallet = makeWallet({ sendOnchain, inputs: [] });
+        await expect(manager(wallet).sweepOnchainCoins()).resolves.toBeUndefined();
+        expect(sendOnchain).not.toHaveBeenCalled();
+    });
+
+    it("poll tick: a non-cosign error is logged without raising the poll backoff", async () => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const wallet = makeWallet({ sendOnchain: vi.fn().mockRejectedValue(new Error("boom")) });
+        const m = manager(wallet);
+        vi.spyOn(m as any, "runPeriodicSettle").mockResolvedValue(undefined);
+        await (m as any).pollBoardingUtxos();
+        expect((m as any).consecutivePollFailures).toBe(0);
+        expect(wallet.onchainProvider.broadcastTransaction).toHaveBeenCalledTimes(1);
     });
 
     it("returns undefined without a cosign attempt when the wallet has no sendOnchain", async () => {

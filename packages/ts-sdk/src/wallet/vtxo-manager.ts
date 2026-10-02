@@ -111,6 +111,8 @@ interface SweepCapableWallet extends IReadonlyWallet {
     signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
     /** Optional so older wallet objects keep working; absent disables the cosign-first sweep. */
     sendOnchain?(params: SendOnchainParams): Promise<string>;
+    /** Outpoints the cosign sweep should renew now; absent disables it. */
+    getOnchainSweepInputs?(): Promise<Outpoint[]>;
 }
 
 /**
@@ -1866,6 +1868,27 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
+     * Renew the onchain coins that need it (unrolled outputs, and boarding coins
+     * nearing cosign cut-off) through an arkd cosignature. Returns the txid, or
+     * undefined when nothing qualified or the cosign path is unavailable.
+     */
+    async sweepOnchainCoins(): Promise<string | undefined> {
+        if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
+        const inputs = await this.wallet.getOnchainSweepInputs?.();
+        if (!inputs?.length) return undefined;
+        const boarding = await this.wallet.getBoardingAddress();
+        try {
+            return await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
+        } catch (e) {
+            if (!isCosignFallback(e)) throw e;
+            if (e instanceof OnchainCosignRejectedError) {
+                console.warn("Onchain cosign sweep rejected, falling back to CSV exit:", e.message);
+            }
+            return undefined;
+        }
+    }
+
+    /**
      * Sweep expired boarding inputs back to a fresh boarding address via
      * the unilateral exit path (onchain self-spend).
      *
@@ -1901,20 +1924,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * }
      * ```
      */
-    async sweepOnchainCoins(): Promise<string | undefined> {
-        if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
-        const boarding = await this.wallet.getBoardingAddress();
-        try {
-            return await this.wallet.sendOnchain({ outputs: [], sweepTo: boarding });
-        } catch (e) {
-            if (!isCosignFallback(e)) throw e;
-            if (e instanceof OnchainCosignRejectedError) {
-                console.warn("Onchain cosign sweep rejected, falling back to CSV exit:", e.message);
-            }
-            return undefined;
-        }
-    }
-
     async sweepExpiredBoardingUtxos(prefetchedUtxos?: ExtendedCoin[]): Promise<string> {
         const sweepEnabled =
             this.settlementConfig !== false &&
@@ -3039,7 +3048,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             utxos = await this.wallet.getBoardingUtxos();
                         }
                     } catch (e) {
-                        hadError = true;
                         console.error("Error cosign-sweeping onchain coins:", e);
                     }
                     try {

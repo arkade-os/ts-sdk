@@ -9,6 +9,7 @@ import { Transaction } from "../../src/utils/transaction";
 import {
     OnchainCosignPreflightError,
     estimateOnchainCosignFee,
+    needsOnchainSweep,
 } from "../../src/contracts/onchainSpend";
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -193,5 +194,40 @@ describe("wallet.cosignOnchainTx", () => {
         tx.addOutput({ script: hex.decode(boardingScriptHex), amount: 40_000n });
         await wallet.cosignOnchainTx(tx);
         expect(sentPsbt(arkProvider).getInput(0).tapScriptSig).toHaveLength(1);
+    });
+});
+
+describe("wallet.getOnchainSweepInputs", () => {
+    const outpoint = { txid: "ab".repeat(32), vout: 1 };
+    const atTip = (onchainProvider: any, height: number) =>
+        onchainProvider.getChainTip.mockResolvedValue({ height, time: 0, hash: "" });
+
+    it("leaves a fresh boarding coin far from maturity alone", async () => {
+        const { wallet } = await makeWallet();
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+    });
+
+    it("selects a boarding coin inside the renew window, and not one inside the cosign margin", async () => {
+        const { wallet, onchainProvider } = await makeWallet();
+        atTip(onchainProvider, 900);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([outpoint]);
+        atTip(onchainProvider, 1000);
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+    });
+
+    it("excludes a coin locked by an intent", async () => {
+        const { wallet, onchainProvider } = await makeWallet();
+        atTip(onchainProvider, 900);
+        (wallet as any).intentRepository = { getLockedVtxoOutpoints: async () => [outpoint] };
+        await expect(wallet.getOnchainSweepInputs()).resolves.toEqual([]);
+    });
+});
+
+describe("needsOnchainSweep", () => {
+    const coin = { status: { confirmed: true, block_height: 100 } } as any;
+
+    it("always takes an unrolled coin of an offchain-scoped contract", () => {
+        const contract = { type: "default", scope: "offchain" } as any;
+        expect(needsOnchainSweep(coin, contract, 100)).toBe(true);
     });
 });
