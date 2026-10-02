@@ -6632,6 +6632,7 @@ export class Wallet
             const inputArkTxIds = new Set<string>();
             // Scripts of the settled boarding inputs, which may sit on rotated-away addresses.
             const boardingScripts = new Set<string>();
+            const boardingOutpoints: Outpoint[] = [];
 
             const vtxoInputs = inputs.filter(isVirtualCoin);
             const cm = await this.getContractManager();
@@ -6665,6 +6666,7 @@ export class Wallet
                         pkScript = this.boardingTapscript.pkScript;
                     }
                     boardingScripts.add(hex.encode(pkScript));
+                    boardingOutpoints.push({ txid: input.txid, vout: input.vout });
                 }
             }
 
@@ -6707,8 +6709,16 @@ export class Wallet
                 }
             }
 
-            // The utxo endpoints omit mempool-spent outputs, so the sync marks these spent.
-            if (boardingScripts.size > 0) await cm.syncOnchain([...boardingScripts]);
+            if (boardingScripts.size > 0) {
+                // An explorer that has not seen the commitment yet still lists these as
+                // unspent; the pending mark vetoes them until the sync sees the spend.
+                try {
+                    await cm.markOnchainSpendPending(boardingOutpoints, commitmentTxid);
+                } catch (e) {
+                    console.warn("Settled boarding inputs not marked pending", e);
+                }
+                await cm.syncOnchain([...boardingScripts]);
+            }
         } catch (e) {
             console.warn("error updating repository after settle", e);
             throw e;

@@ -374,6 +374,40 @@ describe("boarding contract: UTXOs through the merged VTXO store", () => {
         expect(await wallet.getBoardingUtxos()).toEqual([]);
     });
 
+    it("stops counting a settled boarding coin the explorer still lists as unspent", async () => {
+        const { wallet } = await fundedWallet();
+        const [input] = await wallet.getBoardingUtxos();
+
+        await (wallet as any).updateDbAfterSettle([input], "ef".repeat(32));
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+        const balance = await wallet.getBalance();
+        expect(balance.boarding.total).toBe(0);
+        expect(balance.total).toBe(0);
+    });
+
+    it("hands a settled boarding coin from pending to spent once the explorer sees the commitment", async () => {
+        const { wallet, onchainProvider } = await fundedWallet();
+        const [input] = await wallet.getBoardingUtxos();
+        const commitment = "ef".repeat(32);
+        await (wallet as any).updateDbAfterSettle([input], commitment);
+
+        onchainProvider.getCoins.mockResolvedValue([]);
+        onchainProvider.getTxOutspends.mockResolvedValue([
+            { spent: false },
+            { spent: true, txid: commitment },
+        ]);
+        onchainProvider.getChainTip.mockResolvedValue({ height: 100, hash: "", time: 0 });
+
+        expect(await wallet.getBoardingUtxos()).toEqual([]);
+        const [row] = await wallet.walletRepository.getVtxosForScript!(
+            hex.encode(wallet.boardingTapscript.pkScript),
+        );
+        expect(row).toMatchObject({ isSpent: true, spentBy: commitment });
+        const state = await wallet.walletRepository.getWalletState();
+        expect(state?.settings?.onchainPendingSpends).toEqual({});
+    });
+
     it("returns exactly the fetched coins when a vanished row's outspends lookup fails", async () => {
         const { wallet, onchainProvider } = await fundedWallet();
         await wallet.getBoardingUtxos();

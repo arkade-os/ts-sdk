@@ -2684,11 +2684,13 @@ describe("Wallet.updateDbAfterSettle", () => {
     }) => {
         const saveVtxos = vi.fn().mockResolvedValue(undefined);
         const syncOnchain = vi.fn().mockResolvedValue(undefined);
+        const markOnchainSpendPending = vi.fn().mockResolvedValue(undefined);
         const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
         const getContractManager = vi.fn().mockResolvedValue({
             annotateVtxos: overrides.annotateVtxos,
             getContracts,
             syncOnchain,
+            markOnchainSpendPending,
         });
         return {
             thisArg: {
@@ -2698,6 +2700,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             } as any,
             saveVtxos,
             syncOnchain,
+            markOnchainSpendPending,
         };
     };
 
@@ -2791,7 +2794,7 @@ describe("Wallet.updateDbAfterSettle", () => {
         });
         const boardingInput = makeBoardingCoin(boardingScript, "b");
         const annotateVtxos = vi.fn().mockResolvedValue([]);
-        const { thisArg, saveVtxos, syncOnchain } = makeThisArg({
+        const { thisArg, saveVtxos, syncOnchain, markOnchainSpendPending } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
         });
@@ -2803,6 +2806,10 @@ describe("Wallet.updateDbAfterSettle", () => {
         );
 
         expect(saveVtxos).not.toHaveBeenCalled();
+        expect(markOnchainSpendPending).toHaveBeenCalledWith(
+            [{ txid: boardingInput.txid, vout: 0 }],
+            "commitment-tx",
+        );
         expect(syncOnchain).toHaveBeenCalledWith([hex.encode(boardingScript.pkScript)]);
     });
 
