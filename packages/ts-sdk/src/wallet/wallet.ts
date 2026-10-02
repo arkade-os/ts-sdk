@@ -134,7 +134,8 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, type ProviderKind } from "../providers/errors";
+import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
+import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -457,7 +458,8 @@ export function filterSnapshotVtxos(
  * Refresh the swept state of settle inputs already past their batch expiry. The delta sync windows
  * on `created_at`, so it never revisits a coin the operator swept after the cursor passed it, and a
  * stale `isSwept: false` makes {@link requiresForfeit} build a forfeit the operator allocated no
- * connector for. Best-effort: cached inputs are kept on failure.
+ * connector for. Fails closed: a swept state that cannot be confirmed aborts the settlement, since
+ * guessing the obligation fails mid-batch and can get the input's script convicted.
  */
 async function refreshSweptStateOfExpiredInputs(
     wallet: Pick<ReadonlyWallet, "getContractManager" | "getVtxos" | "onchainProvider">,
@@ -473,29 +475,38 @@ async function refreshSweptStateOfExpiredInputs(
     const now = candidates.some((v) => v.expiresAtHeight !== undefined)
         ? await resolveTimeHeight(wallet.onchainProvider)
         : { timestamp: new Date() };
-    const suspects = candidates.filter((v) => isPastExpiry(v, now));
+    // An unknown tip must not exempt a height-expiring coin; a needless refresh is harmless.
+    const suspects = candidates.filter(
+        (v) =>
+            isPastExpiry(v, now) || (v.expiresAtHeight !== undefined && now.height === undefined),
+    );
     if (suspects.length === 0) return inputs;
 
+    let sweptNow: Set<string>;
     try {
         const manager = await wallet.getContractManager();
         await manager.refreshOutpoints(suspects.map(({ txid, vout }) => ({ txid, vout })));
         const suspectKeys = new Set(suspects.map((v) => `${v.txid}:${v.vout}`));
         const fresh = await wallet.getVtxos({ withRecoverable: true });
-        const sweptNow = new Set(
+        sweptNow = new Set(
             fresh
                 .filter((v) => v.isSwept && suspectKeys.has(`${v.txid}:${v.vout}`))
                 .map((v) => `${v.txid}:${v.vout}`),
         );
-        if (sweptNow.size === 0) return inputs;
-        return inputs.map((input) =>
-            isVirtualCoin(input) && sweptNow.has(`${input.txid}:${input.vout}`)
-                ? { ...input, isSwept: true }
-                : input,
-        );
     } catch (e) {
-        console.error("Error refreshing swept state before settle:", e);
-        return inputs;
+        const message =
+            "could not confirm the swept state of expired settlement inputs; retry the settlement";
+        throw isRetryableProviderError(e)
+            ? new ProviderUnavailableError(message, { cause: e })
+            : new Error(message, { cause: e });
     }
+
+    if (sweptNow.size === 0) return inputs;
+    return inputs.map((input) => {
+        if (!isVirtualCoin(input) || !sweptNow.has(`${input.txid}:${input.vout}`)) return input;
+        const swept = { ...normalizeVtxo(input), isSwept: true };
+        return { ...swept, virtualStatus: toVirtualStatus(swept) };
+    });
 }
 
 /**

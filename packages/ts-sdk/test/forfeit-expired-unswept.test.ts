@@ -10,6 +10,7 @@ import { DelegateManagerImpl } from "../src/wallet/delegate";
 import { toVirtualStatus } from "../src/wallet/vtxo";
 import { Transaction } from "../src/utils/transaction";
 import { networks } from "../src/networks";
+import { ProviderUnavailableError } from "../src/providers/errors";
 import type { TapLeafScript } from "../src/script/base";
 import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { BatchFinalizationEvent } from "../src/providers/ark";
@@ -214,11 +215,15 @@ describe("settle refreshes the swept state of expired inputs", () => {
         fresh?: ExtendedVirtualCoin[];
         refreshOutpoints?: () => Promise<void>;
         tipHeight?: number;
+        tipFails?: boolean;
     };
 
     function harness(opts: SettleOpts) {
         const refreshOutpoints = vi.fn(opts.refreshOutpoints ?? (async () => {}));
-        const getChainTip = vi.fn(async () => ({ height: opts.tipHeight ?? 0 }));
+        const getChainTip = vi.fn(async () => {
+            if (opts.tipFails) throw new Error("no tip");
+            return { height: opts.tipHeight ?? 0 };
+        });
         const captured: ExtendedCoin[][] = [];
         const thisArg: any = {
             network: NETWORK,
@@ -236,16 +241,18 @@ describe("settle refreshes the swept state of expired inputs", () => {
         return { thisArg, refreshOutpoints, getChainTip, captured };
     }
 
-    async function settle(inputs: ExtendedVirtualCoin[], opts: SettleOpts = {}) {
+    function runSettle(inputs: ExtendedVirtualCoin[], opts: SettleOpts = {}) {
         const h = harness(opts);
+        const result = (Wallet.prototype as any)._settleImpl.call(h.thisArg, {
+            inputs,
+            outputs: [{ address: ONCHAIN_ADDRESS, amount: 10_000n }],
+        }) as Promise<string>;
+        return { h, result };
+    }
 
-        await expect(
-            (Wallet.prototype as any)._settleImpl.call(h.thisArg, {
-                inputs,
-                outputs: [{ address: ONCHAIN_ADDRESS, amount: 10_000n }],
-            }),
-        ).rejects.toThrow(STOP);
-
+    async function settle(inputs: ExtendedVirtualCoin[], opts: SettleOpts = {}) {
+        const { h, result } = runSettle(inputs, opts);
+        await expect(result).rejects.toThrow(STOP);
         return h;
     }
 
@@ -259,6 +266,7 @@ describe("settle refreshes the swept state of expired inputs", () => {
         expect(refreshOutpoints).toHaveBeenCalledWith([{ txid: input.txid, vout: input.vout }]);
         const refreshed = captured[0][0] as ExtendedVirtualCoin;
         expect(refreshed.isSwept).toBe(true);
+        expect(refreshed.virtualStatus.state).toBe("swept");
 
         const thisArg = await finalize(refreshed);
         expect(thisArg.arkProvider.submitSignedForfeitTxs).not.toHaveBeenCalled();
@@ -286,17 +294,40 @@ describe("settle refreshes the swept state of expired inputs", () => {
         expect(refreshOutpoints).not.toHaveBeenCalled();
     });
 
-    it("settles with the cached inputs when the refresh throws", async () => {
-        const input = vtxoInput(vtxoScript);
-
-        const { refreshOutpoints, captured } = await settle([input], {
+    it("aborts before the intent when the swept state cannot be confirmed", async () => {
+        const { h, result } = runSettle([vtxoInput(vtxoScript)], {
             refreshOutpoints: async () => {
                 throw new Error("indexer down");
             },
         });
 
+        await expect(result).rejects.toThrow(/could not confirm the swept state/i);
+
+        expect(h.refreshOutpoints).toHaveBeenCalled();
+        expect(h.thisArg.makeRegisterIntentSignature).not.toHaveBeenCalled();
+        expect(h.captured).toEqual([]);
+        await expect(result).rejects.not.toBeInstanceOf(ProviderUnavailableError);
+    });
+
+    it("keeps an unreachable indexer retryable", async () => {
+        const { result } = runSettle([vtxoInput(vtxoScript)], {
+            refreshOutpoints: async () => {
+                throw new ProviderUnavailableError("indexer down");
+            },
+        });
+
+        await expect(result).rejects.toBeInstanceOf(ProviderUnavailableError);
+        await expect(result).rejects.toThrow(/could not confirm the swept state/i);
+    });
+
+    it("refreshes a height-expiring input even when the chain tip is unknown", async () => {
+        const { refreshOutpoints, getChainTip } = await settle(
+            [vtxoInput(vtxoScript, { expiresAt: undefined, expiresAtHeight: EXPIRY_HEIGHT })],
+            { tipFails: true },
+        );
+
+        expect(getChainTip).toHaveBeenCalled();
         expect(refreshOutpoints).toHaveBeenCalled();
-        expect(captured[0][0]).toBe(input);
     });
 
     it("resolves the chain tip to catch a height-expired input", async () => {
