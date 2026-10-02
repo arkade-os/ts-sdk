@@ -191,6 +191,17 @@ describe("quote() on a negotiated asset market", () => {
         // mispricing only when both legs are the same asset.
         expect(quote.give).toEqual({ asset: USD, amount: 1_000n });
         expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
+        // The spread plus the 330-sat carrier, which the filler keeps: this solver returns none of it.
+        expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
+    });
+
+    it("charges no carrier to a solver that returns it in the payout", async () => {
+        const { client } = await setup({
+            answer: (payload) => arkadeAssetAnswer(payload, CLOCK, { toAmount: 10_300n }),
+        });
+        const quote = await client.quote(sell());
+
+        expect(quote.take).toEqual({ asset: BTC, amount: 10_300n });
         expect(quote.fee).toEqual({ amount: 30n, asset: BTC });
     });
 
@@ -229,6 +240,25 @@ describe("quote() on a negotiated asset market", () => {
         expect(quote.take.amount).toBe(CARD_PAYOUT);
         expect(quote.solver).toBeUndefined();
         expect(transport.sent).toHaveLength(0);
+    });
+
+    it("asks for a feed-priced asset deposit's carrier back in the payout", async () => {
+        const { client } = await setup({ snapshot: [canonicalSpotCard] });
+        const quote = await client.quote(sell());
+
+        expect(quote.market.backend).toBe("feed");
+        // 1_000 cents is 10_000 sats, less 30bps, plus the 330-sat carrier the deposit rides on.
+        expect(quote.take).toEqual({ asset: BTC, amount: 10_300n });
+        expect(quote.fee).toEqual({ amount: 30n, asset: BTC });
+    });
+
+    it("counts the carrier as fee on a legacy card the plan returns none of it on", async () => {
+        // solver-discovery only recognises a carrier-riding leg by its CAIP-19 `/asset:` id.
+        const { client } = await setup({ snapshot: [spotCard] });
+        const quote = await client.quote(sell());
+
+        expect(quote.take).toEqual({ asset: BTC, amount: 9_970n });
+        expect(quote.fee).toEqual({ amount: 360n, asset: BTC });
     });
 
     it("quotes a card that names its legs in CAIP-19, on either backend", async () => {
@@ -322,6 +352,15 @@ describe("quote() verification, one case per check", () => {
             arkadeAssetAnswer(payload, CLOCK, { quote: { to_amount: "0" } }),
         );
         await expect(client.quote(buy())).rejects.toMatchObject({ check: "pair" });
+    });
+
+    it("refuses a carrier that is not a decimal integer", async () => {
+        for (const carrier_sats of ["1e3", "", "0x1", "-1", 1.5]) {
+            const { client } = await failing((payload) =>
+                arkadeAssetAnswer(payload, CLOCK, { quote: { carrier_sats } }),
+            );
+            await expect(client.quote(sell())).rejects.toMatchObject({ check: "pair" });
+        }
     });
 
     it("refuses a quote that has already lapsed", async () => {

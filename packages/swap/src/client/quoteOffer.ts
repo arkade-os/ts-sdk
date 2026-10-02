@@ -19,6 +19,8 @@ import {
     type Side,
 } from "@arkade-os/solver-discovery";
 import { QUOTE_OPTIONS, makeCachedFeedFetch } from "../markets";
+import { ASSET_CARRIER_SATS } from "../offer";
+import { assetPartOf, BTC_ASSET_PART } from "./assetId";
 import type { DiscoveryLeg } from "./aliases";
 import { QuoteVerificationFailed } from "./errors";
 import type { MarketCandidate } from "./market";
@@ -86,6 +88,9 @@ export const quoteFromFeed = async (
     const plan = await quoteOffer(candidate.card, {
         give: candidate.give,
         ...(amount.on === "give" ? { giveAmount: amount.value } : { wantAmount: amount.value }),
+        // What `fund` attaches to an asset deposit and the fill pays an asset want: the plan asks
+        // for it back in a BTC payout, and charges it where the card declares a delivered carrier.
+        carrierSats: ASSET_CARRIER_SATS,
         ...QUOTE_OPTIONS,
         fetchImpl: input.feed.fetch,
     });
@@ -116,7 +121,12 @@ export const quoteFromFeed = async (
             market: input.market,
             expiresAt,
             fee: {
-                amount: feedSpread(plan, plan.receive.atomic),
+                // The plan's payout returns the deposit's carrier; that part is not proceeds.
+                amount: feedSpread(
+                    plan,
+                    plan.receive.atomic,
+                    sellsAssetForBtc(input.endpoints) ? ASSET_CARRIER_SATS : 0n,
+                ),
                 asset: input.endpoints.take.asset,
             },
         },
@@ -129,8 +139,12 @@ export const quoteFromFeed = async (
  * the deposit would buy at the feed price with no fee, minus what the trader is actually paid out.
  * `take` is a parameter because the plan is the reference price on both asset backends but the
  * payout is not: a feed quote pays what the plan computed, a negotiated one the solver's `to_amount`.
+ *
+ * `carrierSats` is what an asset deposit carried to the filler, netted off a BTC payout: a payout
+ * that returns it charges nothing for it, and one that does not shows it as fee.
  */
-export const feedSpread = (plan: OfferPlan, take: bigint): bigint => {
+export const feedSpread = (plan: OfferPlan, take: bigint, carrierSats = 0n): bigint => {
+    const payout = take > carrierSats ? take - carrierSats : 0n;
     const fair = computeWantAmount({
         deposit: plan.deposit.atomic,
         give: plan.give,
@@ -138,9 +152,14 @@ export const feedSpread = (plan: OfferPlan, take: bigint): bigint => {
         feeBps: 0,
         safetyBps: 0,
     });
-    const spread = fair - take;
+    const spread = fair - payout;
     return spread > 0n ? spread : 0n;
 };
+
+/** Asset in, BTC out: the only shape whose carrier is denominated like the fee. */
+const sellsAssetForBtc = (endpoints: FeedQuoteInput["endpoints"]): boolean =>
+    assetPartOf(endpoints.give.asset) !== BTC_ASSET_PART &&
+    assetPartOf(endpoints.take.asset) === BTC_ASSET_PART;
 
 /** When the price behind this card was read, plus the TTL it is good for. */
 const feedExpiry = (card: DiscoveredMarket, feed: FeedFetch, now: number): number => {

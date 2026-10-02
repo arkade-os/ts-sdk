@@ -49,7 +49,6 @@ import {
     verifyOfferAddress,
     type LightningReceiveContractParams,
     type LightningSendContractParams,
-    quoteCarrierSats,
 } from "../rfq";
 import type { DiscoveryLeg } from "./aliases";
 import type { LightningCorridorDeps } from "./corridors/deps";
@@ -64,6 +63,7 @@ import { toRfqAmountSide } from "./rfqAmount";
 import { assembleRoute } from "./resolve";
 import type { AttestingRfqTransport } from "./transport";
 import {
+    verifiedCarrierSats,
     verifyCrossAssetAmount,
     verifyPair,
     verifyQuotedAmount,
@@ -336,6 +336,9 @@ const quoteArkadeAsset = async (
         now: input.now,
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
     });
+    // The solver's own carrier, parsed before anything is derived; a card that charges for it
+    // prices the reference below with it.
+    const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
 
     // The covenant binds what the fill must DELIVER, so the wanted amount is the
     // quote's own `to_amount` and the deposited asset rides the funding VTXO.
@@ -353,8 +356,6 @@ const quoteArkadeAsset = async (
     // rather than followed.
     verifyingDerivation(() => verifyOfferAddress(wire, offer));
 
-    // The carrier is the solver's own, so a card that charges for it prices the reference with it.
-    const carrierSats = sides.offerAsset === undefined ? undefined : quoteCarrierSats(wire);
     const reference = await quoteOffer(input.candidate.card, {
         give: input.candidate.give,
         giveAmount: parsed.give,
@@ -376,7 +377,11 @@ const quoteArkadeAsset = async (
             market: input.market,
             solver: parsed.solver,
             expiresAt: parsed.validUntil,
-            fee: { amount: feedSpread(reference, parsed.take), asset: input.endpoints.take.asset },
+            // Exactly one leg is BTC, so an asset deposit's carrier is on the payout's unit.
+            fee: {
+                amount: feedSpread(reference, parsed.take, carrierSats),
+                asset: input.endpoints.take.asset,
+            },
         },
         preparation: {
             backend: "rfq",

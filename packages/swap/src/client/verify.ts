@@ -14,6 +14,7 @@ import {
     assertFundable,
     assertReceivable,
     type InvoiceFacts,
+    quoteCarrierSats,
     type RfqQuote,
 } from "../rfq";
 import { QuoteExpired, QuoteVerificationFailed, type QuoteCheck } from "./errors";
@@ -342,6 +343,24 @@ export const verifyCrossAssetAmount = (input: {
             "pair",
             `${input.pair} give > 0 take > 0`,
             `give=${input.give} take=${input.take}`,
+        );
+    }
+};
+
+/**
+ * The solver's carrier for an asset deposit, well-formed. Reported as the `pair` check, like the
+ * amounts: it is sats the trader funds on top of the quoted give leg.
+ */
+export const verifiedCarrierSats = (quote: RfqQuote): bigint => {
+    try {
+        return quoteCarrierSats(quote);
+    } catch (error) {
+        if (reasonOf(error) !== "carrier_malformed") throw error;
+        throw new QuoteVerificationFailed(
+            "pair",
+            "carrier_sats a non-negative integer",
+            String(quote.carrier_sats),
+            { cause: error },
         );
     }
 };

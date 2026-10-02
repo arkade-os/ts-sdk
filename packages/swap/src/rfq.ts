@@ -280,7 +280,8 @@ export interface RfqQuote {
      * solver). */
     from_amount: number | string;
     to_amount: number | string;
-    /** Dust an asset rides on. NOT a fee — already netted into the amounts above. */
+    /** Dust an asset deposit rides on, kept by the filler. Expected back in `to_amount`; the
+     * client counts any shortfall as fee. */
     carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
@@ -1302,9 +1303,22 @@ export const assertArkadeFundable = (input: { quote: RfqQuote; now?: number }): 
     }
 };
 
-/** Falls back on absent AND non-positive: zero would fund an asset with no carrier. */
+/** Falls back on absent AND zero: zero would fund an asset with no carrier. Throws a gate
+ * error (`carrier_malformed`) on anything but a non-negative integer. */
 export const quoteCarrierSats = (quote: RfqQuote): bigint => {
-    const published = quote.carrier_sats === undefined ? 0n : BigInt(quote.carrier_sats);
+    const raw = quote.carrier_sats;
+    if (raw === undefined) return ASSET_CARRIER_SATS;
+    const canonical =
+        typeof raw === "number"
+            ? Number.isSafeInteger(raw) && raw >= 0
+            : /^(0|[1-9][0-9]*)$/.test(raw);
+    if (!canonical) {
+        throw gateError(
+            "carrier_malformed",
+            `quote carrier_sats ${String(raw)} is not a non-negative integer`,
+        );
+    }
+    const published = BigInt(raw);
     return published > 0n ? published : ASSET_CARRIER_SATS;
 };
 
