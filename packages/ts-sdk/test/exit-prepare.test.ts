@@ -1,6 +1,6 @@
 import { base64, hex } from "@scure/base";
 import { p2tr } from "@scure/btc-signer";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SingleKey } from "../src/identity/singleKey";
 import { getNetwork } from "../src/networks";
 import { ChainTxType } from "../src/providers/indexer";
@@ -13,6 +13,8 @@ import { P2A } from "../src/utils/anchor";
 import { Transaction } from "../src/utils/transaction";
 import { CHILD_OUTPUT_DUST, estimate } from "../src/wallet/exit/estimate";
 import type { ExitOptions } from "../src/wallet/exit/estimate";
+import { OnchainCosignPreflightError } from "../src/contracts/onchainSpend";
+import { OnchainCosignRejectedError, OnchainCosignUnsupportedError } from "../src/providers/ark";
 import { prepare } from "../src/wallet/exit/prepare";
 import { PackageStep, SweepStep } from "../src/wallet/exit/types";
 
@@ -250,5 +252,34 @@ describe("prepare", () => {
         if (splitterStep.kind !== "broadcast") throw new Error("expected broadcast step");
         const splitter = Transaction.fromRaw(hex.decode(splitterStep.hex));
         expect(splitter.inputsLength).toBe(2);
+    });
+
+    describe("cosign-first sweep", () => {
+        it("skips the vtxo and builds no CSV sweep when cosign succeeds", async () => {
+            const { exitOpts, vtxo } = await fixture();
+            const cosign = vi.fn().mockResolvedValue("cosign-txid");
+            await expect(prepare({ ...exitOpts, cosign })).rejects.toThrow(/all skipped/);
+            expect(cosign).toHaveBeenCalledWith(
+                { txid: vtxo.txid, vout: vtxo.vout },
+                exitOpts.sweepAddress,
+            );
+        });
+
+        it.each([
+            ["unsupported", new OnchainCosignUnsupportedError()],
+            ["rejected", new OnchainCosignRejectedError("no")],
+            ["preflight", new OnchainCosignPreflightError("nothing to sweep")],
+        ])("continues to the CSV sweep on %s", async (_name, err) => {
+            const { exitOpts } = await fixture();
+            const cosign = vi.fn().mockRejectedValue(err);
+            const pkg = await prepare({ ...exitOpts, cosign });
+            expect(pkg.steps.filter((x) => x.kind === "sweep")).toHaveLength(1);
+        });
+
+        it("rethrows any other cosign error", async () => {
+            const { exitOpts } = await fixture();
+            const cosign = vi.fn().mockRejectedValue(new Error("boom"));
+            await expect(prepare({ ...exitOpts, cosign })).rejects.toThrow("boom");
+        });
     });
 });

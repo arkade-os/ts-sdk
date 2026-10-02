@@ -5,6 +5,7 @@ import {
     IReadonlyWallet,
     isSubdust,
     Outpoint,
+    SendOnchainParams,
     VirtualCoin,
 } from ".";
 import {
@@ -19,7 +20,13 @@ import {
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkInfo, ArkProvider, SettlementEvent } from "../providers/ark";
+import {
+    ArkInfo,
+    ArkProvider,
+    OnchainCosignRejectedError,
+    SettlementEvent,
+} from "../providers/ark";
+import { isCosignFallback } from "../contracts/onchainSpend";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
@@ -102,6 +109,8 @@ interface SweepCapableWallet extends IReadonlyWallet {
      * addresses signs each with the correct key (plan §6-III.3).
      */
     signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
+    /** Optional so older wallet objects keep working; absent disables the cosign-first sweep. */
+    sendOnchain?(params: SendOnchainParams): Promise<string>;
 }
 
 /**
@@ -1892,6 +1901,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * }
      * ```
      */
+    async sweepOnchainCoins(): Promise<string | undefined> {
+        if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
+        const boarding = await this.wallet.getBoardingAddress();
+        try {
+            return await this.wallet.sendOnchain({ outputs: [], sweepTo: boarding });
+        } catch (e) {
+            if (!isCosignFallback(e)) throw e;
+            if (e instanceof OnchainCosignRejectedError) {
+                console.warn("Onchain cosign sweep rejected, falling back to CSV exit:", e.message);
+            }
+            return undefined;
+        }
+    }
+
     async sweepExpiredBoardingUtxos(prefetchedUtxos?: ExtendedCoin[]): Promise<string> {
         const sweepEnabled =
             this.settlementConfig !== false &&
@@ -3010,8 +3033,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     (this.settlementConfig?.boardingUtxoSweep ??
                         DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
                 if (sweepEnabled) {
+                    let utxos = boardingUtxos;
                     try {
-                        await this.sweepExpiredBoardingUtxos(boardingUtxos);
+                        if (await this.sweepOnchainCoins()) {
+                            utxos = await this.wallet.getBoardingUtxos();
+                        }
+                    } catch (e) {
+                        hadError = true;
+                        console.error("Error cosign-sweeping onchain coins:", e);
+                    }
+                    try {
+                        await this.sweepExpiredBoardingUtxos(utxos);
                     } catch (e) {
                         if (
                             !(e instanceof Error) ||

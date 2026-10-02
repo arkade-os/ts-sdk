@@ -55,6 +55,12 @@ export type ExitOptions = {
      * pass this explicitly on signet/mutinynet.
      */
     networkName?: NetworkName;
+    /**
+     * Spends an already-onchain coin through an arkd cosignature, returning the
+     * txid. Tried before the CSV sweep; a cosign fallback error continues to
+     * the CSV path, any other error aborts.
+     */
+    cosign?: (outpoint: Outpoint, outputAddress: string) => Promise<string>;
 };
 
 export function stepFundingAmount(stepFee: number): number {
