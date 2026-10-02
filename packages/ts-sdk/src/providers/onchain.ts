@@ -214,20 +214,46 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getFeeRate(): Promise<number | undefined> {
-        const response = await baseFetch(`${this.baseUrl}/fee-estimates`);
-        // Not every Esplora backend serves /fee-estimates — mempool returns 404
-        // on regtest, where it has no fee history. Every caller falls back to
-        // MIN_FEE_RATE when this is undefined, so degrade gracefully on a missing
-        // endpoint rather than throwing and defeating those fallbacks. Other
-        // (e.g. 5xx) failures still surface.
+        let url = `${this.baseUrl}/fee-estimates`;
+        let key = "1";
+        let response = await baseFetch(url);
+        // Some mempool deployments expose recommendations but not Esplora's
+        // fee-estimates route. Only a missing endpoint triggers the fallback;
+        // transport and service errors must still reach the caller.
         if (response.status === 404) {
+            // Release the connection before issuing another request to this host.
+            await response.body?.cancel();
+            url = `${this.baseUrl}/v1/fees/recommended`;
+            key = "fastestFee";
+            response = await baseFetch(url);
+        }
+        if (response.status === 404) {
+            await response.body?.cancel();
             return undefined;
         }
         if (!response.ok) {
+            await response.body?.cancel();
             throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
         }
-        const fees = (await response.json()) as Record<string, number>;
-        return fees["1"] ?? undefined;
+        const mediaType = response.headers
+            .get("content-type")
+            ?.split(";", 1)[0]
+            .trim()
+            .toLowerCase();
+        if (mediaType === "text/html") {
+            await response.body?.cancel();
+            throw new Error(`Invalid fee estimate from ${url}: received HTML`);
+        }
+        const fees: unknown = await response.json();
+        if (!fees || typeof fees !== "object" || Array.isArray(fees)) {
+            throw new Error(`Invalid fee estimate from ${url}: expected an object`);
+        }
+        const fee = (fees as Record<string, unknown>)[key];
+        if (fee == null) return undefined;
+        if (typeof fee !== "number" || !Number.isFinite(fee) || fee <= 0) {
+            throw new Error(`Invalid fee estimate from ${url}: expected a positive finite number`);
+        }
+        return fee;
     }
 
     async broadcastTransaction(...txs: string[]): Promise<string> {
