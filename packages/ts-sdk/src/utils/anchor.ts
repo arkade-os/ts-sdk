@@ -20,22 +20,16 @@ const hexP2Ascript = hex.encode(P2A.script);
 
 /**
  * search for anchor in the given transaction.
- * @throws {Error} if the anchor is not found or has the wrong amount
+ * @throws {Error} if the anchor is not found
  */
 export function findP2AOutput(tx: Transaction): TransactionInputUpdate {
     for (let i = 0; i < tx.outputsLength; i++) {
         const output = tx.getOutput(i);
         if (output.script && hex.encode(output.script) === hexP2Ascript) {
-            if (output.amount !== P2A.amount) {
-                throw new Error(
-                    `P2A output has wrong amount, expected ${P2A.amount} got ${output.amount}`,
-                );
-            }
-
             return {
                 txid: tx.id,
                 index: i,
-                witnessUtxo: P2A,
+                witnessUtxo: { script: P2A.script, amount: output.amount ?? 0n },
             };
         }
     }
@@ -80,7 +74,8 @@ export function buildAnchorChild(params: AnchorChildParams): {
     const { parent, feeRate, fundingCoins, changeAddress, tapInternalKey, network } = params;
 
     const child = new ArkTransaction({ version: 3, allowLegacyWitnessUtxo: true });
-    child.addInput(findP2AOutput(parent)); // throws if no anchor
+    const anchor = findP2AOutput(parent); // throws if no anchor
+    child.addInput(anchor);
 
     const estimator = TxWeightEstimator.create().addP2AInput();
     for (const _ of fundingCoins) {
@@ -102,7 +97,7 @@ export function buildAnchorChild(params: AnchorChildParams): {
         });
     }
 
-    const change = total + P2A.amount - BigInt(fee);
+    const change = total + anchor.witnessUtxo!.amount - BigInt(fee);
     if (change < BigInt(CHILD_DUST_AMOUNT)) {
         throw new Error(
             `insufficient funding for anchor child: need change >= ${CHILD_DUST_AMOUNT}, got ${change}`,

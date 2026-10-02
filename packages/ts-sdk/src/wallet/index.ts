@@ -576,7 +576,7 @@ export interface SendParams {
      */
     selectedVtxos?: ExtendedVirtualCoin[];
 
-    /** Maximum sats of unavoidable change this send may pay as an offchain fee. Defaults to the operator's cap; 0 disables it. */
+    /** Maximum sats of unavoidable change this send may pay as an offchain fee. Defaults to any change below the operator's VTXO minimum; 0 disables it. */
     maxChangeFee?: number;
 }
 

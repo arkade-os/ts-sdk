@@ -5712,20 +5712,11 @@ export class Wallet
                 ? await this.arkProvider.getInfo()
                 : undefined;
         const vtxoMinAmount = info?.vtxoMinAmount ?? 0n;
-        const advertisedFeeCap = info?.maxOffchainTxFee ?? 0n;
-        const maxDustFee =
-            vtxoMinAmount > 0n && advertisedFeeCap > 0n
-                ? [
-                      vtxoMinAmount - 1n,
-                      advertisedFeeCap,
-                      maxChangeFee === undefined ? advertisedFeeCap : BigInt(maxChangeFee),
-                  ].reduce((smallest, value) => (value < smallest ? value : smallest))
-                : 0n;
         const canPayChangeAsFee = () =>
             assetChanges.size === 0 &&
             changeAmount > 0 &&
             BigInt(changeAmount) < vtxoMinAmount &&
-            BigInt(changeAmount) <= maxDustFee;
+            (maxChangeFee === undefined || changeAmount <= maxChangeFee);
         if (selectedVtxos && changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) {
             if (canPayChangeAsFee()) {
                 changeAmount = 0;
