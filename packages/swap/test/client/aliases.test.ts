@@ -26,17 +26,17 @@ describe("public ids down to discovery legs", () => {
         expect(toDiscoveryLeg(btcOn("arkade", NETWORK))).toEqual({
             corridor: "arkade",
             assetId: BTC_ASSET_ID,
-            marketId: "arkade:regtest/slip44:0",
+            marketId: "arkade:regtest/slip44:1",
         });
         expect(toDiscoveryLeg(btcOn("bolt11", NETWORK))).toEqual({
             corridor: "lightning",
             assetId: BTC_ASSET_ID,
-            marketId: "bolt11:regtest/slip44:0",
+            marketId: "bolt11:regtest/slip44:1",
         });
         expect(toDiscoveryLeg(btcOn("bitcoin", NETWORK))).toEqual({
             corridor: "onchain",
             assetId: BTC_ASSET_ID,
-            marketId: "bitcoin:regtest/slip44:0",
+            marketId: "bitcoin:regtest/slip44:1",
         });
         expect(toDiscoveryLeg(USD)).toEqual({
             corridor: "arkade",
@@ -78,6 +78,37 @@ describe("public ids down to discovery legs", () => {
     ])("refuses %s", (_label, id) => {
         expect(() => toDiscoveryLeg(id)).toThrowError(
             expect.objectContaining({ name: "UnsupportedRoute" }),
+        );
+    });
+
+    it("takes BTC under the network's own coin type: slip44:1 off mainnet", () => {
+        expect(toDiscoveryLeg("arkade:mutinynet/slip44:1")).toEqual({
+            corridor: "arkade",
+            assetId: BTC_ASSET_ID,
+            marketId: "arkade:mutinynet/slip44:1",
+        });
+        expect(toDiscoveryLeg("arkade:bitcoin/slip44:0").assetId).toBe(BTC_ASSET_ID);
+    });
+
+    it.each([
+        [
+            "mainnet's coin type on mutinynet",
+            "arkade:mutinynet/slip44:0",
+            "arkade:mutinynet/slip44:1",
+        ],
+        [
+            "mainnet's coin type on regtest L1",
+            "bitcoin:regtest/slip44:0",
+            "bitcoin:regtest/slip44:1",
+        ],
+        ["the testnet coin type on mainnet", "bolt11:bitcoin/slip44:1", "bolt11:bitcoin/slip44:0"],
+    ] as const)("refuses %s, naming the id BTC has there", (_label, id, expected) => {
+        // No card carries it, so accepting it would only fail later as "no market serves".
+        expect(() => toDiscoveryLeg(id)).toThrowError(
+            expect.objectContaining({
+                name: "UnsupportedRoute",
+                message: expect.stringContaining(expected),
+            }),
         );
     });
 });

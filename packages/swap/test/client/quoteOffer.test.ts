@@ -24,7 +24,7 @@ const snapshot: DiscoverySnapshot = {
 const ARKADE_BTC = {
     corridor: "arkade",
     assetId: "btc",
-    marketId: "arkade:regtest/slip44:0",
+    marketId: "arkade:regtest/slip44:1",
 } as const;
 const ARKADE_USD = {
     corridor: "arkade",
@@ -34,7 +34,7 @@ const ARKADE_USD = {
 
 const legs = { give: ARKADE_BTC, take: ARKADE_USD };
 const endpoints = {
-    give: { corridor: "arkade" as const, asset: "arkade:regtest/slip44:0" as const },
+    give: { corridor: "arkade" as const, asset: "arkade:regtest/slip44:1" as const },
     take: {
         corridor: "arkade" as const,
         asset: `arkade:regtest/asset:${USD_ASSET_ID}` as const,

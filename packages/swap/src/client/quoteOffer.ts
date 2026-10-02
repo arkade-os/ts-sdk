@@ -20,7 +20,7 @@ import {
 } from "@arkade-os/solver-discovery";
 import { QUOTE_OPTIONS, makeCachedFeedFetch } from "../markets";
 import { ASSET_CARRIER_SATS } from "../offer";
-import { assetPartOf, BTC_ASSET_PART } from "./assetId";
+import { isBtcAsset } from "./assetId";
 import type { DiscoveryLeg } from "./aliases";
 import { QuoteVerificationFailed } from "./errors";
 import type { MarketCandidate } from "./market";
@@ -158,8 +158,7 @@ export const feedSpread = (plan: OfferPlan, take: bigint, carrierSats = 0n): big
 
 /** Asset in, BTC out: the only shape whose carrier is denominated like the fee. */
 const sellsAssetForBtc = (endpoints: FeedQuoteInput["endpoints"]): boolean =>
-    assetPartOf(endpoints.give.asset) !== BTC_ASSET_PART &&
-    assetPartOf(endpoints.take.asset) === BTC_ASSET_PART;
+    !isBtcAsset(endpoints.give.asset) && isBtcAsset(endpoints.take.asset);
 
 /** When the price behind this card was read, plus the TTL it is good for. */
 const feedExpiry = (card: DiscoveredMarket, feed: FeedFetch, now: number): number => {

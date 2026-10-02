@@ -62,7 +62,7 @@ vi.mock("../../src/offer", async (original) => {
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const USD = `arkade:regtest/asset:${USD_ASSET_ID}`;
-const BTC = "arkade:regtest/slip44:0";
+const BTC = "arkade:regtest/slip44:1";
 
 /** The card's own formula at the fixture price: 10_000 sats, less 30bps. */
 const CARD_PAYOUT = 997n;

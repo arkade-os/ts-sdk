@@ -92,9 +92,9 @@ describe("quote() on arkade -> lightning", () => {
         const { client, transport } = await setup();
         const quote = await client.quote(sendInput());
 
-        expect(quote.give).toEqual({ asset: "arkade:regtest/slip44:0", amount: 5_050n });
-        expect(quote.take).toEqual({ asset: "bolt11:regtest/slip44:0", amount: 5_000n });
-        expect(quote.fee).toEqual({ amount: 50n, asset: "arkade:regtest/slip44:0" });
+        expect(quote.give).toEqual({ asset: "arkade:regtest/slip44:1", amount: 5_050n });
+        expect(quote.take).toEqual({ asset: "bolt11:regtest/slip44:1", amount: 5_000n });
+        expect(quote.fee).toEqual({ amount: 50n, asset: "arkade:regtest/slip44:1" });
         expect(quote.lock).toEqual({ hash: PAYMENT_HASH });
         expect(quote.refundLocktime).toBe(CLOCK.refundLocktime);
         expect(quote.expiresAt).toBe(CLOCK.validUntil);
@@ -158,8 +158,8 @@ describe("quote() on lightning -> arkade", () => {
             bolt11: (quote.route.give.instrument as { bolt11: string }).bolt11,
         });
         expect(transport.sent).toHaveLength(1);
-        expect(quote.give.asset).toBe("bolt11:regtest/slip44:0");
-        expect(quote.take).toEqual({ asset: "arkade:regtest/slip44:0", amount: 4_950n });
+        expect(quote.give.asset).toBe("bolt11:regtest/slip44:1");
+        expect(quote.take).toEqual({ asset: "arkade:regtest/slip44:1", amount: 4_950n });
         // The give leg's instrument IS the artifact — the quote supplies the
         // non-wallet give instrument, which is what the artifact is.
         expect(quote.route.give.instrument).toMatchObject({ kind: "invoice", amount: 5_000n });
@@ -213,8 +213,8 @@ describe("quote() on arkade -> onchain", () => {
         const { client } = await setup();
         const quote = await client.quote(send());
 
-        expect(quote.give).toEqual({ asset: "arkade:regtest/slip44:0", amount: 100_000n });
-        expect(quote.take).toEqual({ asset: "bitcoin:regtest/slip44:0", amount: 99_000n });
+        expect(quote.give).toEqual({ asset: "arkade:regtest/slip44:1", amount: 100_000n });
+        expect(quote.take).toEqual({ asset: "bitcoin:regtest/slip44:1", amount: 99_000n });
         expect(quote.route.take.instrument).toEqual({ kind: "address", address: BCRT1 });
         expect(quote.refundLocktime).toBe(CLOCK.refundLocktime);
         const preparation = client.preparationOf(quote.id);
@@ -265,7 +265,7 @@ describe("quote() on arkade -> arkade", () => {
     it("resolves a ticker against the cards themselves", async () => {
         const { client } = await setup();
         const resolution = await client.resolve(exchange());
-        expect(resolution.give.asset).toBe("arkade:regtest/slip44:0");
+        expect(resolution.give.asset).toBe("arkade:regtest/slip44:1");
         expect(resolution.take.asset).toBe(`arkade:regtest/asset:${spotCard.quote_asset.id}`);
     });
 });
