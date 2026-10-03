@@ -11,7 +11,9 @@ const XONLY_HEX = /^[0-9a-f]{64}$/;
 /** Where to reach a solver. Bounds are indicative — the quote binds.
  *
  *  No `emulatorPubkey`: the card's key only FILTERS here — the covenant is
- *  built from `deps.emulatorPubkey` or the pinned default, never from it. */
+ *  built from `deps.emulatorPubkey` or the pinned default, never from it.
+ *
+ */
 export interface SolverRendezvous {
     solverPubkey: string;
     transports: { nostr: { relays: string[] } };
@@ -52,7 +54,9 @@ const rendezvousOf = (market: DiscoveredMarket, pinned?: string): SolverRendezvo
 /** The size check is not a courtesy: quoting outside a card's advertised range
  *  burns a negotiation, tells a third party what the user is about to do, and
  *  is refused anyway. A card that serves the corridor but not the size is
- *  skipped, not fatal — another may take it. */
+ *  skipped, not fatal — another may take it.
+ *
+ */
 export const solverRendezvous = (
     markets: DiscoveredMarket[],
     payoutCorridor: "onchain" | "lightning",
@@ -62,9 +66,8 @@ export const solverRendezvous = (
     // A 33-byte compressed key encodes to 66 hex and would otherwise pass as
     // x-only. Neither rail re-derives the pin, so this is the only place both
     // fail closed.
-    const encoded = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
-    if (encoded !== undefined && !XONLY_HEX.test(encoded)) return undefined;
-    const pinned = encoded;
+    const pinned = fallbackEmulatorPubkey ? hex.encode(fallbackEmulatorPubkey) : undefined;
+    if (pinned !== undefined && !XONLY_HEX.test(pinned)) return undefined;
 
     // Corridor AND asset: both rails negotiate the hard-coded `arkade:BTC`
     // pair, so a corridor-only match bounds sats against another asset's

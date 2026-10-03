@@ -3,30 +3,13 @@
  * quote naming a different amount than the request is funded at the solver's
  * number. `requestLightningSend` compares against the invoice instead.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-
-const state = vi.hoisted(() => ({
-    arkInfo: { signerPubkey: "", unilateralExitDelay: 4096, network: "regtest" },
-}));
-
-vi.mock("@arkade-os/sdk", async (importOriginal) => {
-    const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
-    return {
-        ...mod,
-        RestArkProvider: class {
-            async getInfo() {
-                return state.arkInfo;
-            }
-        },
-    };
-});
-
 import { ArkAddress, SingleKey, type IWallet } from "@arkade-os/sdk";
 import {
     ONCHAIN_SEND_PAIR,
-    lightningSendVtxoScript,
+    lightningSendContract,
     requestOnchainSend,
     type RfqQuote,
     type RfqTransport,
@@ -45,7 +28,14 @@ const HTLC_PUBKEY = key(11);
 const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
 const WALLET_KEY = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
-state.arkInfo.signerPubkey = hex.encode(SERVER);
+/** The server info the entrypoint reads off the wallet's own connection —
+ * one object, so the covenant derived in-flow and the one the transport stub
+ * builds from SERVER cannot drift. */
+const ARK_INFO = {
+    signerPubkey: hex.encode(SERVER),
+    unilateralExitDelay: 4096,
+    network: "regtest",
+};
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -56,6 +46,7 @@ const wallet = (): IWallet =>
     ({
         identity: SingleKey.fromHex(WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
+        getArkadeInfo: async () => ARK_INFO,
         getContractManager: async () => ({ createContract: async () => ({}) }),
     }) as unknown as IWallet;
 
@@ -68,10 +59,10 @@ const quoting = (fromAmount: number, toAmount: number): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const paymentHash = profile.payment_hash as string;
-        const lockup = lightningSendVtxoScript({
+        const lockup = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime: REFUND_LOCKTIME,
-            serverPubkey: SERVER,
+            operatorPubkey: SERVER,
             paymentHash,
             claimDelay: 4096,
             emulatorPubkey: key(9),
@@ -115,7 +106,7 @@ const quoting = (fromAmount: number, toAmount: number): RfqTransport => ({
 });
 
 const send = (transport: RfqTransport, amount: number, amountSide: "from" | "to") =>
-    requestOnchainSend(wallet(), "http://ark", transport, {
+    requestOnchainSend(wallet(), transport, {
         amount,
         amountSide,
         payoutPubkey: PAYOUT_PUBKEY,
@@ -154,6 +145,7 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
         const registering = {
             identity: SingleKey.fromHex(WALLET_KEY),
             getAddress: async () => REFUND_ADDRESS,
+            getArkadeInfo: async () => ARK_INFO,
             getContractManager: async () => ({
                 createContract: async (row: unknown) => {
                     rows.push(row);
@@ -163,7 +155,7 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
         } as unknown as IWallet;
 
         await expect(
-            requestOnchainSend(registering, "http://ark", quoting(100_000, 99_000), {
+            requestOnchainSend(registering, quoting(100_000, 99_000), {
                 amount: 100_000,
                 amountSide: "to",
                 payoutPubkey: PAYOUT_PUBKEY,

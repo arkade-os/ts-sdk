@@ -1,3 +1,4 @@
+import { collectAssetSwaps } from "../src/repository";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IWallet } from "@arkade-os/sdk";
 import { InMemoryAssetSwapRepository } from "../src/repository";
@@ -35,19 +36,20 @@ const pending = (id: string, overrides: Partial<AssetSwap> = {}): AssetSwap => (
     ...overrides,
 });
 
-const wallet = { identity: {} } as IWallet;
+const WALLET_ADDRESS =
+    "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2";
+const wallet = { identity: {}, getAddress: async () => WALLET_ADDRESS } as unknown as IWallet;
 const indexer = {} as RestoreIndexer;
 const txs = [{ type: "sent", redeemTxid: "new" }] as Tx[];
-const serverPubkey = new Uint8Array(32);
+const operatorPubkey = new Uint8Array(32);
 
 const run = (repository: InMemoryAssetSwapRepository, overrides = {}) =>
     restoreAssetSwapRepository({
         wallet,
-        arkServerUrl: "https://ark.test",
         indexer,
         repository,
         txs,
-        serverPubkey,
+        operatorPubkey,
         ...overrides,
     });
 
@@ -72,7 +74,12 @@ describe("restoreAssetSwapRepository", () => {
             indexer,
             txs,
             new Set(["open", "settled"]),
-            { serverPubkey, scanned: new Set(["open", "settled"]), reopen: [open] },
+            {
+                operatorPubkey,
+                scanned: new Set(["open", "settled"]),
+                reopen: [open],
+                hrp: "tark",
+            },
         );
     });
 
@@ -106,7 +113,7 @@ describe("restoreAssetSwapRepository", () => {
             { previous: open, current: resolved },
             { current: rebuilt },
         ]);
-        expect(result.swaps).toEqual([open, rebuilt].map((s) => (s.id === "open" ? resolved : s)));
+        expect(result.swaps).toEqual([rebuilt, resolved]);
     });
 
     it("lets a consumer decorate only newly rebuilt records before persistence", async () => {
@@ -136,7 +143,7 @@ describe("restoreAssetSwapRepository", () => {
 
         const result = await run(repository);
 
-        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://ark.test", [open]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, [open]);
         expect(result.coverageError).toBeUndefined();
     });
 
@@ -149,7 +156,7 @@ describe("restoreAssetSwapRepository", () => {
 
         const result = await run(repository);
 
-        expect(await repository.getAllSwaps()).toEqual([rebuilt]);
+        expect(await collectAssetSwaps(repository)).toEqual([rebuilt]);
         expect(await repository.getScannedTxids()).toEqual(new Set(["new"]));
         expect(result.coverageError).toBe(unavailable);
     });
@@ -163,7 +170,7 @@ describe("restoreAssetSwapRepository", () => {
         } as unknown as AssetSwap;
         await repository.saveSwap(onchain);
         mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
-        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Ark server unavailable"));
+        mocks.restoreOfferCoverage.mockRejectedValue(new Error("Arkade operator unavailable"));
 
         const result = await run(repository);
 
@@ -180,7 +187,7 @@ describe("restoreAssetSwapRepository", () => {
 
         await expect(run(repository)).rejects.toBe(scanError);
 
-        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, "https://ark.test", [open]);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledWith(wallet, [open]);
     });
 
     it("does not mutate the repository after cancellation", async () => {
@@ -195,7 +202,7 @@ describe("restoreAssetSwapRepository", () => {
         const result = await run(repository, { signal: controller.signal });
 
         expect(result.aborted).toBe(true);
-        expect(await repository.getAllSwaps()).toEqual([]);
+        expect(await collectAssetSwaps(repository)).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
         expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
     });

@@ -9,15 +9,9 @@
  * | arkade->onchain (solver funds L1)     | user's payout key   | solver's htlc key  |
  * | onchain->arkade (user funds L1)       | solver's htlc key   | user's refund key  |
  *
- * The hash-lock commitment is HASH160-style — `ripemd160(sha256(P))` — the
- * same construction the lightning-send program uses, so ONE preimage unlocks
- * both the Arkade leaf and the L1 leaf of a swap.
- *
- * Design rules carried over from the rest of the package:
- * - contracts are locally derived, byte-pinned by golden tests; anything
- *   address-shaped from a solver is compare-only;
- * - the package holds no keys and no backend: signing is a callback over the
- *   BIP-341 sighash, chain access is the injected {@link ChainSource}.
+ * The hash-lock is `ripemd160(sha256(P))`, as in the lightning-send program, so ONE preimage
+ * unlocks both the Arkade leaf and the L1 leaf. Solver-supplied addresses are compare-only; the
+ * package holds no keys (signing is a callback over the BIP-341 sighash) and no backend.
  */
 import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -37,10 +31,8 @@ export const ONCHAIN_CLAIM_MARGIN_SECONDS = 90 * 60;
 /** Bounds on the confirmation depth a quote may demand. */
 export const MAX_MIN_CONFIRMATIONS = 6;
 /**
- * BIP65's boundary between the two things an absolute locktime can mean.
- * Below it consensus reads the value as a block height; at or above it, as a
- * unix timestamp. 500,000,000 itself is 1985-07-05 and is a timestamp, so the
- * comparison against it is strict.
+ * BIP65's boundary between the two things an absolute locktime can mean: below it a block height,
+ * at or above it a unix timestamp (so the comparison is strict).
  */
 export const LOCKTIME_THRESHOLD = 500_000_000;
 /** Conservative block interval for converting depths into wall-clock time. */
@@ -48,26 +40,21 @@ export const ONCHAIN_SECONDS_PER_BLOCK = 600;
 /**
  * Outputs below this are unspendable in practice; builders refuse them.
  *
- * 330, not 546: Bitcoin Core's dust threshold is a function of the OUTPUT
- * type, and 546 is the P2PKH figure. Both payout scripts on this corridor are
- * taproot — the claim pays the user's Arkade-side L1 address and the refund
- * pays the trader's — for which the threshold is 330 (the same number
- * `FALLBACK_WALLET_DUST_AMOUNT` already uses in the core SDK). Holding the
- * P2PKH number here rejects payouts between 330 and 546 that the network
- * would relay perfectly well, which on a refund path means refusing to return
- * funds that could have been returned.
- *
- * Should a caller ever pass a legacy `payoutPkScript`, this floor is too low
- * for that output and the spend would be non-standard; the threshold would
- * then have to be derived from the script rather than fixed.
- *
- * `BigInt(330)` rather than a `330n` literal, matching the rest of the
- * package: a bigint literal needs an ES2020 target, and this source is read
- * directly by consumers that target lower — forcing every one of them to
- * raise their own target for a single constant. The compiled output is
- * identical.
+ * 330, not 546: dust depends on output type, and both payouts here are taproot (546 is P2PKH).
+ * The higher figure would refuse relayable refunds. A legacy `payoutPkScript` would need a
+ * script-derived threshold. `BigInt(330)`, not `330n`: consumers read this source directly and
+ * may target below ES2020.
  */
 export const ONCHAIN_DUST_SATS = BigInt(330);
+
+/**
+ * vsize of the trader's claim transaction, for pricing it before it is built.
+ *
+ * One-in-one-out with a fixed witness, so only the payout script varies; this is the largest
+ * standard one (P2TR). Rounded UP so a claim fee never under-charges out of the recipient's payout.
+ * Pinned against a real sizing pass in `onchainHtlc.test.ts`; a leaf-shape change moves both.
+ */
+export const ONCHAIN_CLAIM_VSIZE = 152;
 
 // ── Preimage utilities ───────────────────────────────────────────────────────
 
@@ -80,11 +67,52 @@ export const paymentHashOf = (preimage: Uint8Array): string => hex.encode(sha256
 /** The script-level commitment: `ripemd160(sha256(P))`, from the wire hash. */
 const h160FromPaymentHash = (paymentHash: string): Uint8Array => ripemd160(hex.decode(paymentHash));
 
+/** Refuse a `P` whose `ripemd160(sha256(P))` is not the covenant's `preimageHash`. */
+export const assertPreimageMatches = (preimage: Uint8Array, preimageHash: Uint8Array): void => {
+    if (hex.encode(ripemd160(sha256(preimage))) !== hex.encode(preimageHash)) {
+        throw new Error("preimage does not match the covenant's payment hash");
+    }
+};
+
+/** A gate refusal carrying a stable `reason` for callers to switch on. */
+export const gateError = (reason: string, message: string): Error & { reason: string } => {
+    const error = new Error(message) as Error & { reason: string };
+    error.reason = reason;
+    return error;
+};
+
+export const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Probe every `pollMs` (default 5s) until it yields a value; past the unix-seconds
+ * `deadline`, throw `gateError(reason, message)`. */
+export async function pollUntil<T>(
+    probe: () => Promise<T | undefined>,
+    options: { pollMs?: number; deadline?: number },
+    reason: string,
+    message: string,
+): Promise<T> {
+    const pollMs = options.pollMs ?? 5_000;
+    for (;;) {
+        const value = await probe();
+        if (value !== undefined) return value;
+        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
+            throw gateError(reason, message);
+        }
+        await sleep(pollMs);
+    }
+}
+
 // ── The taproot HTLC ─────────────────────────────────────────────────────────
 
 export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
 
-/** `OnchainNetwork` → that chain's address/script parameters. */
+/**
+ * The `@scure/btc-signer` parameters each L1 network is addressed under.
+ *
+ * Three members, not five: `signet` and `mutinynet` are indistinguishable from `testnet` at the
+ * address level, which is why {@link l1NetworkFromArk} folds them together.
+ */
 export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     bitcoin: btc.NETWORK,
     testnet: btc.TEST_NETWORK,
@@ -92,10 +120,9 @@ export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
 };
 
 /**
- * The `payoutPkScript` {@link buildHtlcClaim} pays the fill to. Resolved EARLY:
- * the claim's output is the spender's own choice, so nothing that survives a
- * send screen names it, and a destination that cannot be encoded must be
- * refused before the swap is negotiated rather than at claim time.
+ * The `payoutPkScript` {@link buildHtlcClaim} pays the fill to. Resolve it EARLY: nothing else
+ * names the spender's destination, and one that cannot be encoded must be refused before the swap
+ * is negotiated, not at claim time.
  */
 export const l1ScriptForAddress = (address: string, network: OnchainNetwork): Uint8Array =>
     btc.OutScript.encode(btc.Address(L1_NETWORKS[network]).decode(address));
@@ -129,13 +156,8 @@ export interface OnchainHtlc {
  *   claim:  `OP_SIZE 32 OP_EQUALVERIFY OP_HASH160 <h160> OP_EQUALVERIFY <claimKey> OP_CHECKSIG`
  *   refund: `<locktime> OP_CHECKLOCKTIMEVERIFY OP_DROP <refundKey> OP_CHECKSIG`
  *
- * The claim leaf's `OP_SIZE 32 OP_EQUALVERIFY` prefix pins the witness
- * preimage to exactly 32 bytes before it's hashed — the same shape real HTLC
- * scripts (e.g. BOLT3's) carry, and this contract's preimage is always
- * exactly 32 bytes by construction.
- *
- * Pure derivation — pinned byte-for-byte by the golden test; any drift here
- * changes addresses on BOTH sides of a swap.
+ * `OP_SIZE 32` pins the preimage to 32 bytes before hashing, as BOLT3 HTLCs do. Pinned
+ * byte-for-byte by the golden test; any drift changes addresses on BOTH sides of a swap.
  */
 export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNetwork): OnchainHtlc {
     if (params.claimKey.length !== 32 || params.refundKey.length !== 32) {
@@ -146,24 +168,16 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
             `refundLocktime must be a positive unix timestamp, got ${params.refundLocktime}`,
         );
     }
-    // The bare `number` cannot say which of the two things it means, so a
-    // height-shaped value builds a refund leaf that matures at block ~500
-    // million rather than failing — the caller that dropped a `/ 1000`, or a
-    // solver quoting a height, gets an HTLC whose refund path is dead for
-    // millennia. Nothing downstream can detect it: the address is well-formed
-    // and the funding confirms.
+    // A height-shaped value (a dropped `/ 1000`, a solver quoting a height) would build a refund
+    // leaf dead for millennia, undetectably: the address is well-formed and funding confirms.
     if (params.refundLocktime < LOCKTIME_THRESHOLD) {
         throw new Error(
             `refundLocktime ${params.refundLocktime} is below LOCKTIME_THRESHOLD ` +
                 `(${LOCKTIME_THRESHOLD}) and would be interpreted as a block height`,
         );
     }
-    // Refused rather than defaulted: an unknown network reaches `btc.p2tr` as
-    // `undefined`, which it reads as mainnet — so a regtest HTLC rebuilt from a
-    // record whose `network` was garbled comes back with a `bc1p…` address and
-    // no complaint. The output key is network-independent, so the leaves and
-    // pkScript would still be right; only the address would lie, which is the
-    // worst shape for it to fail in.
+    // `btc.p2tr` reads an `undefined` network as mainnet, so a garbled record would rebuild with
+    // right leaves and pkScript but a lying `bc1p…` address.
     if (!Object.hasOwn(L1_NETWORKS, network)) {
         throw new Error(
             `unknown L1 network '${String(network)}' — expected one of ` +
@@ -353,9 +367,8 @@ export interface ChainUtxo extends HtlcUtxo {
     confirmations: number;
 }
 
-/** The package's whole view of Bitcoin L1. An esplora-backed implementation
- * belongs to the caller (a reference one lives in the test suite); the package
- * itself stays backend-free. */
+/** The package's whole view of Bitcoin L1, injected so the package stays backend-free
+ * (`CorridorOverrides.onchain.chain` takes it). */
 export interface ChainSource {
     /** Confirmed+mempool outputs paying a script; used to detect the fill. */
     getScriptUtxos(pkScript: Uint8Array): Promise<ChainUtxo[]>;
@@ -391,8 +404,6 @@ export function extractPreimage(txHex: string, paymentHash: string): Uint8Array 
 
 // ── Fill watching, claiming, and crash-recovery classification ──────────────
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 /** Poll {@link ChainSource} until the HTLC is funded to the required depth.
  * Picks the largest qualifying output when several exist. Throws (reason
  * `fill_timeout`) once `deadline` (unix seconds) passes without one. */
@@ -402,31 +413,23 @@ export async function awaitOnchainFill(
     minConfirmations: number,
     options: { pollMs?: number; deadline?: number } = {},
 ): Promise<ChainUtxo> {
-    const pollMs = options.pollMs ?? 5_000;
-    for (;;) {
-        const utxos = await chain.getScriptUtxos(htlc.pkScript);
-        const eligible = utxos
-            .filter((u) => u.confirmations >= minConfirmations)
-            .sort((a, b) => (b.amount > a.amount ? 1 : -1));
-        if (eligible[0]) return eligible[0];
-        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
-            const error = new Error("HTLC was not filled before the deadline") as Error & {
-                reason: string;
-            };
-            error.reason = "fill_timeout";
-            throw error;
-        }
-        await sleep(pollMs);
-    }
+    return pollUntil(
+        async () => {
+            const utxos = await chain.getScriptUtxos(htlc.pkScript);
+            return utxos
+                .filter((u) => u.confirmations >= minConfirmations)
+                .sort((a, b) => (b.amount > a.amount ? 1 : -1))[0];
+        },
+        options,
+        "fill_timeout",
+        "HTLC was not filled before the deadline",
+    );
 }
 
 /**
- * Claim the fill: build the claim spend and broadcast it. Broadcasting
- * publishes P (mempool) — by design, it is how the solver gets paid — so this
- * refuses (reason `claim_window_closed`) when less than
- * {@link ONCHAIN_CLAIM_MARGIN_SECONDS} remains before the refund leaf opens:
- * past that point, let the swap die and take the covenant refund instead of
- * racing the counterparty's refund with P exposed.
+ * Claim the fill: build the claim spend and broadcast it, publishing P (that is how the solver
+ * gets paid). Refuses (`claim_window_closed`) with less than {@link ONCHAIN_CLAIM_MARGIN_SECONDS}
+ * before the refund leaf opens.
  */
 export async function claimOnchainFill(
     chain: ChainSource,
@@ -443,31 +446,26 @@ export async function claimOnchainFill(
 ): Promise<{ txid: string; payoutAmount: bigint }> {
     const now = input.now ?? Math.floor(Date.now() / 1000);
     if (input.htlc.refundLocktime - now < ONCHAIN_CLAIM_MARGIN_SECONDS) {
-        const error = new Error(
+        throw gateError(
+            "claim_window_closed",
             "refund leaf opens too soon to claim safely — take the covenant refund instead",
-        ) as Error & { reason: string };
-        error.reason = "claim_window_closed";
-        throw error;
+        );
     }
     const spend = await buildHtlcClaim(input);
     const txid = await chain.broadcast(spend.txHex);
     return { txid, payoutAmount: spend.payoutAmount };
 }
 
-/** Where an onchain HTLC stands, for crash recovery (see the store docs:
- * persisting the record BEFORE funding is what makes this classification —
- * and the claim — possible after a restart). */
+/** Where an onchain HTLC stands, for crash recovery. Persisting the record BEFORE funding is what
+ * makes this classification (and the claim) possible after a restart. */
 export type OnchainHtlcPhase =
     | { phase: "unfunded" }
     | { phase: "awaiting_confirmations"; utxo: ChainUtxo }
     | { phase: "claimable"; utxo: ChainUtxo }
     /**
-     * The refund leaf has matured, which means the CLAIM WINDOW IS CLOSED —
-     * `claimOnchainFill` throws `claim_window_closed` from here, by design.
-     * A recovery caller reading this phase must not try to claim: the correct
-     * action is to let the counterparty's L1 refund settle and take the
-     * Arkade-side covenant refund. Reaching this phase on a swap you expected
-     * to claim means the claim was missed, not that it is still available.
+     * The refund leaf has matured, so the CLAIM WINDOW IS CLOSED and `claimOnchainFill` throws.
+     * Do not claim: let the counterparty's L1 refund settle and take the Arkade-side covenant
+     * refund. On a swap you expected to claim, this means the claim was missed.
      */
     | { phase: "refundable"; utxo: ChainUtxo }
     | { phase: "claimed"; txid: string; preimage: Uint8Array }

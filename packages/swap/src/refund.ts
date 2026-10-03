@@ -2,25 +2,11 @@
  * Tracking a funded RFQ swap to its end, and taking the lockup back when the
  * solver never resolves it.
  *
- * The corridor's operate side is complete (`requestLightningSend` /
- * `requestOnchainSend` quote, derive every leaf locally, and gate funding) and
- * so is the L1 claim side (`awaitOnchainFill` / `claimOnchainFill`). What was
- * missing is the other end of a swap that goes wrong: the trader has funded a
- * VHTLC the solver never claimed, and nothing in this package would build the
- * spend that gets those sats back.
- *
- * **There is no "please refund me" message in this protocol.** `RfqTransport`
- * carries `requestQuote`, `status`, and `close` — nothing else — so "ask the
- * solver first" cannot mean sending a new request type. What it means here is
- * to WATCH: a solver that decides a swap failed resolves it on its own, either
- * by co-signing the collaborative `refund` leaf or by pushing its own
- * `nonInteractiveRefund` escape hatch (server + solver + emulator, no timelock
- * — the reference solver's `refund-now`). Either way the money comes back to
- * the trader's pre-committed address and the RFQ reports `refunded`. So the
- * ask is `status()`, and the fallback is the trader doing it itself once the
- * quote's `refund_locktime` matures. See {@link refundIfUnresolved}.
- *
- * Which leaf the fallback uses, and why it is the only sensible one:
+ * **There is no "please refund me" message in this protocol** (`RfqTransport` has only
+ * `requestQuote`, `status`, `close`). "Ask first" means WATCH `status()`: a solver that gives up
+ * co-signs `refund` or pushes its own `nonInteractiveRefund`, both paying the trader's committed
+ * address. The fallback is the trader refunding once `refund_locktime` matures
+ * ({@link refundIfUnresolved}).
  *
  * | leaf                              | needs                        | timelock |
  * |-----------------------------------|------------------------------|----------|
@@ -29,55 +15,49 @@
  * | `unilateralRefund`                | trader + solver              | CSV      |
  * | `unilateralRefundWithoutReceiver` | trader alone                 | CSV, longest |
  *
- * `refund` needs the solver's live signature, which is exactly what a trader
- * stuck in this situation does not have and has no way to request. The two CSV
- * leaves need no server, but a relative timelock only starts counting once the
- * VTXO is onchain — spending them means unrolling the commitment and checkpoint
- * transactions first (a real unilateral exit) and then waiting out a delay
- * strictly longer than the others. `refundWithoutReceiver` is the one that
- * needs neither the solver nor an exit: the trader's own `sender` key plus the
- * Arkade server, gated on the CLTV the quote already told the trader about.
- * That is what this module builds.
+ * `refund` needs the solver's signature, which a stuck trader cannot get. The CSV leaves only
+ * count once the VTXO is onchain, i.e. after a full unilateral exit. `refundWithoutReceiver`
+ * needs neither the solver nor an exit, so it is what this module builds.
  */
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
+    type ArkTxInput,
     type IContractManager,
     type Identity,
-    RestArkProvider,
+    type ArkProvider,
+    type Network,
     RestIndexerProvider,
     Transaction,
     VHTLC,
     assertSubmittedArkTxid,
+    assertValidServerUnrollScript,
     buildOffchainTx,
     getArkPsbtFields,
     isVtxoSpent,
     matchServerCheckpoints,
+    networkFromArkadeInfo,
+    resolveCheckpointExitDelayPolicy,
+    toXOnly,
+    type IWallet,
 } from "@arkade-os/sdk";
 
+import { pollUntil, sleep } from "./onchainHtlc";
 import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** True for the states after which the solver will report nothing further. */
 export const isRfqTerminal = (state: string): boolean =>
     (RFQ_TERMINAL_STATES as readonly string[]).includes(state);
 
 /**
- * The terminal states that mean the swap is OVER and the lockup is already
- * gone — the solver either claimed it (`settled`, revealing the preimage) or
- * returned it (`refunded`). A trader seeing one of these has nothing left to
- * do.
+ * The terminal states that mean the lockup is already gone: claimed (`settled`) or returned
+ * (`refunded`).
  *
- * Deliberately narrower than {@link RFQ_TERMINAL_STATES}: `refused`, `expired`
- * and `stuck` are terminal for the NEGOTIATION but say nothing about whether
- * the trader's sats are still sitting at the lockup. A trader that funded just
- * as the quote expired, or whose solver wedged mid-payment, is exactly the
- * trader who needs the refund most — so those states must not short-circuit
- * it. {@link refundIfUnresolved} treats them as "keep going", and lets the
- * on-chain VTXO lookup be the authority on whether anything is actually there.
+ * Deliberately narrower than {@link RFQ_TERMINAL_STATES}: `refused`, `expired` and `stuck` end the
+ * NEGOTIATION but the trader may still have funded the lockup, and is then exactly who needs the
+ * refund. The VTXO lookup, not the RFQ state, decides whether anything is there.
  */
 export const RFQ_RESOLVED_STATES = ["settled", "refunded"] as const;
 
@@ -85,57 +65,57 @@ const isResolved = (state: string): boolean =>
     (RFQ_RESOLVED_STATES as readonly string[]).includes(state);
 
 /**
- * Poll a swap's status until it reaches a terminal state.
+ * Poll a swap's status until it reaches a terminal state. Same conventions as
+ * {@link awaitOnchainFill}; throws with `reason: "status_timeout"` past `deadline`.
  *
- * Same shape and conventions as {@link awaitOnchainFill}: a `pollMs` interval,
- * an optional unix-seconds `deadline`, and a thrown error carrying a stable
- * `reason` when that deadline passes.
- *
- * A `null` status (the solver has no record of this `rfq_id`) is treated as
- * "not yet", not as an answer — a status route can legitimately 404 for a
- * moment after a quote is issued. The deadline is what bounds that wait.
- *
- * Transport errors are NOT swallowed; a failing `status()` call rejects this
- * function. Callers polling across a long refund window should expect to
- * restart it after a network blip — nothing is lost by doing so, since the
- * refund path this feeds is gated on an absolute timelock that does not
- * expire.
+ * A `null` status is "not yet" (a status route can 404 briefly after a quote). Transport errors
+ * reject; restarting after a blip loses nothing, since the refund is gated on an absolute
+ * timelock.
  */
 export async function awaitRfqResolution(
     transport: RfqTransport,
     rfqId: string,
     options: { pollMs?: number; deadline?: number } = {},
 ): Promise<RfqStatus> {
-    const pollMs = options.pollMs ?? 5_000;
-    for (;;) {
-        const status = await transport.status(rfqId);
-        if (status && isRfqTerminal(status.state)) return status;
-        if (options.deadline !== undefined && Date.now() / 1000 >= options.deadline) {
-            const error = new Error(
-                `rfq ${rfqId} did not reach a terminal state before the deadline`,
-            ) as Error & { reason: string };
-            error.reason = "status_timeout";
-            throw error;
-        }
-        await sleep(pollMs);
-    }
+    return pollUntil(
+        async () => {
+            const status = await transport.status(rfqId);
+            return status && isRfqTerminal(status.state) ? status : undefined;
+        },
+        options,
+        "status_timeout",
+        `rfq ${rfqId} did not reach a terminal state before the deadline`,
+    );
 }
 
 // ── The refundWithoutReceiver push ───────────────────────────────────────────
 
-/** The Ark surface the refund push needs — narrower than a full provider, and
- * satisfied by {@link RestArkProvider}. Same seam style as `RestoreIndexer`. */
-export type RefundArkProvider = Pick<RestArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+/**
+ * What a push needs from the operator: the broadcast pair, plus the info read that supplies
+ * `checkpointTapscript`. Narrow so a wallet's own connection satisfies it (see
+ * {@link walletOperator}) and no second connection is opened; a full `ArkProvider` also fits.
+ */
+export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /**
- * The contract-manager surface the lockup lookup needs: the registered
- * contract and its VTXOs, in one read.
- *
- * Satisfied structurally by a real `ContractManager`
- * (`await wallet.getContractManager()`), whose `getContractsWithVtxos`
- * performs a best-effort provider sync on every read and serves repository
- * state only when that sync failed retryably — recorded in `getSyncState()`,
- * never silently. {@link findLockupVtxos} trusts this read.
+ * A wallet's own connection, as a {@link SwapOperator}. The broadcaster is resolved lazily and
+ * held; `getInfo` is deliberately NOT held (always live): a stale `checkpointTapscript` derives a
+ * checkpoint the operator will not co-sign.
+ */
+export const walletOperator = (wallet: IWallet): SwapOperator => {
+    let broadcaster: Promise<Awaited<ReturnType<IWallet["getArkadeBroadcaster"]>>> | undefined;
+    const broadcasting = () => (broadcaster ??= wallet.getArkadeBroadcaster());
+    return {
+        getInfo: () => wallet.getArkadeInfo({ requireLive: true }),
+        submitTx: async (...args) => (await broadcasting()).submitTx(...args),
+        finalizeTx: async (...args) => (await broadcasting()).finalizeTx(...args),
+    };
+};
+
+/**
+ * The contract-manager surface the lockup lookup needs: the registered contract and its VTXOs,
+ * in one read. A real `ContractManager` syncs on every read and reports degraded fallback via
+ * `getSyncState()`; {@link findLockupVtxos} trusts this read.
  */
 export type LockupContractSource = Pick<IContractManager, "getContractsWithVtxos">;
 
@@ -145,66 +125,27 @@ export interface LockupVtxo {
     vout: number;
     value: number;
     /**
-     * The batch this output lived in expired and the operator swept it, so it
-     * is no longer a live leaf — it can be RECOVERED, but not spent offchain.
-     *
-     * It is still the trader's money and it is still visible, which is why
-     * {@link findLockupVtxos} returns it. What it is not is refundable by
-     * {@link pushRefundWithoutReceiver}: that builds an offchain Ark
-     * transaction, and the SDK's own predicates put the two states on opposite
-     * sides — `canSpendOffchain` is false whenever `canRecoverOnchain` is true
-     * (`wallet/vtxo.ts`), and the latter is documented as "must be recovered
-     * into a fresh batch rather than spent offchain". Holding the trader's
-     * `sender` key does not change that; a sweep removes the leaf from the live
-     * tree, not the signature from the trader.
-     *
-     * Opposite, but not exhaustive: an unrolled output satisfies neither, and
-     * {@link findLockupVtxos} drops those before they reach this type at all.
-     *
-     * `packages/boltz-swap` splits on exactly this fact rather than working
-     * around it: `settleRefundWithoutReceiver` sends a live VTXO through an
-     * offchain tx and a recoverable one through `joinBatch` — "a swept
-     * (recoverable) VTXO is no longer a live leaf, so it can only be reclaimed
-     * by re-registering it into a batch".
-     *
-     * So the remedy is recovery (renewing the output into a fresh batch),
-     * after which the ordinary CLTV refund works again. This package does not
-     * build that round — see {@link pushRefundWithoutReceiver}, which refuses
-     * rather than submitting a spend that cannot succeed.
+     * The batch expired and the operator swept it: still the trader's money, but no longer a
+     * live leaf, so it can be RECOVERED into a fresh batch but not spent offchain
+     * (`canSpendOffchain` is false whenever `canRecoverOnchain` is true), whatever key signs.
+     * After recovery the ordinary CLTV refund works again; {@link pushRefundWithoutReceiver}
+     * refuses these rather than submitting a doomed spend.
      */
     recoverable: boolean;
 }
 
 /**
- * Thrown when a refund was asked for over outputs that have been swept.
+ * Thrown when a refund was asked for over outputs that have been swept. Carries the outpoints so
+ * a caller can recover exactly those, then retry.
  *
- * Carries the outpoints so a caller can act — recover exactly those, then
- * retry — instead of reading a server rejection and guessing. `reason` follows
- * the same convention as `awaitOnchainFill`'s `fill_timeout` and
- * `claimOnchainFill`'s `claim_window_closed`.
+ * The remedy is the SDK's `IVtxoManager.recoverVtxos()`, which covers a lockup once it is
+ * registered as a contract — so registration is what makes a swept lockup recoverable at all.
+ * Caveats a caller must hold:
  *
- * **The remedy already exists; this package does not reimplement it.** The SDK
- * recovers swept outputs by re-registering them into a fresh batch, through
- * `IVtxoManager.recoverVtxos()` — the same batch round `packages/boltz-swap`
- * reaches via its own `joinBatch`. It reads the wallet's registered-contract
- * snapshot (`recoverVtxos` → `wallet.getVtxos({ withRecoverable: true })` →
- * `contractSnapshot()` → `contractManager.getContractsWithVtxos()`), so it
- * covers a swap lockup as soon as that lockup is registered as a contract —
- * which is what {@link RfqSwapManagerDeps.contracts} does. Registration is
- * therefore not only a latency optimization; it is what turns a swept lockup
- * from a dead end into something the ordinary wallet path can recover.
- *
- * Two caveats a caller must hold, neither enforceable from here:
- *
- * - **The wallet must hold the lockup's `sender` key**, because recovery
- *   settles through `refundWithoutReceiver` — the leaf `vhtlc-v2` annotates
- *   these VTXOs with.
- * - **`refundLocktime` must have matured.** That leaf carries a CLTV, so a
- *   recovery round including this VTXO earlier is rejected. `recoverVtxos`
- *   sweeps every recoverable output in ONE settlement and has no CLTV
- *   awareness, so recovering early can fail the whole batch rather than just
- *   this output. `packages/boltz-swap` encodes the same rule as "pre-CLTV
- *   recoverable → skipped".
+ * - **The wallet must hold the lockup's `sender` key**: recovery settles through
+ *   `refundWithoutReceiver`.
+ * - **`refundLocktime` must have matured.** `recoverVtxos` settles every recoverable output in ONE
+ *   round with no CLTV awareness, so recovering early can fail the whole batch.
  */
 export class LockupNeedsRecoveryError extends Error {
     readonly name = "LockupNeedsRecoveryError";
@@ -212,16 +153,8 @@ export class LockupNeedsRecoveryError extends Error {
     /** `txid:vout` for each output that must be recovered first. */
     readonly outpoints: string[];
     /**
-     * The contract's `refundLocktime`. Recovering before this matures is the
-     * hazard described above: `recoverVtxos()` sweeps EVERY recoverable output
-     * into one settlement with no CLTV awareness, so an early attempt can fail
-     * the whole batch — including unrelated outputs that were otherwise fine.
-     *
-     * Exposed as a value, not only inside the message, so a caller can encode
-     * `packages/boltz-swap`'s "pre-CLTV recoverable → skipped" rule without
-     * parsing prose. Seconds-based locktimes mature against the chain tip's
-     * timestamp rather than wall clock, so treat this as a floor to wait past,
-     * not an exact alarm.
+     * The contract's `refundLocktime`; do not recover before it (see above). Seconds-based
+     * locktimes mature against chain time, not wall clock, so treat this as a floor.
      */
     readonly recoverableAfter: bigint;
 
@@ -239,61 +172,20 @@ export class LockupNeedsRecoveryError extends Error {
 }
 
 /**
- * Every output still sitting at the lockup script — spendable AND
- * swept-but-recoverable, each tagged with which it is.
+ * Every output still at the lockup script — spendable AND swept-but-recoverable, each tagged.
+ * This read, not the RFQ's reported state, is the authority on what is left.
  *
- * All of them, not the first: a trader may fund a lockup in more than one
- * send, and refunding only `vtxos[0]` returns part of the money and strands
- * the rest at a script whose other refund paths are all longer.
+ * All of them, not the first: a lockup funded in several sends would otherwise be partly
+ * stranded. Visible is not refundable: see {@link LockupVtxo.recoverable}.
  *
- * ONE read from the registered contract row (getContractsWithVtxos), not from the indexer by script.
- * The row's isSwept flag is the authority on which outputs are swept-but-recoverable versus live-spendable,
- * and isVtxoSpent prunes already-consumed outputs before they reach the caller.
+ * **Unrolled and terminally spent outputs are dropped** (`isVtxoSpent`, the wallet's own
+ * spend gate): nothing offchain can reach them and `LockupVtxo` could not say so.
+ * {@link readLockupFate} reports exits as `exited`; this drop is the second line of defence.
  *
- * **Visible is not the same as refundable.** A `recoverable` output cannot be
- * spent offchain at all — see {@link LockupVtxo.recoverable} — so this set is
- * "what is there", not "what {@link pushRefundWithoutReceiver} can take back".
- * That function refuses the recoverable ones by name rather than submitting a
- * spend the server must reject.
- *
- * **Unrolled and terminally spent outputs are dropped.** A unilaterally
- * exited output lives onchain behind its CSV; no offchain spend of any leaf can
- * reach it, and `LockupVtxo` carries no field to say so, so a caller could not
- * tell it apart from a live one. The manager's rows carry the canonical facts
- * (`isUnrolled`, `isSpent`, `spentBy`, `settledBy`), so both exclusions are
- * exact rather than defensive — the same predicate (`isVtxoSpent`) the
- * wallet's own spend gate uses. It costs the two waiting callers nothing
- * they wanted: `awaitLockupFunding` keeps waiting for a claimable lockup
- * instead of publishing `P` into a spend that cannot land, and
- * `refundIfUnresolved` reports rather than grinding a doomed push to its
- * deadline. Both that function and `RfqSwapManager` name the exit through
- * {@link readLockupFate}, which queries unfiltered and reports it as `exited`;
- * this drop is the second line, and what still refuses the push on a pass where
- * the fate read learned nothing.
- *
- * This read — not the RFQ's reported state — is the authority on whether
- * there is anything left at the lockup.
- *
- * **Read from the contract manager, and trust it.** The lookup no longer asks
- * the indexer by script: it reads the lockup's REGISTERED contract row
- * (`getContractsWithVtxos`, see {@link LockupContractSource}) and trusts the
- * answer. Two things make that safe, and both are the manager's to hold:
- * the row must exist — registration writes it before the address can be
- * funded (`requestLightningSend` / `requestOnchainSend` up front,
- * `RfqSwapManager`'s `ensureRegistered` per pass for records made before that
- * existed) — and the read must be fresh, which the manager's per-read
- * best-effort sync provides; when only the repository answers, `getSyncState()`
- * loudly says `degraded` instead of hiding it. An empty row for an
- * unregistered or unfunded lockup is honored as-is: this module does not fall
- * back to a script query behind the manager's back, so `RfqSwapManager` (which
- * supplies the seam via `RfqSwapManagerDeps.contracts`) and standalone callers
- * of {@link refundIfUnresolved} / {@link claimReceiveLockup} own the
- * registration.
- *
- * {@link readLockupFate} is the mirror image, and deliberately so: the fate
- * question needs the spending TRANSACTIONS' witnesses, which the manager does
- * not expose — so it stays a direct indexer read while the money question
- * (what is left here) is the manager's.
+ * **Reads the REGISTERED contract row and trusts it**, with no fallback to a script query:
+ * callers own registration (`request*Send`, `RfqSwapManager.ensureRegistered`), and an empty row
+ * is honored as-is. {@link readLockupFate} stays on the indexer because it needs the spending
+ * transactions' witnesses, which the manager does not expose.
  */
 export async function findLockupVtxos(
     contracts: LockupContractSource,
@@ -306,8 +198,6 @@ export async function findLockupVtxos(
     const out: LockupVtxo[] = [];
     for (const vtxo of row?.vtxos ?? []) {
         if (vtxo.isUnrolled) continue;
-        // A spent output cannot back any refund push, and `isVtxoSpent`
-        // unions the three spend facts rather than trusting any one of them.
         if (isVtxoSpent(vtxo)) continue;
         const key = `${vtxo.txid}:${vtxo.vout}`;
         if (seen.has(key)) continue;
@@ -316,8 +206,6 @@ export async function findLockupVtxos(
             txid: vtxo.txid,
             vout: vtxo.vout,
             value: Number(vtxo.value),
-            // The manager's canonical `isSwept` fact; no coercion, because the
-            // normalized row guarantees a boolean.
             recoverable: vtxo.isSwept,
         });
     }
@@ -327,10 +215,9 @@ export async function findLockupVtxos(
 // ── Reading the lockup's fate off chain ──────────────────────────────────────
 
 /**
- * The indexer surface the lockup-spend read needs: the vtxo lookup, plus the
- * raw transactions those vtxos were spent by. Same narrow-seam style as
- * a direct read of {@link RestIndexerProvider}, unlike
- * {@link LockupContractSource}'s contract-manager read.
+ * The indexer surface the lockup-spend read needs: the vtxo lookup, plus the raw transactions
+ * those vtxos were spent by. Taken by `SwapDriveConfig.indexer`; returned by
+ * `walletLockupIndexer()`.
  */
 export type LockupSpendIndexer = Pick<RestIndexerProvider, "getVtxos" | "getVirtualTxs">;
 
@@ -344,60 +231,35 @@ export interface LockupSpend {
     checkpointTxid: string;
     /** The ark transaction that spent the above checkpoint output. What
      * history correlation matches on; absent when the indexer omitted it. */
-    arkTxid?: string;
+    txid?: string;
 }
 
 export type LockupFate =
     /** At least one output at the lockup is still unspent. Not over. */
     | { fate: "open" }
-    /** Spent by a witness carrying a preimage that HASHES to the quote's
-     * `payment_hash`. Only the claim leaf can reveal one, and the only
-     * legitimate way the solver obtains it is by completing its side. */
+    /** Spent by a witness carrying a preimage that HASHES to the quote's `payment_hash`. */
     | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
     /** Fully spent, and nothing that spent it revealed a matching preimage —
      * so the money went back to the trader. See {@link readLockupFate}. */
     | { fate: "returned"; spends: readonly LockupSpend[] }
     /**
-     * At least one output was unilaterally exited: it sits onchain under the
-     * VHTLC script, where no offchain claim or refund can reach it.
-     *
-     * Not terminal, and not a loss. The money is still under the same script
-     * with the same leaves, so `completeUnroll` plus an onchain spend can still
-     * end the swap either way — which is why this outranks `open`: an output
-     * that is "still unspent" but unreachable is not a swap that is merely
-     * running.
-     *
-     * It outranks a verdict too, on a lockup where a sibling output was claimed
-     * or returned. That is the rule `open` already sets, not a new one: the
-     * unspent test short-circuits before any witness is read, so a partially
-     * resolved lockup has never reported `claimed`/`returned`. What changes is
-     * only that such a lockup now says why it is unresolved.
+     * At least one output was unilaterally exited: onchain under the VHTLC script, beyond any
+     * offchain claim or refund. Not terminal and not a loss (`completeUnroll` plus an onchain
+     * spend can still end it). Outranks `open` and any sibling's verdict: unspent-but-unreachable
+     * is not a merely running swap.
      */
     | { fate: "exited"; outpoints: readonly { txid: string; vout: number }[] }
-    /** Nothing was learned: no outputs visible, an output spent by nothing the
-     * indexer names, a spend it could not produce, or a blob that would not
-     * decode. Never an answer. */
+    /** Nothing was learned (see {@link readLockupFate}). Never an answer. */
     | { fate: "unknown" };
 
-/** `sha256(candidate)` against the quote's wire-form payment hash. This — not
- * a matching witness SHAPE — is the only thing that turns a witness item into
- * proof, the same discipline `claimOnchainFill` and `extractPreimage` already
- * apply to every other preimage this package consumes. */
+/** `sha256(candidate)` against the quote's payment hash — see {@link readLockupFate}. */
 const hashesTo = (candidate: Uint8Array, paymentHash: string): boolean =>
     hex.encode(sha256(candidate)) === paymentHash;
 
 /**
- * Every witness item one input of a spend might be carrying the preimage in.
- *
- * Two sources, searched as one set. Ark's proprietary `ConditionWitness` PSBT
- * field is where a preimage is attached when the condition closure is
- * finalized (`setArkPsbtField(tx, i, ConditionWitness, [preimage])`), and it
- * survives a default `Transaction.fromPSBT` round trip — the SDK's decoder
- * already keeps unknown fields, so no options are needed here (the same thing
- * `restore.ts` relies on to read an offer packet back). `finalScriptWitness`
- * is the other place a preimage can sit once the raw witness stack is built.
- * Reading only one of them would miss a real settlement; reading both costs
- * nothing, because neither is trusted — see {@link readLockupFate}.
+ * Every witness item one input of a spend might carry the preimage in: Ark's `ConditionWitness`
+ * PSBT field (survives a default `fromPSBT`) and `finalScriptWitness`. Reading only one could
+ * miss a real settlement; reading both is free because neither is trusted until hashed.
  */
 const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[] => [
     ...getArkPsbtFields(tx, inputIndex, ConditionWitness).flat(),
@@ -408,40 +270,20 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  * Decide from chain data alone whether a swap lockup settled, came back, or is
  * still live.
  *
- * **Why this is decidable without asking anyone.** The lockup's claim leaf can
- * only be spent by revealing `P`, so a spend witness carrying a value that
- * hashes to the quote's `payment_hash` is proof the claim leaf was used — and
- * the only legitimate way the counterparty obtains `P` is by completing its
- * side of the swap. Every OTHER leaf is a refund: `nonInteractiveRefund` is
- * covenant-pinned to the trader's own address (`enforcePayTo(senderPkScript)`),
- * and `refund`, `refundWithoutReceiver`, `unilateralRefund` and
- * `unilateralRefundWithoutReceiver` all require the trader's own signature. So
- * "spent, but not by a hash-verified claim" means the money went back to the
- * trader, and nothing here has to trust a counterparty to say so.
+ * **Decidable without asking anyone.** Only the claim leaf reveals `P`, and the counterparty only
+ * legitimately obtains `P` by completing its side. Every OTHER leaf is a refund:
+ * `nonInteractiveRefund` is covenant-pinned to the trader's address and the rest need the
+ * trader's signature. So "spent, but not by a hash-verified claim" means the money came back.
  *
- * **A matching witness SHAPE is not proof.** Only a candidate that hashes to
- * `paymentHash` may be read as a claim; a 32-byte item that hashes to anything
- * else is just bytes, and is treated as a refund. Getting this wrong in the
- * permissive direction would report "settled" for a swap that actually
- * refunded, which is precisely the fact a trader is relying on.
+ * **A matching witness SHAPE is not proof**: only a candidate hashing to `paymentHash` counts.
+ * Being permissive would report "settled" for a swap that refunded.
  *
- * **`unknown` is not `returned`.** An empty vtxo set (indexer lag, or a lockup
- * not visible yet), a `spentBy` the indexer cannot produce a transaction for,
- * or a blob that will not decode all come back as `unknown`. `getVirtualTxs`
- * may legitimately return fewer transactions than were asked for, so the
- * observed set is counted rather than assumed complete. The caller's correct
- * response to `unknown` is the same as to `open`: keep watching, and let the
- * refund timelock — which no outage can move — be what ends the wait.
+ * **`unknown` is not `returned`**: an empty vtxo set, an unnamed or unfetchable spend, or an
+ * undecodable blob all give `unknown`, and `getVirtualTxs` may return fewer txs than asked, so the
+ * observed set is counted. Treat `unknown` like `open`; the refund timelock ends the wait.
  *
- * **An exit is read before anything else, and over the whole set.** It is the
- * one fact that makes an unspent output unreachable, so it outranks `open`; and
- * it is scanned across every output rather than in outpoint order, so which
- * output happens to come first cannot change the answer.
- *
- * Read fresh on every poll, never cached. {@link findLockupVtxos} has since
- * moved to the contract manager's read, but this question needs the spending
- * transactions' witnesses, which the manager does not expose — so the indexer
- * seam stays.
+ * An exit is checked first, across the whole set, so output order cannot change the answer.
+ * Read fresh on every poll, never cached.
  */
 export async function readLockupFate(
     indexer: LockupSpendIndexer,
@@ -466,26 +308,17 @@ export async function readLockupFate(
     const spentBy = new Map<string, LockupSpend>();
     let everySpendNamed = true;
     for (const vtxo of all) {
-        // The SDK's own predicate, not a fourth copy of it: it unions all three
-        // spend facts rather than trusting `spentBy` alone, because the wire
-        // contract permits `isSpent: true` with an EMPTY `spentBy` and a
-        // `spentBy`-only test would read an output that is gone as one still
-        // sitting there.
+        // Not `spentBy` alone: the wire permits `isSpent: true` with an EMPTY `spentBy`.
         if (!isVtxoSpent(vtxo)) return { fate: "open" };
-        // `spentBy` is the EMPTY STRING, not absent, when there is nothing to
-        // name, so this is a truthiness test and never a presence one. When it
-        // IS set it names the CHECKPOINT transaction, which is exactly the one
-        // carrying the spend leaf's witness: `buildOffchainTx` builds one
-        // checkpoint per input, and that checkpoint's single input is the one
-        // holding the lockup's `tapLeafScript`. The ark transaction spends the
-        // checkpoint, not the lockup, so it is the wrong place to look.
+        // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
+        // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
+        // checkpoint, so it is the wrong place to look).
         if (vtxo.spentBy)
             spentBy.set(vtxo.spentBy, {
                 checkpointTxid: vtxo.spentBy,
-                arkTxid: vtxo.arkTxId,
+                txid: vtxo.arkTxId,
             });
-        // Spent, but by nothing this can go and read. No witness to verify, so
-        // this output can never contribute proof either way.
+        // Spent by nothing we can read: no witness, so no proof either way.
         else everySpendNamed = false;
     }
 
@@ -499,16 +332,12 @@ export async function readLockupFate(
         } catch {
             continue; // undecodable blob: nothing learned from it
         }
-        // Witness data cannot change a taproot-only txid, so binding the
-        // response by the PSBT's own id — rather than by position — is what
-        // says a spend was actually observed. Same binding `restore.ts` makes.
+        // Bound by the PSBT's own id (witness cannot change a taproot txid), not by position.
         if (spentBy.has(tx.id)) observed.add(tx.id);
         for (let i = 0; i < tx.inputsLength; i++) {
             const spent = tx.getInput(i);
             if (!spent.txid) continue;
-            // Matched by outpoint: `hex.encode(input.txid)` is the same txid
-            // convention the indexer hands back, which is how the SDK's own
-            // `assertCheckpointsMatchInputs` compares the two.
+            // Same txid convention as the indexer (cf. `assertCheckpointsMatchInputs`).
             const txid = hex.encode(spent.txid);
             if (!all.some((vtxo) => vtxo.txid === txid && vtxo.vout === spent.index)) continue;
             for (const candidate of candidateWitnessItems(tx, i)) {
@@ -525,117 +354,123 @@ export async function readLockupFate(
         : { fate: "unknown" };
 }
 
+/** Refuse a spend over any swept output — see {@link pushRefundWithoutReceiver}. */
+export const assertNoneSwept = (
+    vtxos: readonly LockupVtxo[],
+    contract: InstanceType<typeof VHTLC.ScriptV2>,
+): void => {
+    const swept = vtxos.filter((vtxo) => vtxo.recoverable);
+    if (swept.length > 0) {
+        throw new LockupNeedsRecoveryError(
+            swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
+            contract.options.refundLocktime,
+        );
+    }
+};
+
+/**
+ * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a sub-floor or
+ * wrong-key script lets the operator sweep an in-flight checkpoint before it settles.
+ *
+ * `network` pins the exit-delay floor to what the CALLER resolved — without it the bound comes
+ * from the very response being checked, so an operator naming `regtest` relaxes its own. The
+ * forfeit key is that response's own, as `Wallet.create` does at first contact.
+ *
+ * @throws {ServerResponseMismatchError} when the script is malformed or out of policy.
+ */
+export const operatorUnrollScript = async (
+    operator: SwapOperator,
+    network?: Network,
+): Promise<CSVMultisigTapscript.Type> => {
+    const info = await operator.getInfo();
+    return assertValidServerUnrollScript(
+        info.checkpointTapscript,
+        resolveCheckpointExitDelayPolicy(network ?? networkFromArkadeInfo(info), {
+            advertisedForfeitPubkey: toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
+        }),
+    );
+};
+
+/** Every lockup output as an offchain input spending `leaf`. */
+export const lockupInputs = (
+    vtxos: readonly LockupVtxo[],
+    contract: InstanceType<typeof VHTLC.ScriptV2>,
+    leaf: ArkTxInput["tapLeafScript"],
+): ArkTxInput[] => {
+    const tapTree = contract.encode();
+    return vtxos.map((vtxo) => ({
+        txid: vtxo.txid,
+        vout: vtxo.vout,
+        value: vtxo.value,
+        tapLeafScript: leaf,
+        tapTree,
+    }));
+};
+
 /**
  * Build, sign, and push the `refundWithoutReceiver` spend: return every funded
  * output at the lockup to the trader's refund address.
  *
- * The leaf is `CLTV(refundLocktime) + <sender> + <server>` — the trader's own
- * VHTLC `sender` key and the Arkade server, and NOBODY else. In particular the
- * emulator is not involved: it co-signs only the two covenant leaves
- * (`nonInteractiveClaim` / `nonInteractiveRefund`), which is why the solver's
- * own escape hatch has to go through it and this one does not. So unlike that
- * push, this transaction is submitted SIGNED, and the only counterparty is the
- * Arkade server doing what it does for any collaborative spend.
+ * The leaf is `CLTV(refundLocktime) + <sender> + <server>`: no emulator (it co-signs only the
+ * covenant leaves), so the tx is submitted SIGNED. One aggregate output, since this leaf has no
+ * covenant requiring index-aligned outputs.
  *
- * One aggregate output, not one per input — again unlike the solver's covenant
- * refund, which needs index-aligned outputs because its ArkadeScript inspects
- * the output at the current input's index. This leaf carries no covenant, so a
- * single output paying the whole balance is both valid and cheaper.
+ * `refundPkScript` defaults to the contract's committed `senderPkScript` (the trader's quote-time
+ * address); overridable because this leaf genuinely permits any destination.
  *
- * `refundPkScript` defaults to the destination the contract itself commits to
- * (`nonInteractiveRefund`'s `senderPkScript`, i.e. the address the trader gave
- * at quote time), so the ordinary call cannot send the refund somewhere the
- * trader did not intend. It is overridable because this leaf, having no
- * covenant, genuinely does permit any destination.
+ * **Median-time-past (BIP-113), not wall clock, decides spendability**: it trails by about an
+ * hour, so an early rejection is expected; {@link refundIfUnresolved} retries.
  *
- * **Consensus, not wall clock, decides when this is spendable.** A seconds
- * locktime matures against median-time-past, which trails real time by roughly
- * an hour, so a push issued the moment `refundLocktime` passes can be rejected
- * until enough blocks land. That is expected, not a failure — see
- * {@link refundIfUnresolved}, which retries.
- *
- * **Swept outputs are refused, not attempted.** This is an OFFCHAIN spend, and
- * a swept output is no longer a live leaf: `canSpendOffchain` is false wherever
- * `canRecoverOnchain` is true, so a recoverable input cannot be spent this way
- * whatever key signs it (see
- * {@link LockupVtxo.recoverable}). Because every input lands in ONE aggregate
- * transaction, a single swept output would take the live ones down with it —
- * so the whole push is refused with {@link LockupNeedsRecoveryError} naming the
- * outpoints, rather than submitted and rejected. Filtering them out silently
- * would be worse still: it would report success over money that never moved.
+ * **Swept outputs refuse the whole push** with {@link LockupNeedsRecoveryError}: one swept input
+ * would sink the aggregate tx, and silently filtering it would report success over unmoved money.
  */
 export async function pushRefundWithoutReceiver(
-    ark: RefundArkProvider,
+    operator: SwapOperator,
     input: {
-        script: InstanceType<typeof VHTLC.ScriptV2>;
-        /** The `sender` signer. Build it from the swap record with
-         * {@link senderIdentityForSwapRecord} — on an HD wallet that resolves
-         * from the seed, with no stored key bytes anywhere, and every way the
-         * wallet can fail to produce it arrives as one typed
-         * {@link RefundNotLocallyPossibleError} the manager reads as permanent
-         * rather than retrying for the rest of the refund window. */
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
+        /** The `sender` signer. Build it with {@link senderIdentityForSwapRecord}, so every
+         * inability to produce it is a typed, permanent {@link RefundNotLocallyPossibleError}. */
         sender: Identity;
         vtxos: readonly LockupVtxo[];
         /** Defaults to the contract's own committed refund destination. */
         refundPkScript?: Uint8Array;
+        /** @see operatorUnrollScript */
+        network?: Network;
     },
-): Promise<{ arkTxid: string; amount: number }> {
+): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
 
-    const swept = input.vtxos.filter((vtxo) => vtxo.recoverable);
-    if (swept.length > 0) {
-        throw new LockupNeedsRecoveryError(
-            swept.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
-            input.script.options.refundLocktime,
-        );
-    }
+    assertNoneSwept(input.vtxos, input.contract);
 
     const refundPkScript =
-        input.refundPkScript ?? input.script.options.nonInteractiveParameters?.senderPkScript;
+        input.refundPkScript ?? input.contract.options.nonInteractiveParameters?.senderPkScript;
     if (!refundPkScript) {
         throw new Error(
             "no refund destination: the contract carries no emulator covenant suite, so pass refundPkScript explicitly",
         );
     }
 
-    const info = await ark.getInfo();
-    let serverUnrollScript: CSVMultisigTapscript.Type;
-    try {
-        serverUnrollScript = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-    } catch {
-        throw new Error("invalid checkpointTapscript from the Arkade server");
-    }
+    const serverUnrollScript = await operatorUnrollScript(operator, input.network);
 
-    const leaf = input.script.refundWithoutReceiver();
-    const tapTree = input.script.encode();
+    const leaf = input.contract.refundWithoutReceiver();
     const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
-    // buildOffchainTx reads the CLTV out of this leaf and sets the ark tx's
-    // nLockTime and input sequence itself, on the checkpoints too — nothing
-    // here has to restate `refundLocktime`.
-    const { arkTx, checkpoints } = buildOffchainTx(
-        input.vtxos.map((vtxo) => ({
-            txid: vtxo.txid,
-            vout: vtxo.vout,
-            value: vtxo.value,
-            tapLeafScript: leaf,
-            tapTree,
-        })),
+    // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
+    const { arkTx: tx, checkpoints } = buildOffchainTx(
+        lockupInputs(input.vtxos, input.contract, leaf),
         [{ script: refundPkScript, amount: BigInt(amount) }],
         serverUnrollScript,
     );
 
     // No index list: every input spends the same leaf, so all are signed.
-    const signedArkTx = await input.sender.sign(arkTx);
-    const submitted = await ark.submitTx(
-        base64.encode(signedArkTx.toPSBT()),
+    const signedTx = await input.sender.sign(tx);
+    const submitted = await operator.submitTx(
+        base64.encode(signedTx.toPSBT()),
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
-    assertSubmittedArkTxid(submitted, signedArkTx, "refundWithoutReceiver");
+    assertSubmittedArkTxid(submitted, signedTx, "refundWithoutReceiver");
 
-    // Only checkpoints we built ourselves get signed: the server's response is
-    // matched against the local set first, so a substituted checkpoint is
-    // rejected rather than blind-signed with the sender key.
+    // Only checkpoints we built get signed: a substituted one is rejected, not blind-signed.
     const matched = matchServerCheckpoints(
         submitted.signedCheckpointTxs,
         checkpoints,
@@ -647,20 +482,16 @@ export async function pushRefundWithoutReceiver(
         ),
     );
 
-    await ark.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { arkTxid: submitted.arkTxid, amount };
+    await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
+    return { txid: submitted.arkTxid, amount };
 }
 
 // ── Ask first, then fall back ────────────────────────────────────────────────
 
 /**
- * How long past `refundLocktime` to keep retrying the push before giving up
- * and surfacing the server's refusal.
- *
- * Two hours because the CLTV matures against median-time-past (BIP-113), which
- * lags wall clock by about an hour, plus room for a slow block. This is the
- * mirror of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes
- * of the same margin.
+ * How long past `refundLocktime` to keep retrying the push before surfacing the server's refusal.
+ * Two hours: MTP (BIP-113) lags wall clock by about an hour, plus room for a slow block. Mirror
+ * of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes of the same margin.
  */
 export const REFUND_MTP_LAG_SECONDS = 2 * 60 * 60;
 
@@ -668,15 +499,12 @@ export type RefundOutcome =
     /** The solver resolved it — claimed (`settled`) or returned it (`refunded`). */
     | { outcome: "resolved"; status: RfqStatus }
     /** The trader took it back via `refundWithoutReceiver`. */
-    | { outcome: "refunded"; arkTxid: string; amount: number; status: RfqStatus | null }
+    | { outcome: "refunded"; txid: string; amount: number; status: RfqStatus | null }
     /** The refund window opened but the lockup holds nothing to return. */
     | { outcome: "nothing_to_refund"; status: RfqStatus | null }
     /**
-     * The money is still at the lockup, but its batch was swept, so no offchain
-     * spend can take it back until it is recovered into a fresh batch. Returned
-     * rather than retried: unlike a median-time-past refusal, no amount of
-     * waiting fixes this — see {@link LockupNeedsRecoveryError}. Recover the
-     * named outpoints, then call this again.
+     * The money is still at the lockup but its batch was swept; no waiting fixes that (see
+     * {@link LockupNeedsRecoveryError}). Recover the named outpoints, then call again.
      */
     | {
           outcome: "needs_recovery";
@@ -685,14 +513,13 @@ export type RefundOutcome =
           status: RfqStatus | null;
       }
     /**
-     * The lockup was unilaterally exited: its outputs sit onchain under the VHTLC
-     * script, where no offchain refund can reach them. Returned rather than
-     * retried: no amount of waiting changes where the money lives. Complete the
-     * unroll and spend the outputs onchain — then there is nothing left to refund.
+     * The lockup was unilaterally exited: its outputs sit onchain, beyond any offchain refund.
+     * Complete the unroll and spend the named outputs onchain.
      *
-     * Distinct from {@link RefundOutcome} `needs_recovery` on purpose: that
-     * variant's remedy is recovery into a fresh batch, which is a spend no batch
-     * can make for an output that is already onchain.
+     * **`outpoints` may not be the whole lockup.** `exited` fires as soon as ANY output exited
+     * (the same rule `RfqSwapManager` uses; the two must agree), and a still-live sibling is left
+     * for the caller to pursue separately. Distinct from `needs_recovery`, whose batch-recovery
+     * remedy cannot reach an onchain output.
      */
     | { outcome: "exited"; outpoints: string[]; status: RfqStatus | null };
 
@@ -701,61 +528,30 @@ export type RefundOutcome =
  * if `refundLocktime` matures without that happening, take the lockup back
  * with `refundWithoutReceiver`.
  *
- * This is the whole trader-side failure story in one call. It polls `status()`
- * — the only "asking" this protocol has (see the module doc) — and returns as
- * soon as the solver reports `settled` or `refunded`. Otherwise, once the
- * quote's `refund_locktime` passes, it looks up what is actually at the lockup
- * and pushes the refund.
+ * - **A dead negotiation does not stop the wait** (see {@link RFQ_RESOLVED_STATES}).
+ * - **Early pushes may fail** while MTP catches up; retried at the poll interval until
+ *   `attemptDeadline`, then the last error is rethrown.
+ * - **A swept lockup returns `needs_recovery`** instead of burning the window.
+ * - **An exited lockup returns `exited`**, checked first via {@link readLockupFate} (an extra
+ *   indexer read per pass). A failing fate read is swallowed: it is a shortcut only.
  *
- * Two behaviours worth knowing:
+ * Safe to call late and to call again: an empty lockup is `nothing_to_refund`, not an error.
  *
- * - **A dead negotiation is not a reason to stop.** `refused`, `expired` and
- *   `stuck` are terminal states, but a trader can be holding a funded lockup in
- *   every one of them, so they do not end the wait — only `settled`/`refunded`
- *   do (see {@link RFQ_RESOLVED_STATES}). What ends it otherwise is the
- *   timelock.
- * - **The first push after the deadline may legitimately fail.** Median-time-
- *   past trails wall clock, so the server can still consider the leaf locked
- *   for a while after `refundLocktime` passes in real time. Failures are
- *   retried at the poll interval until `attemptDeadline`, after which the last
- *   error is rethrown rather than swallowed.
- * - **A swept lockup ends the wait instead of consuming it.** Once the batch
- *   is gone the CLTV refund is not "not yet" but "not this way", so it returns
- *   `needs_recovery` naming the outpoints rather than retrying until the
- *   deadline. Recover them and call again.
- * - **An exited lockup ends it the same way, and is checked first.** Each pass
- *   past the deadline asks {@link readLockupFate} before reading what is
- *   refundable, so an output that has been unilaterally exited returns `exited`
- *   instead of feeding a push that cannot land. It costs one extra `getVtxos`
- *   per such pass (three where there were two), plus a `getVirtualTxs` on a
- *   fully-spent lockup; only the pass that returns `exited` saves the other two.
- *   Paid to prevent a push that would otherwise be retried to the deadline and
- *   then rethrown. A failing fate read is swallowed, not raised: it is a
- *   shortcut, and losing it must not end a wait the ordinary path could answer.
- *
- *   A lockup funded in two sends of which only one exited reports `exited` for
- *   the whole thing and leaves the live half unrefunded. That is deliberate:
- *   `RfqSwapManager` reports the same lockup `exited` on the same any-output
- *   rule, and the two must not disagree.
- *
- * Safe to call late, and safe to call again: a caller recovering from a crash
- * well past the deadline skips straight to the push, and a lockup that is
- * already empty comes back as `nothing_to_refund` instead of an error.
+ * @deprecated Use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export async function refundIfUnresolved(
     transport: RfqTransport,
-    ark: RefundArkProvider,
+    operator: SwapOperator,
     contracts: LockupContractSource,
     indexer: LockupSpendIndexer,
     input: {
         rfqId: string;
-        script: InstanceType<typeof VHTLC.ScriptV2>;
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
         /** @see pushRefundWithoutReceiver */
         sender: Identity;
         /**
-         * `sha256(P)`, hex — the quote's `payment_hash`, as {@link readLockupFate}
-         * takes it. Not derivable from `script`, whose `preimageHash` is a
-         * `hash160` of the same secret.
+         * `sha256(P)`, hex — the quote's `payment_hash`. Not derivable from `script`, whose
+         * `preimageHash` is a `hash160`.
          */
         paymentHash: string;
         /** `refund_locktime` from the quote, unix seconds. */
@@ -779,18 +575,12 @@ export async function refundIfUnresolved(
         if (status && isResolved(status.state)) return { outcome: "resolved", status };
 
         if (now() >= input.refundLocktime) {
-            // Before the refundable read, not after it: the point is to prevent
-            // the doomed push, not to interpret its refusal a pass too late.
-            //
-            // Guarded because it is an addition to this path, not a replacement:
-            // the fate read reaches `getVirtualTxs`, which nothing here called
-            // before, and a transient failure there must not end a refund wait
-            // the ordinary path below would have answered. `RfqSwapManager`
-            // guards the same call for the same reason.
+            // Before the refundable read, to prevent the doomed push. Guarded: a transient
+            // `getVirtualTxs` failure must not end a wait the path below can answer.
             let fate: LockupFate = { fate: "unknown" };
             try {
                 fate = await readLockupFate(indexer, {
-                    swapPkScript: input.script.pkScript,
+                    swapPkScript: input.contract.pkScript,
                     paymentHash: input.paymentHash,
                 });
             } catch {
@@ -804,21 +594,18 @@ export async function refundIfUnresolved(
                 };
             }
 
-            const vtxos = await findLockupVtxos(contracts, input.script.pkScript);
+            const vtxos = await findLockupVtxos(contracts, input.contract.pkScript);
             if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
             try {
-                const pushed = await pushRefundWithoutReceiver(ark, {
-                    script: input.script,
+                const pushed = await pushRefundWithoutReceiver(operator, {
+                    contract: input.contract,
                     sender: input.sender,
                     vtxos,
                     refundPkScript: input.refundPkScript,
                 });
                 return { outcome: "refunded", status, ...pushed };
             } catch (error) {
-                // A swept lockup is not a "not yet" — it is a "not this way".
-                // Retrying it until `attemptDeadline` would burn the whole
-                // window on a spend that cannot succeed and then rethrow, when
-                // the caller could have recovered the outputs and finished.
+                // Swept is "not this way", not "not yet": retrying would burn the window.
                 if (error instanceof LockupNeedsRecoveryError) {
                     return {
                         outcome: "needs_recovery",

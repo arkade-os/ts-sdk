@@ -65,12 +65,12 @@ const makeWallet = () => {
     const indexerProvider = { getVtxos: vi.fn() };
     const arkServerPublicKey = new Uint8Array(32).fill(0xab);
     const wallet = {
-        indexerProvider,
-        arkServerPublicKey,
+        getArkadeReader: vi.fn(() => indexerProvider),
+        getArkadeInfo: vi.fn(async () => ({ signerPubkey: `02${"ab".repeat(32)}` })),
         getTransactionHistory: vi.fn(async () => history),
     } as unknown as IWallet & {
-        indexerProvider: typeof indexerProvider;
-        arkServerPublicKey: Uint8Array;
+        getArkadeReader: () => typeof indexerProvider;
+        getArkadeInfo: () => Promise<{ signerPubkey: string }>;
     };
     return { wallet, history, indexerProvider, arkServerPublicKey };
 };
@@ -86,7 +86,6 @@ describe("registerAssetSwapRestore", () => {
         const prepareNew = vi.fn((swap) => swap);
         const onResult = vi.fn(async () => undefined);
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://ark.test",
             repository: repository as never,
             prepareNew,
             onResult,
@@ -96,7 +95,6 @@ describe("registerAssetSwapRestore", () => {
 
         expect(restoreAssetSwapRepository).toHaveBeenCalledWith({
             wallet,
-            arkServerUrl: "https://ark.test",
             indexer: indexerProvider,
             repository,
             txs: [
@@ -108,7 +106,7 @@ describe("registerAssetSwapRestore", () => {
                     createdAt: 1_750_000_000,
                 },
             ],
-            serverPubkey: arkServerPublicKey,
+            operatorPubkey: arkServerPublicKey,
             prepareNew,
         });
         expect(onResult).toHaveBeenCalledWith(result);
@@ -116,21 +114,18 @@ describe("registerAssetSwapRestore", () => {
 
     it("uses explicit recovery dependencies for proxy and custom wallets", async () => {
         const { wallet } = makeWallet();
-        delete (wallet as Partial<typeof wallet>).indexerProvider;
-        delete (wallet as Partial<typeof wallet>).arkServerPublicKey;
         const indexer = { getVtxos: vi.fn() };
-        const serverPubkey = new Uint8Array(32).fill(0xcd);
+        const operatorPubkey = new Uint8Array(32).fill(0xcd);
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://ark.test",
             repository: {} as never,
             indexer: indexer as never,
-            serverPubkey,
+            operatorPubkey,
         });
 
         await runRegisteredHooks(wallet);
 
         expect(restoreAssetSwapRepository).toHaveBeenCalledWith(
-            expect.objectContaining({ indexer, serverPubkey }),
+            expect.objectContaining({ indexer, operatorPubkey }),
         );
     });
 
@@ -139,12 +134,10 @@ describe("registerAssetSwapRestore", () => {
         const first = vi.fn();
         const second = vi.fn();
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://first.test",
             repository: {} as never,
             onResult: first,
         });
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://second.test",
             repository: {} as never,
             onResult: second,
         });
@@ -155,14 +148,13 @@ describe("registerAssetSwapRestore", () => {
         expect(second).toHaveBeenCalledWith(result);
         expect(restoreAssetSwapRepository).toHaveBeenCalledOnce();
         expect(restoreAssetSwapRepository).toHaveBeenCalledWith(
-            expect.objectContaining({ arkServerUrl: "https://second.test" }),
+            expect.objectContaining({ wallet }),
         );
     });
 
     it("propagates an onResult failure from the restore hook", async () => {
         const { wallet } = makeWallet();
         registerAssetSwapRestore(wallet, {
-            arkServerUrl: "https://ark.test",
             repository: {} as never,
             onResult: async () => {
                 throw new Error("presentation failed");

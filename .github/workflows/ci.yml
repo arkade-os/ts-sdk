@@ -33,32 +33,23 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      - name: Type-check ts-sdk
-        run: pnpm -C packages/ts-sdk run typecheck
+      - name: Type-check sdk
+        run: pnpm -C packages/sdk run typecheck
 
-      - name: Type-check ts-sdk type tests
-        run: pnpm -C packages/ts-sdk run typecheck:types
+      - name: Type-check sdk type tests
+        run: pnpm -C packages/sdk run typecheck:types
 
       - name: Build
         run: pnpm run build
 
-      - name: Type-check boltz-swap
-        run: pnpm -C packages/boltz-swap run typecheck
-
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
-      - name: Smoke-test ts-sdk dist
-        run: pnpm -C packages/ts-sdk run smoke:dist
+      - name: Smoke-test sdk dist
+        run: pnpm -C packages/sdk run smoke:dist
 
-      - name: Verify ts-sdk publish shape
-        run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
-
-      - name: Smoke-test boltz-swap dist
-        run: pnpm -C packages/boltz-swap run smoke:dist
-
-      - name: Verify boltz-swap publish shape
-        run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
+      - name: Verify sdk publish shape
+        run: cd packages/sdk && npm pack --dry-run --ignore-scripts
 
       - name: Smoke-test swap dist
         run: pnpm -C packages/swap run smoke:dist
@@ -77,17 +68,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: ts-sdk
+          - package: sdk
             group: ark-core
             test_files: test/e2e/ark.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: arkade-assets
             test_files: >-
               test/e2e/asset.test.ts
               test/e2e/asset-covenant.test.ts
               test/e2e/arkadeCash.test.ts
               test/e2e/liquidation.test.ts
-          - package: ts-sdk
+          - package: sdk
             group: settlement-delegation
             test_files: >-
               test/e2e/settlement.test.ts
@@ -97,7 +88,10 @@ jobs:
               test/e2e/restore.test.ts
               test/e2e/operatorOffline.test.ts
               test/e2e/arkade-script.test.ts
-          - package: ts-sdk
+              test/e2e/contractWatchState.test.ts
+              test/e2e/lookAhead.test.ts
+              test/e2e/activity.test.ts
+          - package: sdk
             group: exit-providers-rotation
             test_files: >-
               test/e2e/unilateralExit.test.ts
@@ -111,9 +105,6 @@ jobs:
               test/e2e/onchain.test.ts
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
-          # boltz-swap is deprecated: no integration stack is spun up for it.
-          # The check job still type-checks, builds and smoke-tests it, since
-          # release.yml can still publish the package.
           - package: swap
             group: all
             test_files: ""
@@ -140,13 +131,38 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build ts-sdk
-        run: pnpm -C packages/ts-sdk build
+      - name: Build sdk
+        run: pnpm -C packages/sdk build
+
+      # The RFQ client and solver share a fail-closed quote contract. Until the
+      # matching solver change is released, exercising this SDK head against
+      # the last published image would only prove that mixed versions reject
+      # each other. Build the exact reviewed solver revision so this matrix
+      # continues to test the corridor itself, with no mutable branch or image
+      # tag hidden in the result.
+      - name: Check out matching intent solver
+        if: matrix.package == 'swap-rfq'
+        uses: actions/checkout@v6
+        with:
+          repository: arkade-os/intent-solver
+          ref: 173c5672216d3ed65baf428825bc0362f944a5be
+          path: .integration/intent-solver
+          persist-credentials: false
+
+      - name: Build matching intent solver image
+        if: matrix.package == 'swap-rfq'
+        run: >-
+          docker build
+          -f .integration/intent-solver/packages/solver-app/Dockerfile
+          -t intent-solver:refund-timing
+          .integration/intent-solver
 
       - name: Make regtest controller executable
         run: chmod +x scripts/regtest.sh
 
       - name: Start regtest environment
+        env:
+          INTENT_SOLVER_IMAGE: ${{ matrix.package == 'swap-rfq' && 'intent-solver:refund-timing' || '' }}
         run: pnpm run regtest:up:${{ matrix.package }}
 
       - name: Setup test wallets
@@ -170,9 +186,9 @@ jobs:
           # solver and covclaimd now. `|| true` kept a stale list quiet, which
           # is exactly why it went unnoticed — a Lightning failure dumped nothing.
           for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd; do
-            echo "===== logs: $c ====="
-            docker logs --tail 200 "$c" 2>&1 || true
-          done
+             echo "===== logs: $c ====="
+             docker logs --tail 200 "$c" 2>&1 || true
+           done
 
       - name: Cleanup
         if: always()

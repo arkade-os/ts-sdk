@@ -1,26 +1,18 @@
 /**
- * The `refundArkade` callback, assembled.
+ * The `refundArkade` callback, assembled. Its obvious implementation, `refundIfUnresolved`, is
+ * wrong here: it brings its own status polling and MTP retry loop, which would nest inside the
+ * manager's.
  *
- * The wiring this replaces was prose in two places — `swapManager.ts`'s
- * callback doc and the README — because it is the one callback whose obvious
- * implementation is wrong: `refundIfUnresolved` is the single-swap version of
- * `RfqSwapManager` itself and brings its own status polling and MTP retry loop,
- * which would nest inside the manager's. Composing the atomic push here makes
- * that mistake something a consumer has to go out of their way to make.
- *
- * The three semantic rules the manager relies on are structural rather than
- * documented: an empty lockup returns `null`, and both
- * {@link RefundNotLocallyPossibleError} and {@link LockupNeedsRecoveryError}
- * propagate untouched — the manager reads the first as permanent and surfaces
- * the second as `needs_recovery`, and catching either here would turn a state
+ * An empty lockup returns `null`; {@link RefundNotLocallyPossibleError} and
+ * {@link LockupNeedsRecoveryError} propagate untouched, since catching either would turn a state
  * the trader must act on into a retry that grinds the window away.
  */
-import type { IWallet } from "@arkade-os/sdk";
+import type { IWallet, Network } from "@arkade-os/sdk";
 import {
     type LockupContractSource,
     findLockupVtxos,
     pushRefundWithoutReceiver,
-    type RefundArkProvider,
+    type SwapOperator,
 } from "./refund";
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "./refundBlocked";
 import { rfqSignerOf } from "./rfqProfileParts";
@@ -28,23 +20,22 @@ import type { AssetSwapRepository } from "./repository";
 import type { ArkadeRefundResult, RfqSwap } from "./swapManager";
 
 export interface ArkadeRefunderDeps {
-    ark: RefundArkProvider;
+    operator: SwapOperator;
     /**
-     * The wallet's contract manager. The lockup's row must be registered in
-     * it before this can see the funding — which is what
-     * `RfqSwapManager.ensureRegistered` does per pass, and what
-     * `requestLightningSend` / `requestOnchainSend` do up front. Prefer
-     * `await wallet.getContractManager()`.
+     * The wallet's contract manager (prefer `await wallet.getContractManager()`). The lockup must
+     * be registered in it before the funding is visible.
      */
     contracts: LockupContractSource;
     /** Asked for the descriptor's signer; never asked to mint a key. */
     wallet: IWallet;
     /**
-     * The record store. The live `RfqSwap` the manager passes carries no
-     * `signingDescriptor` — that lives in the record's `profile.signer` — so
-     * the refund key is resolved by key, which is what `getRfqSwap` is for.
+     * The record store: the live `RfqSwap` carries no `signingDescriptor` (it lives in the
+     * record's `profile.signer`), so the refund key is resolved through `getRfqSwap`.
      */
     repository: Pick<AssetSwapRepository, "getRfqSwap">;
+    /** The caller's already-resolved network, pinning the checkpoint exit-delay floor. Lazy,
+     * like `SwapDriveConfig.network`. @see operatorUnrollScript */
+    network?: () => Promise<Network>;
 }
 
 /**
@@ -52,7 +43,7 @@ export interface ArkadeRefunderDeps {
  *
  * @example
  * manager.setCallbacks({
- *     refundArkade: arkadeRefunder({ ark, contracts, wallet, repository }),
+ *     refundArkade: arkadeRefunder({ operator, contracts, wallet, repository }),
  *     saveSwap,
  * });
  */
@@ -60,45 +51,37 @@ export function arkadeRefunder(
     deps: ArkadeRefunderDeps,
 ): (swap: RfqSwap) => Promise<ArkadeRefundResult> {
     return async (swap) => {
-        const script = swap.lockup?.script;
-        if (!script) {
-            // A wiring mistake, not a swap outcome: `lockup` is optional only
-            // because the manager can still watch without it, and no refund can
-            // be built from the pkScript alone. Keep `request*`'s `script` on
-            // the swap. Untyped on purpose: the manager retries this once a
-            // poll and ends the swap `failed` at the deadline (see
-            // `RfqSwapManagerCallbacks.refundArkade`), which is the loud
-            // outcome a wiring mistake deserves — not the quiet permanent
-            // refusal a typed error would produce.
+        const contract = swap.lockup?.script;
+        if (!contract) {
+            // A wiring mistake, deliberately untyped: the manager retries it and ends the swap
+            // `failed` at the deadline — loud — rather than the quiet permanent refusal a typed
+            // error would produce.
             throw new Error(
                 `swap ${swap.rfqId} carries no lockup covenant, so its refund cannot be built`,
             );
         }
 
-        // Before the store read: a lockup holding nothing needs no signer, and
-        // `null` is the manager's "nothing to do" rather than a failure.
+        // Before the store read: an empty lockup needs no signer, and `null` is "nothing to do".
         const vtxos = await findLockupVtxos(deps.contracts, swap.lockupPkScript);
         if (vtxos.length === 0) return null;
 
         const record = await deps.repository.getRfqSwap(swap.rfqId);
         if (!record) {
-            // Permanent, and typed as such: the record is written at request
-            // time, so one the store has never seen is not one that will
-            // appear. Retrying would grind until the window shut.
+            // Permanent: the record is written at request time, so a missing one will not appear.
             throw new RefundNotLocallyPossibleError(
                 "no-secrets",
                 `no stored record for ${swap.rfqId}; the descriptor that signs its refund lives there`,
             );
         }
 
-        // The `?? {}` is a refusal, not a default: a record with no
-        // `profile.signer` reaches `senderIdentityForSwapRecord` without a
-        // `signingDescriptor`, which is what turns it into the same typed
-        // `RefundNotLocallyPossibleError("no-secrets")` thrown above. Written
-        // this way rather than as a second explicit throw so that the one place
-        // deciding what "this wallet cannot sign this swap" means stays
-        // `senderIdentityForSwapRecord`.
+        // `?? {}` is a refusal, not a default: no descriptor becomes the same typed "no-secrets",
+        // keeping `senderIdentityForSwapRecord` the one place that decides it.
         const sender = await senderIdentityForSwapRecord(deps.wallet, rfqSignerOf(record) ?? {});
-        return pushRefundWithoutReceiver(deps.ark, { script, sender, vtxos });
+        return pushRefundWithoutReceiver(deps.operator, {
+            contract,
+            sender,
+            vtxos,
+            network: await deps.network?.(),
+        });
     };
 }
