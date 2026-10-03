@@ -292,10 +292,17 @@ const baseQuote = (payload: Payload, clock: SolverClock): Omit<RfqQuote, "profil
 export const lightningSendAnswer = (
     payload: Payload,
     clock: SolverClock,
-    over: { quote?: Partial<RfqQuote>; profile?: Profile; invoiceAmount?: number } = {},
+    over: {
+        quote?: Partial<RfqQuote>;
+        profile?: Profile;
+        invoiceAmount?: number;
+        refundWithoutReceiverDelay?: number;
+    } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
-    const refundWithoutReceiverDelay = Math.ceil((clock.refundLocktime - clock.now) / 512) * 512;
+    const refundWithoutReceiverDelay =
+        over.refundWithoutReceiverDelay ??
+        Math.ceil((clock.refundLocktime - clock.now) / 512) * 512;
     const script = lightningSendContract({
         solverPubkey: SOLVER_PUBKEY,
         refundLocktime: clock.refundLocktime,

@@ -72,6 +72,7 @@ import {
     verifyReceiveWindow,
     verifyResponder,
     verifySendInvoice,
+    verifyRefundWindow,
     verifySendWindow,
     verifyingDerivation,
 } from "./verify";
@@ -484,6 +485,12 @@ const quoteLightningSend = async (
         now: input.now,
         invoiceExpiresAt: invoice.expiresAt,
     });
+    verifyRefundWindow({
+        refundLocktime: derived.refundLocktime,
+        refundWithoutReceiverDelay: derived.contractParams.refundWithoutReceiverDelay,
+        now: input.now,
+        maxSeconds: input.policy?.maxRefundWindowSeconds,
+    });
     verifyQuoteTtl({
         quoteId: input.quoteId,
         expiresAt: parsed.validUntil,
@@ -727,6 +734,11 @@ const quoteOnchainSend = async (
             minConfirmations: derived.minConfirmations,
             direction: "send",
         },
+    });
+    verifyRefundWindow({
+        refundLocktime: derived.refundLocktime,
+        now: input.now,
+        maxSeconds: input.policy?.maxRefundWindowSeconds,
     });
     verifyQuoteTtl({
         quoteId: input.quoteId,

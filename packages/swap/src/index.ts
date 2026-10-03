@@ -34,6 +34,7 @@ export type { DiscoveryConfig, DiscoverySnapshot } from "./client/discovery";
 export { REGISTRY_URL } from "./client/discovery";
 export type { CorridorOverrides } from "./client/corridors/deps";
 export type { DriveMode, RfqAuctionPolicy, SwapPolicy } from "./client/policy";
+export { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "./client/policy";
 export type { RfqTransportFactory } from "./client/transport";
 
 // ── The verbs ───────────────────────────────────────────────────────────────
