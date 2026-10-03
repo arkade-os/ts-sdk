@@ -430,6 +430,17 @@ describe("asset swaps against solverd (regtest)", () => {
         },
         60_000,
     );
+
+    it("refuses to cancel a filled swap", async () => {
+        const swaps = new InMemoryAssetSwapRepository();
+        const funded = await fundOffer("BTC", { swaps });
+        await waitForFill(funded);
+        await expect(cancelAndAwaitRefund(swaps, funded.fundingTxid)).rejects.toThrow(
+            "no spendable VTXO",
+        );
+        // untouched: the watcher or a restore marks it filled
+        expect(await statusOf(swaps, funded.fundingTxid)).toBe("pending");
+    }, 180_000);
 });
 
 const execCommand = (command: string): string => {
@@ -648,6 +659,14 @@ const depositOf = async (swap: AssetSwap) =>
     (await indexer.getVtxos({ scripts: [swap.swapPkScript] })).vtxos.find(
         (v) => v.txid === swap.fundingTxid,
     );
+
+/** Wait until the solver fills the swap: the indexer shows its deposit spent. */
+const waitForFill = (swap: AssetSwap): Promise<void> =>
+    waitFor(async () => (await depositOf(swap))?.isSpent === true, 120_000);
+
+/** The status `swaps` records for the swap funded by `fundingTxid`. */
+const statusOf = async (swaps: AssetSwapRepository, fundingTxid: string) =>
+    (await getAssetSwaps(swaps)).find((s) => s.fundingTxid === fundingTxid)?.status;
 
 /** Cancel a stored swap from its record, and wait for the refund to land. */
 const cancelAndAwaitRefund = async (swaps: AssetSwapRepository, fundingTxid: string) => {
