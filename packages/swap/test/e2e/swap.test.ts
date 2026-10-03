@@ -26,10 +26,17 @@ import {
     RestArkProvider,
     RestIndexerProvider,
     SingleKey,
+    type StorageConfig,
     Wallet,
 } from "@arkade-os/sdk";
 import { discover, quoteOffer, type Market } from "@arkade-os/solver-discovery";
-import { type AssetSwap, type AssetSwapRepository, InMemoryAssetSwapRepository } from "../../src";
+import {
+    type AssetSwap,
+    type AssetSwapRepository,
+    InMemoryAssetSwapRepository,
+    restoreAssetSwapRepository,
+} from "../../src";
+import { toRestoreTx } from "../../src/registerRestore";
 import {
     addAssetSwap,
     ASSET_CARRIER_SATS,
@@ -64,6 +71,8 @@ const DIRECTIONS = [
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
+// one key for the whole run, so the reload and restore tests can reopen it
+const identity = SingleKey.fromRandomBytes();
 let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
 // the covenant leaf it took, so it has to rebuild the same script
@@ -77,19 +86,7 @@ let assetLeg: Market["base_asset"];
 let solverAssetBaseline: bigint;
 
 beforeAll(async () => {
-    wallet = await Wallet.create({
-        identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
-        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
-            forcePolling: true,
-            pollingInterval: 2000,
-        }),
-        storage: {
-            walletRepository: new InMemoryWalletRepository(),
-            contractRepository: new InMemoryContractRepository(),
-        },
-        settlementConfig: false,
-    });
+    wallet = await openWallet();
 
     await faucet(FAUCET_SATS);
 
@@ -441,6 +438,47 @@ describe("asset swaps against solverd (regtest)", () => {
         // untouched: the watcher or a restore marks it filled
         expect(await statusOf(swaps, funded.fundingTxid)).toBe("pending");
     }, 180_000);
+
+    describe("after a reload on the same storage", () => {
+        it.each(DIRECTIONS)(
+            "detects a filled %s to %s swap and its payout",
+            async (give) => {
+                const swaps = new InMemoryAssetSwapRepository();
+                const funded = await fundOffer(give, { swaps });
+                await waitForFill(funded);
+                await reloadWallet(swaps);
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("fulfilled");
+                await expectPayout(swaps, funded.fundingTxid);
+            },
+            180_000,
+        );
+
+        it.each(DIRECTIONS)(
+            "detects and cancels an underbid %s to %s offer",
+            async (give) => {
+                const swaps = new InMemoryAssetSwapRepository();
+                const funded = await fundOffer(give, { swaps, underbid: true });
+                await reloadWallet(swaps);
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("pending");
+                await cancelAndAwaitRefund(swaps, funded.fundingTxid);
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("cancelled");
+            },
+            180_000,
+        );
+
+        it.each(DIRECTIONS)(
+            "detects a cancelled %s to %s offer and its refund",
+            async (give) => {
+                const swaps = new InMemoryAssetSwapRepository();
+                const funded = await fundOffer(give, { swaps, underbid: true });
+                await cancelAndAwaitRefund(swaps, funded.fundingTxid);
+                await reloadWallet(swaps);
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("cancelled");
+                await expectPayout(swaps, funded.fundingTxid);
+            },
+            180_000,
+        );
+    });
 });
 
 const execCommand = (command: string): string => {
@@ -591,6 +629,25 @@ const expectNoFill = async (swap: AssetSwap) => {
     expect((await depositOf(swap))?.isSpent).toBe(false);
 };
 
+/** Open a wallet for the test key: on new, empty storage by default, or on
+ * the storage an earlier wallet used. */
+const openWallet = (
+    storage: StorageConfig = {
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    },
+): Promise<Wallet> =>
+    Wallet.create({
+        identity,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        storage,
+        settlementConfig: false,
+    });
+
 /** Create, fund, and save an offer the way a wallet app does. It gives
  * `amount`, by default 2,000 sats or 1,000 units of the asset, small so one
  * faucet covers every test. It wants the quote, ten times the quote for an
@@ -664,9 +721,33 @@ const depositOf = async (swap: AssetSwap) =>
 const waitForFill = (swap: AssetSwap): Promise<void> =>
     waitFor(async () => (await depositOf(swap))?.isSpent === true, 120_000);
 
+/** Close the wallet and open it again on the same storage, as an app restart
+ * does, then bring `swaps` up to date the way every startup should: with
+ * restoreAssetSwapRepository over the wallet's history. */
+const reloadWallet = async (swaps: AssetSwapRepository): Promise<void> => {
+    const { walletRepository, contractRepository } = wallet;
+    await wallet.dispose();
+    wallet = await openWallet({ walletRepository, contractRepository });
+    const history = await wallet.getTransactionHistory();
+    await restoreAssetSwapRepository({
+        wallet,
+        indexer,
+        repository: swaps,
+        txs: history.map(toRestoreTx),
+        operatorPubkey,
+    });
+};
+
 /** The status `swaps` records for the swap funded by `fundingTxid`. */
 const statusOf = async (swaps: AssetSwapRepository, fundingTxid: string) =>
     (await getAssetSwaps(swaps)).find((s) => s.fundingTxid === fundingTxid)?.status;
+
+/** Wait until the wallet holds the output the swap's spend paid it: the fill's
+ * proceeds or the cancel's refund. */
+const expectPayout = async (swaps: AssetSwapRepository, fundingTxid: string) => {
+    const swap = (await getAssetSwaps(swaps)).find((s) => s.fundingTxid === fundingTxid);
+    await waitFor(async () => (await wallet.getVtxos()).some((v) => v.txid === swap?.spentTxid));
+};
 
 /** Cancel a stored swap from its record, and wait for the refund to land. */
 const cancelAndAwaitRefund = async (swaps: AssetSwapRepository, fundingTxid: string) => {
