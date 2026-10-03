@@ -667,6 +667,48 @@ describe("getBalance", () => {
     });
 });
 
+describe("spent history reads", () => {
+    it("reads no spent rows for getVtxos or getBalance unless unrolled coins are asked for", async () => {
+        const { wallet, walletRepository, defaultScript } = await seededWallet();
+        const spentTxid = "e3".repeat(32);
+        const exitedTxid = "e4".repeat(32);
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: spentTxid,
+                vout: 0,
+                value: 10_000,
+                script: defaultScript,
+                isSpent: true,
+                spentBy: "f3".repeat(32),
+            }),
+            createMockExtendedVtxo({
+                txid: exitedTxid,
+                vout: 0,
+                value: 10_000,
+                script: defaultScript,
+                isSpent: true,
+                spentBy: "f4".repeat(32),
+                isUnrolled: true,
+            }),
+        ]);
+        const manager = await wallet.getContractManager();
+        const snapshots = vi.spyOn(manager, "getContractsWithVtxos");
+        const snapshotTxids = async () =>
+            txidsOf(
+                (await Promise.all(snapshots.mock.results.map((result) => result.value)))
+                    .flat()
+                    .flatMap((entry) => entry.vtxos),
+            );
+
+        await wallet.getVtxos();
+        await wallet.getBalance();
+        expect(await snapshotTxids()).not.toContain(spentTxid);
+
+        expect(txidsOf(await wallet.getVtxos({ withUnrolled: true }))).toContain(exitedTxid);
+        snapshots.mockRestore();
+    });
+});
+
 describe("gated reads stay ungated (D1b/D1d)", () => {
     it("keeps escrowed funds in the recovery read", async () => {
         const { wallet } = await seededWallet();

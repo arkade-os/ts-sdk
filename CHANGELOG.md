@@ -9,6 +9,51 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- **Settlement forfeits a VTXO past expiry that the operator has not
+  swept.** The forfeit-skip decision read `canRecoverOnchain`, which is
+  true for any VTXO past its wall-clock expiry, so renewing one whose
+  batch output the operator never swept sent no forfeit and arkd failed
+  the batch with `missing forfeit transactions`. Settlement, delegation
+  and Arkade batches now decide with `requiresForfeit`, mirroring arkd's
+  `Vtxo.RequiresForfeit()`: only swept or unrolled VTXOs skip the
+  forfeit, whatever their expiry. Because the delta sync never revisits
+  a coin swept after its cursor, `settle` now refreshes the swept state
+  of expired inputs before deciding, so an already-swept VTXO is not
+  given a forfeit the operator allocated no connector for.
+
+- **`programFromArtifact` reads time-based CSV literals.** A literal
+  relative timelock in an `arkadec` artifact is the encoded BIP68
+  sequence, but the reader tagged every literal as a block count, so a
+  512-second literal such as `4194314` (bit 22 set) failed to build with
+  `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
+  reads as 5,120 seconds and builds the artifact's own script bytes. A
+  literal that does not round-trip through BIP68, such as `70000`, is
+  refused when the artifact is read. `$param` operands are still bound
+  as block counts. (#1012)
+
+### Performance
+
+- **`getVtxos` and `getBalance` no longer read spent history.** Both
+  loaded every stored VTXO row, spent ones included, and dropped the
+  spent ones in memory. They now ask the repository for unspent rows
+  only, the read `getSpendableVtxos` already uses, which IndexedDB
+  serves from the `scriptUnspent` index. Results are unchanged:
+  `getVtxos` still reads spent rows when `withUnrolled` is set, because
+  an unrolled coin is returned even when spent, and the balance buckets
+  already skip every spent coin.
+
+- **The service worker's balance and coin reads skip spent history too.**
+  `GET_BALANCE`, and `GET_VTXOS` unless unrolled coins are requested, now
+  read unspent rows only. These back `ServiceWorkerWallet.getBalance` and
+  `getVtxos`, which do not go through the `Wallet` methods above. Rows
+  under one contract script give the same result as before. One legacy
+  case changes: a stale copy of an outpoint stored under a different
+  script used to be counted or hidden depending on which contract the
+  worker read first; it is now counted whenever its own row is unspent,
+  as `getSpendableVtxos` already does.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes
@@ -71,16 +116,6 @@ style and have not been backfilled.
   default threshold. (#975)
 
 ### Bug Fixes
-
-- **`programFromArtifact` reads time-based CSV literals.** A literal
-  relative timelock in an `arkadec` artifact is the encoded BIP68
-  sequence, but the reader tagged every literal as a block count, so a
-  512-second literal such as `4194314` (bit 22 set) failed to build with
-  `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
-  reads as 5,120 seconds and builds the artifact's own script bytes. A
-  literal that does not round-trip through BIP68, such as `70000`, is
-  refused when the artifact is read. `$param` operands are still bound
-  as block counts.
 
 - **`BIP21.create` writes the amount as a plain decimal.** It formatted
   the BTC amount with `String()`, which switches to exponent notation
