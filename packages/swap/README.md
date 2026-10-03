@@ -199,7 +199,6 @@ import { IndexedDbAssetSwapRepository, registerAssetSwapRestore } from "@arkade-
 
 const repository = new IndexedDbAssetSwapRepository();
 const unregisterSwapRestore = registerAssetSwapRestore(wallet, {
-    arkServerUrl,
     repository,
     onResult: ({ changes, coverageError }) => {
         if (coverageError) console.warn("Swap coverage was incomplete", coverageError);
@@ -213,7 +212,7 @@ await wallet.restore();
 Core address, contract, history, and balance recovery finishes before the swap scan. Registering
 again replaces the prior hook, so setup is idempotent; call `unregisterSwapRestore()` when the
 integration no longer owns the wallet. A proxy or custom `IWallet` must also pass `indexer` and
-`serverPubkey` when it does not expose them. Keep calling `restoreAssetSwapRepository` directly
+`operatorPubkey` when it does not expose them. Keep calling `restoreAssetSwapRepository` directly
 during ordinary startup: hooks run only for an explicit `wallet.restore()`.
 
 The client's own records need none of this: `client.ready` rebuilds a record for every offer
