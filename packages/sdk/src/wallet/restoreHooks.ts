@@ -5,7 +5,12 @@ export interface WalletRestoreHook {
     restore(wallet: IWallet): Promise<void>;
 }
 
-const restoreHooks = new WeakMap<IWallet, WalletRestoreHook[]>();
+// Global, not module-scoped: a plugin resolving its own copy of the SDK must still register into
+// the registry the wallet's copy runs.
+const REGISTRY = Symbol.for("@arkade-os/sdk/walletRestoreHooks");
+const restoreHooks: WeakMap<IWallet, WalletRestoreHook[]> = ((
+    globalThis as { [REGISTRY]?: WeakMap<IWallet, WalletRestoreHook[]> }
+)[REGISTRY] ??= new WeakMap());
 
 export function registerWalletRestoreHook(wallet: IWallet, hook: WalletRestoreHook): () => void {
     const hooks = restoreHooks.get(wallet) ?? [];

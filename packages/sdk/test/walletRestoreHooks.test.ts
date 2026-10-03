@@ -116,4 +116,18 @@ describe("wallet restore hooks", () => {
             expect.objectContaining({ message: "second failed" }),
         ]);
     });
+
+    it("shares one registry across copies of the module", async () => {
+        vi.resetModules();
+        const copy = await import("../src/wallet/restoreHooks");
+        expect(copy.runWalletRestoreHooks).not.toBe(runWalletRestoreHooks);
+
+        const wallet = {} as IWallet;
+        const restore = vi.fn(async () => undefined);
+        copy.registerWalletRestoreHook(wallet, { id: "plugin", restore });
+
+        await runWalletRestoreHooks(wallet);
+
+        expect(restore).toHaveBeenCalledOnce();
+    });
 });
