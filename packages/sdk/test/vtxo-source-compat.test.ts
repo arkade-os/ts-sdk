@@ -24,7 +24,7 @@ class MinimalIndexerProvider {
 }
 
 class MinimalWalletRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     async getVtxosPage(_address: string): Promise<{ items: ExtendedVirtualCoin[] }> {
         return { items: [MINIMAL_COIN as ExtendedVirtualCoin] };
     }
