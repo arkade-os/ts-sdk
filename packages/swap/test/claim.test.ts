@@ -15,6 +15,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
+    Extension,
     SingleKey,
     Transaction,
     getArkPsbtFields,
@@ -426,5 +427,77 @@ describe("awaitLockupFunding + claimReceiveLockup", () => {
                 deadline: Math.floor(Date.now() / 1000) - 1,
             }),
         ).rejects.toThrow(expect.objectContaining({ reason: "lockup_timeout" }));
+    });
+});
+
+/**
+ * A cross-rail ASSET receive locks the asset behind the same preimage as the
+ * sats. The claim leaf inspects no output, so nothing on-chain forces the
+ * declaration — arkd simply refuses an undeclared asset, after the preimage is
+ * already public.
+ */
+describe("claiming a lockup that carries assets", () => {
+    const ASSET_A = "aa".repeat(32) + "0000";
+    const ASSET_B = "bb".repeat(32) + "0000";
+    const withAssets = (): LockupVtxo[] => [
+        {
+            ...VTXOS[0]!,
+            assets: [{ assetId: ASSET_A, amount: BigInt(700) }],
+        },
+        {
+            ...VTXOS[1]!,
+            assets: [
+                { assetId: ASSET_A, amount: BigInt(300) },
+                { assetId: ASSET_B, amount: BigInt(5) },
+            ],
+        },
+    ];
+
+    const claimed = async (vtxos: LockupVtxo[]) => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            script: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+        return Transaction.fromPSBT(base64.decode(operator.submitted[0]!.arkTx));
+    };
+
+    it("declares every asset, summed onto the payment output", async () => {
+        const tx = await claimed(withAssets());
+        const groups = Extension.fromTx(tx).getAssetPacket()!.groups;
+        const byId = new Map(groups.map((g) => [g.assetId!.toString(), g]));
+        expect([...byId.keys()].sort()).toEqual([ASSET_A, ASSET_B].sort());
+        // Split across both inputs, landing whole on the single payment vout.
+        const a = byId.get(ASSET_A)!;
+        expect(a.inputs.map((i) => [i.vin, i.amount])).toEqual([
+            [0, BigInt(700)],
+            [1, BigInt(300)],
+        ]);
+        expect(a.outputs.map((o) => [o.vout, o.amount])).toEqual([[0, BigInt(1_000)]]);
+        expect(byId.get(ASSET_B)!.outputs).toEqual([
+            expect.objectContaining({ vout: 0, amount: BigInt(5) }),
+        ]);
+    });
+
+    it("conserves each asset: what the inputs carry is what the output gets", async () => {
+        const tx = await claimed(withAssets());
+        for (const group of Extension.fromTx(tx).getAssetPacket()!.groups) {
+            const inSum = group.inputs.reduce((s, i) => s + i.amount, BigInt(0));
+            const outSum = group.outputs.reduce((s, o) => s + o.amount, BigInt(0));
+            expect(outSum).toBe(inSum);
+        }
+    });
+
+    it("adds no packet when the lockup carries no assets", async () => {
+        const tx = await claimed(VTXOS);
+        const scripts = Array.from(
+            { length: tx.outputsLength },
+            (_, i) => tx.getOutput(i)!.script!,
+        );
+        expect(scripts.some((script) => Extension.isExtension(script))).toBe(false);
     });
 });

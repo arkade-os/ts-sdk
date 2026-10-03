@@ -82,6 +82,7 @@ import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from ".
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
 import type { BatchExpiryPolicy } from "./batchExpiry";
 import { runWalletRestoreHooks } from "./restoreHooks";
+import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
 import {
     assertValidServerUnrollScript,
     resolveCheckpointExitDelayPolicy,
@@ -5595,10 +5596,16 @@ export class Wallet
      */
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const params = asSendParams(args);
-        return this._withTxLock(() => this._sendImpl(params));
+        const validUntil = captureSendDeadline(params.validUntil);
+        assertSendDeadline(validUntil);
+        return this._withTxLock(() => this._sendImpl(params, validUntil));
     }
 
-    private async _sendImpl({ recipients: args, selectedVtxos }: SendParams): Promise<string> {
+    private async _sendImpl(
+        { recipients: args, selectedVtxos }: SendParams,
+        validUntil?: number,
+    ): Promise<string> {
+        assertSendDeadline(validUntil);
         if (args.length === 0) {
             // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
@@ -5947,15 +5954,20 @@ export class Wallet
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        return this._submitOffchainSpend(selectedCoins, outputs, {
-            sentAmount,
-            changeAmount: BigInt(changeAmount),
-            changeVout: changeReceiver ? changeIndex : 0,
-            offchainTapscript,
-            serverPubKey,
-            serverUnrollScript,
-            changeAssets: changeReceiver?.assets,
-        });
+        return this._submitOffchainSpend(
+            selectedCoins,
+            outputs,
+            {
+                sentAmount,
+                changeAmount: BigInt(changeAmount),
+                changeVout: changeReceiver ? changeIndex : 0,
+                offchainTapscript,
+                serverPubKey,
+                serverUnrollScript,
+                changeAssets: changeReceiver?.assets,
+            },
+            { validUntil },
+        );
     }
 
     /**
@@ -5979,6 +5991,7 @@ export class Wallet
             changeAssets?: Asset[];
             recordSentHistory?: boolean;
         },
+        options?: { validUntil?: number },
     ): Promise<string> {
         this._addPendingSpends(inputs);
         try {
@@ -5986,6 +5999,7 @@ export class Wallet
                 inputs,
                 outputs,
                 persist.serverUnrollScript,
+                options,
             );
 
             await this.updateDbAfterOffchainTx(
@@ -6124,7 +6138,10 @@ export class Wallet
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
+        options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
         void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
         // Before anything is signed or submitted: the tx would build fine from
         // the tapscripts stored on each coin, and only `updateDbAfterOffchainTx`
@@ -6209,7 +6226,26 @@ export class Wallet
             {
                 // Mark pending before submitting — if we crash between submit and
                 // finalize, the next init recovers via finalizePendingTxs.
-                beforeSubmit: () => this.setPendingTxFlag(true),
+                beforeSubmit: async () => {
+                    const ownsPendingFlag =
+                        validUntil !== undefined && !(await this.hasPendingTxFlag());
+                    await this.setPendingTxFlag(true);
+                    try {
+                        assertSendDeadline(validUntil);
+                    } catch (error) {
+                        if (ownsPendingFlag) {
+                            try {
+                                await this.setPendingTxFlag(false);
+                            } catch (clearError) {
+                                console.error(
+                                    "Failed to clear pending tx flag after deadline expiry:",
+                                    clearError,
+                                );
+                            }
+                        }
+                        throw error;
+                    }
+                },
                 afterFinalize: async () => {
                     try {
                         await this.setPendingTxFlag(false);

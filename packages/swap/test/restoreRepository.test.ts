@@ -8,11 +8,17 @@ import type { AssetSwap } from "../src/store";
 const mocks = vi.hoisted(() => ({
     restoreAssetSwaps: vi.fn(),
     restoreOfferCoverage: vi.fn(),
+    recoverPreparedOfferFunding: vi.fn(),
 }));
 
 vi.mock("../src/restore", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../src/restore")>()),
     restoreAssetSwaps: mocks.restoreAssetSwaps,
+}));
+
+vi.mock("../src/fundingRecovery", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../src/fundingRecovery")>()),
+    recoverPreparedOfferFunding: mocks.recoverPreparedOfferFunding,
 }));
 
 vi.mock("../src/offer", async (importOriginal) => ({
@@ -54,6 +60,9 @@ const run = (repository: InMemoryAssetSwapRepository, overrides = {}) =>
 beforeEach(() => {
     mocks.restoreAssetSwaps.mockReset();
     mocks.restoreOfferCoverage.mockReset().mockResolvedValue(undefined);
+    mocks.recoverPreparedOfferFunding
+        .mockReset()
+        .mockResolvedValue({ changes: [], candidateTxids: new Set<string>() });
 });
 
 describe("restoreAssetSwapRepository", () => {
@@ -74,6 +83,38 @@ describe("restoreAssetSwapRepository", () => {
             new Set(["open", "settled"]),
             { serverPubkey, scanned: new Set(["open", "settled"]), reopen: [open] },
         );
+    });
+
+    it("skips and reopens a stable operation by its bound funding txid", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const operation = pending("operation-a", {
+            fundingTxid: "",
+            fundingIntent: {
+                version: 1,
+                state: "prepared",
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                arkServerUrl: "https://ark.test/",
+                output: { script: `5120${"ab".repeat(32)}`, value: "10000" },
+            },
+        });
+        await repository.insertPreparedSwap(operation);
+        await repository.advanceFundingState(operation.id, "prepared", { state: "submitted" });
+        const fundingTxid = "22".repeat(32);
+        await repository.advanceFundingState(operation.id, "submitted", {
+            state: "bound",
+            fundingTxid,
+        });
+        const bound = (await repository.getSwap(operation.id))!;
+        mocks.restoreAssetSwaps.mockResolvedValue({ restored: [], scannedTxids: [] });
+
+        await run(repository);
+
+        expect(mocks.restoreAssetSwaps).toHaveBeenCalledWith(indexer, txs, new Set([fundingTxid]), {
+            serverPubkey,
+            scanned: new Set(),
+            reopen: [bound],
+        });
     });
 
     it("persists new and resolved records before advancing the cursor", async () => {
@@ -198,6 +239,25 @@ describe("restoreAssetSwapRepository", () => {
         expect(await repository.getAllSwaps()).toEqual([]);
         expect(await repository.getScannedTxids()).toEqual(new Set());
         expect(mocks.restoreOfferCoverage).not.toHaveBeenCalled();
+    });
+
+    it("still reports funding it recovered when the scan is cancelled", async () => {
+        const repository = new InMemoryAssetSwapRepository();
+        const controller = new AbortController();
+        const previous = pending("operation-a", { fundingTxid: "" });
+        const current = pending("operation-a", { fundingTxid: "cc".repeat(32) });
+        mocks.recoverPreparedOfferFunding.mockResolvedValue({
+            changes: [{ previous, current }],
+            candidateTxids: new Set<string>(),
+        });
+        mocks.restoreAssetSwaps.mockImplementation(async () => {
+            controller.abort();
+            return { restored: [], scannedTxids: [] };
+        });
+
+        const result = await run(repository, { signal: controller.signal });
+
+        expect(result).toMatchObject({ aborted: true, changes: [{ previous, current }] });
     });
 
     it("reports records durably saved before cancellation without advancing the cursor", async () => {

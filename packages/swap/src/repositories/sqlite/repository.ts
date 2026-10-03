@@ -13,6 +13,12 @@ import {
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
+import {
+    advanceFundingSwap,
+    canInsertPreparedSwap,
+    mergeFundingProtectedSwap,
+    type FundingStateAdvance,
+} from "../../fundingPersistence";
 import type { RfqSwapState } from "../../rfqSwapState";
 
 const DEFAULT_PREFIX = "arkade_";
@@ -42,7 +48,7 @@ const INSERT_CHUNK = 500;
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
 export class SQLiteAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly swaps: string;
@@ -127,15 +133,60 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         return runInTransaction(this.db, fn);
     }
 
+    private async writeSwap(swap: AssetSwap): Promise<void> {
+        await this.db.run(
+            `INSERT OR REPLACE INTO ${this.swaps} (id, status, created_at, data)
+             VALUES (?, ?, ?, ?)`,
+            [swap.id, swap.status, swap.createdAt, JSON.stringify(swap)],
+        );
+    }
+
+    private async findSwap(id: string): Promise<AssetSwap | undefined> {
+        const row = await this.db.get<{ data: string }>(
+            `SELECT data FROM ${this.swaps} WHERE id = ?`,
+            [id],
+        );
+        return row ? (JSON.parse(row.data) as AssetSwap) : undefined;
+    }
+
     async saveSwap(swap: AssetSwap): Promise<void> {
         await this.ensureInit();
         await this.withTx(async () => {
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.swaps} (id, status, created_at, data)
-                 VALUES (?, ?, ?, ?)`,
-                [swap.id, swap.status, swap.createdAt, JSON.stringify(swap)],
-            );
+            await this.writeSwap(mergeFundingProtectedSwap(await this.findSwap(swap.id), swap));
         });
+    }
+
+    async getSwap(id: string): Promise<AssetSwap | undefined> {
+        await this.ensureInit();
+        return this.findSwap(id);
+    }
+
+    async insertPreparedSwap(swap: AssetSwap): Promise<boolean> {
+        await this.ensureInit();
+        let inserted = false;
+        await this.withTx(async () => {
+            const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swaps}`);
+            const existing = rows.map((row) => JSON.parse(row.data) as AssetSwap);
+            if (!canInsertPreparedSwap(existing, swap)) return;
+            await this.writeSwap(swap);
+            inserted = true;
+        });
+        return inserted;
+    }
+
+    async advanceFundingState(
+        id: string,
+        expected: "prepared" | "submitted",
+        next: FundingStateAdvance,
+    ): Promise<boolean> {
+        await this.ensureInit();
+        let advanced = false;
+        await this.withTx(async () => {
+            const result = advanceFundingSwap(await this.findSwap(id), expected, next);
+            if (result.swap) await this.writeSwap(result.swap);
+            advanced = result.ok;
+        });
+        return advanced;
     }
 
     async getAllSwaps(): Promise<AssetSwap[]> {

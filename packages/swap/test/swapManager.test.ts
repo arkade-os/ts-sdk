@@ -1280,11 +1280,14 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     /** Comfortably inside the claim window. */
     const BEFORE_DEADLINE = REFUND_LOCKTIME - 3600;
 
-    it("claims a lockup funded for the agreed amount", async () => {
+    it.each([
+        ["reads it open", fundedIndexer],
+        ["is down", () => fakeIndexer({ fail: true })],
+    ])("claims a lockup funded for the agreed amount when the indexer %s", async (_, indexer) => {
         const s = spies();
         const swap = receiveSwap();
         const m = manager({
-            indexer: fundedIndexer(),
+            indexer: indexer(),
             contracts: fundedContracts(),
             now: BEFORE_DEADLINE,
             spies: s,
@@ -2321,12 +2324,19 @@ describe("RfqSwapManager — a lockup that was unilaterally exited", () => {
         // `findLockupVtxos`' own drop of exited outputs.
         const s = spies();
         const swap = receiveSwap();
+        const read = { vtxos: exited(), fail: false };
         const m = manager({
-            indexer: fakeIndexer({ vtxos: exited() }),
+            indexer: fakeIndexer(read),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+            }),
             now: REFUND_LOCKTIME - 3600,
             spies: s,
         });
         await m.addSwap(swap);
+        await m.poll();
+        read.fail = true;
         await m.poll();
 
         expect(s.lockupClaims).toEqual([]);

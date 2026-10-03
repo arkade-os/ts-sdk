@@ -21,6 +21,29 @@ export type AssetSwapStatus =
  * restore layers share one spelling instead of re-typing the literal. */
 export const BTC_ASSET_ID = "btc";
 
+export type FundingIntentState = "prepared" | "submitted" | "bound" | "abandoned";
+
+export interface FundingIntentInput {
+    txid: string;
+    vout: number;
+}
+
+export interface FundingIntentOutput {
+    script: string;
+    value: string;
+    assetId?: string;
+    assetAmount?: string;
+}
+
+export interface FundingIntent {
+    version: 1;
+    state: FundingIntentState;
+    inputs: FundingIntentInput[];
+    serverPubkey: string;
+    arkServerUrl: string;
+    output: FundingIntentOutput;
+}
+
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
 // if a consumer must persist display metadata the restore scan cannot rebuild
@@ -67,7 +90,7 @@ export interface SwapSecretsProjection {
 }
 
 export interface AssetSwap extends SwapSecretsProjection {
-    /** Funding txid — the swap's identity. */
+    /** Stable operation id for prepared rows; legacy rows use the funding txid. */
     id: string;
     /** 'btc' or a 68-hex asset id. */
     fromAsset: string;
@@ -82,6 +105,7 @@ export interface AssetSwap extends SwapSecretsProjection {
     /** TLV offer — needed to rebuild the contract for cancel. */
     offerHex: string;
     fundingTxid: string;
+    fundingIntent?: FundingIntent;
     spentTxid?: string;
     status: AssetSwapStatus;
     createdAt: number;

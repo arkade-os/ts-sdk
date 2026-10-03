@@ -14,6 +14,12 @@ import {
 } from "./repository";
 import type { AssetSwap } from "./store";
 import type { RfqSwapRecord } from "./rfqRecord";
+import {
+    advanceFundingSwap,
+    canInsertPreparedSwap,
+    mergeFundingProtectedSwap,
+    type FundingStateAdvance,
+} from "./fundingPersistence";
 import type { RfqSwapState } from "./rfqSwapState";
 
 const DEFAULT_DB_NAME = "arkade-intents";
@@ -69,7 +75,7 @@ function initDatabase(db: IDBDatabase, oldVersion: number, transaction: IDBTrans
 /** Browser backend over the SDK's shared IndexedDB manager — the same
  * infrastructure the wallet already uses for its Boltz swap repository. */
 export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private readonly connection: ManagedConnection;
 
     constructor(dbName: string = DEFAULT_DB_NAME) {
@@ -94,9 +100,54 @@ export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
         await done;
     }
 
+    private async mutateSwaps<T>(apply: (store: IDBObjectStore) => Promise<T>): Promise<T> {
+        const tx = (await this.ensureDb()).transaction([STORE_SWAPS], "readwrite");
+        const done = awaitTransaction(tx);
+        try {
+            const result = await apply(tx.objectStore(STORE_SWAPS));
+            await done;
+            return result;
+        } catch (error) {
+            try {
+                tx.abort();
+            } catch {}
+            try {
+                await done;
+            } catch {}
+            throw error;
+        }
+    }
+
     async saveSwap(swap: AssetSwap): Promise<void> {
-        await this.write(STORE_SWAPS, (store) => {
-            store.put(swap);
+        await this.mutateSwaps(async (store) => {
+            const existing = await promisifyRequest<AssetSwap | undefined>(store.get(swap.id));
+            store.put(mergeFundingProtectedSwap(existing, swap));
+        });
+    }
+
+    async getSwap(id: string): Promise<AssetSwap | undefined> {
+        return promisifyRequest((await this.readStore(STORE_SWAPS)).get(id));
+    }
+
+    async insertPreparedSwap(swap: AssetSwap): Promise<boolean> {
+        return this.mutateSwaps(async (store) => {
+            const existing = await promisifyRequest<AssetSwap[]>(store.getAll());
+            if (!canInsertPreparedSwap(existing, swap)) return false;
+            store.add(swap);
+            return true;
+        });
+    }
+
+    async advanceFundingState(
+        id: string,
+        expected: "prepared" | "submitted",
+        next: FundingStateAdvance,
+    ): Promise<boolean> {
+        return this.mutateSwaps(async (store) => {
+            const existing = await promisifyRequest<AssetSwap | undefined>(store.get(id));
+            const result = advanceFundingSwap(existing, expected, next);
+            if (result.swap) store.put(result.swap);
+            return result.ok;
         });
     }
 

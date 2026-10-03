@@ -29,6 +29,7 @@
  * the same backstop every other best-effort step here relies on.
  */
 import type { IContractManager } from "@arkade-os/sdk";
+import { hasBoundFunding, mayHaveSubmittedFunding } from "./fundingPersistence";
 import type { AssetSwap, AssetSwapStatus } from "./store";
 
 /**
@@ -83,7 +84,11 @@ async function serialize<T>(script: string, task: () => Promise<T>): Promise<T> 
 function addressOutstanding(swaps: AssetSwap[], script: string): boolean {
     const issued = issuedAt.get(script);
     if (issued === undefined) return false;
-    if (swaps.some((s) => s.swapPkScript === script && s.createdAt >= issued)) {
+    const sinceIssuance = swaps.filter((s) => s.swapPkScript === script && s.createdAt >= issued);
+    if (
+        sinceIssuance.some(hasBoundFunding) ||
+        sinceIssuance.some((swap) => swap.fundingIntent?.state === "abandoned")
+    ) {
         issuedAt.delete(script);
         return false;
     }
@@ -145,7 +150,15 @@ export async function retireOfferContract(
         // NOT `!TERMINAL.includes(...)`: `recoverable` is terminal for a spend
         // and not retirable, so reading liveness off TERMINAL unwatches swept
         // funds.
-        if (swaps.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
+        if (
+            swaps.some(
+                (s) =>
+                    s.swapPkScript === script &&
+                    mayHaveSubmittedFunding(s) &&
+                    !RETIRABLE.includes(s.status),
+            )
+        )
+            return;
         if (addressOutstanding(swaps, script)) return;
         try {
             await manager.setContractWatchState(script, "retained");
