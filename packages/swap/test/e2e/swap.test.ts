@@ -8,7 +8,8 @@
  * Fill suite, against the stack's solverd: swaps in both directions, all-in
  * and partial, resolved live off the wallet's own vtxo_spent event (never a
  * restore scan); plus oversized and underbid offers the solver doesn't fill,
- * which the wallet cancels.
+ * which the wallet cancels. It also reopens the wallet, on the same storage
+ * (a reload) or new storage (a restore), and checks it still finds each swap.
  * afterAll sells leftover asset back to the solver, so its inventory
  * survives every run and the default solver-init float needs no sizing.
  * The minted asset id changes on every regtest boot, so nothing here may
@@ -34,6 +35,7 @@ import {
     type AssetSwap,
     type AssetSwapRepository,
     InMemoryAssetSwapRepository,
+    registerAssetSwapRestore,
     restoreAssetSwapRepository,
 } from "../../src";
 import { toRestoreTx } from "../../src/registerRestore";
@@ -479,6 +481,45 @@ describe("asset swaps against solverd (regtest)", () => {
             180_000,
         );
     });
+
+    describe("after a restore into new storage", () => {
+        it.each(DIRECTIONS)(
+            "detects a filled %s to %s swap and its payout",
+            async (give) => {
+                const funded = await fundOffer(give);
+                await waitForFill(funded);
+                const swaps = await restoreWallet();
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("fulfilled");
+                await expectPayout(swaps, funded.fundingTxid);
+            },
+            180_000,
+        );
+
+        it.each(DIRECTIONS)(
+            "detects and cancels an underbid %s to %s offer",
+            async (give) => {
+                const funded = await fundOffer(give, { underbid: true });
+                const swaps = await restoreWallet();
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("pending");
+                await cancelAndAwaitRefund(swaps, funded.fundingTxid);
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("cancelled");
+            },
+            180_000,
+        );
+
+        it.each(DIRECTIONS)(
+            "detects a cancelled %s to %s offer and its refund",
+            async (give) => {
+                const oldSwaps = new InMemoryAssetSwapRepository();
+                const funded = await fundOffer(give, { swaps: oldSwaps, underbid: true });
+                await cancelAndAwaitRefund(oldSwaps, funded.fundingTxid);
+                const swaps = await restoreWallet();
+                expect(await statusOf(swaps, funded.fundingTxid)).toBe("cancelled");
+                await expectPayout(swaps, funded.fundingTxid);
+            },
+            180_000,
+        );
+    });
 });
 
 const execCommand = (command: string): string => {
@@ -736,6 +777,17 @@ const reloadWallet = async (swaps: AssetSwapRepository): Promise<void> => {
         txs: history.map(toRestoreTx),
         operatorPubkey,
     });
+};
+
+/** Close the wallet and open its key on new, empty storage, as a restore on a
+ * new device does. Returns the swap store the restore rebuilt from history. */
+const restoreWallet = async (): Promise<AssetSwapRepository> => {
+    await wallet.dispose();
+    wallet = await openWallet();
+    const swaps = new InMemoryAssetSwapRepository();
+    registerAssetSwapRestore(wallet, { repository: swaps });
+    await wallet.restore();
+    return swaps;
 };
 
 /** The status `swaps` records for the swap funded by `fundingTxid`. */
