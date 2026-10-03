@@ -73,6 +73,7 @@ const CURATED_ROOT: readonly string[] = [
     "DriveMode",
     "RfqAuctionPolicy",
     "SwapPolicy",
+    "DEFAULT_MAX_REFUND_WINDOW_SECONDS",
     "RfqTransportFactory",
     // The verbs and their option/return vocabulary.
     "pay",
