@@ -122,10 +122,53 @@ export async function checkFundingOutput(
     return exactFundingOutput(final, swap) ? "matches" : "mismatch";
 }
 
+const protectPendingHistory = async (
+    indexer: RestoreIndexer,
+    pending: AssetSwap[],
+    historyTxids: readonly string[],
+    protectedTxids: Set<string>,
+): Promise<void> => {
+    const finals = await fetchTransactions(
+        indexer,
+        new Set(historyTxids.filter((txid) => TXID.test(txid) && !protectedTxids.has(txid))),
+    );
+    const candidates = [...finals.values()].flatMap((final) => {
+        if (final.outputsLength === 0) return [];
+        const matches = pending.filter((swap) => exactFundingOutput(final, swap));
+        const inputs = Array.from({ length: final.inputsLength }, (_, index) =>
+            inputAt(final, index),
+        );
+        if (matches.length === 0 || inputs.some((input) => !input || input.vout !== 0)) return [];
+        const checkpointTxids = inputs.map((input) => input!.txid);
+        if (!exactFinalInputs(final, checkpointTxids)) return [];
+        return [{ final, matches, checkpointTxids }];
+    });
+    const checkpoints = await fetchTransactions(
+        indexer,
+        new Set(candidates.flatMap(({ checkpointTxids }) => checkpointTxids)),
+    );
+    for (const { final, matches, checkpointTxids } of candidates) {
+        for (const swap of matches) {
+            const sources = swap.fundingIntent!.inputs;
+            if (sources.length !== checkpointTxids.length) continue;
+            if (
+                checkpointTxids.some((txid) => !checkpoints.has(txid)) ||
+                sources.every((source) =>
+                    checkpointTxids.some((txid) => exactCheckpoint(checkpoints.get(txid), source)),
+                )
+            ) {
+                protectedTxids.add(final.id);
+                break;
+            }
+        }
+    }
+};
+
 export async function recoverPreparedOfferFunding(
     indexer: RestoreIndexer,
     repository: AssetSwapRepository,
     swaps: AssetSwap[],
+    historyTxids: readonly string[] = [],
 ): Promise<FundingRecoveryResult> {
     const pending = swaps.filter(
         (swap) =>
@@ -175,6 +218,7 @@ export async function recoverPreparedOfferFunding(
         byOutpoint.set(key, byOutpoint.has(key) ? undefined : row);
     }
     const parsed = await fetchTransactions(indexer, requested);
+    await protectPendingHistory(indexer, pending, historyTxids, result.candidateTxids);
 
     for (const initial of pending) {
         if (pendingByInputs.get(inputSetKey(initial)) !== 1) continue;

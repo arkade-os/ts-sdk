@@ -107,7 +107,14 @@ export async function restoreAssetSwapRepository(
 
     let recovered: FundingRecoveryResult;
     try {
-        recovered = await recoverPreparedOfferFunding(indexer, repository, initial);
+        recovered = await recoverPreparedOfferFunding(
+            indexer,
+            repository,
+            initial,
+            txs
+                .filter((tx) => tx.type === "sent" && !scanned.has(tx.redeemTxid))
+                .map((tx) => tx.redeemTxid),
+        );
     } catch (recoveryError) {
         throw await withCoverage(recoveryError, initial);
     }

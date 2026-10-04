@@ -4,10 +4,12 @@ import { base64, hex } from "@scure/base";
 import {
     ArkAddress,
     asset,
+    DefaultVtxo,
     Extension,
     SendDeadlineExceededError,
     Transaction,
     UnknownPacket,
+    Wallet,
     type IWallet,
     type NormalizedExtendedVirtualCoin,
 } from "@arkade-os/sdk";
@@ -35,6 +37,7 @@ const state = vi.hoisted(() => ({
     network: "regtest",
     signerPubkey: "024f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     dust: 330n,
+    minimum: undefined as bigint | undefined,
     virtualTxs: new Map<string, string>(),
 }));
 
@@ -60,6 +63,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
                     network: state.network,
                     unilateralExitDelay: 4096n,
                     dust: state.dust,
+                    vtxoMinAmount: state.minimum,
                 };
             }
         },
@@ -197,6 +201,38 @@ const opaqueWalletFor = (
     send: (params: SelectedSend) => Promise<string>,
 ) => walletFor(vtxos, send, MAKER_ADDRESS, null);
 
+const realSendWalletFor = (vtxos: NormalizedExtendedVirtualCoin[]) => {
+    const submit = vi.fn(
+        async (
+            _inputs: NormalizedExtendedVirtualCoin[],
+            _outputs: { amount: bigint }[],
+            _persist: { changeAssets?: { assetId: string; amount: bigint }[] },
+        ) => FUNDING_TXID,
+    );
+    const context = {
+        offchainTapscript: new DefaultVtxo.Script({
+            pubKey: MAKER_KEY,
+            serverPubKey: SERVER_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        }),
+        arkServerPublicKey: SERVER_KEY,
+        serverUnrollScript: {},
+        network: { hrp: "tark" },
+        dustAmount: 330n,
+        recipientAddressContext: () => ({
+            hrp: "tark",
+            signerSet: { active: SERVER_KEY_HEX, deprecated: new Map() },
+        }),
+        arkProvider: { getInfo: vi.fn(async () => ({ vtxoMinAmount: state.minimum })) },
+        logUngatedInputs: vi.fn(),
+        _submitOffchainSpend: submit,
+    };
+    const send = vi.fn(async (params: SelectedSend) =>
+        (Wallet.prototype as any)._sendImpl.call(context, params),
+    );
+    return { wallet: walletFor(vtxos, send), submit };
+};
+
 /** A funding transaction as the wallet would produce it: the deposit output, then
  * the extension carrying the OFFER packet. */
 const fundingTx = (script: Uint8Array, amount: bigint, offerHex: string) => {
@@ -215,6 +251,7 @@ beforeEach(() => {
     state.network = "regtest";
     state.signerPubkey = `02${SERVER_KEY_HEX}`;
     state.dust = 330n;
+    state.minimum = undefined;
     state.virtualTxs.clear();
     contractManager.createContract.mockClear();
     contractManager.setContractWatchState.mockClear();
@@ -223,6 +260,147 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("fundOffer", () => {
+    it("rejects unusable minimum change before registering or reserving a real wallet send", async () => {
+        state.minimum = 330n;
+        const repository = new InMemoryAssetSwapRepository();
+        const { wallet, submit } = realSendWalletFor([coin("11", 616)]);
+        const error = await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: offer().offerHex,
+            deposit: { amount: 505n },
+            id: "minimum-change",
+        }).catch((value) => value);
+
+        expect(await repository.getAllSwaps(), `${error}: ${error?.cause}`).toEqual([]);
+        expect(contractManager.createContract).not.toHaveBeenCalled();
+        expect(wallet.send).not.toHaveBeenCalled();
+        expect(submit).not.toHaveBeenCalled();
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(FundingOutcomeUnknownError);
+    });
+
+    it("names an extra input so a real wallet can produce minimum-sized change", async () => {
+        state.minimum = 330n;
+        const coins = [coin("11", 616), coin("22", 400)];
+        const { wallet, submit } = realSendWalletFor(coins);
+        const result = await fundOffer(wallet, "https://ark.example/", {
+            repository: new InMemoryAssetSwapRepository(),
+            offerHex: offer().offerHex,
+            deposit: { amount: 505n },
+        });
+
+        expect(result.fundingIntent?.state).toBe("bound");
+        expect(submit).toHaveBeenCalledOnce();
+        expect(submit.mock.calls[0][0]).toEqual(coins);
+        expect(submit.mock.calls[0][1].slice(0, 2).map((output) => output.amount)).toEqual([
+            505n,
+            511n,
+        ]);
+    });
+
+    it("uses only unreserved, expiry-eligible top-ups for minimum change", async () => {
+        state.minimum = 330n;
+        const repository = new InMemoryAssetSwapRepository();
+        const reserved = coin("22", 400);
+        const derived = offer();
+        await expect(
+            fundOffer(
+                walletFor([reserved], async () => {
+                    throw new Error("response lost");
+                }),
+                "https://ark.example/",
+                {
+                    repository,
+                    offerHex: derived.offerHex,
+                    deposit: { amount: 400n },
+                    id: "reserved-top-up",
+                },
+            ),
+        ).rejects.toBeInstanceOf(FundingOutcomeUnknownError);
+        const first = coin("11", 616);
+        const expired = coin("33", 400, undefined, { kind: "time", value: NOW + 30 });
+        const eligible = coin("44", 400);
+        const { wallet, submit } = realSendWalletFor([first, reserved, expired, eligible]);
+        await fundOffer(wallet, "https://ark.example/", {
+            repository,
+            offerHex: derived.offerHex,
+            deposit: { amount: 505n },
+            inputExpiryFloor: { kind: "time", value: BigInt(NOW + 3600) },
+        });
+
+        expect(submit.mock.calls[0][0]).toEqual([first, eligible]);
+        expect(await repository.getSwap("reserved-top-up")).toMatchObject({
+            fundingIntent: { state: "submitted" },
+        });
+    });
+
+    it("keeps an exact real-wallet payment free of unnecessary change", async () => {
+        state.minimum = 330n;
+        const exact = coin("11", 505);
+        const { wallet, submit } = realSendWalletFor([exact, coin("22", 400)]);
+        await fundOffer(wallet, "https://ark.example/", {
+            repository: new InMemoryAssetSwapRepository(),
+            offerHex: offer().offerHex,
+            deposit: { amount: 505n },
+        });
+
+        expect(submit.mock.calls[0][0]).toEqual([exact]);
+        expect(submit.mock.calls[0][1].map((output) => output.amount)).toEqual([505n, 0n]);
+    });
+
+    it.each([undefined, 0n, 1n])(
+        "preserves plain change when the minimum is %s",
+        async (minimum) => {
+            state.minimum = minimum;
+            const { wallet, submit } = realSendWalletFor([coin("11", 616)]);
+            await fundOffer(wallet, "https://ark.example/", {
+                repository: new InMemoryAssetSwapRepository(),
+                offerHex: offer().offerHex,
+                deposit: { amount: 505n },
+            });
+
+            expect(submit.mock.calls[0][1].slice(0, 2).map((output) => output.amount)).toEqual([
+                505n,
+                111n,
+            ]);
+        },
+    );
+
+    it("tops up asset residuals beyond dust when the real-wallet minimum is larger", async () => {
+        state.minimum = 500n;
+        const coins = [coin("11", 660, [{ assetId: ASSET_ID, amount: 600n }]), coin("22", 200)];
+        const { wallet, submit } = realSendWalletFor(coins);
+        await fundOffer(wallet, "https://ark.example/", {
+            repository: new InMemoryAssetSwapRepository(),
+            offerHex: offer("asset").offerHex,
+            deposit: { assetId: ASSET_ID, amount: 500n },
+        });
+
+        expect(submit.mock.calls[0][0]).toEqual(coins);
+        expect(submit.mock.calls[0][1].slice(0, 2).map((output) => output.amount)).toEqual([
+            330n,
+            530n,
+        ]);
+        expect(submit.mock.calls[0][2].changeAssets).toEqual([{ assetId: ASSET_ID, amount: 100n }]);
+    });
+
+    it("still reserves asset dust when the operator minimum is lower", async () => {
+        state.minimum = 100n;
+        const coins = [coin("11", 400, [{ assetId: ASSET_ID, amount: 600n }]), coin("22", 260)];
+        const { wallet, submit } = realSendWalletFor(coins);
+        await fundOffer(wallet, "https://ark.example/", {
+            repository: new InMemoryAssetSwapRepository(),
+            offerHex: offer("asset").offerHex,
+            deposit: { assetId: ASSET_ID, amount: 500n },
+        });
+
+        expect(submit.mock.calls[0][0]).toEqual(coins);
+        expect(submit.mock.calls[0][1].slice(0, 2).map((output) => output.amount)).toEqual([
+            330n,
+            330n,
+        ]);
+    });
+
     it("rejects repositories without the complete v5 atomic funding contract before wallet work", async () => {
         const getAddress = vi.fn();
         const getSpendableVtxos = vi.fn();

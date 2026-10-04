@@ -247,6 +247,54 @@ describe("prepared OFFER funding recovery", () => {
         expect(result.changes).toHaveLength(2);
     });
 
+    it.each([true, false])(
+        "defers owned history until canonical source evidence arrives (checkpoint available: %s)",
+        async (checkpointAvailable) => {
+            const evidence = chain(source("63"));
+            const repository = new InMemoryAssetSwapRepository();
+            await seed(repository, prepared("operation-a", [evidence.source]));
+            const responses = new Map([[evidence.final.txid, evidence.final.psbt]]);
+            if (checkpointAvailable)
+                responses.set(evidence.checkpoint.txid, evidence.checkpoint.psbt);
+            const options = {
+                sourceRows: [
+                    sourceVtxo(evidence, {
+                        isSpent: false,
+                        spentBy: "",
+                        arkTxId: "",
+                        virtualStatus: { state: "settled" },
+                    }),
+                ],
+                responses,
+            };
+            const indexer = indexerFor([evidence], options);
+            const txs = [history(evidence.final.txid)];
+
+            const first = await run(repository, indexer, txs);
+            expect(first.swaps.map((swap) => swap.id)).toEqual(["operation-a"]);
+            expect(first.changes).toHaveLength(0);
+            expect(first.scannedTxids).toEqual([]);
+            expect(await repository.getScannedTxids()).not.toContain(evidence.final.txid);
+            expect(await repository.getSwap("operation-a")).toMatchObject({
+                fundingTxid: "",
+                fundingIntent: { state: "submitted" },
+            });
+
+            options.sourceRows = [sourceVtxo(evidence)];
+            responses.set(evidence.checkpoint.txid, evidence.checkpoint.psbt);
+            const second = await run(repository, indexer, txs);
+            expect(second.swaps).toHaveLength(1);
+            expect(second.changes).toHaveLength(1);
+            expect(await repository.getSwap("operation-a")).toMatchObject({
+                fundingTxid: evidence.final.txid,
+                fundingIntent: { state: "bound" },
+                quote: { feeBps: 30 },
+                carrier: { mode: "purchase", physicalSats: "330" },
+            });
+            expect(await repository.getSwap(evidence.final.txid)).toBeUndefined();
+        },
+    );
+
     it("leaves an unrelated same-script deposit to the legacy restore path", async () => {
         const selected = source("61");
         const manualCheckpoint = checkpoint(source("62"));
@@ -412,6 +460,29 @@ describe("prepared OFFER funding recovery", () => {
                 "operation-a",
             ]);
         }
+    });
+
+    it("surfaces a history checkpoint read failure without persisting a legacy duplicate", async () => {
+        const evidence = chain(source("9d"));
+        const repository = new InMemoryAssetSwapRepository();
+        await seed(repository, prepared("operation-a", [evidence.source]));
+        const answers = indexerFor([evidence], {
+            sourceRows: [sourceVtxo(evidence, { isSpent: false, spentBy: "", arkTxId: "" })],
+        });
+        const unavailable = new Error("history checkpoint unavailable");
+        const indexer = {
+            ...answers,
+            getVirtualTxs: async (ids: string[]) => {
+                if (ids.includes(evidence.checkpoint.txid)) throw unavailable;
+                return answers.getVirtualTxs(ids);
+            },
+        };
+        await expect(run(repository, indexer, [history(evidence.final.txid)])).rejects.toBe(
+            unavailable,
+        );
+        expect((await repository.getAllSwaps()).map((swap) => swap.id)).toEqual(["operation-a"]);
+        expect(await repository.getScannedTxids()).not.toContain(evidence.final.txid);
+        expect(mocks.restoreOfferCoverage).toHaveBeenCalledOnce();
     });
 
     it("preserves both causes when coverage also fails after a failed recovery read", async () => {

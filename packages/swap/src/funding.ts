@@ -132,6 +132,7 @@ const canonicalUrl = (value: string): string => {
     ) {
         throw new Error("arkServerUrl must be an HTTP(S) URL without credentials or a fragment");
     }
+    if (parsed.href.includes("?")) throw new Error("arkServerUrl must not contain a query");
     return parsed.toString();
 };
 
@@ -182,6 +183,7 @@ const selectFundingInputs = (
     depositAssetId: string | undefined,
     depositAmount: bigint,
     dust: number,
+    minimum: number,
 ): NormalizedExtendedVirtualCoin[] => {
     let selected: NormalizedExtendedVirtualCoin[];
     if (depositAssetId) {
@@ -212,8 +214,10 @@ const selectFundingInputs = (
     // A top-up coin carries its own assets, so the carrier reserve is re-derived over
     // the whole selection: `send({selectedVtxos})` may not reach for an unnamed input.
     for (;;) {
-        const neededSats = outputSats + (assetChange(selected).size > 0 ? dust : 0);
-        if (selectedSats >= neededSats) return selected;
+        const hasAssetChange = assetChange(selected).size > 0;
+        const neededSats = outputSats + Math.max(minimum, hasAssetChange ? dust : 0);
+        if ((selectedSats === outputSats && !hasAssetChange) || selectedSats >= neededSats)
+            return selected;
         const selectedKeys = new Set(selected.map((coin) => `${coin.txid}:${coin.vout}`));
         const remaining = available.filter(
             (coin) => !selectedKeys.has(`${coin.txid}:${coin.vout}`),
@@ -340,6 +344,7 @@ export async function fundOffer(
         throw new Error("deposit.carrierSats is only valid for an asset deposit");
     }
     const url = canonicalUrl(arkServerUrl);
+    const providerUrl = url.replace(/\/+$/, "");
     const validUntil = captureSendDeadline(params.validUntil);
     const floor = params.inputExpiryFloor
         ? { kind: params.inputExpiryFloor.kind, value: params.inputExpiryFloor.value }
@@ -370,7 +375,7 @@ export async function fundOffer(
     }
 
     assertSendDeadline(validUntil);
-    const provider = new RestArkProvider(url);
+    const provider = new RestArkProvider(providerUrl);
     const [info, makerPublicKey, walletAddress] = await Promise.all([
         provider.getInfo(),
         wallet.identity.xOnlyPublicKey(),
@@ -423,7 +428,14 @@ export async function fundOffer(
     const eligible = floor ? unreserved.filter((coin) => expiryMatches(coin, floor)) : unreserved;
     let selected: NormalizedExtendedVirtualCoin[];
     try {
-        selected = selectFundingInputs(eligible, outputSats, depositAssetId, depositAmount, dust);
+        selected = selectFundingInputs(
+            eligible,
+            outputSats,
+            depositAssetId,
+            depositAmount,
+            dust,
+            Number(info.vtxoMinAmount ?? 0n),
+        );
     } catch (cause) {
         if (floor)
             throw new Error("input expiry floor leaves insufficient eligible funds", { cause });
@@ -463,7 +475,7 @@ export async function fundOffer(
     assertSendDeadline(validUntil);
     await registerOfferContract(
         wallet,
-        url,
+        providerUrl,
         info.network as NetworkName,
         binding,
         serverPubkey,
@@ -527,7 +539,7 @@ export async function fundOffer(
         let observed: FundingOutputCheck;
         try {
             observed = await checkFundingOutput(
-                new RestIndexerProvider(url),
+                new RestIndexerProvider(providerUrl),
                 fundingTxid,
                 prepared,
             );

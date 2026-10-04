@@ -1439,6 +1439,36 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(swap.blockedReason).toBeUndefined();
     });
 
+    it("rechecks a short lockup after a top-up while the fate indexer is down", async () => {
+        const s = spies();
+        const swap = receiveSwap();
+        const read = { vtxos: unspent(), fail: false };
+        let value = LOCKUP_VALUE - 1;
+        const m = manager({
+            indexer: fakeIndexer(read),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                vtxos: () => [{ ...LOCKUP_OUTPOINT, value }],
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        expect(swap.state).toBe("needs_counterparty");
+        expect(s.lockupClaims).toHaveLength(0);
+
+        read.fail = true;
+        await m.poll();
+        expect(s.lockupClaims).toHaveLength(0);
+        expect(swap.blockedReason).toContain("99999 sats, below the agreed 100000");
+
+        value = LOCKUP_VALUE;
+        await m.poll();
+        expect(swap.state).toBe("claimed");
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(swap.blockedReason).toBeUndefined();
+    });
+
     it("never pushes an Arkade refund, before or after the deadline", async () => {
         // Every non-claim leaf of this covenant is the SOLVER's. A generic
         // caller that wired `refundArkade` for its send swaps must not see it
@@ -3610,6 +3640,76 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             // refusal on a swap that is running.
             expect(store.records.get(RFQ_ID)?.blockedReason).toBeUndefined();
         });
+
+        it.each([
+            [
+                "short lockup",
+                "lockup holds 99999 sats, below the agreed 100000 \u2014 refusing to publish the preimage",
+                LOCKUP_VALUE,
+                REFUND_LOCKTIME - 3600,
+                true,
+            ],
+            [
+                "still short",
+                "lockup holds 99999 sats, below the agreed 100000 \u2014 refusing to publish the preimage",
+                LOCKUP_VALUE - 1,
+                REFUND_LOCKTIME - 3600,
+                false,
+            ],
+            [
+                "known exit",
+                "the lockup was unilaterally exited (1 output(s) onchain), so no offchain spend can move it \u2014 complete the unroll and spend it onchain",
+                LOCKUP_VALUE,
+                REFUND_LOCKTIME - 3600,
+                false,
+            ],
+            [
+                "unknown block",
+                "operator must inspect this lockup",
+                LOCKUP_VALUE,
+                REFUND_LOCKTIME - 3600,
+                false,
+            ],
+            [
+                "closed window",
+                "lockup holds 99999 sats, below the agreed 100000 \u2014 refusing to publish the preimage",
+                LOCKUP_VALUE,
+                REFUND_LOCKTIME,
+                false,
+            ],
+        ])(
+            "restores a receive %s safely during a fate outage",
+            async (_, blockedReason, value, now, claims) => {
+                const store = fakeStore([
+                    createRfqSwapRecord(
+                        receiveOrigin(),
+                        receiveSwap({
+                            state: "needs_counterparty",
+                            blockedReason,
+                        }),
+                    ),
+                ]);
+                const s = spies();
+                const m = manager({
+                    repository: store,
+                    indexer: fakeIndexer({ fail: true }),
+                    contracts: fakeContracts({
+                        preexisting: [rowFor(RECEIVE_LOCKUP, RECEIVE_ADDRESS)],
+                        vtxos: () => [{ ...LOCKUP_OUTPOINT, value }],
+                    }),
+                    now,
+                    spies: s,
+                });
+                const restored = await m.restoreFromRepository();
+                expect(restored.restored).toHaveLength(1);
+                await m.poll();
+                expect(s.lockupClaims).toHaveLength(claims ? 1 : 0);
+                expect(store.records.get(RFQ_ID)?.state).toBe(
+                    claims ? "claimed" : "needs_counterparty",
+                );
+                if (claims) expect(store.records.get(RFQ_ID)?.blockedReason).toBeUndefined();
+            },
+        );
 
         it("reports a record it cannot rebuild without stranding the others", async () => {
             const orphan = {
