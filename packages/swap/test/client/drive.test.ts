@@ -30,6 +30,7 @@ import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
 import type { AssetSwapRepository } from "../../src/repository";
 import { rfqRecordOf } from "../../src/client/driveRecords";
+import { legacyOfferDepositsToReopen } from "../../src/client/legacyRecords";
 import type { RfqSwapRecord } from "../../src/rfqRecord";
 import type { AssetSwap } from "../../src/store";
 import {
@@ -316,6 +317,21 @@ describe("the v1 read-through", () => {
         });
 
         expect(h.drive.swap("q1")?.outcome).toBe("refunded");
+        expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
+        await h.drive.dispose();
+    });
+
+    it("leaves a v1 row undriven behind a terminal v2 record of its rfqId", async () => {
+        const record = signable({ fundingTxid: "aa".repeat(32), state: "refunded" });
+        const legacy = rfqRecordOf(signable({ fundingTxid: "aa".repeat(32) }));
+        const h = await build({
+            records: [record],
+            legacy: [legacy],
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
+            vtxos: unspent(),
+            funded: [],
+        });
+
         expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
         await h.drive.dispose();
     });
@@ -899,6 +915,19 @@ describe("the offer half", () => {
 
         expect(await collectSwapRecords(repository)).toEqual([]);
         await drive.dispose();
+    });
+
+    it("reopens a funded v1 offer, never an HTLC row or an unfunded offer", async () => {
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer("aa".repeat(32)));
+        const { offerHex: _, ...htlc } = legacyOffer("bb".repeat(32), { id: "v1-htlc" });
+        await repository.saveSwap(htlc as AssetSwap);
+        const { fundingTxid: __, ...unfunded } = legacyOffer("cc".repeat(32), {
+            id: "v1-unfunded",
+        });
+        await repository.saveSwap(unfunded as AssetSwap);
+
+        expect(await legacyOfferDepositsToReopen(repository)).toEqual(new Set(["aa".repeat(32)]));
     });
 
     it("rebuilds a record for a deposit no record claims", async () => {

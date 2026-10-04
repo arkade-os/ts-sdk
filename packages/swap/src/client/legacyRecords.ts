@@ -47,7 +47,11 @@ export const withLegacyRfqSwaps = (
             assertPageRequest(page);
             assertRfqSwapPageFilter(filter);
             const v2 = await collectRfqSwaps(bridge, filter);
-            const held = new Set(v2.map((record) => record.rfqId));
+            // Every v2 rfqId, not just the admitted page: a terminal or differently-stated v2
+            // copy must still shadow its v1 row.
+            const held = new Set(
+                splitRecords(await collectSwapRecords(repository)).corridor.map((r) => r.rfqId),
+            );
             const v1 = (await collectRfqSwaps(repository, filter)).filter(
                 (record) => !held.has(record.rfqId) && admits(record),
             );
