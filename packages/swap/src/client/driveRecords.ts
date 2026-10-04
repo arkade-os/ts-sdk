@@ -19,13 +19,22 @@ import {
     assertRfqSwapPageFilter,
     collectSwapRecords,
     type AssetSwapRepository,
+    type RfqSwapPageCursor,
+    type RfqSwapPageFilter,
 } from "../repository";
 import type { RfqSwapRecord } from "../rfqRecord";
 import type { RfqSwapRecordStore } from "../swapManager";
 import type { LockupSpendIndexer } from "../refund";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "../store";
 import type { OfferSpendChanges, OfferSwapFacts, OfferSwapSource } from "../watch";
-import { asset, assertPageRequest, pageResult, type IWallet } from "@arkade-os/sdk";
+import {
+    asset,
+    assertPageRequest,
+    pageResult,
+    type IWallet,
+    type PageRequest,
+    type PageResult,
+} from "@arkade-os/sdk";
 import { toAtomicDecimal } from "./amount";
 import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
 import type { QuoteId } from "./quote";
@@ -108,6 +117,32 @@ export const withRfqState = (
     };
 };
 
+/** One keyset page over records already in memory, in the repository's `(updatedAt, rfqId)` order. */
+export const pageRfqRecords = (
+    records: readonly RfqSwapRecord[],
+    filter: RfqSwapPageFilter,
+    page: PageRequest<RfqSwapPageCursor>,
+): PageResult<RfqSwapRecord, RfqSwapPageCursor> => {
+    const rows = records
+        .filter(
+            (record) =>
+                (filter.state === undefined || record.state === filter.state) &&
+                (filter.since === undefined || record.updatedAt >= filter.since) &&
+                (!page.after ||
+                    record.updatedAt > page.after.updatedAt ||
+                    (record.updatedAt === page.after.updatedAt && record.rfqId > page.after.rfqId)),
+        )
+        .sort(
+            (a, b) =>
+                a.updatedAt - b.updatedAt || (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0),
+        )
+        .slice(0, page.limit + 1);
+    return pageResult(rows, page.limit, (record) => ({
+        updatedAt: record.updatedAt,
+        rfqId: record.rfqId,
+    }));
+};
+
 /** What a bridge or source hands back to the drive after a write. */
 export type RecordSink = (record: SwapRecord) => void;
 
@@ -168,28 +203,7 @@ export const corridorRecordStore = (
             const { corridor } = splitRecords(await collectSwapRecords(repository));
             // indexed before the filter: an excluded record must stay findable by `rfqId`
             for (const record of corridor) index(record);
-            const rows = corridor
-                .filter(admits)
-                .map(rfqRecordOf)
-                .filter(
-                    (record) =>
-                        (filter.state === undefined || record.state === filter.state) &&
-                        (filter.since === undefined || record.updatedAt >= filter.since) &&
-                        (!page.after ||
-                            record.updatedAt > page.after.updatedAt ||
-                            (record.updatedAt === page.after.updatedAt &&
-                                record.rfqId > page.after.rfqId)),
-                )
-                .sort(
-                    (a, b) =>
-                        a.updatedAt - b.updatedAt ||
-                        (a.rfqId < b.rfqId ? -1 : a.rfqId > b.rfqId ? 1 : 0),
-                )
-                .slice(0, page.limit + 1);
-            return pageResult(rows, page.limit, (record) => ({
-                updatedAt: record.updatedAt,
-                rfqId: record.rfqId,
-            }));
+            return pageRfqRecords(corridor.filter(admits).map(rfqRecordOf), filter, page);
         },
 
         async getRfqSwap(rfqId) {

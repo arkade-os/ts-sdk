@@ -71,6 +71,11 @@ import {
     type CorridorRecordStore,
 } from "./driveRecords";
 import {
+    legacyLiveRfqSwaps,
+    legacyOfferDepositsToReopen,
+    withLegacyRfqSwaps,
+} from "./legacyRecords";
+import {
     LOCKUP_OWNER,
     corridorOutcome,
     readsChain,
@@ -298,15 +303,24 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      */
     const undrivable = new Set<QuoteId>();
 
+    /** LEGACY(v1): `undrivable`, for v1 records, by `rfqId`. */
+    const undrivableLegacy = new Set<string>();
+
     let bridge: CorridorRecordStore | undefined;
+    let readThrough: CorridorRecordStore | undefined;
     const corridorStore = (): CorridorRecordStore =>
-        (bridge ??= corridorRecordStore(
+        // LEGACY(v1): unwrap to `bridge` alone once the read-through goes.
+        (readThrough ??= withLegacyRfqSwaps(
+            (bridge ??= corridorRecordStore(
+                storage(),
+                remember,
+                // Terminal records stay readable but are excluded from the manager's read, sparing
+                // a rebuild per record just to file it `finished`. The index still learns their
+                // `rfqId` (see `getRfqSwapsPage`).
+                (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
+            )),
             storage(),
-            remember,
-            // Terminal records stay readable but are excluded from the manager's read, sparing
-            // a rebuild per record just to file it `finished`. The index still learns their
-            // `rfqId` (see `getRfqSwapsPage`).
-            (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
+            (r) => !undrivableLegacy.has(r.rfqId) && !isRfqSwapTerminal(r.state),
         ));
 
     // ── the outcome ──────────────────────────────────────────────────────────
@@ -532,7 +546,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
-    const drivable = async (record: CorridorSwapRecord): Promise<boolean> =>
+    const drivable = async (record: Pick<CorridorSwapRecord, "kind">): Promise<boolean> =>
         !readsChain(record.kind) || (await resolveOnchain());
 
     // ── the money-moving half ────────────────────────────────────────────────
@@ -657,10 +671,13 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         const txs = history.map(toRestoreTx);
 
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
+        // LEGACY(v1): drop `reopened` once the read-through goes.
+        const reopened = await legacyOfferDepositsToReopen(store);
+        if (reopen !== undefined) reopened.add(reopen);
         const cursor =
-            reopen === undefined
+            reopened.size === 0
                 ? scanned
-                : new Set([...scanned].filter((txid) => txid !== reopen));
+                : new Set([...scanned].filter((txid) => !reopened.has(txid)));
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, txs, new Set(), {
             operatorPubkey,
             scanned: cursor,
@@ -791,14 +808,19 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
         const store = corridorStore();
         for (const record of liveCorridor) store.index(record);
+        // LEGACY(v1)
+        const liveLegacy = await legacyLiveRfqSwaps(repository);
 
-        if (liveCorridor.length > 0) {
+        if (liveCorridor.length > 0 || liveLegacy.length > 0) {
             // A contract-manager failure is not a repository failure: logged, never propagated
             // into `ready`. Records stay readable and the next `arm()` retries.
             try {
                 await contractsOf();
                 for (const record of liveCorridor) {
                     if (!(await drivable(record))) undrivable.add(record.id);
+                }
+                for (const record of liveLegacy) {
+                    if (!(await drivable(record))) undrivableLegacy.add(record.rfqId);
                 }
                 managerDeps.repository = store;
                 // Per-record failures come back in `failed`; such a record reads off itself.

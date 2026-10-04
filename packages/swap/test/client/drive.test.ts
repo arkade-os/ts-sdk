@@ -29,6 +29,9 @@ import { RFQ_CONFIGURATION_REFUSAL, RFQ_CONFIGURATION_REFUSALS } from "../../src
 import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
 import type { AssetSwapRepository } from "../../src/repository";
+import { rfqRecordOf } from "../../src/client/driveRecords";
+import type { RfqSwapRecord } from "../../src/rfqRecord";
+import type { AssetSwap } from "../../src/store";
 import {
     AFTER,
     BEFORE,
@@ -133,6 +136,8 @@ interface Harness {
 const build = async (
     over: {
         records?: SwapRecord[];
+        /** v1 `rfqSwaps` rows, as a 0.0.x client left them. */
+        legacy?: RfqSwapRecord[];
         mode?: "auto" | "manual" | "readonly";
         now?: number;
         vtxos?: FakeVtxo[];
@@ -153,6 +158,7 @@ const build = async (
 ): Promise<Harness> => {
     const repository = memoryRepository();
     for (const record of over.records ?? []) await repository.saveSwapRecord(record);
+    for (const record of over.legacy ?? []) await repository.saveRfqSwap(record);
     const corridors = fakeCorridors({
         ...(over.chain === undefined ? {} : { chain: over.chain }),
         ...(over.claim === undefined ? {} : { claim: over.claim }),
@@ -274,6 +280,51 @@ describe("the record bridge", () => {
         const h = await build({ records: [aged], now: AFTER + 400 * 24 * 3600 });
 
         expect(await h.repository.getSwapRecord("q1")).toBeDefined();
+        await h.drive.dispose();
+    });
+});
+
+describe("the v1 read-through", () => {
+    const legacySend = (over: Partial<CorridorSwapRecord> = {}): RfqSwapRecord =>
+        rfqRecordOf(signable({ fundingTxid: "aa".repeat(32), ...over }));
+
+    it("refunds a v1 swap and writes its state back to the v1 store", async () => {
+        const legacy = legacySend();
+        const h = await build({
+            legacy: [legacy],
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
+            vtxos: unspent(),
+            funded: [],
+        });
+
+        expect((await h.repository.getRfqSwap(legacy.rfqId))?.state).toBe("refunded");
+        expect(await collectSwapRecords(h.repository)).toEqual([]);
+        // driven, not listed
+        expect(h.seen).toEqual([]);
+        await h.drive.dispose();
+    });
+
+    it("lets the v2 record win an rfqId both stores hold", async () => {
+        const record = signable({ fundingTxid: "aa".repeat(32) });
+        const legacy = { ...rfqRecordOf(record), updatedAt: 1 };
+        const h = await build({
+            records: [record],
+            legacy: [legacy],
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
+            vtxos: unspent(),
+            funded: [],
+        });
+
+        expect(h.drive.swap("q1")?.outcome).toBe("refunded");
+        expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
+        await h.drive.dispose();
+    });
+
+    it("leaves a v1 onchain swap undriven rather than failing it terminally", async () => {
+        const legacy = legacySend({ kind: "onchain_send" });
+        const h = await build({ legacy: [legacy], chain: null, vtxos: unspent() });
+
+        expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
         await h.drive.dispose();
     });
 });
@@ -781,8 +832,8 @@ describe("the offer half", () => {
         records: OfferSwapRecord[],
         funding: { txid: string; psbt: string },
         deposit: FakeVtxo,
+        repository: AssetSwapRepository = memoryRepository(),
     ) => {
-        const repository = memoryRepository();
         for (const record of records) await repository.saveSwapRecord(record);
         const contracts = fakeContracts([]);
         const { wallet } = fakeWallet({
@@ -806,6 +857,49 @@ describe("the offer half", () => {
         await drive.idle();
         return { drive, repository, seen };
     };
+
+    /** A v1 offer row, as a 0.0.x client left it. */
+    const legacyOffer = (fundingTxid: string, over: Partial<AssetSwap> = {}): AssetSwap => ({
+        id: "v1-offer",
+        fromAsset: "btc",
+        toAsset: "f1".repeat(34),
+        fromAmount: "100000",
+        toAmount: "5000",
+        swapAddress: OFFER_ADDRESS,
+        swapPkScript: OFFER_SCRIPT,
+        offerHex: "00",
+        fundingTxid,
+        status: "pending",
+        createdAt: 1_700_000_000_000,
+        ...over,
+    });
+
+    it("adopts a live v1 offer whose deposit v1's restore marked scanned", async () => {
+        const funding = offerFunding();
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer(funding.txid));
+        await repository.markTxidsScanned([funding.txid]);
+        const { drive } = await restoreOver([], funding, offerDeposit(funding.txid), repository);
+
+        expect(await repository.getSwapRecord(funding.txid)).toMatchObject({
+            family: "offer",
+            status: "pending",
+            fundingTxid: funding.txid,
+        });
+        expect(drive.swap(funding.txid)?.outcome).toBe("open");
+        await drive.dispose();
+    });
+
+    it("leaves a settled v1 offer's deposit on the cursor", async () => {
+        const funding = offerFunding();
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer(funding.txid, { status: "fulfilled" }));
+        await repository.markTxidsScanned([funding.txid]);
+        const { drive } = await restoreOver([], funding, offerDeposit(funding.txid), repository);
+
+        expect(await collectSwapRecords(repository)).toEqual([]);
+        await drive.dispose();
+    });
 
     it("rebuilds a record for a deposit no record claims", async () => {
         const funding = offerFunding();

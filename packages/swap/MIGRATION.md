@@ -37,6 +37,18 @@ union, the asset-id vocabulary, the amount law and the sixteen-member error taxo
 `@arkade-os/swap`, and the v1 building blocks moved to `@arkade-os/swap/protocol` under
 `@deprecated` pointers.
 
+### Swaps in flight across the upgrade
+
+The client drives v2 records (`swapRecords`). Swaps a `0.0.x` client started stay in its stores, and
+the client keeps driving them on the same repository, with no migration:
+
+- `rfqSwaps` rows are restored, claimed and refunded, and their state is written back to `rfqSwaps`.
+  They are driven, not listed: `client.swaps()` and `onUpdate` never report them.
+- Live offers in `swaps` are re-scanned and adopted as v2 records (listed, cancellable).
+
+This read-through is temporary (`src/client/legacyRecords.ts`). A later release drops it. Upgrade
+through `0.1.x`, or let in-flight swaps settle first.
+
 ### The root `createSwapClient` is a different function
 
 `0.1.0-rc.1` published a v1 facade under that name (ts-sdk #793). The v2 client took it. This is
