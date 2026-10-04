@@ -5995,7 +5995,7 @@ export class Wallet
     ): Promise<string> {
         this._addPendingSpends(inputs);
         try {
-            const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
+            const { arkTxid, signedCheckpointTxs } = await this._buildAndSubmitOffchainTx(
                 inputs,
                 outputs,
                 persist.serverUnrollScript,
@@ -6138,6 +6138,19 @@ export class Wallet
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
+        options?: { validUntil?: number },
+    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
+        return this._withTxLock(() =>
+            this._buildAndSubmitOffchainTx(inputs, outputs, serverUnrollScript, { validUntil }),
+        );
+    }
+
+    private async _buildAndSubmitOffchainTx(
+        inputs: ExtendedVirtualCoin[],
+        outputs: TransactionOutput[],
+        serverUnrollScript: CSVMultisigTapscript.Type,
         options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
         const validUntil = captureSendDeadline(options?.validUntil);

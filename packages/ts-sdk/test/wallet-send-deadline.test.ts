@@ -104,6 +104,12 @@ function mockSubmission(wallet: Wallet, beforeResponse?: () => void) {
     return { submit, finalize };
 }
 
+function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => (resolve = done));
+    return { promise, resolve };
+}
+
 describe("Wallet.send validUntil", () => {
     beforeEach(() => {
         vi.stubGlobal("EventSource", MockEventSource);
@@ -241,6 +247,74 @@ describe("Wallet.send validUntil", () => {
         ).rejects.toMatchObject({ name: "SendDeadlineExceededError" });
         expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
         await wallet.dispose();
+    });
+
+    it("keeps a concurrent public submission pending when a deadline send rolls back", async () => {
+        const { wallet, walletRepository } = await makeWallet();
+        const firstWrite = deferred();
+        const releaseFirstWrite = deferred();
+        const submitted = deferred();
+        const releaseSubmit = deferred();
+        const finalizing = deferred();
+        const releaseFinalize = deferred();
+        let now = 1_700_000_000_000;
+        vi.spyOn(Date, "now").mockImplementation(() => now);
+        const saveState = walletRepository.saveWalletState.bind(walletRepository);
+        let first = true;
+        vi.spyOn(walletRepository, "saveWalletState").mockImplementation(async (state) => {
+            await saveState(state);
+            if (state.settings?.hasPendingTx === true && first) {
+                first = false;
+                firstWrite.resolve();
+                await releaseFirstWrite.promise;
+            }
+        });
+        const { submit, finalize } = mockSubmission(wallet);
+        const submitResponse = submit.getMockImplementation()!;
+        submit.mockImplementation(async (...args) => {
+            const response = await submitResponse(...args);
+            submitted.resolve();
+            await releaseSubmit.promise;
+            return response;
+        });
+        finalize.mockImplementation(async () => {
+            finalizing.resolve();
+            await releaseFinalize.promise;
+        });
+        const deadline = wallet
+            .send(sendParams(wallet, 1_700_000_001, [coin(wallet)]))
+            .catch((error) => error);
+        let direct: ReturnType<Wallet["buildAndSubmitOffchainTx"]> | undefined;
+        try {
+            await firstWrite.promise;
+            const other = { ...coin(wallet), txid: "22".repeat(32) };
+            direct = wallet.buildAndSubmitOffchainTx(
+                [other],
+                [{ script: hex.decode(other.script!), amount: BigInt(other.value) }],
+            );
+            // Drain the fixture's resolved signing/read promises without waiting on B's lock.
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            now = 1_700_000_001_000;
+            releaseFirstWrite.resolve();
+            expect(await deadline).toMatchObject({ name: "SendDeadlineExceededError" });
+
+            await submitted.promise;
+            expect(submit).toHaveBeenCalledOnce();
+            expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
+            releaseSubmit.resolve();
+            await finalizing.promise;
+            expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(true);
+            releaseFinalize.resolve();
+            await expect(direct).resolves.toMatchObject({ arkTxid: expect.any(String) });
+            expect(finalize).toHaveBeenCalledOnce();
+            expect((await walletRepository.getWalletState())?.settings?.hasPendingTx).toBe(false);
+        } finally {
+            releaseFirstWrite.resolve();
+            releaseSubmit.resolve();
+            releaseFinalize.resolve();
+            await Promise.allSettled([deadline, ...(direct ? [direct] : [])]);
+            await wallet.dispose();
+        }
     });
 
     it("propagates pending-flag callback errors and releases the input hold", async () => {
