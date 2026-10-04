@@ -7,6 +7,10 @@ import {
     DefaultVtxo,
     Extension,
     SendDeadlineExceededError,
+    ServiceWorkerWallet,
+    WalletMessageHandler,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
     Transaction,
     UnknownPacket,
     Wallet,
@@ -813,6 +817,127 @@ describe("fundOffer", () => {
             }),
         ).resolves.toMatchObject({ fundingIntent: { state: "bound" } });
     });
+
+    it.each(["deadline", "provider-failure"] as const)(
+        "keeps worker %s evidence through funding reservation transitions",
+        async (outcome) => {
+            const repository = new InMemoryAssetSwapRepository();
+            const selected = coin("11", 20_000);
+            const derived = offer();
+            let now = NOW * 1000;
+            vi.spyOn(Date, "now").mockImplementation(() => now);
+            const submit = vi.fn(async () => {
+                throw Object.assign(
+                    new Error("Send deadline expired", {
+                        cause: new SendDeadlineExceededError(NOW + 1),
+                    }),
+                    { name: "SendDeadlineExceededError", code: "SEND_DEADLINE_EXCEEDED" },
+                );
+            });
+            const acquire = vi.fn(() => submit());
+            const workerWallet = walletFor([selected], (params) =>
+                Wallet.prototype.send.call(
+                    { _withTxLock: acquire } as unknown as Wallet,
+                    params as never,
+                ),
+            );
+            const handler = new WalletMessageHandler();
+            (handler as any).readonlyWallet = workerWallet;
+            (handler as any).wallet = workerWallet;
+            const listeners = new Set<(event: any) => void>();
+            const replies: any[] = [];
+            const worker = {
+                postMessage: vi.fn((request: any) => {
+                    void (async () => {
+                        expect(await repository.getSwap("worker-transport")).toMatchObject({
+                            fundingIntent: { state: "submitted" },
+                        });
+                        if (outcome === "deadline") now = (NOW + 1) * 1000;
+                        const response = structuredClone(
+                            await handler.handleMessage(structuredClone(request)),
+                        );
+                        replies.push(response);
+                        for (const listener of [...listeners])
+                            listener({ data: response, source: worker });
+                    })().catch((error) => {
+                        for (const listener of [...listeners])
+                            listener({
+                                data: { id: request.id, tag: request.tag, error },
+                                source: worker,
+                            });
+                    });
+                }),
+            };
+            vi.stubGlobal("navigator", {
+                serviceWorker: {
+                    addEventListener: (_type: string, listener: (event: any) => void) =>
+                        listeners.add(listener),
+                    removeEventListener: (_type: string, listener: (event: any) => void) =>
+                        listeners.delete(listener),
+                },
+            });
+            const page = new (ServiceWorkerWallet as any)(
+                worker,
+                workerWallet.identity,
+                new InMemoryWalletRepository(),
+                new InMemoryContractRepository(),
+                handler.messageTag,
+                false,
+            ) as ServiceWorkerWallet;
+            const wallet = walletFor([selected], (params) => page.send(params as never));
+            try {
+                const error = await fundOffer(wallet, "https://ark.example/", {
+                    repository,
+                    offerHex: derived.offerHex,
+                    deposit: { amount: 10_000n },
+                    id: "worker-transport",
+                    validUntil: NOW + 1,
+                }).catch((value) => value);
+                expect(worker.postMessage.mock.calls.map(([request]) => request.type)).toEqual([
+                    "SEND_WITH_DEADLINE",
+                ]);
+                expect(replies[0].error).toBeInstanceOf(Error);
+                expect(replies[0].error).not.toBeInstanceOf(SendDeadlineExceededError);
+                if (outcome === "deadline") {
+                    expect(error).toBeInstanceOf(SendDeadlineExceededError);
+                    expect(acquire).not.toHaveBeenCalled();
+                    expect(submit).not.toHaveBeenCalled();
+                    expect(await repository.getSwap("worker-transport")).toMatchObject({
+                        status: "cancelled",
+                        fundingIntent: { state: "abandoned" },
+                    });
+                    await expect(
+                        fundOffer(walletFor([selected]), "https://ark.example/", {
+                            repository,
+                            offerHex: derived.offerHex,
+                            deposit: { amount: 10_000n },
+                            id: "same-input-after-worker-refusal",
+                        }),
+                    ).resolves.toMatchObject({ fundingIntent: { state: "bound" } });
+                } else {
+                    expect(error).toBeInstanceOf(FundingOutcomeUnknownError);
+                    expect(error).not.toBeInstanceOf(SendDeadlineExceededError);
+                    expect(submit).toHaveBeenCalledOnce();
+                    expect(await repository.getSwap("worker-transport")).toMatchObject({
+                        fundingIntent: { state: "submitted" },
+                    });
+                    const retry = walletFor([selected]);
+                    await expect(
+                        fundOffer(retry, "https://ark.example/", {
+                            repository,
+                            offerHex: derived.offerHex,
+                            deposit: { amount: 10_000n },
+                            id: "same-input-after-unknown",
+                        }),
+                    ).rejects.toThrow();
+                    expect(retry.send).not.toHaveBeenCalled();
+                    expect(await repository.getSwap("same-input-after-unknown")).toBeUndefined();
+                }
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        },
+    );
 
     it("releases the reservation when the wallet refuses the deadline before submitting", async () => {
         const repository = new InMemoryAssetSwapRepository();

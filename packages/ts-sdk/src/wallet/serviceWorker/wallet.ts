@@ -148,7 +148,7 @@ import {
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
-import { captureSendDeadline } from "../sendDeadline";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
 import type {
     Contract,
     ContractEventCallback,
@@ -763,6 +763,23 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 }
 
+                if (response.type === "SEND_DEADLINE_EXCEEDED") {
+                    if (event.source !== this.serviceWorker || response.tag !== request.tag) return;
+                    cleanup();
+                    if (
+                        request.type === "SEND_WITH_DEADLINE" &&
+                        response.error instanceof Error &&
+                        (response.broadcast === undefined || response.broadcast === false) &&
+                        Number.isSafeInteger(response.payload?.validUntil) &&
+                        response.payload.validUntil > 0 &&
+                        response.payload.validUntil === request.payload.validUntil
+                    ) {
+                        reject(new SendDeadlineExceededError(request.payload.validUntil));
+                    } else {
+                        reject(new Error("Invalid timed-send refusal response"));
+                    }
+                    return;
+                }
                 cleanup();
                 if (response.error) {
                     reject(response.error);
@@ -2070,6 +2087,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessage(message);
             return (response as ResponseSend).payload.txid;
         } catch (error) {
+            if (error instanceof SendDeadlineExceededError) throw error;
             throw new Error(`Send failed: ${error}`);
         }
     }

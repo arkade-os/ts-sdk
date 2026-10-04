@@ -69,7 +69,7 @@ import {
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
-import { captureSendDeadline } from "../sendDeadline";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -519,6 +519,11 @@ export type RequestSendWithDeadline = RequestEnvelope & {
         validUntil: number;
     };
 };
+export type ResponseSendDeadlineExceeded = ResponseEnvelope & {
+    type: "SEND_DEADLINE_EXCEEDED";
+    error: Error;
+    payload: { validUntil: number };
+};
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
     payload: { txid: string };
@@ -903,6 +908,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
         | ResponseSend
+        | ResponseSendDeadlineExceeded
         | ResponseGetAssetDetails
         | ResponseIssue
         | ResponseReissue
@@ -1511,16 +1517,22 @@ export class WalletMessageHandler
                         validUntil: wireDeadline,
                     } = (message as RequestSendWithDeadline).payload;
                     const validUntil = captureSendDeadline(wireDeadline, true)!;
-                    const txid = await (this.wallet as IWallet).send({
-                        recipients,
-                        ...(selectedVtxos ? { selectedVtxos } : {}),
-                        validUntil,
-                    });
-                    return this.tagged({
-                        id,
-                        type: "SEND_SUCCESS",
-                        payload: { txid },
-                    });
+                    try {
+                        const txid = await (this.wallet as IWallet).send({
+                            recipients,
+                            ...(selectedVtxos ? { selectedVtxos } : {}),
+                            validUntil,
+                        });
+                        return this.tagged({ id, type: "SEND_SUCCESS", payload: { txid } });
+                    } catch (error) {
+                        if (!(error instanceof SendDeadlineExceededError)) throw error;
+                        return this.tagged({
+                            id,
+                            type: "SEND_DEADLINE_EXCEEDED",
+                            error,
+                            payload: { validUntil },
+                        });
+                    }
                 }
                 case "GET_ASSET_DETAILS": {
                     const { assetId } = (message as RequestGetAssetDetails).payload;
