@@ -241,7 +241,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * error rather than recording a state, so this is the only trace. Cleared when a push reruns.
      */
     const swept = new Map<QuoteId, readonly string[]>();
-    /** Rounds this drive's `recover()` ran: a swept offer deposit settled in one went home. */
+    /** Rounds this drive's `recover()` ran: a swept offer deposit settled in one went home. Kept
+     * for the drive's life, never cleared: one txid per user-initiated recovery. */
     const recoveredIn = new Set<string>();
     /**
      * Swaps a drive pass has actually run over. NOT "the manager holds it": a restored swap is
@@ -958,15 +959,38 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 id,
             );
         }
+        const wentHome = async (): Promise<boolean> => {
+            await restoreOfferDeposits(
+                record.fundingTxid === undefined ? [] : [record.fundingTxid],
+            );
+            const after = records.get(id);
+            return after?.family === "offer" && after.status !== "recoverable";
+        };
+        // Chain first: a retry after a re-read that lagged or failed finds the deposit already
+        // home, where a second round would only fail with "No recoverable VTXOs found". Best
+        // effort: an outage here is the round's to report.
+        try {
+            if (await wentHome()) return { recovered: true, swap: swapView(id) };
+        } catch (error) {
+            console.warn(`[swap] could not re-read offer ${id} before recovering it`, error);
+        }
         const vtxoManager = await recoverer();
         // `recoverVtxos` settles only what the contract manager holds, and a record rebuilt from
         // history or adopted from v1 never registered its covenant. A fresh row hydrates in full.
         await restoreOfferCoverage(wallet, [offerFactsOf(record)]);
         const txid = await track(vtxoManager.recoverVtxos());
         recoveredIn.add(txid);
-        await restoreOfferDeposits(record.fundingTxid === undefined ? [] : [record.fundingTxid]);
-        const after = records.get(id);
-        const recovered = after?.family === "offer" && after.status !== "recoverable";
+        // The round ran; only its confirmation can fail now. Reported as not-yet rather than
+        // thrown: `recoveredIn` keeps the round, so a retry's chain-first read resolves it.
+        let recovered = false;
+        try {
+            recovered = await wentHome();
+        } catch (error) {
+            console.warn(
+                `[swap] recovered offer ${id} in ${txid}, but could not re-read it`,
+                error,
+            );
+        }
         return { recovered, txid, swap: swapView(id) };
     };
 

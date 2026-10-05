@@ -307,7 +307,9 @@ export async function restoreAssetSwaps(
         const fromAmount = depositAmount.toString();
 
         // A swept output settles without a forfeit, so arkd records no spending tx and keeps
-        // `isSwept`: the round is all that marks a recovered deposit.
+        // `isSwept`: the round is all that marks a recovered deposit. Relies on arkd's
+        // `getSpentVtxoKeysFromRound` leaving `spent_by` empty when `RequiresForfeit()` is false;
+        // should that change, this reads `indeterminate` below and retries, never mislabels.
         const recovered =
             vtxo.isSpent && vtxo.isSwept && !!vtxo.settledBy && spendTxidsOf(vtxo).length === 0;
         const spentTxid = vtxo.isSpent

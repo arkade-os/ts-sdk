@@ -138,6 +138,8 @@ interface Harness {
     readonly resolved: string[];
     readonly seen: SwapUpdate[];
     readonly recoveries: number[];
+    /** From now on, every indexer read throws. */
+    failIndexer(): void;
     outcomes(id: string): string[];
     settle(): Promise<void>;
 }
@@ -161,6 +163,8 @@ const build = async (
         history?: { type: string; arkTxid: string; createdAt: number; commitmentTxid?: string }[];
         contracts?: FakeContracts;
         noVtxoManager?: boolean;
+        /** What `recoverVtxos()` does; defaults to returning `RECOVERY_ROUND`. */
+        recover?: () => Promise<string>;
         subscribe?: boolean;
         ready?: boolean;
         /** Holds the operator's info read — and so any refund push — open. */
@@ -184,18 +188,20 @@ const build = async (
         identity: over.identity ?? SENDER,
         ...(over.history === undefined ? {} : { history: over.history }),
         ...(over.noVtxoManager ? { noVtxoManager: true } : {}),
+        ...(over.recover === undefined ? {} : { recover: over.recover }),
     });
+    const indexerState: Parameters<typeof fakeIndexer>[0] = {
+        ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
+        ...(over.txs === undefined ? {} : { txs: over.txs }),
+        ...(over.indexerFails ? { fail: true } : {}),
+    };
     const drive = createSwapDrive({
         wallet,
         repository,
         corridors,
         network: async () => "regtest",
         operator: fakeOperator(over.gate),
-        indexer: fakeIndexer({
-            ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
-            ...(over.txs === undefined ? {} : { txs: over.txs }),
-            ...(over.indexerFails ? { fail: true } : {}),
-        }),
+        indexer: fakeIndexer(indexerState),
         contracts,
         ...(over.mode === undefined ? {} : { mode: over.mode }),
         now: () => over.now ?? BEFORE,
@@ -220,6 +226,9 @@ const build = async (
         resolved: corridors.resolved,
         seen,
         recoveries,
+        failIndexer: () => {
+            indexerState.fail = true;
+        },
         // `swap.id` is the tagged public form; these fixtures name the bare
         // quote id, which is what storage and the drive key on.
         outcomes: (id) =>
@@ -1300,6 +1309,54 @@ describe("recover()", () => {
         const result = await h.drive.recover(funding.txid);
         expect(result.recovered).toBe(false);
         expect(h.recoveries).toHaveLength(1);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        await h.drive.dispose();
+    });
+
+    it("answers a retry from the chain once the lagging round lands, running no second round", async () => {
+        const funding = offerFunding();
+        const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos,
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        expect((await h.drive.recover(funding.txid)).recovered).toBe(false);
+
+        // The indexer catches up: a second round would find nothing and throw.
+        vtxos[0] = offerDeposit(funding.txid, {
+            isSwept: true,
+            isSpent: true,
+            settledBy: RECOVERY_ROUND,
+        });
+        const retry = await h.drive.recover(funding.txid);
+
+        expect(retry.recovered).toBe(true);
+        expect(retry.txid).toBeUndefined();
+        expect(h.recoveries).toHaveLength(1);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("cancelled");
+        await h.drive.dispose();
+    });
+
+    it("reports a round whose re-read failed as not yet recovered, rather than throwing", async () => {
+        const funding = offerFunding();
+        let failIndexer = () => {};
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+            recover: async () => {
+                failIndexer();
+                return RECOVERY_ROUND;
+            },
+        });
+        failIndexer = h.failIndexer;
+
+        const result = await h.drive.recover(funding.txid);
+
+        expect(result).toMatchObject({ recovered: false, txid: RECOVERY_ROUND });
         expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
         await h.drive.dispose();
     });
