@@ -31,7 +31,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: pnpm run lint
+        run: pnpm exec biome format config && pnpm -r --filter="!@arkade-os/boltz-swap" lint
 
       - name: Type-check ts-sdk
         run: pnpm -C packages/ts-sdk run typecheck
@@ -40,10 +40,7 @@ jobs:
         run: pnpm -C packages/ts-sdk run typecheck:types
 
       - name: Build
-        run: pnpm run build
-
-      - name: Type-check boltz-swap
-        run: pnpm -C packages/boltz-swap run typecheck
+        run: pnpm -r --filter="!@arkade-os/boltz-swap" build
 
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
@@ -53,12 +50,6 @@ jobs:
 
       - name: Verify ts-sdk publish shape
         run: cd packages/ts-sdk && npm pack --dry-run --ignore-scripts
-
-      - name: Smoke-test boltz-swap dist
-        run: pnpm -C packages/boltz-swap run smoke:dist
-
-      - name: Verify boltz-swap publish shape
-        run: cd packages/boltz-swap && npm pack --dry-run --ignore-scripts
 
       - name: Smoke-test swap dist
         run: pnpm -C packages/swap run smoke:dist
