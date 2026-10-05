@@ -2,6 +2,11 @@ packages:
   - packages/*
 
 overrides:
+  "@arkade-taxi/client>@arkade-taxi/covenant": "file:./packages/taxi/vendor/arkade-taxi-covenant-0.0.0-946e851c.tgz"
+  "@arkade-taxi/client>@arkade-taxi/protocol": "file:./packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz"
+  "@arkade-taxi/client>@arkade-os/sdk": "workspace:*"
+  "@arkade-taxi/client>@arkade-os/swap": "workspace:*"
+  "@arkade-taxi/covenant>@arkade-os/sdk": "workspace:*"
   esbuild: ">=0.28.1"
   minimatch: "^10.2.5"
   "@ungap/structured-clone": ">=1.3.1"

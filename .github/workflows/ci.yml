@@ -48,6 +48,9 @@ jobs:
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
+      - name: Type-check Taxi
+        run: pnpm -C packages/taxi run typecheck
+
       # The package's own typecheck excludes test/, so a broken e2e file only
       # surfaces in the regtest job — after it has spent minutes standing a
       # stack up. This catches it in the fast job instead.
@@ -71,6 +74,12 @@ jobs:
 
       - name: Verify swap publish shape
         run: cd packages/swap && npm pack --dry-run --ignore-scripts
+
+      - name: Smoke-test Taxi dist
+        run: pnpm -C packages/taxi run smoke:dist
+
+      - name: Verify Taxi publish shape
+        run: cd packages/taxi && npm pack --dry-run --ignore-scripts
 
       - name: Unit tests
         run: pnpm run test:unit

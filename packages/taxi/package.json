@@ -1,0 +1,50 @@
+{
+    "name": "@arkade-os/taxi",
+    "version": "0.0.1",
+    "type": "module",
+    "description": "Verified Taxi payments and claims for Arkade wallets.",
+    "license": "MIT",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "typecheck": "tsc --noEmit",
+        "lint": "biome format src test",
+        "format": "biome format --write src test",
+        "test:unit": "vitest run",
+        "prepack": "pnpm run build",
+        "prebuild": "node scripts/verify-vendor.mjs",
+        "pretest:unit": "node scripts/verify-vendor.mjs",
+        "smoke:dist": "node scripts/smoke-dist.mjs"
+    },
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1",
+        "@arkade-os/swap": "workspace:*",
+        "@arkade-os/solver-discovery": "0.2.7"
+    },
+    "peerDependencies": {
+        "@arkade-taxi/client": "0.0.0",
+        "@arkade-taxi/protocol": "0.0.0"
+    },
+    "devDependencies": {
+        "@arkade-taxi/client": "file:./vendor/arkade-taxi-client-0.0.0-946e851c.tgz",
+        "@arkade-taxi/protocol": "file:./vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz"
+    }
+}

@@ -50,6 +50,8 @@
         "husky": "9.1.7",
         "tsup": "^8.5.0",
         "typescript": "5.9.2",
-        "vitest": "3.2.7"
+        "vitest": "3.2.7",
+        "@arkade-os/sdk": "workspace:*",
+        "@arkade-os/swap": "workspace:*"
     }
 }

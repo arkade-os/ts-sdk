@@ -1,0 +1,67 @@
+{
+  "artifacts": [
+    {
+      "file": "arkade-taxi-client-0.0.0-946e851c.tgz",
+      "package": "@arkade-taxi/client",
+      "version": "0.0.0",
+      "license": "MIT",
+      "licenseFrom": "the LICENSE file of the source repository",
+      "sha256": "c914cd3e276942e425136bbea184c590bc5111cd6e193d0eb3a62d8940797e42",
+      "bytes": 62905,
+      "source": {
+        "repository": "https://github.com/ArkLabsHQ/arkade-taxi.git",
+        "commit": "946e851c03fa2f81c4311f6551e4acb8dfcf67f0",
+        "directory": "packages/client"
+      },
+      "toolchain": {
+        "node": "v24.16.0",
+        "pnpm": "10.34.5",
+        "declaredPackageManager": "pnpm@10.34.5",
+        "command": "pnpm --filter @arkade-taxi/client pack",
+        "platform": "win32-x64"
+      }
+    },
+    {
+      "file": "arkade-taxi-covenant-0.0.0-946e851c.tgz",
+      "package": "@arkade-taxi/covenant",
+      "version": "0.0.0",
+      "license": "MIT",
+      "licenseFrom": "the LICENSE file of the source repository",
+      "sha256": "8fb25534b91cec54e82496afef52fd1169724dbdedfca7987ee08db8eb1614d9",
+      "bytes": 29193,
+      "source": {
+        "repository": "https://github.com/ArkLabsHQ/arkade-taxi.git",
+        "commit": "946e851c03fa2f81c4311f6551e4acb8dfcf67f0",
+        "directory": "packages/covenant"
+      },
+      "toolchain": {
+        "node": "v24.16.0",
+        "pnpm": "10.34.5",
+        "declaredPackageManager": "pnpm@10.34.5",
+        "command": "pnpm --filter @arkade-taxi/covenant pack",
+        "platform": "win32-x64"
+      }
+    },
+    {
+      "file": "arkade-taxi-protocol-0.0.0-946e851c.tgz",
+      "package": "@arkade-taxi/protocol",
+      "version": "0.0.0",
+      "license": "MIT",
+      "licenseFrom": "the LICENSE file of the source repository",
+      "sha256": "43b5041c71efe2c2162edff7650c8ac7c3993a52a0f14b05f87e673826654c25",
+      "bytes": 24049,
+      "source": {
+        "repository": "https://github.com/ArkLabsHQ/arkade-taxi.git",
+        "commit": "946e851c03fa2f81c4311f6551e4acb8dfcf67f0",
+        "directory": "packages/protocol"
+      },
+      "toolchain": {
+        "node": "v24.16.0",
+        "pnpm": "10.34.5",
+        "declaredPackageManager": "pnpm@10.34.5",
+        "command": "pnpm --filter @arkade-taxi/protocol pack",
+        "platform": "win32-x64"
+      }
+    }
+  ]
+}
