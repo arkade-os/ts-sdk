@@ -160,7 +160,7 @@ jobs:
           # the second LND node to `lnd-peer`; the swap stacks also run the
           # solver and covclaimd now. `|| true` kept a stale list quiet, which
           # is exactly why it went unnoticed — a Lightning failure dumped nothing.
-          for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd; do
+          for c in arkd arkd-wallet emulator lnd lnd-peer solver intent-solver covclaimd; do
              echo "===== logs: $c ====="
              docker logs --tail 200 "$c" 2>&1 || true
            done
