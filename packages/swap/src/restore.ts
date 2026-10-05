@@ -192,9 +192,17 @@ export async function restoreAssetSwaps(
         reopen?: AssetSwap[];
         /** Address prefix; given, a rebuilt record names the covenant's address (#680). */
         hrp?: string;
+        /** Commitment txids of recovery rounds this wallet ran (`recoverVtxos()`'s return). */
+        recoveredIn?: ReadonlySet<string>;
     },
 ): Promise<{ restored: AssetSwap[]; scannedTxids: string[] }> {
-    const { operatorPubkey, scanned = new Set<string>(), reopen = [], hrp } = opts;
+    const {
+        operatorPubkey,
+        scanned = new Set<string>(),
+        reopen = [],
+        hrp,
+        recoveredIn = new Set<string>(),
+    } = opts;
     const reopened: Found[] = [];
     for (const swap of reopen) {
         try {
@@ -298,11 +306,28 @@ export async function restoreAssetSwaps(
         }
         const fromAmount = depositAmount.toString();
 
-        const spentTxid = vtxo.isSpent ? vtxo.arkTxId || vtxo.spentBy : undefined;
+        // A swept output settles without a forfeit, so arkd records no spending tx and keeps
+        // `isSwept`: the round is all that marks a recovered deposit. Relies on arkd's
+        // `getSpentVtxoKeysFromRound` leaving `spent_by` empty when `RequiresForfeit()` is false;
+        // should that change, this reads `indeterminate` below and retries, never mislabels.
+        const recovered =
+            vtxo.isSpent && vtxo.isSwept && !!vtxo.settledBy && spendTxidsOf(vtxo).length === 0;
+        const spentTxid = vtxo.isSpent
+            ? vtxo.arkTxId || vtxo.spentBy || (recovered ? vtxo.settledBy : undefined)
+            : undefined;
         // Chain fate only: a stored `cancelling` reads back as `pending`, and
         // cancel() retries from there.
         let status: AssetSwapStatus = "pending";
-        if (vtxo.isSwept) status = "recoverable";
+        if (recovered) {
+            // Only the wallet's own round proves it went home (the user signs the cancel
+            // leaf); any other round is a spend this scan cannot read.
+            const ours = recoveredIn.has(vtxo.settledBy!) || txByAnyId.has(vtxo.settledBy!);
+            if (!ours) {
+                unresolved.add(fundingTx.redeemTxid);
+                continue;
+            }
+            status = "cancelled";
+        } else if (vtxo.isSwept && !vtxo.isSpent) status = "recoverable";
         else if (vtxo.isSpent) {
             const spendTxs = spendTxidsOf(vtxo)
                 .map((id) => spendTxByTxid.get(id))

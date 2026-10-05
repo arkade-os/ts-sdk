@@ -10,6 +10,13 @@ import { collectRfqSwaps, collectSwapRecords } from "../../src/repository";
  */
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
+
+/** The real one derives the covenant against a live operator; what is ours is when it runs. */
+const coverage = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
+vi.mock("../../src/offer", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../src/offer")>()),
+    restoreOfferCoverage: (...args: unknown[]) => coverage(...args),
+}));
 import {
     CSVMultisigTapscript,
     ConditionWitness,
@@ -36,6 +43,7 @@ import type { AssetSwap } from "../../src/store";
 import {
     AFTER,
     BEFORE,
+    RECOVERY_ROUND,
     OFFER_ADDRESS,
     OFFER_SCRIPT,
     OPERATOR,
@@ -130,6 +138,8 @@ interface Harness {
     readonly resolved: string[];
     readonly seen: SwapUpdate[];
     readonly recoveries: number[];
+    /** From now on, every indexer read throws. */
+    failIndexer(): void;
     outcomes(id: string): string[];
     settle(): Promise<void>;
 }
@@ -150,9 +160,11 @@ const build = async (
         identity?: unknown;
         chain?: unknown | null;
         claim?: unknown;
-        history?: { type: string; arkTxid: string; createdAt: number }[];
+        history?: { type: string; arkTxid: string; createdAt: number; commitmentTxid?: string }[];
         contracts?: FakeContracts;
         noVtxoManager?: boolean;
+        /** What `recoverVtxos()` does; defaults to returning `RECOVERY_ROUND`. */
+        recover?: () => Promise<string>;
         subscribe?: boolean;
         ready?: boolean;
         /** Holds the operator's info read — and so any refund push — open. */
@@ -176,18 +188,20 @@ const build = async (
         identity: over.identity ?? SENDER,
         ...(over.history === undefined ? {} : { history: over.history }),
         ...(over.noVtxoManager ? { noVtxoManager: true } : {}),
+        ...(over.recover === undefined ? {} : { recover: over.recover }),
     });
+    const indexerState: Parameters<typeof fakeIndexer>[0] = {
+        ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
+        ...(over.txs === undefined ? {} : { txs: over.txs }),
+        ...(over.indexerFails ? { fail: true } : {}),
+    };
     const drive = createSwapDrive({
         wallet,
         repository,
         corridors,
         network: async () => "regtest",
         operator: fakeOperator(over.gate),
-        indexer: fakeIndexer({
-            ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
-            ...(over.txs === undefined ? {} : { txs: over.txs }),
-            ...(over.indexerFails ? { fail: true } : {}),
-        }),
+        indexer: fakeIndexer(indexerState),
         contracts,
         ...(over.mode === undefined ? {} : { mode: over.mode }),
         now: () => over.now ?? BEFORE,
@@ -212,6 +226,9 @@ const build = async (
         resolved: corridors.resolved,
         seen,
         recoveries,
+        failIndexer: () => {
+            indexerState.fail = true;
+        },
         // `swap.id` is the tagged public form; these fixtures name the bare
         // quote id, which is what storage and the drive key on.
         outcomes: (id) =>
@@ -890,12 +907,26 @@ describe("the offer half", () => {
         funding: { txid: string; psbt: string },
         deposit: FakeVtxo,
         repository: AssetSwapRepository = memoryRepository(),
+        /** A batch round the wallet's history holds. */
+        round?: string,
     ) => {
         for (const record of records) await repository.saveSwapRecord(record);
         const contracts = fakeContracts([]);
         const { wallet } = fakeWallet({
             contracts,
-            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            history: [
+                { type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 },
+                ...(round === undefined
+                    ? []
+                    : [
+                          {
+                              type: "RECEIVED",
+                              arkTxid: "",
+                              commitmentTxid: round,
+                              createdAt: 1_700_000_100_000,
+                          },
+                      ]),
+            ],
         });
         const seen: SwapUpdate[] = [];
         const drive = createSwapDrive({
@@ -960,6 +991,30 @@ describe("the offer half", () => {
         );
 
         expect(drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        await drive.dispose();
+    });
+
+    it("re-reads a stored recoverable deposit on start, so a recovery made elsewhere lands", async () => {
+        const funding = offerFunding();
+        const repository = memoryRepository();
+        await repository.saveSwapRecord(
+            offerRecord({ id: funding.txid, fundingTxid: funding.txid, status: "recoverable" }),
+        );
+        await repository.markTxidsScanned([funding.txid]);
+        const { drive } = await restoreOver(
+            [],
+            funding,
+            offerDeposit(funding.txid, { isSwept: true, isSpent: true, settledBy: RECOVERY_ROUND }),
+            repository,
+            // The round paid the wallet, so its history has it.
+            RECOVERY_ROUND,
+        );
+
+        expect(drive.swap(funding.txid)?.outcome).toBe("cancelled");
+        expect(await repository.getSwapRecord(funding.txid)).toMatchObject({
+            status: "cancelled",
+            spentTxid: RECOVERY_ROUND,
+        });
         await drive.dispose();
     });
 
@@ -1141,6 +1196,52 @@ describe("recover()", () => {
         await h.drive.dispose();
     });
 
+    it("registers the offer's covenant before the round, so the round can see the deposit", async () => {
+        // A record rebuilt from history (or adopted from v1) never registered its contract, and
+        // `recoverVtxos` reads only what the contract manager holds.
+        const funding = offerFunding();
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        let roundsAtRegistration = -1;
+        coverage.mockImplementationOnce(async () => {
+            roundsAtRegistration = h.recoveries.length;
+        });
+
+        await h.drive.recover(funding.txid);
+
+        expect(roundsAtRegistration).toBe(0);
+        expect(h.recoveries).toHaveLength(1);
+        const record = await h.repository.getSwapRecord(funding.txid);
+        expect(coverage).toHaveBeenLastCalledWith(expect.anything(), [
+            expect.objectContaining({
+                status: "recoverable",
+                swapPkScript: record?.family === "offer" ? record.swapPkScript : undefined,
+                offerHex: record?.family === "offer" ? record.offerHex : undefined,
+            }),
+        ]);
+        await h.drive.dispose();
+    });
+
+    it("runs no round when the covenant cannot be registered", async () => {
+        const funding = offerFunding();
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        coverage.mockRejectedValueOnce(new Error("operator unreachable"));
+
+        await expect(h.drive.recover(funding.txid)).rejects.toThrow("operator unreachable");
+        expect(h.recoveries).toEqual([]);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        await h.drive.dispose();
+    });
+
     it("re-answers a recovered offer deposit the cursor had already answered", async () => {
         const funding = offerFunding();
         const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
@@ -1154,13 +1255,130 @@ describe("recover()", () => {
         expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
         expect(await h.repository.getScannedTxids()).toEqual(new Set([funding.txid]));
 
+        // What arkd writes for a swept output settled in a round: no forfeit, so no
+        // `spentBy`, and `isSwept` stays set. The round is `recoverVtxos()`'s return.
+        vtxos[0] = offerDeposit(funding.txid, {
+            isSwept: true,
+            isSpent: true,
+            settledBy: RECOVERY_ROUND,
+        });
+
+        const result = await h.drive.recover(funding.txid);
+        expect(result).toMatchObject({ recovered: true, txid: RECOVERY_ROUND });
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("cancelled");
+        expect(await h.repository.getSwapRecord(funding.txid)).toMatchObject({
+            status: "cancelled",
+            spentTxid: RECOVERY_ROUND,
+        });
+        await h.drive.dispose();
+    });
+
+    it("still classifies a swept deposit spent through a covenant leaf", async () => {
+        const funding = offerFunding();
         const spend = offerSpend({ txid: funding.txid, vout: 0 });
+        const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
+        const txs = [funding];
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos,
+            txs,
+            contracts: fakeContracts([]),
+        });
         txs.push(spend);
-        vtxos[0] = offerDeposit(funding.txid, { isSpent: true, spentBy: spend.txid });
+        vtxos[0] = offerDeposit(funding.txid, {
+            isSwept: true,
+            isSpent: true,
+            spentBy: spend.txid,
+        });
 
         const result = await h.drive.recover(funding.txid);
         expect(result.recovered).toBe(true);
         expect(h.drive.swap(funding.txid)?.outcome).toBe("cancelled");
+        await h.drive.dispose();
+    });
+
+    it("reports recovered: false while the indexer has not caught up on the round", async () => {
+        const funding = offerFunding();
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+
+        const result = await h.drive.recover(funding.txid);
+        expect(result.recovered).toBe(false);
+        expect(h.recoveries).toHaveLength(1);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        await h.drive.dispose();
+    });
+
+    it("answers a retry from the chain once the lagging round lands, running no second round", async () => {
+        const funding = offerFunding();
+        const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos,
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        expect((await h.drive.recover(funding.txid)).recovered).toBe(false);
+
+        // The indexer catches up: a second round would find nothing and throw.
+        vtxos[0] = offerDeposit(funding.txid, {
+            isSwept: true,
+            isSpent: true,
+            settledBy: RECOVERY_ROUND,
+        });
+        const retry = await h.drive.recover(funding.txid);
+
+        expect(retry.recovered).toBe(true);
+        expect(retry.txid).toBeUndefined();
+        expect(h.recoveries).toHaveLength(1);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("cancelled");
+        await h.drive.dispose();
+    });
+
+    it("reports a round whose re-read failed as not yet recovered, rather than throwing", async () => {
+        const funding = offerFunding();
+        let failIndexer = () => {};
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+            recover: async () => {
+                failIndexer();
+                return RECOVERY_ROUND;
+            },
+        });
+        failIndexer = h.failIndexer;
+
+        const result = await h.drive.recover(funding.txid);
+
+        expect(result).toMatchObject({ recovered: false, txid: RECOVERY_ROUND });
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        await h.drive.dispose();
+    });
+
+    it("leaves a deposit some other round settled unresolved, rather than guessing", async () => {
+        const funding = offerFunding();
+        const vtxos = [offerDeposit(funding.txid, { isSwept: true })];
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos,
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        vtxos[0] = offerDeposit(funding.txid, {
+            isSwept: true,
+            isSpent: true,
+            settledBy: "f0".repeat(32),
+        });
+
+        const result = await h.drive.recover(funding.txid);
+        expect(result.recovered).toBe(false);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
         await h.drive.dispose();
     });
 });
