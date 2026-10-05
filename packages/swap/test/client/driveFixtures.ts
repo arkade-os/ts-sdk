@@ -187,10 +187,15 @@ export const offerFunding = (): { psbt: string; txid: string } => {
     return { psbt: base64.encode(tx.toPSBT()), txid: tx.id };
 };
 
+/** The commitment txid `fakeWallet`'s `recoverVtxos()` reports by default. */
+export const RECOVERY_ROUND = "ee".repeat(32);
+
 /** The deposit at the offer's script, in whatever state the scan should read. */
 export const offerDeposit = (
     txid: string,
-    facts: Partial<Pick<FakeVtxo, "isSwept" | "isSpent" | "spentBy" | "arkTxId">> = {},
+    facts: Partial<
+        Pick<FakeVtxo, "isSwept" | "isSpent" | "spentBy" | "arkTxId" | "settledBy">
+    > = {},
 ): FakeVtxo => ({
     txid,
     vout: 0,
@@ -319,6 +324,8 @@ export interface FakeVtxo {
     vout: number;
     spentBy: string;
     arkTxId?: string;
+    /** The round that settled it; for a swept output, with no `spentBy`. */
+    settledBy?: string;
     isSpent?: boolean;
     isSwept?: boolean;
     isUnrolled?: boolean;
@@ -367,7 +374,7 @@ export const fakeWallet = (
          * Absent leaves the wallet unable to sign, which is what the refusal
          * paths need. */
         identity?: unknown;
-        history?: { type: string; arkTxid: string; createdAt: number }[];
+        history?: { type: string; arkTxid: string; createdAt: number; commitmentTxid?: string }[];
         recover?: () => Promise<string>;
         /** Omit the VTXO manager entirely, as a watch-only wallet would. */
         noVtxoManager?: boolean;
@@ -383,7 +390,11 @@ export const fakeWallet = (
         getTransactionHistory: async () =>
             (over.history ?? []).map((tx) => ({
                 type: tx.type,
-                key: { arkTxid: tx.arkTxid, boardingTxid: "", commitmentTxid: "" },
+                key: {
+                    arkTxid: tx.arkTxid,
+                    boardingTxid: "",
+                    commitmentTxid: tx.commitmentTxid ?? "",
+                },
                 createdAt: tx.createdAt,
                 amount: 0,
                 settled: true,
@@ -394,7 +405,7 @@ export const fakeWallet = (
                   getVtxoManager: async () => ({
                       recoverVtxos: async () => {
                           recoveries.push(recoveries.length);
-                          return over.recover ? over.recover() : "ee".repeat(32);
+                          return over.recover ? over.recover() : RECOVERY_ROUND;
                       },
                   }),
               }),

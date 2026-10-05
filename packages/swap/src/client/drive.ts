@@ -130,7 +130,8 @@ export interface RecoveryResult {
     /**
      * Whether THIS swap's outpoints were included in the round, per a re-read afterwards. A
      * settlement txid is not success: `recoverVtxos` takes the whole wallet and caps the round,
-     * deferring overflow to the next cycle.
+     * deferring overflow to the next cycle. An offer re-read the indexer has not caught up on
+     * reports `false`; the next client start re-reads it.
      */
     readonly recovered: boolean;
     /** The settlement the round produced, when one ran. */
@@ -239,6 +240,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * error rather than recording a state, so this is the only trace. Cleared when a push reruns.
      */
     const swept = new Map<QuoteId, readonly string[]>();
+    /** Rounds this drive's `recover()` ran: a swept offer deposit settled in one went home. */
+    const recoveredIn = new Set<string>();
     /**
      * Swaps a drive pass has actually run over. NOT "the manager holds it": a restored swap is
      * held before anything is read from chain, and until a pass looks at the lockup `pending`
@@ -657,10 +660,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * does not), an unstamped record gets its txid, and a known deposit gets its fate — spends
      * that landed while no client ran included. A live offer's txid stays off the scan cursor.
      *
-     * `reopen` re-answers one scanned txid: a `recoverable` deposit is marked scanned, and the pass
-     * after `recoverVtxos()` would otherwise skip it.
+     * `reopen` re-answers scanned txids: a `recoverable` deposit is marked scanned, and a recovery
+     * (this pass's `recoverVtxos()`, or another device's) would otherwise never be read.
      */
-    const restoreOfferDeposits = async (reopen?: string): Promise<OfferSwapRecord[]> => {
+    const restoreOfferDeposits = async (
+        reopen: Iterable<string> = [],
+    ): Promise<OfferSwapRecord[]> => {
         const store = storage();
         const [history, scanned, address, network] = await Promise.all([
             wallet.getTransactionHistory(),
@@ -673,7 +678,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
         // LEGACY(v1): drop `reopened` once the read-through goes.
         const reopened = await legacyOfferDepositsToReopen(store);
-        if (reopen !== undefined) reopened.add(reopen);
+        for (const txid of reopen) reopened.add(txid);
         const cursor =
             reopened.size === 0
                 ? scanned
@@ -682,6 +687,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             operatorPubkey,
             scanned: cursor,
             hrp,
+            recoveredIn,
         });
 
         // After the scan: a record `accept()` persisted meanwhile is matched, not rebuilt.
@@ -843,7 +849,13 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // After the corridor half, which resolves the contract registry this needs.
         let offers = offer;
         try {
-            offers = await restoreOfferDeposits();
+            offers = await restoreOfferDeposits(
+                offer.flatMap((record) =>
+                    record.status === "recoverable" && record.fundingTxid !== undefined
+                        ? [record.fundingTxid]
+                        : [],
+                ),
+            );
         } catch (error) {
             // History/indexer outage, not the repository: never fails `ready`.
             console.warn("[swap] the offer deposit restore did not complete", error);
@@ -946,7 +958,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             );
         }
         const txid = await track((await recoverer()).recoverVtxos());
-        await restoreOfferDeposits(record.fundingTxid);
+        recoveredIn.add(txid);
+        await restoreOfferDeposits(record.fundingTxid === undefined ? [] : [record.fundingTxid]);
         const after = records.get(id);
         const recovered = after?.family === "offer" && after.status !== "recoverable";
         return { recovered, txid, swap: swapView(id) };

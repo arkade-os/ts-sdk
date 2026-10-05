@@ -407,6 +407,68 @@ describe("restoreAssetSwaps", () => {
         }
     });
 
+    describe("a swept deposit settled in a round", () => {
+        // arkd's shape for it: no forfeit, so no `spentBy`/`arkTxId`, and `isSwept` stays set.
+        const ROUND = "c0".repeat(32);
+        const recovered = (offer: Offer, txid: string) =>
+            depositVtxo(offer, txid, { isSwept: true, isSpent: true, settledBy: ROUND });
+
+        it("is cancelled when the round is in the wallet's history", async () => {
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const indexer = makeIndexer([funding], [recovered(offer, funding.txid)]);
+
+            const result = await scan(indexer, [
+                walletTx(funding.txid, "sent"),
+                walletTx("", "received", { roundTxid: ROUND }),
+            ]);
+
+            expect(result.restored).toMatchObject([{ status: "cancelled", spentTxid: ROUND }]);
+            expect(result.scannedTxids).toEqual([funding.txid]);
+        });
+
+        it("is cancelled when the wallet ran the round, though history lacks it", async () => {
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const indexer = makeIndexer([funding], [recovered(offer, funding.txid)]);
+
+            const result = await restoreAssetSwaps(
+                indexer,
+                [walletTx(funding.txid, "sent")],
+                new Set(),
+                { operatorPubkey: OPERATOR_KEY, recoveredIn: new Set([ROUND]) },
+            );
+
+            expect(result.restored).toMatchObject([{ status: "cancelled", spentTxid: ROUND }]);
+        });
+
+        it("is left unscanned when the round is not the wallet's", async () => {
+            const offer = makeOffer("want-asset", BigInt(992));
+            const funding = fundingPsbt(offer);
+            const indexer = makeIndexer([funding], [recovered(offer, funding.txid)]);
+
+            const result = await scan(indexer, [walletTx(funding.txid, "sent")]);
+
+            expect(result).toEqual({ restored: [], scannedTxids: [] });
+        });
+    });
+
+    it("classifies a swept deposit's offchain spend rather than reading it recoverable", async () => {
+        const offer = makeOffer("want-asset", BigInt(992));
+        const funding = fundingPsbt(offer);
+        const cancel = spendPsbt([
+            { offer, deposit: { txid: funding.txid, vout: 0 }, via: "cancel" },
+        ]);
+        const indexer = makeIndexer(
+            [funding, cancel],
+            [spentVtxo(offer, funding.txid, cancel.txid, { isSwept: true })],
+        );
+
+        const result = await scan(indexer, [walletTx(funding.txid, "sent")]);
+
+        expect(result.restored).toMatchObject([{ status: "cancelled", spentTxid: cancel.txid }]);
+    });
+
     it("leaves a spend it cannot classify unscanned, rather than guessing", async () => {
         // the spender is not fetchable yet. Persisting a guess here is what made
         // a mislabel permanent: a stored swap is skipped by every later scan.
