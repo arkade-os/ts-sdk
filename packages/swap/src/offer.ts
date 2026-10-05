@@ -464,7 +464,16 @@ function offerContractParams(
     };
 }
 
-export async function restoreOfferCoverage(wallet: IWallet, swaps: AssetSwap[]): Promise<void> {
+/** What coverage reads off a swap: an `AssetSwap` fits, and so does a drive record's facts. */
+export type OfferCoverageSwap = Pick<
+    AssetSwap,
+    "status" | "swapPkScript" | "offerHex" | "createdAt"
+>;
+
+export async function restoreOfferCoverage(
+    wallet: IWallet,
+    swaps: readonly OfferCoverageSwap[],
+): Promise<void> {
     const live = swaps.filter((swap) => !RETIRABLE.includes(swap.status));
     if (live.length === 0) return;
 

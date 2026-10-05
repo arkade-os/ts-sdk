@@ -10,6 +10,13 @@ import { collectRfqSwaps, collectSwapRecords } from "../../src/repository";
  */
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
+
+/** The real one derives the covenant against a live operator; what is ours is when it runs. */
+const coverage = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
+vi.mock("../../src/offer", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../src/offer")>()),
+    restoreOfferCoverage: (...args: unknown[]) => coverage(...args),
+}));
 import {
     CSVMultisigTapscript,
     ConditionWitness,
@@ -1177,6 +1184,52 @@ describe("recover()", () => {
     it("refuses an id it holds no record for", async () => {
         const h = await build();
         await expect(h.drive.recover("nope")).rejects.toMatchObject({ reason: "unknown-swap" });
+        await h.drive.dispose();
+    });
+
+    it("registers the offer's covenant before the round, so the round can see the deposit", async () => {
+        // A record rebuilt from history (or adopted from v1) never registered its contract, and
+        // `recoverVtxos` reads only what the contract manager holds.
+        const funding = offerFunding();
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        let roundsAtRegistration = -1;
+        coverage.mockImplementationOnce(async () => {
+            roundsAtRegistration = h.recoveries.length;
+        });
+
+        await h.drive.recover(funding.txid);
+
+        expect(roundsAtRegistration).toBe(0);
+        expect(h.recoveries).toHaveLength(1);
+        const record = await h.repository.getSwapRecord(funding.txid);
+        expect(coverage).toHaveBeenLastCalledWith(expect.anything(), [
+            expect.objectContaining({
+                status: "recoverable",
+                swapPkScript: record?.family === "offer" ? record.swapPkScript : undefined,
+                offerHex: record?.family === "offer" ? record.offerHex : undefined,
+            }),
+        ]);
+        await h.drive.dispose();
+    });
+
+    it("runs no round when the covenant cannot be registered", async () => {
+        const funding = offerFunding();
+        const h = await build({
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            txs: [funding],
+            contracts: fakeContracts([]),
+        });
+        coverage.mockRejectedValueOnce(new Error("operator unreachable"));
+
+        await expect(h.drive.recover(funding.txid)).rejects.toThrow("operator unreachable");
+        expect(h.recoveries).toEqual([]);
+        expect(h.drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
         await h.drive.dispose();
     });
 

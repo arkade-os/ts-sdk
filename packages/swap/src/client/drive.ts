@@ -28,6 +28,7 @@ import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
 import { claimOnchainFill } from "../onchainHtlc";
 import { retireSettledOfferContracts } from "../coverage";
+import { restoreOfferCoverage } from "../offer";
 import { lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
 import {
@@ -957,7 +958,11 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 id,
             );
         }
-        const txid = await track((await recoverer()).recoverVtxos());
+        const vtxoManager = await recoverer();
+        // `recoverVtxos` settles only what the contract manager holds, and a record rebuilt from
+        // history or adopted from v1 never registered its covenant. A fresh row hydrates in full.
+        await restoreOfferCoverage(wallet, [offerFactsOf(record)]);
+        const txid = await track(vtxoManager.recoverVtxos());
         recoveredIn.add(txid);
         await restoreOfferDeposits(record.fundingTxid === undefined ? [] : [record.fundingTxid]);
         const after = records.get(id);
