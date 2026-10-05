@@ -823,7 +823,7 @@ describe("the offer half", () => {
             fundingTxid: funding.txid,
             swapPkScript: OFFER_SCRIPT,
             swapAddress: OFFER_ADDRESS,
-            give: { asset: "arkade:regtest/slip44:0", amount: "100000" },
+            give: { asset: "arkade:regtest/slip44:1", amount: "100000" },
             take: { asset: `arkade:regtest/asset:${"f1".repeat(34)}`, amount: "5000" },
             market: { kind: "restored", backend: "feed" },
             createdAt: 1_700_000_000,

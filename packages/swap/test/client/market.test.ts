@@ -14,6 +14,9 @@ import {
     marketRefOf,
     type MarketCandidate,
 } from "../../src/client/market";
+import { arkadeAsset, btcOn } from "../../src/client/assetId";
+import { toDiscoveryLeg } from "../../src/client/aliases";
+import { asset } from "@arkade-os/sdk";
 import { lightningCard, onchainCard, rivalLightningCard, spotCard, USD_ASSET_ID } from "./fixtures";
 
 const snapshotOf = (markets: DiscoveredMarket[]): DiscoverySnapshot => ({
@@ -24,17 +27,17 @@ const snapshotOf = (markets: DiscoveredMarket[]): DiscoverySnapshot => ({
 const ARKADE_BTC = {
     corridor: "arkade",
     assetId: "btc",
-    marketId: "arkade:regtest/slip44:0",
+    marketId: "arkade:regtest/slip44:1",
 } as const;
 const LIGHTNING_BTC = {
     corridor: "lightning",
     assetId: "btc",
-    marketId: "bolt11:regtest/slip44:0",
+    marketId: "bolt11:regtest/slip44:1",
 } as const;
 const ONCHAIN_BTC = {
     corridor: "onchain",
     assetId: "btc",
-    marketId: "bitcoin:regtest/slip44:0",
+    marketId: "bitcoin:regtest/slip44:1",
 } as const;
 const ARKADE_USD = {
     corridor: "arkade",
@@ -230,5 +233,66 @@ describe("the provenance a card leaves on a quote", () => {
             pair: "BTC/lightning:BTC",
             snapshot: snapshot.ref,
         });
+    });
+});
+
+describe("BTC on a test network, against cards carrying a CAIP-19 id", () => {
+    // The mutinynet registry's `frenchman` card, verbatim: a legacy `id` plus the `caip19_id`
+    // discovery keys it by, with BTC under SLIP-44's testnet coin type. `btcOn` once spelled BTC
+    // `slip44:0` on every network, so the wallet's BTC -> USDT quote matched neither key.
+    const frenchman: DiscoveredMarket = {
+        base_asset: {
+            id: "btc",
+            name: "Bitcoin",
+            ticker: "BTC",
+            decimals: 8,
+            caip19_id: "arkade:mutinynet/slip44:1",
+        },
+        quote_asset: {
+            id: USD_ASSET_ID,
+            name: "USDT",
+            ticker: "USDT",
+            decimals: 2,
+            caip19_id: `arkade:mutinynet/asset:${USD_ASSET_ID}`,
+        },
+        price_feed: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        price_feed_schema: { type: "json", price_path: "/bitcoin/usd" },
+        price_decimals: 6,
+        fee_bps: 30,
+        min_base_amount: "330",
+        max_base_amount: "10000000",
+        min_quote_amount: "1",
+        max_quote_amount: "10000000",
+        solver: "frenchman",
+        pair: "BTC/USDT",
+        source: "https://arkade-os.github.io/solver-registry/mutinynet.json",
+        sourceType: "registry",
+    };
+    const usdt = arkadeAsset("mutinynet", asset.AssetId.fromString(USD_ASSET_ID));
+
+    it("finds the card from the wallet's own BTC id", () => {
+        const legs = {
+            give: toDiscoveryLeg(btcOn("arkade", "mutinynet")),
+            take: toDiscoveryLeg(usdt),
+        };
+        const candidates = eligibleMarkets(snapshotOf([frenchman, lightningCard]), legs);
+        expect(candidates.map((c) => c.card)).toEqual([frenchman]);
+        expect(candidates[0]).toMatchObject({ give: "base", backend: "feed" });
+    });
+
+    it("still finds a legacy card with no CAIP-19 id, by its corridor key", () => {
+        // The `ln-solver-mutinynet` cards: `id: "btc"` and nothing else.
+        const legs = {
+            give: toDiscoveryLeg(btcOn("arkade", "mutinynet")),
+            take: toDiscoveryLeg(btcOn("bolt11", "mutinynet")),
+        };
+        const candidates = eligibleMarkets(snapshotOf([frenchman, lightningCard]), legs);
+        expect(candidates.map((c) => c.card)).toEqual([lightningCard]);
+    });
+
+    it("refuses the old spelling outright rather than matching nothing", () => {
+        expect(() => toDiscoveryLeg("arkade:mutinynet/slip44:0")).toThrowError(
+            expect.objectContaining({ name: "UnsupportedRoute" }),
+        );
     });
 });

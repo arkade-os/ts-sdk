@@ -41,7 +41,7 @@ const ARK_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode
 const INVOICE = invoiceFor(PAYMENT_HASH, CLOCK);
 
 /** BTC on the leg every corridor quote denominates its fee on. */
-const ARKADE_BTC = "arkade:regtest/slip44:0" as const;
+const ARKADE_BTC = "arkade:regtest/slip44:1" as const;
 const USD = `arkade:regtest/asset:${USD_ASSET_ID}` as const;
 
 beforeEach(() => {
@@ -254,10 +254,10 @@ describe("the fee ceiling", () => {
     });
 
     it("accepts the same asset spelled on another rail, which needs no rate", async () => {
-        // `bolt11:…/slip44:0` and `arkade:…/slip44:0` are one BTC, one sat.
+        // `bolt11:…/slip44:1` and `arkade:…/slip44:1` are one BTC, one sat.
         const { client } = await harness();
         await expect(
-            client.pay(INVOICE, { maxFee: ceiling(50n, "bolt11:regtest/slip44:0") }),
+            client.pay(INVOICE, { maxFee: ceiling(50n, "bolt11:regtest/slip44:1") }),
         ).resolves.toMatchObject({ kind: "swap" });
     });
 

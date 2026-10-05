@@ -22,17 +22,17 @@ import { USD_ASSET_ID } from "./fixtures";
 const arkade = {
     corridor: "arkade",
     assetId: "btc",
-    marketId: "arkade:regtest/slip44:0",
+    marketId: "arkade:regtest/slip44:1",
 } as const;
 const lightning = {
     corridor: "lightning",
     assetId: "btc",
-    marketId: "bolt11:regtest/slip44:0",
+    marketId: "bolt11:regtest/slip44:1",
 } as const;
 const onchain = {
     corridor: "onchain",
     assetId: "btc",
-    marketId: "bitcoin:regtest/slip44:0",
+    marketId: "bitcoin:regtest/slip44:1",
 } as const;
 const usd = {
     corridor: "arkade",

@@ -129,6 +129,21 @@ style and have not been backfilled.
   deposit's spend and completion time alongside its status. Type-only in
   both cases: nothing on disk changes, and a record written before the
   upgrade reads back unchanged. (#930)
+- **`@arkade-os/swap`: BTC's asset id off mainnet is `slip44:1`, not
+  `slip44:0`.** `btcOn(rail, network)` now uses SLIP-44's testnet coin type
+  on `testnet`, `signet`, `mutinynet` and `regtest`
+  (`arkade:mutinynet/slip44:1`); mainnet keeps `arkade:bitcoin/slip44:0`.
+  That is the id solver-discovery validates and cards carry, so a card that
+  published a `caip19_id` was unreachable on a test network: a mutinynet
+  BTC → USDT quote failed with "no market serves", and the `"BTC"` ticker
+  refused as `ambiguous_alias`. A test-network BTC id spelled the old way
+  is now refused as `UnsupportedRoute` naming the right one; callers that
+  hard-code BTC ids — including a `maxFee` or `policy.maxFee` ceiling, which
+  would otherwise refuse as differently denominated — should build them
+  with `btcOn`. Swap records written before the upgrade are not rewritten
+  and still fund and reconcile as BTC. `BTC_ASSET_PART` is deprecated (it
+  is mainnet's part only); use `btcAssetPart(network)`, or `isBtcAsset`
+  (and `isBtcAssetLenient` for stored ids) to recognize BTC.
 
 ### Features
 

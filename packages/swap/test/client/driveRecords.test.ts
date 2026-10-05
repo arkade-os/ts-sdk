@@ -136,10 +136,10 @@ describe("a record rebuilt from the chain", () => {
             status: "pending",
             fundingTxid: FUNDING,
             route: {
-                give: { corridor: "arkade", asset: "arkade:regtest/slip44:0" },
+                give: { corridor: "arkade", asset: "arkade:regtest/slip44:1" },
                 take: { corridor: "arkade", asset: `arkade:regtest/asset:${ASSET}` },
             },
-            give: { asset: "arkade:regtest/slip44:0", amount: "100000" },
+            give: { asset: "arkade:regtest/slip44:1", amount: "100000" },
             take: { asset: `arkade:regtest/asset:${ASSET}`, amount: "5000" },
             swapAddress: "tark1qrestored",
             swapPkScript: OFFER_SCRIPT,
@@ -152,7 +152,7 @@ describe("a record rebuilt from the chain", () => {
             0,
         );
         expect(inverse.give.asset).toBe(`arkade:regtest/asset:${ASSET}`);
-        expect(inverse.take.asset).toBe("arkade:regtest/slip44:0");
+        expect(inverse.take.asset).toBe("arkade:regtest/slip44:1");
     });
 
     it("names no market it never saw", () => {

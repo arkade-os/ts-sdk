@@ -181,11 +181,11 @@ describe("the cache as a trust boundary", () => {
             quote_corridor: undefined,
             base_asset: {
                 ...lightningCard.base_asset,
-                id: "arkade:regtest/slip44:0",
+                id: "arkade:regtest/slip44:1",
             },
             quote_asset: {
                 ...lightningCard.quote_asset,
-                id: "bolt11:regtest/slip44:0",
+                id: "bolt11:regtest/slip44:1",
             },
         };
 

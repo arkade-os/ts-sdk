@@ -44,12 +44,12 @@ const swapRecord = (id: string): CorridorSwapRecord => ({
     route: {
         give: {
             corridor: "arkade",
-            asset: "arkade:regtest/slip44:0",
+            asset: "arkade:regtest/slip44:1",
             instrument: { kind: "wallet" },
         },
         take: {
             corridor: "lightning",
-            asset: "bolt11:regtest/slip44:0",
+            asset: "bolt11:regtest/slip44:1",
             instrument: {
                 kind: "invoice",
                 bolt11: "lnbcrt50u1p",
@@ -59,9 +59,9 @@ const swapRecord = (id: string): CorridorSwapRecord => ({
             },
         },
     },
-    give: { asset: "arkade:regtest/slip44:0", amount: "5050" as AtomicDecimal },
-    take: { asset: "bolt11:regtest/slip44:0", amount: "5000" as AtomicDecimal },
-    fee: { asset: "arkade:regtest/slip44:0", amount: "50" as AtomicDecimal },
+    give: { asset: "arkade:regtest/slip44:1", amount: "5050" as AtomicDecimal },
+    take: { asset: "bolt11:regtest/slip44:1", amount: "5000" as AtomicDecimal },
+    fee: { asset: "arkade:regtest/slip44:1", amount: "50" as AtomicDecimal },
     market: {
         kind: "card",
         key: "arkade:BTC/lightning:BTC",

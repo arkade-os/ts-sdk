@@ -199,7 +199,7 @@ export const assetCard: DiscoveredMarket = {
  */
 export const canonicalSpotCard: DiscoveredMarket = {
     ...spotCard,
-    base_asset: { ...spotCard.base_asset, id: "arkade:regtest/slip44:0" },
+    base_asset: { ...spotCard.base_asset, id: "arkade:regtest/slip44:1" },
     quote_asset: { ...spotCard.quote_asset, id: `arkade:regtest/asset:${USD_ASSET_ID}` },
 };
 

@@ -27,7 +27,7 @@ Each is one `quote` → `accept` chain. `quote` returns binding, verified terms 
 durable; `accept` writes the record, then funds.
 
 ```ts
-const BTC = btcOn("arkade", "bitcoin"); // arkade:bitcoin/slip44:0
+const BTC = btcOn("arkade", "bitcoin"); // arkade:bitcoin/slip44:0 (slip44:1 on test networks)
 const USDT = "arkade:bitcoin/asset:…";
 
 // arkade -> lightning: pay an invoice. The amount is the invoice's.
@@ -98,7 +98,7 @@ Asset ids are CAIP-19 with the rail as the CAIP-2 namespace, `<rail>:<network>/<
 ```ts
 const asset = canonicalAssetId("BTC", {
     network: "regtest",
-    assets: [{ ticker: "BTC", id: "arkade:regtest/slip44:0" }],
+    assets: [{ ticker: "BTC", id: "arkade:regtest/slip44:1" }],
 });
 ```
 

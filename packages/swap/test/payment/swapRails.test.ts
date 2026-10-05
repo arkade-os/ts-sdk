@@ -38,9 +38,9 @@ const ARK_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode
 const CLAIM_RATE = 1;
 const CLAIM_FEE = claimFeeSats({ claimFeeRateSatVb: CLAIM_RATE });
 
-const ARKADE_BTC = "arkade:regtest/slip44:0" as const;
-const BOLT11_BTC = "bolt11:regtest/slip44:0" as const;
-const BITCOIN_BTC = "bitcoin:regtest/slip44:0" as const;
+const ARKADE_BTC = "arkade:regtest/slip44:1" as const;
+const BOLT11_BTC = "bolt11:regtest/slip44:1" as const;
+const BITCOIN_BTC = "bitcoin:regtest/slip44:1" as const;
 
 const quoteFor = (give: bigint, take: bigint, takeAsset: string): Quote =>
     ({

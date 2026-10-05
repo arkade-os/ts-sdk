@@ -1,13 +1,17 @@
 import { asset } from "@arkade-os/sdk";
+import { ASSET_ID_FORMS, NETWORKS } from "@arkade-os/solver-discovery";
 import { describe, expect, it } from "vitest";
 import {
     AssetIdError,
     arkadeAsset,
     assetPartOf,
     bitcoinNetworkOf,
+    btcAssetPart,
     btcOn,
     formatAssetId,
     isAssetId,
+    isBtcAsset,
+    isBtcAssetLenient,
     issuanceOf,
     parseAssetId,
     railOf,
@@ -111,7 +115,7 @@ describe("sameness across rails", () => {
         expect(sameAsset(btcOn("arkade", "bitcoin"), btcOn("bitcoin", "bitcoin"))).toBe(true);
         expect(sameAsset(btcOn("bolt11", "bitcoin"), btcOn("arkade", "bitcoin"))).toBe(true);
         expect(btcOn("arkade", "bitcoin")).not.toBe(btcOn("bitcoin", "bitcoin"));
-        expect(assetPartOf(btcOn("arkade", "regtest"))).toBe("slip44:0");
+        expect(assetPartOf(btcOn("arkade", "regtest"))).toBe("slip44:1");
     });
 
     it("does not confuse two arkade assets", () => {
@@ -181,4 +185,69 @@ describe("arkade asset ids, against the shared vector", () => {
                 expect(() => parseAssetId(`arkade:regtest/asset:${v.value}`)).toThrow(AssetIdError);
             });
         });
+});
+
+describe("BTC's asset part depends on the network", () => {
+    // SLIP-44: coin type 0 is Bitcoin, coin type 1 is "Testnet (all coins)". Discovery's card
+    // validator refuses `slip44:0` off mainnet and `slip44:1` on it, so `btcOn` must agree.
+    it.each([
+        ["bitcoin", "slip44:0"],
+        ["testnet", "slip44:1"],
+        ["signet", "slip44:1"],
+        ["mutinynet", "slip44:1"],
+        ["regtest", "slip44:1"],
+    ] as const)("names BTC on %s with %s", (network, part) => {
+        expect(btcAssetPart(network)).toBe(part);
+        for (const rail of ["arkade", "bitcoin", "bolt11"] as const) {
+            expect(btcOn(rail, network)).toBe(`${rail}:${network}/${part}`);
+            expect(isBtcAsset(btcOn(rail, network))).toBe(true);
+        }
+    });
+
+    it("refuses the wrong coin type for the network", () => {
+        expect(isBtcAsset("arkade:mutinynet/slip44:0")).toBe(false);
+        expect(isBtcAsset("bolt11:regtest/slip44:0")).toBe(false);
+        expect(isBtcAsset("arkade:bitcoin/slip44:1")).toBe(false);
+        expect(isBtcAsset("bitcoin:signet/slip44:2")).toBe(false);
+    });
+
+    it("is not BTC when it is an issued asset or another chain's native coin", () => {
+        expect(isBtcAsset(arkadeAsset("regtest", issued(`${"a1".repeat(32)}0000`)))).toBe(false);
+        expect(isBtcAsset("eip155:1/slip44:60")).toBe(false);
+        expect(isBtcAsset("eip155:1/slip44:0")).toBe(false);
+        expect(isBtcAssetLenient("eip155:1/slip44:0")).toBe(false);
+    });
+
+    it("reads a record's pre-fix `slip44:0` as BTC on any network, and nothing wider", () => {
+        for (const id of [
+            "arkade:regtest/slip44:0",
+            "bolt11:mutinynet/slip44:0",
+            "bitcoin:signet/slip44:0",
+            "arkade:testnet/slip44:0",
+            "arkade:bitcoin/slip44:0",
+            "arkade:regtest/slip44:1",
+        ] as const) {
+            expect(isBtcAssetLenient(id)).toBe(true);
+        }
+        expect(isBtcAssetLenient("arkade:regtest/slip44:2")).toBe(false);
+        // `slip44:1` was never BTC on mainnet, before or after.
+        expect(isBtcAssetLenient("arkade:bitcoin/slip44:1")).toBe(false);
+        expect(isBtcAssetLenient(arkadeAsset("regtest", issued(`${"a1".repeat(32)}0000`)))).toBe(
+            false,
+        );
+    });
+
+    it("agrees with discovery's own id grammar on every network it indexes", () => {
+        // Discovery's card validator is the other side of the key match. An id it would refuse on
+        // a card is an id no card can carry, so `btcOn` producing one is the bug, not the card.
+        const forms = ASSET_ID_FORMS.map(({ pattern }) => new RegExp(`^(?:${pattern})$`));
+        const carriable = (id: string): boolean => forms.some((form) => form.test(id));
+        for (const network of NETWORKS) {
+            for (const rail of ["arkade", "bitcoin", "bolt11"] as const) {
+                expect(carriable(btcOn(rail, network)), `${rail} on ${network}`).toBe(true);
+                const swapped = network === "bitcoin" ? "slip44:1" : "slip44:0";
+                expect(carriable(`${rail}:${network}/${swapped}`)).toBe(false);
+            }
+        }
+    });
 });
