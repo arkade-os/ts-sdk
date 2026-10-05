@@ -8,7 +8,7 @@ import { Bytes } from "@scure/btc-signer/utils.js";
  */
 export class Transaction extends BtcSignerTransaction {
     static ARK_TX_OPTS: TxOpts = {
-        allowUnknown: true,
+        unknown: "ignore",
         allowUnknownOutputs: true,
         allowUnknownInputs: true,
     };

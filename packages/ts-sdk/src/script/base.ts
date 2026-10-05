@@ -1,4 +1,4 @@
-import { Address, p2tr, TAPROOT_UNSPENDABLE_KEY, NETWORK } from "@scure/btc-signer";
+import { Address, p2tr, taprootNumsKey, NETWORK } from "@scure/btc-signer";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import { VarBytes } from "@scure/btc-signer/script.js";
@@ -28,6 +28,11 @@ export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = P.array(
     null,
     P.struct({ depth: P.U8, version: P.U8, script: VarBytes }),
 );
+
+export function toBIP371TapTree(tapTree: Bytes): ReturnType<typeof TapTreeCoder.decode> {
+    const leaves = TapTreeCoder.decode(tapTree);
+    return leaves.map((leaf, i) => ({ ...leaf, depth: Math.min(i + 1, leaves.length - 1) }));
+}
 
 export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
@@ -78,7 +83,7 @@ export class VtxoScript {
     constructor(readonly scripts: Bytes[]) {
         const tapTree = assembleBtcdTaprootTree(scripts);
 
-        const payment = p2tr(TAPROOT_UNSPENDABLE_KEY, tapTree, undefined, true);
+        const payment = p2tr(taprootNumsKey(), tapTree, undefined, true);
 
         if (!payment.tapLeafScript || payment.tapLeafScript.length !== scripts.length) {
             throw new Error("invalid scripts");

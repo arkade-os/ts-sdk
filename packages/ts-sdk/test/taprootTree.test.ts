@@ -1,7 +1,8 @@
 import { hex } from "@scure/base";
 import { describe, expect, it } from "vitest";
-import { p2tr, TAPROOT_UNSPENDABLE_KEY } from "@scure/btc-signer";
-import { assembleBtcdTaprootTree, VtxoScript } from "../src";
+import { p2tr, taprootNumsKey } from "@scure/btc-signer";
+import { assembleBtcdTaprootTree, Transaction, VtxoScript } from "../src";
+import { toBIP371TapTree } from "../src/script/base";
 
 /**
  * Sanity tests for the btcd-compatible Taproot script tree builder.
@@ -18,7 +19,7 @@ import { assembleBtcdTaprootTree, VtxoScript } from "../src";
  * checks are the golden vectors in `fixtures/vtxoscript.json`, exercised by
  * `tapscript.test.ts`: their `taprootKey`s were generated independently with
  * btcd's `txscript.AssembleTaprootScriptTree` + `ComputeTaprootOutputKey`
- * (using scure's `TAPROOT_UNSPENDABLE_KEY` as the internal key), so they fail
+ * (using scure's `taprootNumsKey()` as the internal key), so they fail
  * if our builder produces a wrong tree. This file only asserts:
  *
  *   1. The function accepts arbitrary leaf counts and produces a tree.
@@ -40,7 +41,7 @@ describe("assembleBtcdTaprootTree", () => {
         it(`builds a valid tree for ${count} leaves`, () => {
             const scripts = makeScripts(count);
             const tree = assembleBtcdTaprootTree(scripts);
-            const payment = p2tr(TAPROOT_UNSPENDABLE_KEY, tree, undefined, true);
+            const payment = p2tr(taprootNumsKey(), tree, undefined, true);
             expect(payment.tapLeafScript).toBeTruthy();
             expect(payment.tapLeafScript!.length).toBe(count);
         });
@@ -63,5 +64,21 @@ describe("assembleBtcdTaprootTree", () => {
                 hex.encode(original.tweakedPublicKey),
             );
         }
+    });
+});
+
+describe("VtxoScript.encode as a PSBT output tapTree", () => {
+    it.each([1, 2, 3, 6])("round-trips %i leaves through scure's BIP-371 coder", (n) => {
+        const script = new VtxoScript(
+            Array.from({ length: n }, (_, i) => new Uint8Array([0x51 + i])),
+        );
+        const tx = new Transaction();
+        tx.addOutput({
+            script: script.pkScript,
+            amount: 1000n,
+            tapTree: toBIP371TapTree(script.encode()),
+        });
+        const back = Transaction.fromPSBT(tx.toPSBT());
+        expect(back.getOutput(0).tapTree?.map((leaf) => leaf.script)).toEqual(script.scripts);
     });
 });
