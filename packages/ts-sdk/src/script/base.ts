@@ -1,7 +1,9 @@
 import { Address, p2tr, TAPROOT_UNSPENDABLE_KEY, NETWORK } from "@scure/btc-signer";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
+import { VarBytes } from "@scure/btc-signer/script.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
+import * as P from "micro-packed";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
 import { timelockToSequence } from "../utils/timelock";
@@ -22,7 +24,10 @@ export type TapLeafScript = [
     Bytes,
 ];
 
-export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = PSBTOutput.tapTree[2];
+export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = P.array(
+    null,
+    P.struct({ depth: P.U8, version: P.U8, script: VarBytes }),
+);
 
 export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
@@ -95,7 +100,7 @@ export class VtxoScript {
             this.scripts.map((script) => ({
                 depth: 1,
                 version: TAP_LEAF_VERSION,
-                script,
+                script: script as Uint8Array<ArrayBuffer>,
             })),
         );
         return tapTree;

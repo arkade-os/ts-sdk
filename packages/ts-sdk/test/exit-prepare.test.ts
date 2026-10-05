@@ -5,9 +5,8 @@ import { SingleKey } from "../src/identity/singleKey";
 import { getNetwork } from "../src/networks";
 import { ChainTxType } from "../src/providers/indexer";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
-import { VtxoScript } from "../src/script/base";
+import { DefaultVtxo } from "../src/script/default";
 import { CHILD_OUTPUT_DUST } from "../src/wallet/exit/estimate";
-import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { timelockToSequence } from "../src/utils/timelock";
 import { P2A } from "../src/utils/anchor";
 import { Transaction } from "../src/utils/transaction";
@@ -23,8 +22,11 @@ const timelock = { type: "blocks", value: 144n } as const;
 
 async function fixture(opts?: { coins?: { value: number }[] }) {
     const owner = (await identity.xOnlyPublicKey())!;
-    const exit = CSVMultisigTapscript.encode({ pubkeys: [owner], timelock });
-    const vtxoScript = new VtxoScript([exit.script]);
+    const vtxoScript = new DefaultVtxo.Script({
+        pubKey: owner,
+        serverPubKey: owner,
+        csvTimelock: timelock,
+    });
     const pay = p2tr(owner, undefined, network);
 
     function treePsbt(fill: number): { txid: string; psbt: string } {

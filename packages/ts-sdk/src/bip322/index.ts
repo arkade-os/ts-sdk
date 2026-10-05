@@ -158,7 +158,7 @@ function verifyP2TR(
     }
 
     const toSpend = craftToSpendTx(message, pkScript, TAG_BIP322);
-    const toSign = craftBIP322ToSignP2TR(toSpend, pkScript, pubkey);
+    const toSign = craftBIP322ToSignP2TR(toSpend, pkScript);
 
     const sighash = toSign.preimageWitnessV1(0, [pkScript], sighashType, [0n]);
 
@@ -275,7 +275,7 @@ function encodeCompactSize(n: number): Uint8Array {
 function craftBIP322ToSignP2TR(
     toSpend: Transaction,
     pkScript: Uint8Array,
-    tapInternalKey: Uint8Array,
+    tapInternalKey?: Uint8Array,
 ): Transaction {
     const tx = new Transaction({ version: 0 });
 

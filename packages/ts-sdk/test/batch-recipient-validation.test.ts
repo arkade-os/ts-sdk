@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { Address, OutScript, TaprootControlBlock } from "@scure/btc-signer";
+import { Address, OutScript } from "@scure/btc-signer";
 
 import { ArkNote, Wallet } from "../src";
 import {
@@ -11,7 +11,7 @@ import {
 import { ServerResponseMismatchError } from "../src/providers/errors";
 import { Transaction } from "../src/utils/transaction";
 import { networks } from "../src/networks";
-import type { TapLeafScript } from "../src/script/base";
+import { VtxoScript } from "../src/script/base";
 import type { ExtendedCoin, Recipient } from "../src/wallet";
 import type { BatchFinalizationEvent } from "../src/providers/ark";
 
@@ -135,24 +135,15 @@ describe("validateBatchRecipientsWithoutTree", () => {
     });
 });
 
-function tapLeaf(): TapLeafScript {
-    const controlBlock = TaprootControlBlock.decode(
-        new Uint8Array([0xc0, ...new Uint8Array(32).fill(1)]),
-    );
-    // PSBT stores the leaf version as the script's trailing byte; it must match
-    // the control block's or `updateInput` rejects the pair.
-    const script = new Uint8Array(20).fill(2);
-    script[script.length - 1] = 0xc0;
-    return [controlBlock, script];
-}
+const BOARDING_SCRIPT = new VtxoScript([new Uint8Array([0x51])]);
 
 const BOARDING_INPUT = {
     txid: "aa".repeat(32),
     vout: 0,
     value: 10_000,
     status: { confirmed: true },
-    forfeitTapLeafScript: tapLeaf(),
-    intentTapLeafScript: tapLeaf(),
+    forfeitTapLeafScript: BOARDING_SCRIPT.leaves[0],
+    intentTapLeafScript: BOARDING_SCRIPT.leaves[0],
     tapTree: new Uint8Array([0x00]),
 } as unknown as ExtendedCoin;
 
@@ -163,7 +154,7 @@ function finalizationEvent(outputs: { address: string; amount: bigint }[]): Batc
         txid: hex.decode(BOARDING_INPUT.txid),
         index: BOARDING_INPUT.vout,
         witnessUtxo: {
-            script: pkScript(ONCHAIN_ADDRESS),
+            script: BOARDING_SCRIPT.pkScript,
             amount: BigInt(BOARDING_INPUT.value),
         },
     });
