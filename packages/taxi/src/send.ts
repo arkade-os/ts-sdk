@@ -599,7 +599,8 @@ export const createTaxiSender = (deps: TaxiSenderDependencies) => {
                 coin.assets?.some((held) => held.assetId !== assetId && held.amount > 0n),
             );
         const requiredSats =
-            (currency === "sats" ? fareUnits : 0n) + (hasAssetChange ? ctx.vtxoMinAmount : 0n);
+            (currency === "sats" ? fareUnits : 0n) +
+            (hasAssetChange ? (ctx.dust > ctx.vtxoMinAmount ? ctx.dust : ctx.vtxoMinAmount) : 0n);
         let selectedSats = selected.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
         for (const coin of available
             .filter((coin) => !coin.assets?.length)

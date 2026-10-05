@@ -3,6 +3,7 @@ import type { Identity } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import {
     TaxiClient,
+    type CovenantSpendConfig,
     type CovenantTransfer,
     type EventSourceLike,
     type SubscribeClaimsArgs,
@@ -367,29 +368,60 @@ describe("watchReceiverClaims", () => {
         expect(onGone).toHaveBeenCalledWith(offerKey(offers[0]));
     });
 
-    it("does not offer a claim withdrawn while verification is in flight", async () => {
-        let finishVerification!: (transfer: CovenantTransfer) => void;
-        const { client, feed } = fakeTaxi({
-            verifyIncomingClaim: vi.fn(
-                () => new Promise<CovenantTransfer>((resolve) => (finishVerification = resolve)),
-            ),
-        });
-        const { offers, onGone } = watch(client);
-        feed.args!.onSnapshot({ claims: [satsFareClaim(7n)] });
-        await settle();
-        expect(client.verifyIncomingClaim).toHaveBeenCalledOnce();
-        feed.args!.onChanged({ claims: [RECYCLED] });
-        finishVerification(TRANSFER);
-        await settle();
-        expect(offers).toEqual([]);
-        expect(onGone).not.toHaveBeenCalled();
+    it.each(["change", "snapshot"])(
+        "does not publish verification completed after its own Taxi %s withdrew the claim",
+        async (withdrawal) => {
+            let finishVerification!: (transfer: CovenantTransfer) => void;
+            const { client, feed } = fakeTaxi({
+                verifyIncomingClaim: vi.fn(
+                    () =>
+                        new Promise<CovenantTransfer>((resolve) => (finishVerification = resolve)),
+                ),
+            });
+            const { offers, onGone, stop } = watch(client);
+            feed.args!.onSnapshot({ claims: [satsFareClaim(7n)] });
+            await settle();
+            expect(client.verifyIncomingClaim).toHaveBeenCalledOnce();
+            if (withdrawal === "change") feed.args!.onChanged({ claims: [RECYCLED] });
+            else feed.args!.onSnapshot({ claims: [] });
+            finishVerification(TRANSFER);
+            await settle();
+            expect(offers).toEqual([]);
+            expect(onGone).not.toHaveBeenCalled();
 
-        feed.args!.onChanged({ claims: [satsFareClaim(7n)] });
+            if (withdrawal === "change") feed.args!.onChanged({ claims: [satsFareClaim(7n)] });
+            else feed.args!.onSnapshot({ claims: [satsFareClaim(7n)] });
+            await settle();
+            expect(client.verifyIncomingClaim).toHaveBeenCalledTimes(2);
+            finishVerification(TRANSFER);
+            await settle();
+            expect(offers).toHaveLength(1);
+            stop();
+        },
+    );
+
+    it("withdraws only absent pending claims from the snapshot's Taxi while config is loading", async () => {
+        let finishConfig!: (config: CovenantSpendConfig) => void;
+        const config = new Promise<CovenantSpendConfig>((resolve) => (finishConfig = resolve));
+        const taxis = new Map([TAXI_URL, `${TAXI_URL}.second`].map((url) => [url, fakeTaxi()]));
+        const { offers, onGone, stop } = watch(fakeTaxi().client, {
+            taxis: [...taxis.keys()].map((url) => ({ ...TAXI, url })),
+            clientFor: (url) => taxis.get(url)!.client,
+            spendConfig: () => config,
+        });
+        const [first, second] = [...taxis.values()];
+        first.feed.args!.onSnapshot({ claims: [satsFareClaim(7n)] });
+        second.feed.args!.onSnapshot({ claims: [satsFareClaim(7n)] });
+        expect(first.client.verifyIncomingClaim).not.toHaveBeenCalled();
+        expect(second.client.verifyIncomingClaim).not.toHaveBeenCalled();
+        first.feed.args!.onSnapshot({ claims: [] });
+        second.feed.args!.onSnapshot({ claims: [satsFareClaim(7n)] });
+        finishConfig(CONFIG);
         await settle();
-        expect(client.verifyIncomingClaim).toHaveBeenCalledTimes(2);
-        finishVerification(TRANSFER);
-        await settle();
-        expect(offers).toHaveLength(1);
+        expect(offers.map(offerKey)).toEqual([`${TAXI_URL}.second tr-sats-7`]);
+        expect(second.client.verifyIncomingClaim).toHaveBeenCalledOnce();
+        expect(onGone).not.toHaveBeenCalled();
+        stop();
     });
 
     it("withdraws an offer a fresh snapshot from its own Taxi no longer lists, and nothing of another Taxi", async () => {

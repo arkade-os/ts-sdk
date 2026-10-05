@@ -11,6 +11,8 @@ The Taxi client and protocol peers currently come from the frozen candidate arch
 - `payAssetRequest` negotiates a receiver-paid carrier with a supporting solver, falls back only before funding and preserves an uncertain funding result.
 - `decodeTaxiParams` and `encodeTaxiParams` preserve repayment preferences in amountless or fixed payment requests.
 
+`FailedDirectTaxi.forget()` is an explicit local journal override, not cancellation. The operator can still complete a failed submission. Require the sender to acknowledge that making a replacement payment may pay twice; automation must retain the pending guard and reconcile instead.
+
 Wallet adapters supply fresh coins with **all reservations excluded**, a shared transaction lock for sends and claims, the active authorization check and wallet reload. The queue remembers consumed inputs and waits for reload before proceeding. Without a coordination callback it plans offers and allows manual claims, but does not sign automatically.
 
 ```ts

@@ -309,6 +309,79 @@ describe("Taxi claim queue", () => {
         queue.dispose();
     });
 
+    it.each(["claim", "lock-unlock", "withdraw"] as const)(
+        "preserves queued manual %s behavior when wake starts another automatic inventory pass",
+        async (action) => {
+            const reading = deferred();
+            const release = deferred();
+            const restarted = deferred();
+            const releaseRestart = deferred();
+            let inventory = coins([1000n]);
+            let reads = 0;
+            const inputs: string[] = [];
+            const recorded: string[] = [];
+            const client = clientWith(
+                vi.fn(async (_transfer, funding) => {
+                    inputs.push(`${funding.input.txid}:${funding.input.vout}`);
+                    return String(inputs.length).repeat(64);
+                }),
+            );
+            const queue = new TaxiClaimQueue(
+                options({
+                    getCoins: async () => {
+                        if (++reads === 1) {
+                            reading.resolve();
+                            await release.promise;
+                        } else if (reads === 3) {
+                            restarted.resolve();
+                            await releaseRestart.promise;
+                        }
+                        return inventory;
+                    },
+                    recordClaim: (delivery) => {
+                        recorded.push(delivery.claim.transferId);
+                    },
+                    reload: async () => {
+                        inventory = [
+                            {
+                                ...inventory[0],
+                                txid: String(inputs.length).repeat(64),
+                                value: inputs.length === 1 ? 1050 : 1043,
+                            },
+                        ];
+                    },
+                }),
+            );
+            const paid = offer("paid-queued", client, true);
+            queue.offer(offer("free-first", client));
+            queue.offer(paid);
+            await reading.promise;
+            const manual = queue.claim(offerKey(paid));
+            queue.wake();
+            release.resolve();
+            await restarted.promise;
+            expect(inputs).toEqual([`${"c".repeat(64)}:0`]);
+            if (action === "lock-unlock") {
+                queue.setActive(false);
+                queue.setActive(true);
+            } else if (action === "withdraw") queue.withdraw(offerKey(paid));
+            releaseRestart.resolve();
+            await manual;
+            await idle(queue);
+            expect(recorded).toEqual(
+                action === "claim" ? ["free-first", "paid-queued"] : ["free-first"],
+            );
+            expect(inputs).toEqual(
+                action === "claim"
+                    ? [`${"c".repeat(64)}:0`, `${"1".repeat(64)}:0`]
+                    : [`${"c".repeat(64)}:0`],
+            );
+            expect(inventory[0].value).toBe(action === "claim" ? 1043 : 1050);
+            expect(queue.snapshot().offers).toEqual(action === "lock-unlock" ? [paid] : []);
+            queue.dispose();
+        },
+    );
+
     it("retains the verified one-shot capability and failed state across claim feed restarts", async () => {
         const client = clientWith(
             vi.fn(async () => {

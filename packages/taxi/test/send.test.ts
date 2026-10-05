@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SingleKey, Transaction } from "@arkade-os/sdk";
+import { asset, SingleKey, Transaction } from "@arkade-os/sdk";
 import { TaxiClient, verifyQuote } from "@arkade-taxi/client";
 import { base64, hex } from "@scure/base";
 import {
@@ -16,6 +16,7 @@ import {
     KEYS,
     RECEIVER_ADDRESS,
     TAXI_URL,
+    arkadeContext,
     legacyBitcoinQuote,
     senderCoin,
     taxiFetch,
@@ -667,6 +668,95 @@ describe("sending sub-dust bitcoin through the Taxi", () => {
     });
 });
 
+describe("asset payments keep spendable sender change", () => {
+    const setup = async (vtxoMinAmount: bigint, withPlainCoin: boolean) => {
+        const assetCoin = {
+            ...(await senderCoin(
+                wallet.identity,
+                Number(vtxoMinAmount > 330n ? vtxoMinAmount : 330n),
+            )),
+            assets: [
+                { assetId: ASSET_ID, amount: 10n },
+                { assetId: "f".repeat(64) + "0000", amount: 4n },
+            ],
+        };
+        const plainCoin = { ...(await senderCoin(wallet.identity, 1_000)), vout: 1 };
+        const coins = withPlainCoin ? [assetCoin, plainCoin] : [assetCoin];
+        const infoFetch = taxiFetch({
+            info: { ...withRule({}), vtxoMinAmount: vtxoMinAmount.toString() },
+        });
+        const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") return new Response(null, { status: 503 });
+            return infoFetch(url, init);
+        });
+        vi.stubGlobal("fetch", fetch);
+        const { sendDirectTaxi: send } = createTaxiSender({
+            storage: localStorage,
+            runExclusive: async (_key, run) => run(),
+            getContext: async () => arkadeContext({ vtxoMinAmount }),
+            serverUnrollScript: new Uint8Array(),
+            pageProtocol: "https:",
+            unreservedCoins: async () => coins,
+        });
+        const confirmPayment = vi.fn(async () => true);
+        const payment = send({
+            wallet: { identity: wallet.identity } as never,
+            network: "regtest",
+            taxi: { url: TAXI_URL },
+            receiverAddress: RECEIVER_ADDRESS,
+            assetId: ASSET_ID,
+            amount: 5n,
+            mode: "recycle",
+            confirmPayment,
+        });
+        return { payment, fetch, confirmPayment, assetCoin, plainCoin };
+    };
+
+    it.each([1n, 700n])(
+        "adds plain funding before quoting a sats fare with output minimum %s",
+        async (vtxoMinAmount) => {
+            const { payment, fetch, confirmPayment, assetCoin, plainCoin } = await setup(
+                vtxoMinAmount,
+                true,
+            );
+            await expect(payment).rejects.toThrow("HTTP 503");
+            const posts = fetch.mock.calls.filter(([, init]) => init?.method === "POST");
+            expect(posts).toHaveLength(1);
+            expect(posts[0][0]).toBe(`${TAXI_URL}/v1/transfers`);
+            const body = JSON.parse(String(posts[0][1]!.body));
+            expect(body).toMatchObject({
+                senderSats: String(assetCoin.value + plainCoin.value),
+                assetUnits: "5",
+                fareId: "flat",
+            });
+            expect(body.senderInputs).toMatchObject([
+                { txid: assetCoin.txid, vout: assetCoin.vout, value: String(assetCoin.value) },
+                { txid: plainCoin.txid, vout: plainCoin.vout, value: "1000" },
+            ]);
+            expect(
+                asset.Packet.fromString(body.senderInputs[0].assetPacket).groups.map((group) => ({
+                    assetId: group.assetId!.toString(),
+                    amount: group.outputs[0].amount,
+                })),
+            ).toEqual(assetCoin.assets);
+            expect(confirmPayment).not.toHaveBeenCalled();
+            expect(localStorage.keys()).toEqual([]);
+        },
+    );
+
+    it.each([1n, 700n])(
+        "refuses before quoting when residual assets lack spendable change at minimum %s",
+        async (vtxoMinAmount) => {
+            const { payment, fetch, confirmPayment } = await setup(vtxoMinAmount, false);
+            await expect(payment).rejects.toThrow(
+                "Insufficient sats for the Taxi fare and asset change",
+            );
+            expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
+            expect(confirmPayment).not.toHaveBeenCalled();
+            expect(localStorage.keys()).toEqual([]);
+        },
+    );
+});
 describe("selectSatsForTaxi", () => {
     const plain = (value: number, vout: number) => ({ txid: "c".repeat(64), vout, value });
 

@@ -308,6 +308,9 @@ export const watchReceiverClaims = (watch: ClaimWatch): (() => void) => {
                         const listed = new Set(
                             snapshot.claims.map((claim) => claimKey(url, claim.transferId)),
                         );
+                        for (const key of verifying)
+                            if (key.startsWith(`${url} `) && !listed.has(key))
+                                withdrawnDuringVerification.add(key);
                         for (const [key, offer] of verified)
                             if (offer.taxi.url === url && !listed.has(key) && verified.delete(key))
                                 watch.onGone(key);

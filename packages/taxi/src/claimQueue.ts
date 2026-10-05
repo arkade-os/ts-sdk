@@ -118,7 +118,10 @@ export class TaxiClaimQueue {
 
     async claim(key: string): Promise<void> {
         const epoch = this.epoch;
-        await this.running;
+        do {
+            await this.running;
+            if (!this.authorized(epoch)) return;
+        } while (this.running);
         const offer = this.offers.get(key);
         if (!offer || this.running || !this.authorized(epoch)) return;
         await this.start(() => this.run(offer, false, epoch));
