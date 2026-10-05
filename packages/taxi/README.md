@@ -36,4 +36,12 @@ queue.dispose();
 
 Free eligibility requires zero receiver fare, no asset dilution and full retention of the receiver's funding coin. The receiver still needs liquidity to repay the carrier loan. A returned legacy sub-dust refund likewise needs consolidation before it is spendable; this plugin does not add a new refund covenant.
 
-The regtest scenario uses two real SDK wallets and the local Taxi profile. Run `pnpm regtest:up:taxi` and `pnpm regtest:test:taxi`; `pnpm test:integration:taxi` resets, starts and tests the profile in one command.
+The regtest scenario uses two real SDK wallets and the local Taxi profile. The `arkade-taxi:regtest` image must be available first; build it from the same Taxi revision CI uses:
+
+```sh
+git clone https://github.com/ArkLabsHQ/arkade-taxi.git taxi-image
+git -C taxi-image checkout ffdeff7c1b171e660e1c119cd6994c440a456338
+docker build -t arkade-taxi:regtest ./taxi-image
+```
+
+Then run `pnpm regtest:up:taxi` and `pnpm regtest:test:taxi`; `pnpm test:integration:taxi` resets, starts and tests the profile in one command.

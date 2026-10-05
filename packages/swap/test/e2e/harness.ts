@@ -51,9 +51,8 @@ export const faucet = (arkdExec: string, addresses: readonly string[], satsEach:
     const note = execCommand(`${arkdExec} arkd note --amount ${satsEach * addresses.length * 2}`);
     settle(`${arkdExec} ark redeem-notes -n ${note} --password secret`, "redeem-notes");
     for (const address of addresses) {
-        settle(
-            `${arkdExec} ark send --to ${address} --amount ${satsEach} --password secret`,
-            `send to ${address.slice(0, 12)}…`,
-        );
+        // An ambiguous CLI error can follow a successful FinalizeTx. Sending
+        // again is not idempotent, so fail setup instead of overfunding a wallet.
+        execCommand(`${arkdExec} ark send --to ${address} --amount ${satsEach} --password secret`);
     }
 };

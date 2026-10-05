@@ -251,14 +251,15 @@ export class TaxiActivityStore {
         const key = taxiActivityKey(r);
         const running = this.inFlight.get(key);
         if (running) return running;
-        client ??=
-            this.options.client?.(r.taxiUrl) ??
-            new TaxiClient({ baseUrl: r.taxiUrl, fetch: boundedFetch });
-        const read =
-            r.mode === "sponsored"
-                ? client.sponsoredStatus(r.transferId)
-                : client.status(r.transferId);
-        const run = read
+        const run = Promise.resolve()
+            .then(() => {
+                client ??=
+                    this.options.client?.(r.taxiUrl) ??
+                    new TaxiClient({ baseUrl: r.taxiUrl, fetch: boundedFetch });
+                return r.mode === "sponsored"
+                    ? client.sponsoredStatus(r.transferId)
+                    : client.status(r.transferId);
+            })
             .then(
                 (status) => this.recordStatus(r, status),
                 (error) => {

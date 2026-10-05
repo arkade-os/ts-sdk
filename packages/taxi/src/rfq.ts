@@ -249,10 +249,12 @@ export const payAssetRequest = async (
         };
         if (!(await deps.ui.confirmPayment(terms))) throw new PaymentDeclined();
         const validUntil = fundingDeadline(negotiated, taxi);
-        if (taxi && expired(validUntil)) {
-            // Nothing is funded yet: one fresh Taxi quote, then a purchase, so a slow answer cannot loop.
-            dropTaxi(deps, "confirmed too late for the solver to fill");
-            if (lapsed > 0) request = { ...request, taxi: undefined };
+        if (expired(validUntil)) {
+            // Nothing is funded yet. Re-negotiate after a slow confirmation; each retry needs a new confirmation.
+            if (taxi) {
+                dropTaxi(deps, "confirmed too late for the solver to fill");
+                if (lapsed > 0) request = { ...request, taxi: undefined };
+            }
             continue;
         }
         // THE COMMIT POINT. Everything above may fall back; nothing from here may. A funding

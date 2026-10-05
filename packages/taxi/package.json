@@ -30,7 +30,6 @@
         "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
         "prepack": "pnpm run build",
         "prebuild": "node scripts/verify-vendor.mjs",
-        "pretest:unit": "node scripts/verify-vendor.mjs",
         "smoke:dist": "node scripts/smoke-dist.mjs"
     },
     "dependencies": {
