@@ -16,16 +16,31 @@ import {
     collectRfqSwaps,
     collectSwapRecords,
     type AssetSwapRepository,
+    type RfqSwapPageFilter,
 } from "../repository";
+import type { AssetSwap } from "../store";
 import type { RfqSwapRecord } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
 import { pageRfqRecords, splitRecords, type CorridorRecordStore } from "./driveRecords";
+
+/** v1 corridor records, or none: an unreadable v1 store must not stop the v2 records. */
+const readLegacyRfqSwaps = async (
+    repository: AssetSwapRepository,
+    filter: RfqSwapPageFilter = {},
+): Promise<RfqSwapRecord[]> => {
+    try {
+        return await collectRfqSwaps(repository, filter);
+    } catch (error) {
+        console.warn("[swap] the v1 rfq swaps could not be read", error);
+        return [];
+    }
+};
 
 /** Live v1 corridor records: what the manager should take over. */
 export const legacyLiveRfqSwaps = async (
     repository: AssetSwapRepository,
 ): Promise<RfqSwapRecord[]> =>
-    (await collectRfqSwaps(repository)).filter((record) => !isRfqSwapTerminal(record.state));
+    (await readLegacyRfqSwaps(repository)).filter((record) => !isRfqSwapTerminal(record.state));
 
 /**
  * `bridge` plus the v1 `rfqSwaps` rows `admits` lets through. On an `rfqId` in both, v2 wins.
@@ -52,7 +67,7 @@ export const withLegacyRfqSwaps = (
             const held = new Set(
                 splitRecords(await collectSwapRecords(repository)).corridor.map((r) => r.rfqId),
             );
-            const v1 = (await collectRfqSwaps(repository, filter)).filter(
+            const v1 = (await readLegacyRfqSwaps(repository, filter)).filter(
                 (record) => !held.has(record.rfqId) && admits(record),
             );
             for (const record of v1) legacy.add(record.rfqId);
@@ -79,16 +94,28 @@ export const withLegacyRfqSwaps = (
     };
 };
 
-/** Funding txids of live v1 offers no v2 record has adopted yet. */
+/** v1 offers, or none: an unreadable v1 store must not stop the v2 deposit restore. */
+const readLegacyAssetSwaps = async (repository: AssetSwapRepository): Promise<AssetSwap[]> => {
+    try {
+        return await collectAssetSwaps(repository);
+    } catch (error) {
+        console.warn("[swap] the v1 swaps could not be read", error);
+        return [];
+    }
+};
+
+/** Funding txids of live or swept v1 offers no v2 record has adopted yet. */
 export const legacyOfferDepositsToReopen = async (
     repository: AssetSwapRepository,
 ): Promise<Set<string>> => {
     // Typed required, but onchain-HTLC rows carry no `offerHex` and an unfunded one no txid.
-    const live = (await collectAssetSwaps(repository)).filter(
+    const live = (await readLegacyAssetSwaps(repository)).filter(
         (swap) =>
             !!swap.offerHex &&
             !!swap.fundingTxid &&
-            (swap.status === "pending" || swap.status === "cancelling"),
+            (swap.status === "pending" ||
+                swap.status === "cancelling" ||
+                swap.status === "recoverable"),
     );
     if (live.length === 0) return new Set();
     const { offer } = splitRecords(await collectSwapRecords(repository));

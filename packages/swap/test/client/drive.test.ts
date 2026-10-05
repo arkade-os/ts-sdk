@@ -139,6 +139,8 @@ const build = async (
         records?: SwapRecord[];
         /** v1 `rfqSwaps` rows, as a 0.0.x client left them. */
         legacy?: RfqSwapRecord[];
+        /** The v1 `rfqSwaps` store throws on read. */
+        legacyUnreadable?: boolean;
         mode?: "auto" | "manual" | "readonly";
         now?: number;
         vtxos?: FakeVtxo[];
@@ -160,6 +162,9 @@ const build = async (
     const repository = memoryRepository();
     for (const record of over.records ?? []) await repository.saveSwapRecord(record);
     for (const record of over.legacy ?? []) await repository.saveRfqSwap(record);
+    if (over.legacyUnreadable) {
+        repository.getRfqSwapsPage = () => Promise.reject(new Error("v1 store unreadable"));
+    }
     const corridors = fakeCorridors({
         ...(over.chain === undefined ? {} : { chain: over.chain }),
         ...(over.claim === undefined ? {} : { claim: over.claim }),
@@ -333,6 +338,42 @@ describe("the v1 read-through", () => {
         });
 
         expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
+        await h.drive.dispose();
+    });
+
+    it("reads a row under the field names 0.0.x wrote", async () => {
+        const { fundingTxid, ...current } = legacySend();
+        const legacy = {
+            ...current,
+            fundingArkTxid: fundingTxid,
+            lockupSpendArkTxids: ["bb".repeat(32)],
+        } as RfqSwapRecord;
+        const h = await build({
+            legacy: [legacy],
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
+            vtxos: unspent(),
+            funded: [],
+        });
+
+        const stored = await h.repository.getRfqSwap(legacy.rfqId);
+        expect(stored?.state).toBe("refunded");
+        expect(stored).toMatchObject({ fundingTxid, lockupSpendTxids: ["bb".repeat(32)] });
+        expect(stored).not.toHaveProperty("fundingArkTxid");
+        expect(stored).not.toHaveProperty("lockupSpendArkTxids");
+        await h.drive.dispose();
+    });
+
+    it("drives the v2 records when the v1 store cannot be read", async () => {
+        const h = await build({
+            records: [signable({ fundingTxid: "aa".repeat(32) })],
+            legacyUnreadable: true,
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
+            vtxos: unspent(),
+            funded: [],
+        });
+
+        await expect(h.drive.ready).resolves.toBeUndefined();
+        expect(h.drive.swap("q1")?.outcome).toBe("refunded");
         await h.drive.dispose();
     });
 
@@ -906,6 +947,22 @@ describe("the offer half", () => {
         await drive.dispose();
     });
 
+    it("adopts a swept v1 offer, so it can be recovered", async () => {
+        const funding = offerFunding();
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer(funding.txid, { status: "recoverable" }));
+        await repository.markTxidsScanned([funding.txid]);
+        const { drive } = await restoreOver(
+            [],
+            funding,
+            offerDeposit(funding.txid, { isSwept: true }),
+            repository,
+        );
+
+        expect(drive.swap(funding.txid)?.outcome).toBe("needs_recovery");
+        await drive.dispose();
+    });
+
     it("leaves a settled v1 offer's deposit on the cursor", async () => {
         const funding = offerFunding();
         const repository = memoryRepository();
@@ -928,6 +985,14 @@ describe("the offer half", () => {
         await repository.saveSwap(unfunded as AssetSwap);
 
         expect(await legacyOfferDepositsToReopen(repository)).toEqual(new Set(["aa".repeat(32)]));
+    });
+
+    it("reopens nothing, without failing, when the v1 swaps store cannot be read", async () => {
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer("aa".repeat(32)));
+        repository.getAssetSwapsPage = () => Promise.reject(new Error("v1 store unreadable"));
+
+        expect(await legacyOfferDepositsToReopen(repository)).toEqual(new Set());
     });
 
     it("rebuilds a record for a deposit no record claims", async () => {
