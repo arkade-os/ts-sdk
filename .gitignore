@@ -27,3 +27,22 @@ REVIEW.md
 
 # Per-package symlink to the shared regtest submodule (created by scripts/regtest.sh)
 packages/*/regtest
+
+packages/swap/test/fundOffer.test.ts
+packages/swap/test/fundOfferUrl.test.ts
+packages/swap/test/fundingRecovery.test.ts
+packages/swap/test/fundingRepository.test.ts
+packages/swap/test/receiveAddress.test.ts
+packages/swap/test/receiveCarrier.test.ts
+packages/taxi/test/activity.test.ts
+packages/taxi/test/claimQueue.test.ts
+packages/taxi/test/claims.test.ts
+packages/taxi/test/claimsFixtures.ts
+packages/taxi/test/context.test.ts
+packages/taxi/test/contextFixtures.ts
+packages/taxi/test/requests.test.ts
+packages/taxi/test/rfq.test.ts
+packages/taxi/test/send.test.ts
+packages/taxi/test/sendJournal.test.ts
+packages/ts-sdk/test/wallet-send-deadline.test.ts
+packages/.taxi-test-scratch/

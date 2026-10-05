@@ -35,3 +35,5 @@ queue.dispose();
 ```
 
 Free eligibility requires zero receiver fare, no asset dilution and full retention of the receiver's funding coin. The receiver still needs liquidity to repay the carrier loan. A returned legacy sub-dust refund likewise needs consolidation before it is spendable; this plugin does not add a new refund covenant.
+
+The regtest scenario uses two real SDK wallets and the local Taxi profile. Run `pnpm regtest:up:taxi` and `pnpm regtest:test:taxi`; `pnpm test:integration:taxi` resets, starts and tests the profile in one command.

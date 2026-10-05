@@ -51,6 +51,9 @@ jobs:
       - name: Type-check Taxi
         run: pnpm -C packages/taxi run typecheck
 
+      - name: Type-check Taxi regtest suite
+        run: pnpm -C packages/taxi run typecheck:e2e
+
       # The package's own typecheck excludes test/, so a broken e2e file only
       # surfaces in the regtest job — after it has spent minutes standing a
       # stack up. This catches it in the fast job instead.
@@ -137,6 +140,9 @@ jobs:
           - package: swap-rfq
             group: all
             test_files: ""
+          - package: taxi
+            group: exact-subdust
+            test_files: test/e2e/subdust.test.ts
 
     steps:
       - uses: actions/checkout@v6
@@ -157,6 +163,19 @@ jobs:
 
       - name: Build ts-sdk
         run: pnpm -C packages/ts-sdk build
+
+      - name: Checkout Taxi image source
+        if: matrix.package == 'taxi'
+        uses: actions/checkout@v6
+        with:
+          repository: ArkLabsHQ/arkade-taxi
+          ref: ffdeff7c1b171e660e1c119cd6994c440a456338
+          path: taxi-image
+          persist-credentials: false
+
+      - name: Build Taxi image
+        if: matrix.package == 'taxi'
+        run: docker build -t arkade-taxi:regtest ./taxi-image
 
       - name: Make regtest controller executable
         run: chmod +x scripts/regtest.sh
@@ -184,7 +203,7 @@ jobs:
           # the second LND node to `lnd-peer`; the swap stacks also run the
           # solver and covclaimd now. `|| true` kept a stale list quiet, which
           # is exactly why it went unnoticed — a Lightning failure dumped nothing.
-          for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd; do
+          for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd taxi; do
             echo "===== logs: $c ====="
             docker logs --tail 200 "$c" 2>&1 || true
           done
