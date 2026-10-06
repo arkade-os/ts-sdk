@@ -1,17 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import {
-    ArkAddress,
-    asset,
-    Extension,
-    Transaction,
-    UnknownPacket,
-    type IWallet,
-} from "@arkade-os/sdk";
+import { asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
 import { encodeOffer, offerContract, Offer, OFFER_PACKET_TYPE } from "../src/offer";
-import { InMemoryAssetSwapRepository } from "../src/repository";
-import { restoreAssetSwapRepository } from "../src/restoreRepository";
 import {
     classifyDepositSpend,
     classifySpend,
@@ -805,31 +796,5 @@ describe("restoreAssetSwaps — reopening records the scan left pending", () => 
         const result = await reask(indexer, [record(offer, funding.txid)]);
 
         expect(result.restored).toMatchObject([{ status: "recoverable" }]);
-    });
-});
-
-describe("restoreAssetSwapRepository", () => {
-    // Through the entry point, not the scan: the prefix it derives is what an empty
-    // `swapAddress` costs — cancel() then pins the CURRENT operator key, not the funded one.
-    const wallet = {
-        getAddress: async () => new ArkAddress(OPERATOR_KEY, MAKER_KEY, "tark").encode(),
-    } as unknown as IWallet;
-
-    it("names a rebuilt record's covenant address, so cancel keeps the funded operator key", async () => {
-        const offer = makeOffer("want-asset", BigInt(992));
-        const funding = fundingPsbt(offer);
-        const indexer = makeIndexer([funding], [depositVtxo(offer, funding.txid)]);
-
-        const { changes } = await restoreAssetSwapRepository({
-            wallet,
-            indexer,
-            repository: new InMemoryAssetSwapRepository(),
-            txs: [walletTx(funding.txid, "sent")],
-            operatorPubkey: OPERATOR_KEY,
-        });
-
-        expect(changes[0]?.current.swapAddress).toBe(
-            offerContract(offer, OPERATOR_KEY).address("tark", OPERATOR_KEY).encode(),
-        );
     });
 });

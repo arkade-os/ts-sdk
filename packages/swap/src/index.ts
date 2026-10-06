@@ -215,16 +215,6 @@ export {
     type ClaimPacketShape,
     SEALED_CIPHERTEXT_LENGTH,
 } from "./claimPacket";
-export {
-    restoreAssetSwapRepository,
-    type AssetSwapRestoreChange,
-    type RestoreAssetSwapRepositoryOptions,
-    type RestoreAssetSwapRepositoryResult,
-} from "./restoreRepository";
-export {
-    registerAssetSwapRestore,
-    type RegisterAssetSwapRestoreOptions,
-} from "./registerRestore";
 
 // `SwapClientConfig.operator`, for a second operator or a test.
 export { type SwapOperator } from "./refund";

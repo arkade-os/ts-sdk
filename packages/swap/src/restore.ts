@@ -11,6 +11,7 @@ import {
     RestIndexerProvider,
     Transaction,
     scriptFromTapLeafScript,
+    type ArkTransaction,
 } from "@arkade-os/sdk";
 import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerContract } from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
@@ -31,6 +32,14 @@ export interface Tx {
     /** Unix seconds. */
     createdAt?: number;
 }
+
+export const toRestoreTx = (tx: ArkTransaction): Tx => ({
+    type: tx.type.toLowerCase(),
+    redeemTxid: tx.key.arkTxid,
+    boardingTxid: tx.key.boardingTxid,
+    roundTxid: tx.key.commitmentTxid,
+    createdAt: Math.floor(tx.createdAt / 1_000),
+});
 
 /** The indexer surface the restore scan needs — narrower than a full provider. */
 export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtxos">;

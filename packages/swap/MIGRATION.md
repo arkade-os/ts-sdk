@@ -44,7 +44,8 @@ the client keeps driving them on the same repository, with no migration:
 
 - `rfqSwaps` rows are restored, claimed and refunded, and their state is written back to `rfqSwaps`.
   They are driven, not listed: `client.swaps()` and `onUpdate` never report them.
-- Live offers in `swaps` are re-scanned and adopted as v2 records (listed, cancellable).
+- Offers in `swaps`, live or settled, are re-scanned and adopted once as v2 records. Live ones stay
+  cancellable, and settled ones keep the history.
 
 This read-through is temporary (`src/client/legacyRecords.ts`). A later release drops it. Upgrade
 through `0.1.x`, or let in-flight swaps settle first.
@@ -163,6 +164,7 @@ The `0.1.0-rc.1` facade's vocabulary, replaced by the closed route union:
 | `SwapClientDeps`                                                         | `SwapClientConfig`                         |
 | `SwapQuote`, `SpotQuote`, `LightningSendQuote`, `LightningReceiveQuote`, `OnchainSendQuote` | `Quote`                                    |
 | `ARKADE_ASSET`                                                           | nothing — no solver served the coarse leg  |
+| `registerAssetSwapRestore`, `restoreAssetSwapRepository` (and `RegisterAssetSwapRestoreOptions`, `RestoreAssetSwapRepositoryOptions`, `RestoreAssetSwapRepositoryResult`, `AssetSwapRestoreChange`) | `await wallet.restore()`, then `createSwapClient(…)`; `client.ready` rebuilds offers from history |
 
 `ARKADE_ASSET` was already deprecated in favour of `arkadeAssetLeg` before this release, and
 giving a deprecated alias a `/protocol` floor would deprecate a deprecation. It was the coarse RFQ

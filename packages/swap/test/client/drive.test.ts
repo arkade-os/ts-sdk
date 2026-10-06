@@ -37,7 +37,7 @@ import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
 import type { AssetSwapRepository } from "../../src/repository";
 import { rfqRecordOf } from "../../src/client/driveRecords";
-import { legacyOfferDepositsToReopen } from "../../src/client/legacyRecords";
+import { legacyOfferDepositsToAdopt } from "../../src/client/legacyRecords";
 import type { RfqSwapRecord } from "../../src/rfqRecord";
 import type { AssetSwap } from "../../src/store";
 import {
@@ -909,6 +909,7 @@ describe("the offer half", () => {
         repository: AssetSwapRepository = memoryRepository(),
         /** A batch round the wallet's history holds. */
         round?: string,
+        spends: { txid: string; psbt: string }[] = [],
     ) => {
         for (const record of records) await repository.saveSwapRecord(record);
         const contracts = fakeContracts([]);
@@ -935,7 +936,7 @@ describe("the offer half", () => {
             repository,
             corridors: fakeCorridors(),
             network: async () => "regtest",
-            indexer: fakeIndexer({ txs: [funding], vtxos: [deposit] }),
+            indexer: fakeIndexer({ txs: [funding, ...spends], vtxos: [deposit] }),
             contracts,
             now: () => BEFORE,
             pollIntervalMs: 10 * 60 * 1000,
@@ -1018,20 +1019,98 @@ describe("the offer half", () => {
         await drive.dispose();
     });
 
-    it("leaves a settled v1 offer's deposit on the cursor", async () => {
+    it("adopts a fulfilled v1 offer whose deposit v1's restore marked scanned", async () => {
+        coverage.mockClear();
         const funding = offerFunding();
         const repository = memoryRepository();
         await repository.saveSwap(legacyOffer(funding.txid, { status: "fulfilled" }));
         await repository.markTxidsScanned([funding.txid]);
-        const { drive } = await restoreOver([], funding, offerDeposit(funding.txid), repository);
+        const fill = offerSpend({ txid: funding.txid, vout: 0 }, "fulfill");
+        const { drive } = await restoreOver(
+            [],
+            funding,
+            offerDeposit(funding.txid, { isSpent: true, arkTxId: fill.txid }),
+            repository,
+            undefined,
+            [fill],
+        );
 
-        expect(await collectSwapRecords(repository)).toEqual([]);
+        expect(await repository.getSwapRecord(funding.txid)).toMatchObject({
+            family: "offer",
+            status: "fulfilled",
+            spentTxid: fill.txid,
+            market: { kind: "restored" },
+        });
+        expect(drive.swap(funding.txid)?.outcome).toBe("filled");
+        expect(await repository.getScannedTxids()).toContain(funding.txid);
+        expect(coverage).not.toHaveBeenCalled();
         await drive.dispose();
     });
 
-    it("reopens a funded v1 offer, never an HTLC row or an unfunded offer", async () => {
+    it("registers a rebuilt live offer's covenant", async () => {
+        coverage.mockClear();
+        const funding = offerFunding();
+        const { drive } = await restoreOver([], funding, offerDeposit(funding.txid));
+
+        expect(coverage).toHaveBeenCalledTimes(1);
+        expect(coverage).toHaveBeenCalledWith(expect.anything(), [
+            expect.objectContaining({ status: "pending", swapPkScript: OFFER_SCRIPT }),
+        ]);
+        await drive.dispose();
+    });
+
+    it("registers an adopted swept v1 offer's covenant", async () => {
+        coverage.mockClear();
+        const funding = offerFunding();
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer(funding.txid, { status: "recoverable" }));
+        await repository.markTxidsScanned([funding.txid]);
+        const { drive } = await restoreOver(
+            [],
+            funding,
+            offerDeposit(funding.txid, { isSwept: true }),
+            repository,
+        );
+
+        expect(coverage).toHaveBeenCalledWith(expect.anything(), [
+            expect.objectContaining({ status: "recoverable" }),
+        ]);
+        await drive.dispose();
+    });
+
+    it("restores the record even when registration fails", async () => {
+        coverage.mockClear();
+        coverage.mockRejectedValueOnce(new Error("arkd unreachable"));
+        const funding = offerFunding();
+        const { drive, repository } = await restoreOver([], funding, offerDeposit(funding.txid));
+
+        expect(await repository.getSwapRecord(funding.txid)).toMatchObject({ status: "pending" });
+        expect(drive.swap(funding.txid)?.outcome).toBe("open");
+        await drive.dispose();
+    });
+
+    it("registers nothing in readonly mode", async () => {
+        coverage.mockClear();
+        const funding = offerFunding();
+        const h = await build({
+            mode: "readonly",
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            txs: [funding],
+            vtxos: [offerDeposit(funding.txid)],
+            contracts: fakeContracts([]),
+        });
+
+        expect(await h.repository.getSwapRecord(funding.txid)).toBeDefined();
+        expect(coverage).not.toHaveBeenCalled();
+        await h.drive.dispose();
+    });
+
+    it("adopts every funded v1 offer, never an HTLC row or an unfunded offer", async () => {
         const repository = memoryRepository();
         await repository.saveSwap(legacyOffer("aa".repeat(32)));
+        await repository.saveSwap(
+            legacyOffer("dd".repeat(32), { id: "v1-filled", status: "fulfilled" }),
+        );
         const { offerHex: _, ...htlc } = legacyOffer("bb".repeat(32), { id: "v1-htlc" });
         await repository.saveSwap(htlc as AssetSwap);
         const { fundingTxid: __, ...unfunded } = legacyOffer("cc".repeat(32), {
@@ -1039,7 +1118,19 @@ describe("the offer half", () => {
         });
         await repository.saveSwap(unfunded as AssetSwap);
 
-        expect(await legacyOfferDepositsToReopen(repository)).toEqual(new Set(["aa".repeat(32)]));
+        expect(await legacyOfferDepositsToAdopt(repository)).toEqual(
+            new Set(["aa".repeat(32), "dd".repeat(32)]),
+        );
+    });
+
+    it("skips a v1 offer a v2 record already adopted", async () => {
+        const repository = memoryRepository();
+        await repository.saveSwap(legacyOffer("aa".repeat(32), { status: "fulfilled" }));
+        await repository.saveSwapRecord(
+            offerRecord({ id: "x", fundingTxid: "aa".repeat(32), status: "fulfilled" }),
+        );
+
+        expect(await legacyOfferDepositsToAdopt(repository)).toEqual(new Set());
     });
 
     it("reopens nothing, without failing, when the v1 swaps store cannot be read", async () => {
@@ -1047,7 +1138,7 @@ describe("the offer half", () => {
         await repository.saveSwap(legacyOffer("aa".repeat(32)));
         repository.getAssetSwapsPage = () => Promise.reject(new Error("v1 store unreadable"));
 
-        expect(await legacyOfferDepositsToReopen(repository)).toEqual(new Set());
+        expect(await legacyOfferDepositsToAdopt(repository)).toEqual(new Set());
     });
 
     it("rebuilds a record for a deposit no record claims", async () => {

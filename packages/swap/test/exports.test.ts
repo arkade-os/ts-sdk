@@ -211,12 +211,6 @@ const CURATED_ROOT: readonly string[] = [
     "RfqSwapPageCursor",
     "InMemoryAssetSwapRepository",
     "IndexedDbAssetSwapRepository",
-    "restoreAssetSwapRepository",
-    "RestoreAssetSwapRepositoryOptions",
-    "RestoreAssetSwapRepositoryResult",
-    "AssetSwapRestoreChange",
-    "registerAssetSwapRestore",
-    "RegisterAssetSwapRestoreOptions",
     // The operator slice for `SwapClientConfig.operator`.
     "SwapOperator",
     // Names v1 declared that the v2 surface references — in something the
