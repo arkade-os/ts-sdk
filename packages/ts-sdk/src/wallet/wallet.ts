@@ -4011,9 +4011,31 @@ export class Wallet
         return this._withTxLock(() => this._settleImpl(params, eventCallback));
     }
 
+    /** Reports registration attempts for native settlements without wrapping the original error. */
+    async settleWithOutcome(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void,
+    ): Promise<
+        | { ok: true; txid: string }
+        | { ok: false; error: unknown; intentRegistrationAttempted: boolean }
+    > {
+        return this._withTxLock(async () => {
+            let intentRegistrationAttempted = false;
+            try {
+                const txid = await this._settleImpl(params, eventCallback, () => {
+                    intentRegistrationAttempted = true;
+                });
+                return { ok: true, txid };
+            } catch (error) {
+                return { ok: false, error, intentRegistrationAttempted };
+            }
+        });
+    }
+
     private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        onRegistrationAttempt?: () => void,
     ): Promise<string> {
         if (params?.inputs) {
             for (const input of params.inputs) {
@@ -4334,6 +4356,7 @@ export class Wallet
                 yield* stream;
             })();
 
+            onRegistrationAttempt?.();
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
             await this.persistIntentSnapshot(
