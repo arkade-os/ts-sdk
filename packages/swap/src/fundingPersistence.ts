@@ -2,7 +2,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset } from "@arkade-os/sdk";
 import { BTC_ASSET_ID, type AssetSwap, type FundingIntent, type FundingIntentState } from "./store";
 
-export const FUNDING_INTENT_INPUT_LIMIT = 256;
+const FUNDING_INTENT_INPUT_LIMIT = 256;
 
 export type FundingStateAdvance =
     | { state: "submitted" }
@@ -215,7 +215,7 @@ const validatePinnedSwap = (swap: AssetSwap): FundingIntent => {
     return intent;
 };
 
-export function assertPreparedFundingSwap(swap: AssetSwap): void {
+function assertPreparedFundingSwap(swap: AssetSwap): void {
     const intent = validatePinnedSwap(swap);
     if (intent.state !== "prepared")
         throw new Error("initial fundingIntent.state must be prepared");

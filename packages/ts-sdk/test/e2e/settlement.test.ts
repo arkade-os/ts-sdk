@@ -786,10 +786,13 @@ describe("Settlement - Native registration outcomes", () => {
                 inputs: coins,
                 outputs: [{ address: "invalid-destination", amount: 10000n }],
             };
-            const refused = await wallet.settleWithOutcome(invalid);
-            if (refused.ok) throw new Error("invalid settlement succeeded");
-            expect(refused.intentRegistrationAttempted).toBe(false);
-            expect(refused.error).toBeInstanceOf(Error);
+            const refusedPhases: string[] = [];
+            await expect(
+                wallet.settle(invalid, undefined, {
+                    onPhase: (phase) => refusedPhases.push(phase),
+                }),
+            ).rejects.toBeInstanceOf(Error);
+            expect(refusedPhases).toEqual(["preparing"]);
             await expect(wallet.settle(invalid)).rejects.toBeInstanceOf(Error);
             expect(await wallet.getSpendableVtxos()).toEqual(coins);
 
@@ -802,9 +805,12 @@ describe("Settlement - Native registration outcomes", () => {
                 script: coins[0].script,
             }).satoshis;
             const net = 10000 - inputFee - outputFee;
-            const settled = await wallet.settleWithOutcome();
-            if (!settled.ok) throw settled.error;
-            expect(settled.txid).toMatch(/^[0-9a-f]{64}$/);
+            const settledPhases: string[] = [];
+            const settledTxid = await wallet.settle(undefined, undefined, {
+                onPhase: (phase) => settledPhases.push(phase),
+            });
+            expect(settledTxid).toMatch(/^[0-9a-f]{64}$/);
+            expect(settledPhases).toEqual(["preparing", "registration_attempt"]);
             await waitFor(async () => {
                 const landed = await wallet.getSpendableVtxos();
                 return (
@@ -815,13 +821,18 @@ describe("Settlement - Native registration outcomes", () => {
                 );
             });
 
-            const stale = await wallet.settleWithOutcome({
-                inputs: coins,
-                outputs: [{ address, amount: BigInt(net) }],
-            });
-            if (stale.ok) throw new Error("spent settlement inputs accepted twice");
-            expect(stale.intentRegistrationAttempted).toBe(true);
-            expect(stale.error).toBeInstanceOf(ArkError);
+            const stalePhases: string[] = [];
+            await expect(
+                wallet.settle(
+                    {
+                        inputs: coins,
+                        outputs: [{ address, amount: BigInt(net) }],
+                    },
+                    undefined,
+                    { onPhase: (phase) => stalePhases.push(phase) },
+                ),
+            ).rejects.toBeInstanceOf(ArkError);
+            expect(stalePhases).toEqual(["preparing", "registration_attempt"]);
             expect((await wallet.getSpendableVtxos()).map((coin) => coin.value)).toEqual([net]);
         } finally {
             await wallet.dispose();

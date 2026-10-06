@@ -59,11 +59,7 @@ export {
     type PreimageBlockedReason,
     type SwapSecretsProjection,
 } from "./store";
-export {
-    assertPreparedFundingSwap,
-    FUNDING_INTENT_INPUT_LIMIT,
-    type FundingStateAdvance,
-} from "./fundingPersistence";
+export { type FundingStateAdvance } from "./fundingPersistence";
 export {
     FundingNotCompletedError,
     FundingOutcomeUnknownError,
@@ -338,3 +334,22 @@ export {
     type RfqSwapDatedActivityPage,
     type SwapActivityInput,
 } from "./activity";
+
+export {
+    ActivityEvidenceError,
+    allocateActivityEvidence,
+    allocateIndexedActivityEvidence,
+    indexActivityEvidence,
+    parseActivityEvidence,
+    readActivityEvidence,
+    type ActivityEvidence,
+    type ActivityEvidenceAllocation,
+    type ActivityEvidenceAsset,
+    type ActivityEvidenceContribution,
+    type ActivityEvidenceDirection,
+    type ActivityEvidenceIndex,
+    type ActivityEvidenceOperation,
+    type AllocatedContribution,
+    type MemberActivityAllocation,
+    type SwapActivityAllocation,
+} from "./activityEvidence";

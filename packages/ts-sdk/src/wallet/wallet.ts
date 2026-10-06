@@ -4002,16 +4002,24 @@ export class Wallet
      *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
+     * @param hooks - Optional phases for preparation and intent registration.
      * @returns The finalized Arkade transaction id
      */
     async settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string> {
-        return this._withTxLock(() => this._settleImpl(params, eventCallback));
+        return this._withTxLock(() => {
+            hooks?.onPhase?.("preparing");
+            const onRegistrationAttempt = hooks?.onPhase
+                ? () => hooks.onPhase?.("registration_attempt")
+                : undefined;
+            return this._settleImpl(params, eventCallback, onRegistrationAttempt);
+        });
     }
 
-    /** Reports registration attempts for native settlements without wrapping the original error. */
+    /** Backward-compatible outcome form for callers that need registration status. */
     async settleWithOutcome(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
@@ -4019,17 +4027,20 @@ export class Wallet
         | { ok: true; txid: string }
         | { ok: false; error: unknown; intentRegistrationAttempted: boolean }
     > {
-        return this._withTxLock(async () => {
-            let intentRegistrationAttempted = false;
-            try {
-                const txid = await this._settleImpl(params, eventCallback, () => {
-                    intentRegistrationAttempted = true;
-                });
-                return { ok: true, txid };
-            } catch (error) {
-                return { ok: false, error, intentRegistrationAttempted };
-            }
-        });
+        let preparing = false;
+        let intentRegistrationAttempted = false;
+        try {
+            const txid = await this.settle(params, eventCallback, {
+                onPhase: (phase) => {
+                    if (phase === "preparing") preparing = true;
+                    if (phase === "registration_attempt") intentRegistrationAttempted = true;
+                },
+            });
+            return { ok: true, txid };
+        } catch (error) {
+            if (!preparing) throw error;
+            return { ok: false, error, intentRegistrationAttempted };
+        }
     }
 
     private async _settleImpl(

@@ -1553,15 +1553,22 @@ export class RfqSwapManager {
         //    push fail forever against a key this wallet does not hold.
         if (swap.kind === "lightning_receive") {
             if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
-            // Only an underfunding block can be reassessed without a fresh fate:
+            // Underfunding and restored claim wiring can be reassessed without a fresh fate:
             // the contract row can still show a known exited lockup live.
             const underfunded =
                 /^lockup holds [0-9]+ sats, below the agreed [0-9]+ \u2014 refusing to publish the preimage$/.test(
                     swap.blockedReason ?? "",
                 );
+            const claimWiringRestored =
+                this.callbacks?.claimLockup &&
+                (swap.blockedReason ===
+                    "no callbacks are wired, so this wallet cannot claim the lockup" ||
+                    swap.blockedReason ===
+                        "no claimLockup callback is wired, so this wallet cannot claim the lockup");
             if (
                 fate.fate === "open" ||
-                (fateUnread && (swap.state !== "needs_counterparty" || underfunded))
+                (fateUnread &&
+                    (swap.state !== "needs_counterparty" || underfunded || claimWiringRestored))
             )
                 return this.driveReceiveClaim(swap);
             if (this.config.now() >= swap.refundLocktime) return this.driveReceiveClaim(swap);

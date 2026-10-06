@@ -46,3 +46,4 @@ packages/taxi/test/send.test.ts
 packages/taxi/test/sendJournal.test.ts
 packages/ts-sdk/test/wallet-send-deadline.test.ts
 packages/.taxi-test-scratch/
+/.local-tests/
