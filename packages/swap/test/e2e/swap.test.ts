@@ -8,7 +8,8 @@
  * Fill suite, against the stack's solverd: swaps in both directions, all-in
  * and partial, resolved live off the wallet's own vtxo_spent event (never a
  * restore scan); plus oversized and underbid offers the solver doesn't fill,
- * which the wallet cancels.
+ * which the wallet cancels. It also reopens the wallet and checks it still
+ * finds each swap.
  * afterAll sells leftover asset back to the solver, so its inventory
  * survives every run and the default solver-init float needs no sizing.
  * The minted asset id changes on every regtest boot, so nothing here may
@@ -26,10 +27,17 @@ import {
     RestArkProvider,
     RestIndexerProvider,
     SingleKey,
+    type StorageConfig,
     Wallet,
 } from "@arkade-os/sdk";
 import { discover, quoteOffer, type Market } from "@arkade-os/solver-discovery";
-import { type AssetSwap, type AssetSwapRepository, InMemoryAssetSwapRepository } from "../../src";
+import {
+    type AssetSwap,
+    type AssetSwapRepository,
+    createSwapClient,
+    InMemoryAssetSwapRepository,
+    type SwapClient,
+} from "../../src";
 import {
     addAssetSwap,
     ASSET_CARRIER_SATS,
@@ -59,6 +67,8 @@ const FILL_WAIT_MS = 8_000;
 
 const indexer = new RestIndexerProvider(OPERATOR_URL);
 const repository = new InMemoryAssetSwapRepository();
+// one key for the whole run, so a test can reopen the wallet
+const identity = SingleKey.fromRandomBytes();
 let wallet: Wallet;
 // the key the covenants are funded against — restore classifies each spend by
 // the covenant leaf it took, so it has to rebuild the same script
@@ -72,19 +82,7 @@ let assetLeg: Market["base_asset"];
 let solverAssetBaseline: bigint;
 
 beforeAll(async () => {
-    wallet = await Wallet.create({
-        identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
-        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
-            forcePolling: true,
-            pollingInterval: 2000,
-        }),
-        storage: {
-            walletRepository: new InMemoryWalletRepository(),
-            contractRepository: new InMemoryContractRepository(),
-        },
-        settlementConfig: false,
-    });
+    wallet = await openWallet();
 
     await faucet(FAUCET_SATS);
 
@@ -440,6 +438,69 @@ describe("asset swaps against solverd (regtest)", () => {
         // untouched: the watcher records the fill
         expect(await statusOf(swaps, swap)).toBe("pending");
     }, 180_000);
+
+    describe("after a reload on the same storage", () => {
+        it("detects a filled BTC to asset swap and its payout", async () => {
+            const swaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteBtcForAsset(2_000);
+            const swap = await offerBtcForAsset(swaps, 2_000, quote);
+            await waitForFill(swap);
+            await using client = await reloadWallet(swaps);
+            expect(await outcomeOf(client, swap)).toBe("filled");
+            await expectPayout(swap);
+        }, 180_000);
+
+        it("detects a filled asset to BTC swap and its payout", async () => {
+            await topUpAssetTo(1_000n);
+            const swaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteAssetForBtc(1_000n);
+            const swap = await offerAssetForBtc(swaps, 1_000n, quote);
+            await waitForFill(swap);
+            await using client = await reloadWallet(swaps);
+            expect(await outcomeOf(client, swap)).toBe("filled");
+            await expectPayout(swap);
+        }, 180_000);
+
+        it("detects and cancels an underbid BTC to asset offer", async () => {
+            const swaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteBtcForAsset(2_000);
+            const swap = await offerBtcForAsset(swaps, 2_000, quote * 10n);
+            await using client = await reloadWallet(swaps);
+            expect(await outcomeOf(client, swap)).toBe("open");
+            await cancelWithClient(client, swap);
+        }, 180_000);
+
+        it("detects and cancels an underbid asset to BTC offer", async () => {
+            await topUpAssetTo(1_000n);
+            const swaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteAssetForBtc(1_000n);
+            const swap = await offerAssetForBtc(swaps, 1_000n, quote * 10n);
+            await using client = await reloadWallet(swaps);
+            expect(await outcomeOf(client, swap)).toBe("open");
+            await cancelWithClient(client, swap);
+        }, 180_000);
+
+        it("detects a cancelled BTC to asset offer and its refund", async () => {
+            const swaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteBtcForAsset(2_000);
+            const swap = await offerBtcForAsset(swaps, 2_000, quote * 10n);
+            await cancelAndAwaitRefund(swaps, swap);
+            await using client = await reloadWallet(swaps);
+            expect(await outcomeOf(client, swap)).toBe("cancelled");
+            await expectPayout(swap);
+        }, 180_000);
+
+        it("detects a cancelled asset to BTC offer and its refund", async () => {
+            await topUpAssetTo(1_000n);
+            const swaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteAssetForBtc(1_000n);
+            const swap = await offerAssetForBtc(swaps, 1_000n, quote * 10n);
+            await cancelAndAwaitRefund(swaps, swap);
+            await using client = await reloadWallet(swaps);
+            expect(await outcomeOf(client, swap)).toBe("cancelled");
+            await expectPayout(swap);
+        }, 180_000);
+    });
 });
 
 const execCommand = (command: string): string => {
@@ -724,3 +785,54 @@ const cancelAndAwaitRefund = async (swaps: AssetSwapRepository, swap: AssetSwap)
 /** The status `swaps` records for the swap. */
 const statusOf = async (swaps: AssetSwapRepository, swap: AssetSwap) =>
     (await getAssetSwaps(swaps)).find((s) => s.fundingTxid === swap.fundingTxid)?.status;
+
+/** Wait until the wallet holds what the deposit's spend paid it: the fill's
+ * proceeds or the cancel's refund. */
+const expectPayout = (swap: AssetSwap): Promise<void> =>
+    waitFor(async () => {
+        const deposit = await depositOf(swap);
+        const payoutTxid = deposit?.arkTxId || deposit?.spentBy;
+        return (await wallet.getVtxos()).some((v) => v.txid === payoutTxid);
+    });
+
+/** Where the client says the swap stands. */
+const outcomeOf = async (client: SwapClient, swap: AssetSwap) =>
+    (await client.swaps()).find((s) => s.fundingTxid === swap.fundingTxid)?.outcome;
+
+/** Cancel the swap with the client, and wait for the refund to land. */
+const cancelWithClient = async (client: SwapClient, swap: AssetSwap) => {
+    const held = (await client.swaps()).find((s) => s.fundingTxid === swap.fundingTxid);
+    expect(await client.cancel(held!.id)).toEqual({ outcome: "cancelled" });
+    await expectPayout(swap);
+};
+
+/** Open a wallet for the test key: on new, empty storage by default, or on
+ * the storage an earlier wallet used. */
+const openWallet = (
+    storage: StorageConfig = {
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    },
+): Promise<Wallet> =>
+    Wallet.create({
+        identity,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
+        onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        storage,
+        settlementConfig: false,
+    });
+
+/** Close the wallet and open it again on the same storage, as an app restart
+ * does, then start a swap client on the app's swap store: `client.ready`
+ * reads each offer back off the wallet's history. */
+const reloadWallet = async (swaps: AssetSwapRepository): Promise<SwapClient> => {
+    const { walletRepository, contractRepository } = wallet;
+    await wallet.dispose();
+    wallet = await openWallet({ walletRepository, contractRepository });
+    const client = createSwapClient({ wallet, repository: swaps });
+    await client.ready;
+    return client;
+};
