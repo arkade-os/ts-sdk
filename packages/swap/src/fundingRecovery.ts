@@ -1,59 +1,35 @@
-import { base64, hex } from "@scure/base";
-import { Extension, Transaction } from "@arkade-os/sdk";
+import { hex } from "@scure/base";
+import { Extension, Transaction, type Outpoint } from "@arkade-os/sdk";
+import { TXID } from "./fundingPersistence";
 import { OFFER_PACKET_TYPE } from "./offer";
 import type { AssetSwapRepository } from "./repository";
-import type { RestoreIndexer } from "./restore";
-import type { AssetSwap, FundingIntentInput } from "./store";
+import { fetchParsedTxs, type RestoreIndexer } from "./restore";
+import type { AssetSwap } from "./store";
 
 export interface FundingRecoveryResult {
     changes: { previous: AssetSwap; current: AssetSwap }[];
     candidateTxids: Set<string>;
 }
 
-const TXID = /^[0-9a-f]{64}$/;
-const TXS_PER_REQUEST = 50;
 const OUTPOINTS_PER_REQUEST = 64;
 
-const outpointKey = (input: FundingIntentInput): string => `${input.txid}:${input.vout}`;
+const outpointKey = (input: Outpoint): string => `${input.txid}:${input.vout}`;
 
 const inputSetKey = (swap: AssetSwap): string =>
     swap.fundingIntent!.inputs.map(outpointKey).sort().join("|");
 
-const inputAt = (tx: Transaction, index: number): FundingIntentInput | undefined => {
+const inputAt = (tx: Transaction, index: number): Outpoint | undefined => {
     const input = tx.getInput(index);
     if (!input.txid || input.index === undefined) return undefined;
     return { txid: hex.encode(input.txid), vout: input.index };
 };
 
-const fetchTransactions = async (
-    indexer: RestoreIndexer,
-    txids: Set<string>,
-): Promise<Map<string, Transaction>> => {
-    const parsed = new Map<string, Transaction>();
-    if (txids.size === 0) return parsed;
-    const values = [...txids];
-    for (let offset = 0; offset < values.length; offset += TXS_PER_REQUEST) {
-        // A read that failed is not an absence of evidence: swallowing it reports a
-        // funded operation as having no candidate, and the caller then rebuilds it.
-        const { txs: raws } = await indexer.getVirtualTxs(
-            values.slice(offset, offset + TXS_PER_REQUEST),
-        );
-        for (const raw of raws) {
-            try {
-                const tx = Transaction.fromPSBT(base64.decode(raw));
-                if (txids.has(tx.id)) parsed.set(tx.id, tx);
-            } catch {
-                continue;
-            }
-        }
-    }
-    return parsed;
-};
+// A failed read is not an absence of evidence: swallowed, a funded operation
+// reads as having no candidate and the caller rebuilds it.
+const fetchTransactions = (indexer: RestoreIndexer, txids: Iterable<string>) =>
+    fetchParsedTxs(indexer, [...new Set(txids)], { strict: true });
 
-const exactCheckpoint = (
-    checkpoint: Transaction | undefined,
-    source: FundingIntentInput,
-): boolean => {
+const exactCheckpoint = (checkpoint: Transaction | undefined, source: Outpoint): boolean => {
     if (!checkpoint || checkpoint.inputsLength !== 1) return false;
     const input = inputAt(checkpoint, 0);
     return input !== undefined && input.txid === source.txid && input.vout === source.vout;
@@ -183,7 +159,7 @@ export async function recoverPreparedOfferFunding(
         pendingByInputs.set(key, (pendingByInputs.get(key) ?? 0) + 1);
     }
 
-    const wanted = new Map<string, FundingIntentInput>();
+    const wanted = new Map<string, Outpoint>();
     for (const swap of pending) {
         for (const input of swap.fundingIntent!.inputs) wanted.set(outpointKey(input), input);
     }

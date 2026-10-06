@@ -27,12 +27,6 @@ importers:
 
   .:
     devDependencies:
-      '@arkade-os/sdk':
-        specifier: workspace:*
-        version: link:packages/ts-sdk
-      '@arkade-os/swap':
-        specifier: workspace:*
-        version: link:packages/swap
       '@biomejs/biome':
         specifier: 2.5.9
         version: 2.5.9

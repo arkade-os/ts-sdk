@@ -1,4 +1,31 @@
 import { execSync } from "node:child_process";
+import { vi } from "vitest";
+
+// expect.poll refuses to run outside a test (the beforeAll faucet wait needs
+// this); vi.waitFor polls anywhere but retries ANY throw until the deadline —
+// a real error (stack down, HTTP 500) would burn the whole timeout, so capture
+// it, stop polling, and rethrow at once. Only a `false` (not ready yet) may spin.
+export const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error("timeout in waitFor");
+            },
+            { timeout, interval: 500 },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
+};
 
 /**
  * Run a CLI command in the arkd container.

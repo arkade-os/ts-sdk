@@ -14,8 +14,8 @@
  * The minted asset id changes on every regtest boot, so nothing here may
  * hardcode it: the solver's card (`GET /v1/card`) is the one source of truth.
  */
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { faucet } from "./harness";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { faucet, waitFor } from "./harness";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
@@ -552,32 +552,6 @@ describe("asset swaps against solverd (regtest)", () => {
         await waitFor(async () => (await wallet.getVtxos()).some((v) => v.txid === cancelTxid));
     }, 60_000);
 });
-
-// expect.poll refuses to run outside a test (the beforeAll faucet wait needs
-// this); vi.waitFor polls anywhere but retries ANY throw until the deadline —
-// a real error (stack down, HTTP 500) would burn the whole timeout, so capture
-// it, stop polling, and rethrow at once. Only a `false` (not ready yet) may spin.
-const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
-    let fatal: { err: unknown } | undefined;
-    return vi
-        .waitFor(
-            async () => {
-                if (fatal) return;
-                let ready: boolean;
-                try {
-                    ready = await fn();
-                } catch (err) {
-                    fatal = { err };
-                    return;
-                }
-                if (!ready) throw new Error("timeout in waitFor");
-            },
-            { timeout, interval: 500 },
-        )
-        .then(() => {
-            if (fatal) throw fatal.err;
-        });
-};
 
 /** The solver's BTC market, discovered from its own published card. */
 const solverMarket = async (): Promise<Market> => {

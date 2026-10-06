@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { contractPreimage } from "@arkade-os/sdk";
-import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
+import type { IWallet, Outpoint, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus =
@@ -23,11 +23,6 @@ export const BTC_ASSET_ID = "btc";
 
 export type FundingIntentState = "prepared" | "submitted" | "bound" | "abandoned";
 
-export interface FundingIntentInput {
-    txid: string;
-    vout: number;
-}
-
 export interface FundingIntentOutput {
     script: string;
     value: string;
@@ -38,7 +33,7 @@ export interface FundingIntentOutput {
 export interface FundingIntent {
     version: 1;
     state: FundingIntentState;
-    inputs: FundingIntentInput[];
+    inputs: Outpoint[];
     serverPubkey: string;
     arkServerUrl: string;
     output: FundingIntentOutput;

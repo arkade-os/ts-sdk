@@ -97,7 +97,7 @@ export const rfqSecretsProfile = (
 /** 64 characters of hex, case-folded to what `hex.encode` emits — a backend that
  * normalises hex to upper case round-trips a correct value, and rejecting it
  * here would fail the record for the backend's habit. */
-const parseHex32 = (value: unknown, field: string): string => {
+export const parseHex32 = (value: unknown, field: string): string => {
     if (typeof value !== "string" || !/^[0-9a-fA-F]{64}$/.test(value)) {
         throw new Error(`${field} must be 32 bytes of hex, got ${JSON.stringify(value)}`);
     }

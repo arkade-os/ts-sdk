@@ -48,9 +48,6 @@ jobs:
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
-      # The package's own typecheck excludes test/, so a broken e2e file only
-      # surfaces in the regtest job — after it has spent minutes standing a
-      # stack up. This catches it in the fast job instead.
       - name: Type-check swap e2e
         run: pnpm -C packages/swap run typecheck:e2e
 

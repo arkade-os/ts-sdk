@@ -15,7 +15,7 @@ import {
     type NetworkName,
     type NormalizedExtendedVirtualCoin,
 } from "@arkade-os/sdk";
-import { hasBoundFunding } from "./fundingPersistence";
+import { hasBoundFunding, TXID } from "./fundingPersistence";
 import { checkFundingOutput, type FundingOutputCheck } from "./fundingRecovery";
 import { decodeOffer, OFFER_PACKET_TYPE, offerVtxoScript, registerOfferContract } from "./offer";
 import type { AssetSwapRepository } from "./repository";
@@ -526,7 +526,7 @@ export async function fundOffer(
         }
         throw new FundingOutcomeUnknownError(id, undefined, cause);
     }
-    if (!/^[0-9a-f]{64}$/.test(fundingTxid)) {
+    if (!TXID.test(fundingTxid)) {
         throw new FundingOutcomeUnknownError(
             id,
             undefined,

@@ -146,11 +146,8 @@ export interface LockupVtxo {
     txid: string;
     vout: number;
     value: number;
-    /**
-     * Assets the locked output carries. A cross-rail asset receive locks them
-     * behind the same preimage as the sats, and a claim that does not declare
-     * them is refused by arkd with ASSET_NOT_FOUND.
-     */
+    /** Assets the locked output carries: a cross-rail asset receive locks them
+     * behind the same preimage as the sats. */
     assets?: readonly { assetId: string; amount: bigint }[];
     /**
      * The batch this output lived in expired and the operator swept it, so it
@@ -546,7 +543,7 @@ export async function readLockupFate(
  * when the inputs carried assets. Shared by the claim and the CLTV refund —
  * neither leaf inspects the output set, so each asset is one total on vout 0
  * fed by every input vin, never a routing decision. Undeclared, arkd answers
- * ASSET_NOT_FOUND.
+ * ASSET_NOT_FOUND — on a claim, after the preimage is already public.
  */
 export function lockupSpendOutputs(
     vtxos: readonly LockupVtxo[],

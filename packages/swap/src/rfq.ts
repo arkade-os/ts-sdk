@@ -1453,16 +1453,18 @@ export async function requestArkadeSwap(
     /** Ready for `wallet.send`'s `extensions`. */
     extension: { type: number; payload: Uint8Array };
 }> {
-    const wantAsset = params.wantAsset;
-    const offerAsset = params.offerAsset;
-    const amount = params.amount;
+    const {
+        wantAsset,
+        offerAsset,
+        amount,
+        maxFromAmount,
+        minToAmount,
+        rfqId: requestedRfqId,
+        emulatorPubkey,
+        receiveAddress: requestedReceiveAddress,
+        now: requestedNow,
+    } = params;
     const amountSide = params.amountSide ?? "from";
-    const maxFromAmount = params.maxFromAmount;
-    const minToAmount = params.minToAmount;
-    const requestedRfqId = params.rfqId;
-    const emulatorPubkey = params.emulatorPubkey;
-    const requestedReceiveAddress = params.receiveAddress;
-    const requestedNow = params.now;
     if (!wantAsset && !offerAsset) {
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }

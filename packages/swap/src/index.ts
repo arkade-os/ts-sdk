@@ -53,7 +53,6 @@ export {
     type AssetSwap,
     type AssetSwapStatus,
     type FundingIntent,
-    type FundingIntentInput,
     type FundingIntentOutput,
     type FundingIntentState,
     type PreimageBlockedReason,
@@ -325,22 +324,3 @@ export {
     type RfqSwapDatedActivityPage,
     type SwapActivityInput,
 } from "./activity";
-
-export {
-    ActivityEvidenceError,
-    allocateActivityEvidence,
-    allocateIndexedActivityEvidence,
-    indexActivityEvidence,
-    parseActivityEvidence,
-    readActivityEvidence,
-    type ActivityEvidence,
-    type ActivityEvidenceAllocation,
-    type ActivityEvidenceAsset,
-    type ActivityEvidenceContribution,
-    type ActivityEvidenceDirection,
-    type ActivityEvidenceIndex,
-    type ActivityEvidenceOperation,
-    type AllocatedContribution,
-    type MemberActivityAllocation,
-    type SwapActivityAllocation,
-} from "./activityEvidence";

@@ -22,7 +22,7 @@
  * to the program's `$param`s, and speak the solver's TLV offer-discovery
  * format.
  */
-import { bech32m, hex } from "@scure/base";
+import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
@@ -40,6 +40,7 @@ import {
     type IWallet,
     type NetworkName,
     type EmulatorProvider,
+    type Outpoint,
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
@@ -48,6 +49,7 @@ import wantBtcProgram from "./swap-want-btc.program.json";
 import { promoteOfferContract, retireOfferContract, RETIRABLE } from "./coverage";
 import { hasBoundFunding, mayHaveSubmittedFunding } from "./fundingPersistence";
 import type { AssetSwapRepository } from "./repository";
+import { parseHex32 } from "./rfqProfileParts";
 import {
     getAssetSwapsOrThrow,
     updateAssetSwap,
@@ -637,14 +639,17 @@ function resolveReceivePkScript(
     serverPubKey: Uint8Array,
 ): Uint8Array {
     if (receiveAddress === undefined) return ArkAddress.decode(walletAddress).pkScript;
-    const decoded = bech32m.decodeUnsafe(receiveAddress, 1023);
-    if (!decoded) throw new Error("receiveAddress is not a valid Arkade address");
-    if (decoded.prefix !== hrp) {
+    let address: ArkAddress;
+    try {
+        address = ArkAddress.decode(receiveAddress);
+    } catch (cause) {
+        throw new Error("receiveAddress is not a valid Arkade address", { cause });
+    }
+    if (address.hrp !== hrp) {
         throw new Error(
-            `receiveAddress network ${decoded.prefix} does not match the server network ${hrp}`,
+            `receiveAddress network ${address.hrp} does not match the server network ${hrp}`,
         );
     }
-    const address = ArkAddress.decode(receiveAddress);
     // uppercase decodes but re-encodes differently, so re-encoding is the proof
     if (address.encode() !== receiveAddress) {
         throw new Error("receiveAddress is not in canonical bech32m form");
@@ -873,6 +878,7 @@ export async function cancelOffer(
 ): Promise<string> {
     const { repository, fundingTxid, fundingOutpoint, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
+    // Strict: a failed read must not pass for "no local record" and skip the marker.
     const stored = await getAssetSwapsOrThrow(repository);
     const matching = stored.filter((swap) => swap.offerHex === offerHex);
     const requested = fundingTxid
@@ -947,8 +953,6 @@ export async function cancelOffer(
     );
     const localSwap = local.find((swap) => swap.id === requested?.id) ?? local[0];
     const swapId = localSwap?.id;
-    // Strict read: a failed one must not read as "no local record here" and
-    // send us past the marker into the broadcast.
     // The in-flight marker is useful only when there is a local record to
     // update; a different or empty repository intentionally leaves the cancel
     // for event/restore classification. It gates the broadcast, so it throws:
@@ -1002,10 +1006,7 @@ export type FillFunding = ArkTxInput & {
 };
 
 /** Exact deposit reference: the funding transaction and its output index. */
-export interface FillOutpoint {
-    readonly txid: string;
-    readonly vout: number;
-}
+export type FillOutpoint = Outpoint;
 
 /** Who funds a fill input: the solver or the sponsor. A null owner marks the provider-signed deposit (input 0). */
 export type FillInputOwner = "solver" | "sponsor";
@@ -1033,11 +1034,7 @@ export interface SponsorFillInput {
         script: Uint8Array;
         sats: bigint | number;
     };
-    /** Where the sponsor's change lands. Required even when the contribution
-     * spends every sponsor sat and no change output is emitted: the caller
-     * always knows where its change belongs, and an optional field would push a
-     * "was change produced?" decision onto every caller. Validated either way so
-     * a bad script fails here, not on the one fill that happens to need it. */
+    /** Where the sponsor's change lands. */
     changeScript: Uint8Array;
 }
 
@@ -1203,7 +1200,7 @@ export function resolveDeposit<V extends { txid: string; vout: number }>(
 ): V {
     const { fundingTxid, fundingOutpoint } = sel;
     if (fundingOutpoint !== undefined) {
-        const txid = assertTxid(fundingOutpoint.txid, "fundingOutpoint.txid");
+        const txid = parseHex32(fundingOutpoint.txid, "fundingOutpoint.txid");
         const vout = assertVout(fundingOutpoint.vout, "fundingOutpoint.vout");
         if (fundingTxid !== undefined && fundingTxid.toLowerCase() !== txid) {
             throw new Error(
@@ -1215,7 +1212,7 @@ export function resolveDeposit<V extends { txid: string; vout: number }>(
         return vtxo;
     }
     if (fundingTxid !== undefined) {
-        const txid = assertTxid(fundingTxid, "fundingTxid");
+        const txid = parseHex32(fundingTxid, "fundingTxid");
         const matches = vtxos.filter((v) => v.txid.toLowerCase() === txid);
         if (matches.length > 1) {
             throw new Error(
@@ -1278,9 +1275,9 @@ export function assembleOfferFill(
     }
     solverFund.forEach((coin, i) => assertFillCoin(coin, `fund[${i}]`));
     assertScript(solverPayout, "payoutScript");
-    toSatsAmount(vtxo.value, "deposit.value", { min: BigInt(1) });
+    toAmount(vtxo.value, "deposit.value", "sats", BigInt(1));
     assertAssetEntries(vtxo.assets, "deposit");
-    const carrier = toSatsAmount(assetCarrierSats, "assetCarrierSats", { min: BigInt(1) });
+    const carrier = toAmount(assetCarrierSats, "assetCarrierSats", "sats", BigInt(1));
 
     let sponsorFund: FillFunding[] = [];
     let sponsorChange = BigInt(0);
@@ -1299,9 +1296,10 @@ export function assembleOfferFill(
             }
         });
         assertScript(sponsor.changeScript, "sponsor.changeScript");
-        const contribution = toSatsAmount(
+        const contribution = toAmount(
             sponsor.netContributionSats,
             "sponsor.netContributionSats",
+            "sats",
         );
         if (contribution <= BigInt(0)) {
             throw new Error("sponsor.netContributionSats must be a positive amount of sats");
@@ -1325,13 +1323,13 @@ export function assembleOfferFill(
             }
             if (assetId !== undefined) {
                 fareAsset = assertAssetId(assetId, "sponsor.fare.assetId");
-                fareAmount = toAssetUnits(amount, "sponsor.fare.amount");
+                fareAmount = toAmount(amount, "sponsor.fare.amount", "asset units");
                 if (fareAmount <= BigInt(0)) {
                     throw new Error("sponsor.fare.amount must be a positive amount of asset units");
                 }
             }
             assertScript(sponsor.fare.script, "sponsor.fare.script");
-            fareSats = toSatsAmount(sponsor.fare.sats, "sponsor.fare.sats", { min: BigInt(1) });
+            fareSats = toAmount(sponsor.fare.sats, "sponsor.fare.sats", "sats", BigInt(1));
             if (combineSatsFareWithChange) {
                 if (assetId !== undefined) {
                     throw new Error("sponsor.combineSatsFareWithChange requires a sats-only fare");
@@ -1352,9 +1350,7 @@ export function assembleOfferFill(
         sponsorFund = sponsor.fund;
         const baseSponsorChange = sponsorInputs - contribution;
         sponsorChange = combineSatsFareWithChange
-            ? toSatsAmount(baseSponsorChange + fareSats, "combined sponsor change", {
-                  min: BigInt(1),
-              })
+            ? toAmount(baseSponsorChange + fareSats, "combined sponsor change", "sats", BigInt(1))
             : baseSponsorChange;
     }
 
@@ -1397,14 +1393,16 @@ export function assembleOfferFill(
         if (seen.has(key)) throw new Error(`duplicate fill input ${key} (${what})`);
         seen.add(key);
     };
-    claim(assertTxid(vtxo.txid, "deposit.txid"), assertVout(vtxo.vout, "deposit.vout"), "deposit");
+    claim(parseHex32(vtxo.txid, "deposit.txid"), assertVout(vtxo.vout, "deposit.vout"), "deposit");
     solverFund.forEach((coin, i) => claim(coin.txid, coin.vout, `fund[${i}]`));
     sponsorFund.forEach((coin, i) => claim(coin.txid, coin.vout, `sponsor.fund[${i}]`));
 
     // A BTC want is paid in sats at output 0; an asset want is paid through the
     // packet, so its sats leg is only the carrier the output needs to exist.
     const makerSats =
-        wantedAssetId === undefined ? toSatsAmount(offer.wantAmount, "offer.wantAmount") : carrier;
+        wantedAssetId === undefined
+            ? toAmount(offer.wantAmount, "offer.wantAmount", "sats")
+            : carrier;
     const outputs: AssembledFillLayout["outputs"] = [
         { role: "receiver", script: offer.makerPkScript, sats: makerSats },
     ];
@@ -1558,14 +1556,6 @@ const amountOfAsset = (assets: FillFunding["assets"], assetId: string): bigint =
 const U64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
 /** Largest sats amount representable exactly — SDK coin values are numbers. */
 const MAX_SAFE_SATS = BigInt(Number.MAX_SAFE_INTEGER);
-const TXID_RE = /^[0-9a-fA-F]{64}$/;
-
-function assertTxid(txid: unknown, what: string): string {
-    if (typeof txid !== "string" || !TXID_RE.test(txid)) {
-        throw new Error(`${what} must be a 32-byte hex transaction id`);
-    }
-    return txid.toLowerCase();
-}
 
 function assertVout(vout: unknown, what: string): number {
     if (typeof vout !== "number" || !Number.isSafeInteger(vout) || vout < 0 || vout > 0xffffffff) {
@@ -1575,33 +1565,24 @@ function assertVout(vout: unknown, what: string): number {
 }
 
 /** `isSafeInteger`, never `isInteger`: past 2^53 the parse is already rounded. */
-function toSatsAmount(value: unknown, what: string, opts: { min?: bigint } = {}): bigint {
-    const min = opts.min ?? BigInt(0);
+function toAmount(
+    value: unknown,
+    what: string,
+    unit: "sats" | "asset units",
+    min = BigInt(0),
+): bigint {
+    const max = unit === "sats" ? MAX_SAFE_SATS : U64_MAX;
     let amount: bigint | undefined;
     if (typeof value === "bigint") {
-        if (value >= BigInt(0) && value <= MAX_SAFE_SATS) amount = value;
+        if (value >= BigInt(0) && value <= max) amount = value;
     } else if (typeof value === "number") {
         if (Number.isSafeInteger(value) && value >= 0) amount = BigInt(value);
     }
     if (amount === undefined) {
-        throw new Error(`${what} must be a safe integer amount of sats (0 to ${MAX_SAFE_SATS})`);
+        throw new Error(`${what} must be a safe integer amount of ${unit} (0 to ${max})`);
     }
     if (amount < min) {
-        throw new Error(`${what} must be a positive amount of sats`);
-    }
-    return amount;
-}
-
-/** Asset units: safe numbers, bigints to u64. Zero entries are allowed here and ignored downstream. */
-function toAssetUnits(value: unknown, what: string): bigint {
-    let amount: bigint | undefined;
-    if (typeof value === "bigint") {
-        if (value >= BigInt(0) && value <= U64_MAX) amount = value;
-    } else if (typeof value === "number") {
-        if (Number.isSafeInteger(value) && value >= 0) amount = BigInt(value);
-    }
-    if (amount === undefined) {
-        throw new Error(`${what} must be a safe integer amount of asset units (0 to ${U64_MAX})`);
+        throw new Error(`${what} must be a positive amount of ${unit}`);
     }
     return amount;
 }
@@ -1629,13 +1610,13 @@ function assertAssetEntries(assets: FillFunding["assets"], what: string): void {
             throw new Error(`${what} declares ${id} twice — merge the entries instead`);
         }
         seen.add(id);
-        toAssetUnits(a.amount, `${what}.assets[${i}].amount`);
+        toAmount(a.amount, `${what}.assets[${i}].amount`, "asset units");
     }
 }
 
 function assertFillCoin(coin: FillFunding, what: string): void {
-    assertTxid(coin.txid, `${what}.txid`);
+    parseHex32(coin.txid, `${what}.txid`);
     assertVout(coin.vout, `${what}.vout`);
-    toSatsAmount(coin.value, `${what}.value`, { min: BigInt(1) });
+    toAmount(coin.value, `${what}.value`, "sats", BigInt(1));
     assertAssetEntries(coin.assets, what);
 }

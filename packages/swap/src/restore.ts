@@ -52,10 +52,13 @@ export type RestoreIndexer = Pick<RestIndexerProvider, "getVirtualTxs" | "getVtx
  * concurrently; a chunk that fails or a txid that does not come back is simply
  * absent from the result, which every caller reads as "unanswered, retry later"
  * — the property that keeps a partial response from orphaning a txid forever.
+ * `strict` throws on a failed chunk instead, for callers that read an absence as
+ * evidence.
  */
-async function fetchParsedTxs(
+export async function fetchParsedTxs(
     indexer: RestoreIndexer,
     txids: string[],
+    { strict = false }: { strict?: boolean } = {},
 ): Promise<Map<string, Transaction>> {
     const parsedByTxid = new Map<string, Transaction>();
     if (txids.length === 0) return parsedByTxid;
@@ -64,9 +67,9 @@ async function fetchParsedTxs(
     for (let i = 0; i < txids.length; i += TXS_PER_REQUEST) {
         chunks.push(txids.slice(i, i + TXS_PER_REQUEST));
     }
-    const chunkResults = await Promise.allSettled(
-        chunks.map(async (ids) => (await indexer.getVirtualTxs(ids)).txs),
-    );
+    const requests = chunks.map(async (ids) => (await indexer.getVirtualTxs(ids)).txs);
+    if (strict) await Promise.all(requests);
+    const chunkResults = await Promise.allSettled(requests);
 
     for (const result of chunkResults) {
         if (result.status !== "fulfilled") continue;
