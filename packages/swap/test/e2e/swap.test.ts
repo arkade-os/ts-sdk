@@ -45,13 +45,13 @@ import {
     type Tx,
 } from "../../src";
 
-const OPERATOR_URL = "http://localhost:7070";
+const OPERATOR_URL = process.env.ARK_URL ?? "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
-const ESPLORA_API_URL = "http://localhost:3000/api";
+const ESPLORA_API_URL = process.env.ESPLORA_URL ?? "http://localhost:3000/api";
 // solverd's HTTP API and the mock price feed, on their host-published ports
-const SOLVER_HTTP_URL = "http://localhost:7091";
-const PRICEFEED_URL = "http://localhost:8088";
-const arkdExec = "docker exec -t arkd";
+const SOLVER_HTTP_URL = process.env.SOLVER_HTTP_URL ?? "http://localhost:7091";
+const PRICEFEED_URL = process.env.PRICEFEED_URL ?? "http://localhost:8088";
+const arkdExec = `docker exec -t ${process.env.ARKD_CONTAINER ?? "arkd"}`;
 
 const FAUCET_SATS = 30_000;
 const DEPOSIT_SATS = 10_000;
@@ -216,12 +216,33 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
+        const operationId = "uppercase-cancel";
+        await repository.saveSwap({
+            id: operationId,
+            fundingTxid: fundingTxid.toUpperCase(),
+            fromAsset: "btc",
+            toAsset: wantAsset.toString(),
+            fromAmount: String(DEPOSIT_SATS),
+            toAmount: WANT_AMOUNT.toString(),
+            swapAddress: offer.address,
+            swapPkScript: hex.encode(offer.swapPkScript),
+            offerHex: restoredOfferHex,
+            status: "pending",
+            createdAt: Date.now(),
+        });
         const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, restoredOfferHex, {
             repository,
-            fundingTxid,
+            fundingTxid: operationId,
             swapAddress: offer.address,
         });
-        expect(cancelTxid).toBeTruthy();
+        expect(cancelTxid).toMatch(/^[0-9a-f]{64}$/);
+        expect(await repository.getSwap(operationId)).toMatchObject({
+            status: "cancelled",
+            spentTxid: cancelTxid,
+        });
+        const manager = await wallet.getContractManager();
+        const [contract] = await manager.getContracts({ script: hex.encode(offer.swapPkScript) });
+        expect(contract.watch).toBe("retained");
 
         const script = hex.encode(offer.swapPkScript);
         await waitFor(async () => {
@@ -252,6 +273,55 @@ describe("maker-side swap loop (regtest)", () => {
             const vtxos = await wallet.getVtxos();
             return vtxos.some((v) => v.txid === cancelTxid && v.value === DEPOSIT_SATS);
         });
+    }, 120_000);
+
+    it("records cancellation on the requested operation when another row shares its deposit", async () => {
+        const offer = await createOffer(wallet, OPERATOR_URL, {
+            wantAmount: WANT_AMOUNT + 2n,
+            wantAsset,
+        });
+        const fundingTxid = await wallet.send({
+            address: offer.address,
+            amount: DEPOSIT_SATS,
+            extensions: [offer.extension],
+        });
+        const script = hex.encode(offer.swapPkScript);
+        await waitFor(async () =>
+            (await wallet.getVtxos()).some(
+                (coin) => coin.txid === fundingTxid && coin.script === script,
+            ),
+        );
+        const swaps = new InMemoryAssetSwapRepository();
+        const requested = {
+            id: "requested-cancel",
+            fundingTxid,
+            fromAsset: "btc",
+            toAsset: wantAsset.toString(),
+            fromAmount: String(DEPOSIT_SATS),
+            toAmount: (WANT_AMOUNT + 2n).toString(),
+            swapAddress: offer.address,
+            swapPkScript: script,
+            offerHex: offer.offerHex,
+            status: "pending" as const,
+            createdAt: Date.now(),
+        };
+        await swaps.saveSwap(requested);
+        await swaps.saveSwap({ ...requested, id: fundingTxid, createdAt: requested.createdAt + 1 });
+        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+            repository: swaps,
+            fundingTxid: requested.id,
+            swapAddress: offer.address,
+        });
+        expect(await swaps.getSwap(requested.id)).toMatchObject({
+            status: "cancelled",
+            spentTxid: cancelTxid,
+        });
+        expect((await swaps.getSwap(fundingTxid))?.status).toBe("pending");
+        await waitFor(async () =>
+            (await wallet.getSpendableVtxos()).some(
+                (coin) => coin.txid === cancelTxid && coin.value === DEPOSIT_SATS,
+            ),
+        );
     }, 120_000);
 
     it("resolves the swap as cancelled from the wallet's own spend event, without a restore scan", async () => {

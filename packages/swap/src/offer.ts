@@ -940,10 +940,12 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
-    const localSwap = stored.find(
+    const local = stored.filter(
         (swap) =>
-            swap.fundingTxid === vtxo.txid && swap.swapPkScript === hex.encode(offer.swapPkScript),
+            swap.fundingTxid.toLowerCase() === vtxo.txid.toLowerCase() &&
+            swap.swapPkScript === hex.encode(offer.swapPkScript),
     );
+    const localSwap = local.find((swap) => swap.id === requested?.id) ?? local[0];
     const swapId = localSwap?.id;
     // Strict read: a failed one must not read as "no local record here" and
     // send us past the marker into the broadcast.

@@ -44,4 +44,4 @@ git -C taxi-image checkout ffdeff7c1b171e660e1c119cd6994c440a456338
 docker build -t arkade-taxi:regtest ./taxi-image
 ```
 
-Then run `pnpm regtest:up:taxi` and `pnpm regtest:test:taxi`; `pnpm test:integration:taxi` resets, starts and tests the profile in one command.
+Build the SDK and swap dependencies with `pnpm -C packages/ts-sdk build` and `pnpm -C packages/swap build`. Then run `pnpm regtest:up:taxi` and `pnpm regtest:test:taxi`; `pnpm test:integration:taxi` resets, starts and tests the profile in one command.
