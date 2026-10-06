@@ -26,6 +26,28 @@ testTaskQueueContract("AsyncStorageTaskQueue", () => {
 });
 
 describe("AsyncStorageTaskQueue", () => {
+    it("uses prefix-scoped storage keys", async () => {
+        const storage = new FakeAsyncStorage();
+        const queue = new AsyncStorageTaskQueue(storage, "queue:test");
+
+        await queue.addTask({
+            id: "task-1",
+            type: "contract-poll",
+            data: {},
+            createdAt: 1,
+        });
+        expect(storage.values.has("queue:test:inbox")).toBe(true);
+
+        await queue.pushResult({
+            id: "result-1",
+            taskItemId: "task-1",
+            type: "contract-poll",
+            status: "noop",
+            executedAt: 2,
+        });
+        expect(storage.values.has("queue:test:outbox")).toBe(true);
+    });
+
     it("persists config", async () => {
         const queue = new AsyncStorageTaskQueue(new FakeAsyncStorage(), "queue:test");
         const config = { arkServerUrl: "https://ark.example", version: 1 };
