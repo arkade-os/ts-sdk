@@ -1,43 +1,33 @@
 ---
 name: arkade-product-ui
 description: >
-  Build or polish an Arkade product UI. Use for a desk, vault, swap, quote,
-  lock, or settlement screen. Starts from emilkowalski/skills and the
-  Impeccable scaffolding, then applies Arkade covenant and regtest constraints.
-  Do not use for contract authoring or SDK internals.
+  Build or polish a UI for any Arkade contract. Use for funding, spending a
+  named function, watching coins, or an exit. Starts from emilkowalski/skills
+  and the Impeccable scaffolding. Do not use for contract authoring or SDK internals.
 ---
 
-# Arkade product UI
+# Arkade contract UI
 
-An Arkade screen is an Operate surface: the user completes a quote, a lock, a settle, or an exit. A marketing page in the same product is Persuade. Pick the mode from the surface.
+The screen is a client of one or more artifacts. It offers the constructor, the funding step, and the spend functions the artifact actually has. It does not invent a second product model beside the contract.
 
-## Start from the two design sources
+A contract surface is Operate in [Impeccable](https://github.com/pbakaus/impeccable) (`skill/SKILL.src.md`): the user completes a task. A landing page on the same product is Persuade. If the skill is installed, run its context command once, use `shape` before a new surface, and read the craft floor immediately before editing. A narrow fix stays on the existing screen. Verify once at desktop and mobile, fix what that pass shows, confirm once, and stop.
 
-1. Impeccable ([pbakaus/impeccable](https://github.com/pbakaus/impeccable), `skill/SKILL.src.md`). If the project has the skill installed, run its context command once, then the playbook for the request (`shape` before a new surface, `craft-floor` immediately before editing). Missing `PRODUCT.md` on a new surface goes through `init`. A narrow fix of an existing screen stays on that screen. Verify in one desktop-and-mobile pass, fix what that pass shows, confirm once, and stop.
-2. Emil Kowalski's skills ([emilkowalski/skills](https://github.com/emilkowalski/skills)). Load `emil-design-eng` for polish and motion. Load `prototype` when the screen is still a prototype. Load `animate` only after the decision framework says the motion should exist.
+Polish and motion come from [emilkowalski/skills](https://github.com/emilkowalski/skills), `emil-design-eng`. Load `prototype` while the flow is still fake, and `animate` only after that skill's decision framework says the motion should exist. An action the user repeats does not animate. A press uses `transform` only, ease-out, and `scale(0.97)` on `:active`. Review notes go in one table with Before, After, and Why.
 
-Motion that the user hits on every quote, keystroke, or countdown does not animate. A lock button scales on press (`transform: scale(0.97)`), with `transition` naming `transform` and a custom ease-out (`cubic-bezier(0.23, 1, 0.32, 1)`). Do not use `transition: all` or `ease-in` on a control.
+## Match the artifact
 
-When reviewing UI, use one markdown table with Before, After, and Why columns.
+Each primary action is one function on `contract.functions`, named as in the `.ark` file. Constructor fields are collected before coins lock. The spend screen sends the witnesses and outputs that function checks, and nothing else.
 
-## What the screen is allowed to claim
+Numbers the user sees are the integers the covenant computes, in the units the contract uses. A display format is applied after that result. A preview that rounds in floating point and then spends the rounded value will disagree with the script.
 
-The footer and the status line name the covenant path that will actually run: the function, the signature count, the deadline. If the prototype does not broadcast, say that. A SHA-256 of the terms is not a witness program and is not a payment.
+Say when the page does not broadcast. A hash of the form fields is not a script, an address, or a payment.
 
-Constructor values (`kind`, strike, collateral, expiry, side, exit) are chosen before coins lock. The screen collects them once. It does not ask the user to re-confirm them inside a spend, and it does not imply the contract re-checks them.
+Keep the clocks apart. `checkTime` is the emulator clock. `tx.time` is nLockTime. `older` starts when the output is mined, which is after unroll. One control does not represent both. Enable a spend when `getUtxos()` has a coin for it. A lookup still in flight is a loader on that control.
 
-Show the settlement number from the same integer formula the contract uses. Prices in USD cents, amounts and payoffs in sats, dust at 330 sats folded into the other output. A preview that uses floating point and then displays BTC will disagree with the covenant.
+External data fails closed. Show the failure. Do not substitute a price, a balance, or a confirmation the feed did not return.
 
-`checkTime` is the emulator clock. `older` starts when the output is mined. Do not draw one timeline for both. Arm the action when `getUtxos()` returns; a loader covers an in-flight exit lookup.
+## Verify
 
-## Quote and lock
+Walk the contract's own path: construct, fund, spend each function the user can reach, and the exit. Then the edges that function defines: missing inputs, a rejected `require`, an empty wallet, and a second page that reads the same contract row. Desktop and a narrow viewport.
 
-One primary action. Validate the amount before setting a quoting flag. Keep the selected strike across a re-render of the strike list. The countdown is the contract `deadline`, not a second constant in the page.
-
-A spot feed fails closed: try the next source, and if both fail, show the failure. Do not invent a price. A median that ignores a single spiked print should say so when the prototype is demonstrating that.
-
-## Verify the screen
-
-Exercise the path a user takes: choose the product, pick a strike, type an amount, receive a premium, lock, and open the settlement preview. Then the edges: empty amount, expired lock, a feed error, dust, and the other product on the same state. Check the pages that share the quote or the locked terms. Desktop and a narrow viewport.
-
-A single screenshot of the resting screen is not that check.
+A screenshot of the resting screen is not that check.

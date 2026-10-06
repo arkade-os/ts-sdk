@@ -1,10 +1,10 @@
 ---
 name: arkade-regtest
 description: >
-  Bring up ArkLabsHQ/arkade-regtest in one shot and run smoke and functional
-  tests of an Arkade contract against it. Use for the regtest CLI, faucet,
-  notes, asset issuance, the emulator, and e2e tests in packages/ts-sdk.
-  Do not use for contract authoring.
+  Bring up ArkLabsHQ/arkade-regtest in one shot and prove any Arkade contract
+  with one functional end-to-end test against that stack. Use for the regtest
+  CLI, faucet, notes, asset issuance, and the emulator. Do not write unit
+  tests. Do not use for contract authoring.
 ---
 
 # Arkade regtest
@@ -61,29 +61,22 @@ docker exec arkd ark redeem-notes -n <note> --password secret
 
 ## Issue an asset
 
-Fund an offchain wallet first. Issuance is `wallet.assetManager.issue({ amount })`. The result's `assetId` is genesis txid plus group index; `AssetId.fromString` splits it into the `bytes32` and `int` a beacon or vault constructor wants.
+Fund an offchain wallet first, then `wallet.assetManager.issue({ amount })`. Skip this when the contract under test locks only sats. The result's `assetId` is genesis txid plus group index; `AssetId.fromString` splits it into the `bytes32` and `int` a constructor stores.
 
-A control asset is an issuance of amount `1n`. A later `issue({ amount, controlAssetId })` mints under that control. Poll `getVtxos()` until the asset amount is present. The indexer trails a settle and a mine; `waitFor` on the vtxo, and read Bitcoin Core's height with `node regtest/regtest.mjs rpc getblockcount` when a locktime must still be immature. Do not treat an Esplora tip as that height.
+A control asset is an issuance of amount `1n`. A later `issue({ amount, controlAssetId })` mints under that control. Poll `getVtxos()` until the amount is present. The indexer trails a settle and a mine; `waitFor` on the vtxo. When a locktime must still be immature, read Bitcoin Core with `node regtest/regtest.mjs rpc getblockcount`. An Esplora tip lags that height.
 
-A beacon reading is that asset amount on the beacon output. Update spends the beacon, pays the same script, and sets the ticker amount to the new price and the clock amount to the new time. Passthrough pays the same script with each amount at least the input amount.
+## One functional test
 
-## Smoke, then the contract
+Do not write unit tests. Do not add a file that compiles the artifact and counts opcodes, and do not add a test per `require`. Write one end-to-end test against this running stack, and make that one complete.
 
-Smoke proves the stack and one happy path. Stop if smoke fails; the contract test will not explain a down arkd.
+The test is the contract's real life, in order: the stack answers, coins arrive from the faucet, assets are issued only when the contract locks them, the artifact is registered and funded, each spend function a party can run is run, and the indexer shows the coin leaving on `vtxo_spent`. A continuation pays the next script that function names. A coin whose reading moves is asserted by the amount on the continuing output. A path that must fail is one step in that same test, with the output or the clock the contract rejects.
 
-- `curl -sf http://localhost:7070/v1/info` and, when a covenant path is under test, the emulator info URL on port 7073.
-- Faucet an onchain address with `--confirm` and see it on Esplora.
-- Redeem a note, `ark send` to a wallet address, and see the vtxo in `getVtxos()`.
-- Issue an asset and see `assetId` on a vtxo.
-- `programFromArtifact`, `register()`, fund `contract.address`, and see `vtxo_received` for that `pkScript`.
+Virtual txids are not on Esplora. Assert through the indexer. Mine, then ask Esplora, only for an unrolled exit.
 
-Functional tests hit every spend group against this stack, plus the rejects:
+A refused emulator signature is a key mismatch until `hex.encode(client.emulatorKey)` differs from the pubkey the emulator serves. Compare those before changing the contract.
 
-- Happy path for each function, with the outputs the covenant requires.
-- Finalize before the deadline and cancel after it. The opposite clock fails.
-- A second input that carries the same intent script fails a finalize that requires a different funding script.
-- An output under 330 sats is folded only where the contract folds it.
-- Beacon `update` accepts a higher clock and rejects a lower one. `passthrough` keeps both asset amounts.
-- A refused emulator claim: compare `hex.encode(client.emulatorKey)` with the emulator's reported signer before changing the contract.
+If the stack is down, stop. A failing spend will not explain a down arkd. `curl -sf http://localhost:7070/v1/info` and, when the contract has a covenant, the emulator on port 7073.
 
-Virtual txids are not on Esplora. Assert through the indexer and `vtxo_spent`. Mine, then ask Esplora, only for an unrolled exit.
+## Shape of the file
+
+The test is the body of the file. Helpers go at the end. Funding, waiting on the indexer, building constructor args, and decoding an asset id are functions below the test, not a prelude and not a second module of unit tests.

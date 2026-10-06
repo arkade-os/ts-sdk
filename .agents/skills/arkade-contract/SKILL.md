@@ -1,18 +1,18 @@
 ---
 name: arkade-contract
 description: >
-  Load an arkadec artifact and spend an Arkade contract through @arkade-os/sdk.
-  Use for programFromArtifact, Arkade.connect, client.contract, constructor
-  arguments, covenant outputs, tapleaf spends, ContractManager, contract and
-  wallet repositories, and watching a contract. Extends the escrow covenant
-  skill at ArkLabsHQ/arkade-escrow-covenant .cursor/skills/arkade-contract.
+  Load any arkadec artifact and spend it through @arkade-os/sdk. Use for
+  programFromArtifact, Arkade.connect, client.contract, constructor arguments,
+  covenant outputs, tapleaf spends, ContractManager, repositories, and
+  watching. Extends the escrow skill at ArkLabsHQ/arkade-escrow-covenant
+  .cursor/skills/arkade-contract to any contract.
 ---
 
-# Arkade contract on the TypeScript SDK
+# Spend any Arkade contract
 
-Compile in the compiler repo. Spend the committed artifact here. Function names on `contract.functions` are the function names in the `.ark` file.
+Compile in the compiler repo. This skill spends the committed artifact. The same steps cover a vault, a swap, an escrow, a beacon, or a contract that does not exist yet. Function names on `contract.functions` are the function names in the `.ark` file.
 
-The escrow repo's skill is the same path for a session with no user wallet. This skill is that path against current `@arkade-os/sdk` (`packages/ts-sdk`). `programFromArtifact` is `src/arkade/artifact.ts`. Do not vendor an old SDK tarball for new work.
+The escrow repo's skill is this path for one covenant and a session with no user wallet. Here it is the current SDK in `packages/ts-sdk`. `programFromArtifact` is `src/arkade/artifact.ts`. Do not vendor an old SDK tarball for new work.
 
 ## Ownership
 
@@ -103,15 +103,15 @@ const contract = client.contract(program, args);
 const coin = (await contract.getUtxos())[0];
 
 await contract.functions
-    .claim(preimage)
+    .spend(/* witnesses, in source order */)
     .from(coin)
     .to(destination.pkScript, coin.value)
     .send();
 ```
 
-`.from` / `.to` / `.send()` talks to the operator and the emulator and signs with the session identity. Call the function with the Arkade inputs, in order. A function with no inputs is `functions.cancel()`. Outputs have to satisfy that function's `tx.outputs[i]` checks.
+`.from` / `.to` / `.send()` talks to the operator and the emulator and signs with the session identity. Call whichever function the artifact declares, with its inputs in source order. A function with no inputs is called with none. Outputs have to satisfy that function's `tx.outputs[i]` checks: value, script, and any asset amounts.
 
-`.fund(coins)` adds inputs 1..n, signed with the client identity. Use it for the funding input a finalize path requires. `.withAsset(spec)` moves an asset group. `.change(script)` is required when the spend is not exact.
+`.fund(coins)` adds inputs after the contract coin, signed with the client identity. `.withAsset(spec)` moves an asset group. `.change(script)` is required when the spend is not exact.
 
 `.build()` assembles without broadcasting. A leaf that needs several local signatures and no server is not a `.send()`: take the leaf from the compiled program, set the input sequence when the leaf has `older`, sign input 0 with each required key, and broadcast yourself.
 
@@ -135,12 +135,8 @@ const stop = manager.onContractEvent((event) => {
 
 `wallet.restore()` will not find this contract. Nothing in a seed derives the script. The repository row is the backup. In-memory repositories are empty after a restart, so `register()` again with the same program, args, and keys. A durable repository reloads the row when `ContractManager.create` runs. Rebuild with `arkade.ArkadeContract.fromContract(client, row)` so a later server key does not point the watcher at a different script.
 
-Do not set `metadata.genericallySpendable`. The arkade handler treats anything but explicit `true` as not generically spendable, and `createContract` is first-writer-wins for that script. These coins stay out of a generic send.
+Leave `metadata.genericallySpendable` unset unless this contract's coins are safe in a generic wallet send. The arkade handler treats anything but explicit `true` as not generically spendable, and `createContract` is first-writer-wins for that script.
 
-Do not poll Esplora for a virtual transaction id. `GET /api/tx/<virtualTxid>` is 404. Ask Mempool only about a transaction that has been unrolled, and only when the user is looking at that exit.
+Do not poll Esplora for a virtual transaction id. `GET /api/tx/<virtualTxid>` is 404. Ask Mempool only about a transaction that has been unrolled.
 
-## Time in the product
-
-`checkTime(deadline)` reads the emulator clock, in unix seconds. Arm the spend control as soon as `getUtxos()` returns. While a Bitcoin exit lookup is in flight, show a loader on the button. A grey disabled control looks like the path is closed.
-
-`older(n)` has not started before unroll. Read the operator minimum from `arkadeOperator.getInfo()` (`unilateralExitDelay`).
+`checkTime` reads the emulator clock, in unix seconds. `older(n)` has not started before unroll. Read the operator minimum from `arkadeOperator.getInfo()` (`unilateralExitDelay`).
