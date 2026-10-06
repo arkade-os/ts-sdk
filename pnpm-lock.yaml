@@ -5,11 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@arkade-taxi/client>@arkade-taxi/covenant': file:./packages/taxi/vendor/arkade-taxi-covenant-0.0.0-946e851c.tgz
-  '@arkade-taxi/client>@arkade-taxi/protocol': file:./packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz
-  '@arkade-taxi/client>@arkade-os/sdk': workspace:*
-  '@arkade-taxi/client>@arkade-os/swap': workspace:*
-  '@arkade-taxi/covenant>@arkade-os/sdk': workspace:*
   esbuild: '>=0.28.1'
   minimatch: ^10.2.5
   '@ungap/structured-clone': '>=1.3.1'
@@ -131,31 +126,6 @@ importers:
         specifier: ^2.12.0
         version: 2.24.1(typescript@5.9.2)
 
-  packages/taxi:
-    dependencies:
-      '@arkade-os/sdk':
-        specifier: workspace:*
-        version: link:../ts-sdk
-      '@arkade-os/solver-discovery':
-        specifier: 0.2.7
-        version: 0.2.7
-      '@arkade-os/swap':
-        specifier: workspace:*
-        version: link:../swap
-      '@scure/base':
-        specifier: 2.0.0
-        version: 2.0.0
-      '@scure/btc-signer':
-        specifier: 2.0.1
-        version: 2.0.1
-    devDependencies:
-      '@arkade-taxi/client':
-        specifier: file:./vendor/arkade-taxi-client-0.0.0-946e851c.tgz
-        version: file:packages/taxi/vendor/arkade-taxi-client-0.0.0-946e851c.tgz
-      '@arkade-taxi/protocol':
-        specifier: file:./vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz
-        version: file:packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz
-
   packages/ts-sdk:
     dependencies:
       '@bitcoinerlab/descriptors-scure':
@@ -229,18 +199,6 @@ packages:
   '@arkade-os/solver-discovery@0.2.7':
     resolution: {integrity: sha512-T5dfiezUG5YKtzOmX1Z2E0LePF3bx6unsqq7UPgha0Zp9PQFcodYMYl6T1i0AbruaGup5XWq8Die5wusiA5qUA==}
     engines: {node: '>=18'}
-
-  '@arkade-taxi/client@file:packages/taxi/vendor/arkade-taxi-client-0.0.0-946e851c.tgz':
-    resolution: {integrity: sha512-T0nygF0Qpu3nxLV0WGU1S3HWtD0c+0YJREa3DtJ2VdAINEPM1yyMvmQawPbnZ1bZNszUOgtHLaufv61WxQEJHg==, tarball: file:packages/taxi/vendor/arkade-taxi-client-0.0.0-946e851c.tgz}
-    version: 0.0.0
-
-  '@arkade-taxi/covenant@file:packages/taxi/vendor/arkade-taxi-covenant-0.0.0-946e851c.tgz':
-    resolution: {integrity: sha512-rzJYG/SM1QB71CY+y17MdEgnlcM6DQnX0dpGTxPkV/BEO/6+fWFVPm6lt2iHzyi5qoAgGvHHQRdGx+IHv+/gWw==, tarball: file:packages/taxi/vendor/arkade-taxi-covenant-0.0.0-946e851c.tgz}
-    version: 0.0.0
-
-  '@arkade-taxi/protocol@file:packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz':
-    resolution: {integrity: sha512-nr0E1ryqWH8VQM5pBrnE1cq/+hwg3oSV0VePYe+qEnIce4rh/aVYnmE1RFEbyPb65EK3abGcwzQz9SwW9Pg6Fw==, tarball: file:packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz}
-    version: 0.0.0
 
   '@babel/code-frame@7.10.4':
     resolution: {integrity: sha512-vG6SvB6oYEhvgisZNFRmRCUkLz11c7rp+tbNTynGqc6mS1d5ATd/sGyV6W0KZZnXRKMTzZDRgQT3Ou9jhpAfUg==}
@@ -3901,24 +3859,6 @@ snapshots:
       '@jridgewell/trace-mapping': 0.3.31
 
   '@arkade-os/solver-discovery@0.2.7': {}
-
-  '@arkade-taxi/client@file:packages/taxi/vendor/arkade-taxi-client-0.0.0-946e851c.tgz':
-    dependencies:
-      '@arkade-os/sdk': link:packages/ts-sdk
-      '@arkade-os/swap': link:packages/swap
-      '@arkade-taxi/covenant': file:packages/taxi/vendor/arkade-taxi-covenant-0.0.0-946e851c.tgz
-      '@arkade-taxi/protocol': file:packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz
-      '@noble/hashes': 2.0.1
-      '@scure/base': 2.0.0
-      '@scure/btc-signer': 2.0.1
-
-  '@arkade-taxi/covenant@file:packages/taxi/vendor/arkade-taxi-covenant-0.0.0-946e851c.tgz':
-    dependencies:
-      '@arkade-os/sdk': link:packages/ts-sdk
-      '@noble/hashes': 2.0.1
-      '@scure/btc-signer': 2.0.1
-
-  '@arkade-taxi/protocol@file:packages/taxi/vendor/arkade-taxi-protocol-0.0.0-946e851c.tgz': {}
 
   '@babel/code-frame@7.10.4':
     dependencies:

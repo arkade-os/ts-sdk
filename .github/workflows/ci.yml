@@ -48,12 +48,6 @@ jobs:
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
-      - name: Type-check Taxi
-        run: pnpm -C packages/taxi run typecheck
-
-      - name: Type-check Taxi regtest suite
-        run: pnpm -C packages/taxi run typecheck:e2e
-
       # The package's own typecheck excludes test/, so a broken e2e file only
       # surfaces in the regtest job — after it has spent minutes standing a
       # stack up. This catches it in the fast job instead.
@@ -77,12 +71,6 @@ jobs:
 
       - name: Verify swap publish shape
         run: cd packages/swap && npm pack --dry-run --ignore-scripts
-
-      - name: Smoke-test Taxi dist
-        run: pnpm -C packages/taxi run smoke:dist
-
-      - name: Verify Taxi publish shape
-        run: cd packages/taxi && npm pack --dry-run --ignore-scripts
 
       - name: Unit tests
         run: pnpm run test:unit
@@ -140,9 +128,6 @@ jobs:
           - package: swap-rfq
             group: all
             test_files: ""
-          - package: taxi
-            group: exact-subdust
-            test_files: test/e2e/subdust.test.ts
 
     steps:
       - uses: actions/checkout@v6
@@ -163,23 +148,6 @@ jobs:
 
       - name: Build ts-sdk
         run: pnpm -C packages/ts-sdk build
-
-      - name: Build swap for Taxi client
-        if: matrix.package == 'taxi'
-        run: pnpm -C packages/swap build
-
-      - name: Checkout Taxi image source
-        if: matrix.package == 'taxi'
-        uses: actions/checkout@v6
-        with:
-          repository: ArkLabsHQ/arkade-taxi
-          ref: ffdeff7c1b171e660e1c119cd6994c440a456338
-          path: taxi-image
-          persist-credentials: false
-
-      - name: Build Taxi image
-        if: matrix.package == 'taxi'
-        run: docker build -t arkade-taxi:regtest ./taxi-image
 
       - name: Make regtest controller executable
         run: chmod +x scripts/regtest.sh

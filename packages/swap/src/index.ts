@@ -190,15 +190,6 @@ export {
     type RfqTransport,
 } from "./rfq";
 export {
-    assertReceiverPaidEchoMatchesExpected,
-    type ArkadeCarrierChoice,
-    type ArkadeCarrierRequest,
-    type ReceiverPaidCarrierQuote,
-    type RecycleCarrierQuote,
-    type TaxiIdentity,
-    type VerifiedCarrierTerms,
-} from "./receiveCarrier";
-export {
     LOCKTIME_THRESHOLD,
     ONCHAIN_DUST_SATS,
     ONCHAIN_SECONDS_PER_BLOCK,

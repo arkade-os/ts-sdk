@@ -4019,30 +4019,6 @@ export class Wallet
         });
     }
 
-    /** Backward-compatible outcome form for callers that need registration status. */
-    async settleWithOutcome(
-        params?: SettleParams,
-        eventCallback?: (event: SettlementEvent) => void,
-    ): Promise<
-        | { ok: true; txid: string }
-        | { ok: false; error: unknown; intentRegistrationAttempted: boolean }
-    > {
-        let preparing = false;
-        let intentRegistrationAttempted = false;
-        try {
-            const txid = await this.settle(params, eventCallback, {
-                onPhase: (phase) => {
-                    if (phase === "preparing") preparing = true;
-                    if (phase === "registration_attempt") intentRegistrationAttempted = true;
-                },
-            });
-            return { ok: true, txid };
-        } catch (error) {
-            if (!preparing) throw error;
-            return { ok: false, error, intentRegistrationAttempted };
-        }
-    }
-
     private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
