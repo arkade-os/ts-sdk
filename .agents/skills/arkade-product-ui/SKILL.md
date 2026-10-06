@@ -8,7 +8,9 @@ description: >
 
 # Arkade contract UI
 
-The screen is a client of one or more artifacts. It offers the constructor, the funding step, and the spend functions the artifact actually has. It does not invent a second product model beside the contract.
+The screen is a client of artifacts compiled in this project. It offers the constructor, the funding step, and the spend functions the artifact actually has. It does not invent a second product model beside the contract.
+
+The design sources are separate repositories. Use them when those skills are installed. Otherwise clone [emilkowalski/skills](https://github.com/emilkowalski/skills) and [pbakaus/impeccable](https://github.com/pbakaus/impeccable) and read the skill files named below. They are not application dependencies.
 
 A contract surface is Operate in [Impeccable](https://github.com/pbakaus/impeccable) (`skill/SKILL.src.md`): the user completes a task. A landing page on the same product is Persuade. If the skill is installed, run its context command once, use `shape` before a new surface, and read the craft floor immediately before editing. A narrow fix stays on the existing screen. Verify once at desktop and mobile, fix what that pass shows, confirm once, and stop.
 

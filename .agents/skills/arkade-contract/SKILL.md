@@ -10,9 +10,16 @@ description: >
 
 # Spend any Arkade contract
 
-Compile in the compiler repo. This skill spends the committed artifact. The same steps cover a vault, a swap, an escrow, a beacon, or a contract that does not exist yet. Function names on `contract.functions` are the function names in the `.ark` file.
+This skill is used from a fresh project. The artifact is produced by the `writing-arkade-contracts` skill (`arkadec` from a clone of [arkade-os/compiler](https://github.com/arkade-os/compiler)). This skill spends that committed JSON. The same steps cover any contract. Function names on `contract.functions` are the function names in the `.ark` file.
 
-The escrow repo's skill is this path for one covenant and a session with no user wallet. Here it is the current SDK in `packages/ts-sdk`. `programFromArtifact` is `src/arkade/artifact.ts`. Do not vendor an old SDK tarball for new work.
+Pull the SDK. It is not already in this project.
+
+```bash
+git clone --depth 1 https://github.com/arkade-os/ts-sdk.git vendor/ts-sdk
+pnpm add @arkade-os/sdk
+```
+
+Ignore `vendor/`. Read the implementation under `vendor/ts-sdk/packages/ts-sdk/src`. `programFromArtifact` is `src/arkade/artifact.ts` in that package. If the published `@arkade-os/sdk` you installed does not export it, depend on the clone (`pnpm add ./vendor/ts-sdk/packages/ts-sdk`) instead of an older tarball.
 
 ## Ownership
 

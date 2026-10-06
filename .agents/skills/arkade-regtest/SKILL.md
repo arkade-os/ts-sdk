@@ -9,28 +9,22 @@ description: >
 
 # Arkade regtest
 
-[arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) is the Docker stack: Bitcoin Core, mempool (Esplora under `/api`), arkd, the emulator, and optional solvers. This repo vendors it as the `regtest/` submodule. `git submodule update --init` after clone. Docker with the compose plugin, and Node 18 or newer. No `npm install` inside the regtest repo.
-
-## One-shot stack
-
-From this repo, with ports free:
+This skill is used from a fresh project. Pull the stack. It is not already checked out.
 
 ```bash
-pnpm run regtest:up:ts-sdk
-pnpm run regtest:setup:ts-sdk
-```
-
-`up` is `node regtest/regtest.mjs start --env packages/ts-sdk/.env.regtest`. `setup` waits until arkd and the emulator answer, then runs `ark init` inside the arkd container with password `secret`. From a checkout of arkade-regtest itself, `node regtest.mjs start` is the same bring-up and also seeds the `ark` client with offchain funds.
-
-Stop with `pnpm run regtest:down:ts-sdk` (`stop` keeps volumes). Wipe with `pnpm run regtest:reset:ts-sdk` (`clean` drops containers and volumes). `pnpm run test:integration:ts-sdk` is reset, up, setup, and the e2e suite.
-
-`start` with no profile flag brings up the full stack. A contract test needs `ark` and the emulator:
-
-```bash
+git clone --depth 1 https://github.com/ArkLabsHQ/arkade-regtest.git regtest
 node regtest/regtest.mjs start --profile ark --profile emulator
 ```
 
-Set `AUTOMINE_INTERVAL=0` in the override file for any test that mines. The default auto-miner (one block every 600 seconds) moves block-denominated expiry and sweeps under a running test. Mine with `node regtest/regtest.mjs mine [n]`.
+[arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) is Docker images plus a Node CLI: Bitcoin Core, mempool (Esplora under `/api`), arkd, and the emulator. Docker with the compose plugin, and Node 18 or newer. No `npm install` inside `regtest/`. Ignore that directory. `start` initializes the `ark` client and seeds it with offchain funds.
+
+## One-shot stack
+
+`node regtest/regtest.mjs start` with no profile flag brings up the full stack. A contract test needs `ark` and the emulator, as in the clone command above.
+
+Stop with `node regtest/regtest.mjs stop` (volumes stay). Wipe with `node regtest/regtest.mjs clean`. The SDK checkout's `pnpm run regtest:*:ts-sdk` scripts call this same CLI. Use them only when the working tree is that checkout.
+
+Set `AUTOMINE_INTERVAL=0` in a `--env` file for any test that mines. The default auto-miner (one block every 600 seconds) moves block-denominated expiry and sweeps under a running test. Mine with `node regtest/regtest.mjs mine [n]`.
 
 Defaults that matter: arkd `http://localhost:7070` (admin `7071`), Esplora `http://localhost:3000/api`, emulator `http://localhost:7073`, arkd wallet `http://localhost:6060`. The SDK's regtest Esplora default is that `/api` URL. Bitcoin Core RPC is `localhost:18443`, user `admin1`, password `123`.
 
@@ -50,14 +44,14 @@ Offchain, the stack's `ark` client sends sats to an Arkade address. The password
 docker exec arkd ark send --to <address> --amount 20000 --password secret
 ```
 
-The e2e helpers are `faucetOnchain`, `faucetOffchain`, `mineBlocks`, and `beforeEachFaucet` in `packages/ts-sdk/test/e2e/utils.ts`. `beforeEachFaucet` redeems a fresh note because spent rounds leave notes the balance still shows and `ark send` cannot spend:
+The SDK checkout has the same commands in `vendor/ts-sdk/packages/ts-sdk/test/e2e/utils.ts` (`faucetOnchain`, `faucetOffchain`, `mineBlocks`, `beforeEachFaucet`). Copy what this test needs to the bottom of its own file. Do not import that module. `beforeEachFaucet` redeems a fresh note because spent rounds leave notes the balance still shows and `ark send` cannot spend:
 
 ```bash
 docker exec arkd arkd note --amount 200000
 docker exec arkd ark redeem-notes -n <note> --password secret
 ```
 
-`pnpm run regtest:test:ts-sdk` runs the suite. `pnpm run regtest:test:ts-sdk test/e2e/asset.test.ts` runs one file. The full cycle is `pnpm run test:integration:ts-sdk`.
+Run this project's one end-to-end file against the stack you just started. The SDK checkout's `pnpm run test:integration:ts-sdk` is that repo's own suite, not this project's test.
 
 ## Issue an asset
 
