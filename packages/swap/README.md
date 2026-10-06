@@ -192,31 +192,17 @@ newer.
 
 ### Restore an imported wallet
 
-Register swap recovery before calling the core wallet's explicit `restore()`:
+Run the core wallet's `restore()` first (addresses, contracts, history), **then** create the client:
 
 ```ts
-import { IndexedDbAssetSwapRepository, registerAssetSwapRestore } from "@arkade-os/swap";
-
-const repository = new IndexedDbAssetSwapRepository();
-const unregisterSwapRestore = registerAssetSwapRestore(wallet, {
-    repository,
-    onResult: ({ changes, coverageError }) => {
-        if (coverageError) console.warn("Swap coverage was incomplete", coverageError);
-        console.info(`Restored or updated ${changes.length} swaps`);
-    },
-});
-
 await wallet.restore();
+const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepository() });
+await client.ready;
 ```
 
-Core address, contract, history, and balance recovery finishes before the swap scan. Registering
-again replaces the prior hook, so setup is idempotent; call `unregisterSwapRestore()` when the
-integration no longer owns the wallet. A proxy or custom `IWallet` must also pass `indexer` and
-`operatorPubkey` when it does not expose them. Keep calling `restoreAssetSwapRepository` directly
-during ordinary startup: hooks run only for an explicit `wallet.restore()`.
-
-The client's own records need none of this: `client.ready` rebuilds a record for every offer
-deposit the store has no record for. Such a record carries `market: { kind: "restored" }`.
+`client.ready` rebuilds a record for every offer deposit in that history, with
+`market: { kind: "restored" }`. A client created before `restore()` finishes rebuilds only what
+history held at that moment, until its next construction.
 
 ## Runtime requirements
 

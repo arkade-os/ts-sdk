@@ -4,8 +4,9 @@
  *
  * - **Corridor swaps** (`rfqSwaps`): served to the manager beside the v2 records, and their state
  *   written back to `rfqSwaps`. Driven, never listed — they surface in no `Outcome` stream.
- * - **Offers** (`swaps`): a live offer's deposit is taken back off the scan cursor (v1's restore
- *   marks it answered), so the drive's deposit restore adopts it as a v2 record.
+ * - **Offers** (`swaps`): every funded offer's deposit is taken back off the scan cursor until a
+ *   v2 record adopts it, so the drive's deposit restore rebuilds it — settled ones included, so
+ *   history survives the upgrade.
  *
  * Temporary. To remove: delete this file and the `LEGACY(v1)` sites in `drive.ts`.
  */
@@ -104,21 +105,20 @@ const readLegacyAssetSwaps = async (repository: AssetSwapRepository): Promise<As
     }
 };
 
-/** Funding txids of live or swept v1 offers no v2 record has adopted yet. */
-export const legacyOfferDepositsToReopen = async (
+/**
+ * Funding txids of funded v1 offers no v2 record has adopted yet, whatever their status: v1's
+ * restore marked every deposit it read scanned, so without this a settled v1 offer would never
+ * get a v2 record.
+ */
+export const legacyOfferDepositsToAdopt = async (
     repository: AssetSwapRepository,
 ): Promise<Set<string>> => {
     // Typed required, but onchain-HTLC rows carry no `offerHex` and an unfunded one no txid.
-    const live = (await readLegacyAssetSwaps(repository)).filter(
-        (swap) =>
-            !!swap.offerHex &&
-            !!swap.fundingTxid &&
-            (swap.status === "pending" ||
-                swap.status === "cancelling" ||
-                swap.status === "recoverable"),
+    const unadopted = (await readLegacyAssetSwaps(repository)).filter(
+        (swap) => !!swap.offerHex && !!swap.fundingTxid,
     );
-    if (live.length === 0) return new Set();
+    if (unadopted.length === 0) return new Set();
     const { offer } = splitRecords(await collectSwapRecords(repository));
     const adopted = new Set(offer.map((record) => record.fundingTxid));
-    return new Set(live.map((swap) => swap.fundingTxid).filter((txid) => !adopted.has(txid)));
+    return new Set(unadopted.map((swap) => swap.fundingTxid).filter((txid) => !adopted.has(txid)));
 };

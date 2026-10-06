@@ -27,7 +27,7 @@ import {
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
 import { claimOnchainFill } from "../onchainHtlc";
-import { retireSettledOfferContracts } from "../coverage";
+import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { restoreOfferCoverage } from "../offer";
 import { lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
@@ -43,8 +43,7 @@ import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../r
 import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
-import { restoreAssetSwaps } from "../restore";
-import { toRestoreTx } from "../registerRestore";
+import { restoreAssetSwaps, toRestoreTx } from "../restore";
 import { preimageForSwapRecord } from "../store";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import {
@@ -73,7 +72,7 @@ import {
 } from "./driveRecords";
 import {
     legacyLiveRfqSwaps,
-    legacyOfferDepositsToReopen,
+    legacyOfferDepositsToAdopt,
     withLegacyRfqSwaps,
 } from "./legacyRecords";
 import {
@@ -663,7 +662,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
      * that landed while no client ran included. A live offer's txid stays off the scan cursor.
      *
      * `reopen` re-answers scanned txids: a `recoverable` deposit is marked scanned, and a recovery
-     * (this pass's `recoverVtxos()`, or another device's) would otherwise never be read.
+     * (this pass's `recoverVtxos()`, or another device's) would otherwise never be read. v1
+     * offers no record has adopted are re-answered too, settled ones included
+     * (`legacyOfferDepositsToAdopt`).
      */
     const restoreOfferDeposits = async (
         reopen: Iterable<string> = [],
@@ -679,7 +680,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
         const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
         // LEGACY(v1): drop `reopened` once the read-through goes.
-        const reopened = await legacyOfferDepositsToReopen(store);
+        const reopened = await legacyOfferDepositsToAdopt(store);
         for (const txid of reopen) reopened.add(txid);
         const cursor =
             reopened.size === 0
@@ -805,6 +806,23 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
+    const registerRestoredOffers = async (offers: OfferSwapRecord[]): Promise<void> => {
+        if (mode === "readonly") return;
+        // Not `OFFER_LIVE`: a swept (`recoverable`) deposit is still the trader's money and must
+        // stay watched, which is why `RETIRABLE` excludes it.
+        const live = offers.filter(
+            (record) => record.fundingTxid !== undefined && !RETIRABLE.includes(record.status),
+        );
+        if (live.length === 0) return;
+        try {
+            // Idempotent: an existing row is kept, and its watch state is promoted to `watched`.
+            await restoreOfferCoverage(wallet, live.map(offerFactsOf));
+        } catch (error) {
+            // Best-effort: the record still restores, and `recover()` registers before a round.
+            console.warn("[swap] could not register restored offer covenants", error);
+        }
+    };
+
     const restore = async (): Promise<void> => {
         if (!repository) return;
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
@@ -862,6 +880,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             // History/indexer outage, not the repository: never fails `ready`.
             console.warn("[swap] the offer deposit restore did not complete", error);
         }
+        await registerRestoredOffers(offers);
 
         // Before arming, so a refusal the first pass clears is still visible once.
         emitAll();
@@ -976,7 +995,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
         const vtxoManager = await recoverer();
         // `recoverVtxos` settles only what the contract manager holds, and a record rebuilt from
-        // history or adopted from v1 never registered its covenant. A fresh row hydrates in full.
+        // history or adopted from v1 may not have registered its covenant (registration on
+        // restore is best-effort). A fresh row hydrates in full.
         await restoreOfferCoverage(wallet, [offerFactsOf(record)]);
         const txid = await track(vtxoManager.recoverVtxos());
         recoveredIn.add(txid);
