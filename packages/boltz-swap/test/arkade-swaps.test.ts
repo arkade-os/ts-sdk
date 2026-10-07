@@ -6742,11 +6742,7 @@ describe("ArkadeSwaps", () => {
                 refundKey: btcEphemeralPub,
                 version: 0xc1,
             });
-            // scure >= 2.4 rejects the leaf version while hashing the tree,
-            // before the HTLC leaf check runs.
-            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(
-                /invalid BTC HTLC|invalid leafVersion/,
-            );
+            expect(() => verify("ARK", makeBtcChainSwap("ARK", tree))).toThrow(/invalid BTC HTLC/);
         });
 
         it("rejects a CLTV that does not equal timeoutBlockHeight", () => {

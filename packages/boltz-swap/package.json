@@ -93,10 +93,10 @@
     "license": "MIT",
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
-        "@noble/curves": "2.4.0",
-        "@noble/hashes": "2.4.0",
-        "@scure/base": "2.4.0",
-        "@scure/btc-signer": "2.4.1",
+        "@noble/curves": "2.0.1",
+        "@noble/hashes": "2.0.1",
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4",
         "light-bolt11-decoder": "3.2.0"
     },
