@@ -99,10 +99,11 @@ export interface AuctionMarketRef {
     readonly backend: "rfq";
 }
 
-/** A record rebuilt from the funding tx after a restore: no card stands behind it. */
+/** A record rebuilt after a restore (from the funding tx, or a v1 corridor row): no card stands
+ * behind it. */
 export interface RestoredMarketRef {
     readonly kind: "restored";
-    readonly backend: "feed";
+    readonly backend: "feed" | "rfq";
 }
 
 /**

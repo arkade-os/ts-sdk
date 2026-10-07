@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import {
     fateMoved,
+    restoredCorridorRecord,
     restoredOfferRecord,
     rfqRecordOf,
     withDepositFate,
@@ -182,6 +183,51 @@ describe("a record rebuilt from the chain", () => {
         const record = restoredOfferRecord(found(), "regtest", 0);
         expect("spentTxid" in record).toBe(false);
         expect("completedAt" in record).toBe(false);
+    });
+});
+
+describe("a corridor record restored from a v1 row", () => {
+    const v1 = (kind: CorridorSwapRecord["kind"]): RfqSwapRecord => ({
+        ...rfqRecordOf(corridorRecord({ kind })),
+        amount: 5_000,
+    });
+
+    it.each([
+        ["lightning_send", "arkade", "arkade", "lightning", "bolt11"],
+        ["lightning_receive", "lightning", "bolt11", "arkade", "arkade"],
+        ["onchain_send", "arkade", "arkade", "onchain", "bitcoin"],
+    ] as const)("routes %s from %s to %s", (kind, give, giveRail, take, takeRail) => {
+        const record = restoredCorridorRecord(v1(kind), "regtest", 0);
+        expect(record.route).toEqual({
+            give: {
+                corridor: give,
+                asset: `${giveRail}:regtest/slip44:1`,
+                instrument: { kind: "wallet" },
+            },
+            take: {
+                corridor: take,
+                asset: `${takeRail}:regtest/slip44:1`,
+                instrument: { kind: "wallet" },
+            },
+        });
+        expect(record.fee).toEqual({ asset: record.give.asset, amount: "0" });
+        expect(record.take.amount).toBe("5000");
+    });
+
+    it("spells mainnet BTC as coin type 0", () => {
+        const record = restoredCorridorRecord(v1("lightning_send"), "bitcoin", 0);
+        expect(record.give.asset).toBe("arkade:bitcoin/slip44:0");
+        expect(record.take.asset).toBe("bolt11:bitcoin/slip44:0");
+    });
+
+    it("throws on a lockup address that does not decode", () => {
+        expect(() =>
+            restoredCorridorRecord(
+                { ...v1("lightning_send"), lockupAddress: "nope" },
+                "regtest",
+                0,
+            ),
+        ).toThrow();
     });
 });
 

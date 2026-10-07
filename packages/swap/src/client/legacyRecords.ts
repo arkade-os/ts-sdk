@@ -1,9 +1,10 @@
 /**
  * Read-through over the stores a 0.0.x client wrote, so swaps in flight across the upgrade to 0.1
- * keep being driven. Nothing is migrated: v1 rows stay where they are.
+ * keep being driven and listed. v1 rows stay where they are.
  *
- * - **Corridor swaps** (`rfqSwaps`): served to the manager beside the v2 records, and their state
- *   written back to `rfqSwaps`. Driven, never listed — they surface in no `Outcome` stream.
+ * - **Corridor swaps** (`rfqSwaps`): adopted once as restored v2 records
+ *   (`legacyRfqSwapsToAdopt`). Until then, or for a row adoption skipped, served to the manager
+ *   beside the v2 records, and their state written back to `rfqSwaps`.
  * - **Offers** (`swaps`): every funded offer's deposit is taken back off the scan cursor until a
  *   v2 record adopts it, so the drive's deposit restore rebuilds it — settled ones included, so
  *   history survives the upgrade.
@@ -93,6 +94,28 @@ export const withLegacyRfqSwaps = (
 
         removeRfqSwap: (rfqId) => bridge.removeRfqSwap(rfqId),
     };
+};
+
+/**
+ * v1 corridor rows, live or terminal, that no v2 record holds yet. A row whose `rfqId` is already
+ * another v2 record's id is skipped: adoption keys on `rfqId` and must not overwrite that swap.
+ */
+export const legacyRfqSwapsToAdopt = async (
+    repository: AssetSwapRepository,
+): Promise<RfqSwapRecord[]> => {
+    const v1 = await readLegacyRfqSwaps(repository);
+    if (v1.length === 0) return [];
+    const records = await collectSwapRecords(repository);
+    const held = new Set(splitRecords(records).corridor.map((record) => record.rfqId));
+    const ids = new Set(records.map((record) => record.id));
+    return v1.filter((record) => {
+        if (held.has(record.rfqId)) return false;
+        if (ids.has(record.rfqId)) {
+            console.warn(`[swap] v1 rfq swap ${record.rfqId} collides with a v2 record id`);
+            return false;
+        }
+        return true;
+    });
 };
 
 /** v1 offers, or none: an unreadable v1 store must not stop the v2 deposit restore. */

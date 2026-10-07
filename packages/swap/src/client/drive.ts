@@ -29,7 +29,7 @@ import { pushClaim } from "../claim";
 import { claimOnchainFill } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { restoreOfferCoverage } from "../offer";
-import { lockupContractParams } from "../lockupContract";
+import { LockupContractMissing, lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
 import {
     LockupNeedsRecoveryError,
@@ -64,6 +64,7 @@ import {
     fateMoved,
     offerFactsOf,
     offerRecordSource,
+    restoredCorridorRecord,
     restoredOfferRecord,
     rfqRecordOf,
     splitRecords,
@@ -73,6 +74,7 @@ import {
 import {
     legacyLiveRfqSwaps,
     legacyOfferDepositsToAdopt,
+    legacyRfqSwapsToAdopt,
     withLegacyRfqSwaps,
 } from "./legacyRecords";
 import {
@@ -823,8 +825,47 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
+    /**
+     * LEGACY(v1): writes a restored v2 record for every v1 corridor row none holds, so the restore
+     * below lists and drives it like any other. A live row with no contract row is left to the
+     * read-through and retried next start. Never throws.
+     */
+    const adoptLegacyRfqSwaps = async (store: AssetSwapRepository): Promise<void> => {
+        try {
+            const toAdopt = await legacyRfqSwapsToAdopt(store);
+            if (toAdopt.length === 0) return;
+            const network = await config.network();
+            let contracts: SwapContractRegistry | undefined;
+            try {
+                contracts = await contractsOf();
+            } catch (error) {
+                console.warn("[swap] v1 rfq swap adoption has no contract manager", error);
+            }
+            for (const v1 of toAdopt) {
+                try {
+                    const params = contracts
+                        ? await lockupContractParams(contracts, v1.lockupAddress).catch(
+                              (error: unknown) => {
+                                  if (error instanceof LockupContractMissing) return undefined;
+                                  throw error;
+                              },
+                          )
+                        : undefined;
+                    if (params === undefined && !isRfqSwapTerminal(v1.state)) continue;
+                    const refundLocktime = params ? Number(params.refundLocktime) : 0;
+                    await store.saveSwapRecord(restoredCorridorRecord(v1, network, refundLocktime));
+                } catch (error) {
+                    console.warn(`[swap] could not adopt v1 rfq swap ${v1.rfqId}`, error);
+                }
+            }
+        } catch (error) {
+            console.warn("[swap] v1 rfq swap adoption did not complete", error);
+        }
+    };
+
     const restore = async (): Promise<void> => {
         if (!repository) return;
+        await adoptLegacyRfqSwaps(repository);
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));

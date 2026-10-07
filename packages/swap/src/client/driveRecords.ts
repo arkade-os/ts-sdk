@@ -22,12 +22,13 @@ import {
     type RfqSwapPageCursor,
     type RfqSwapPageFilter,
 } from "../repository";
-import type { RfqSwapRecord } from "../rfqRecord";
+import { normalizeRfqSwapRecord, type RfqSwapRecord } from "../rfqRecord";
 import type { RfqSwapRecordStore } from "../swapManager";
 import type { LockupSpendIndexer } from "../refund";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "../store";
 import type { OfferSpendChanges, OfferSwapFacts, OfferSwapSource } from "../watch";
 import {
+    ArkAddress,
     asset,
     assertPageRequest,
     pageResult,
@@ -35,8 +36,11 @@ import {
     type PageRequest,
     type PageResult,
 } from "@arkade-os/sdk";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hex } from "@scure/base";
 import { toAtomicDecimal } from "./amount";
 import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
+import { railOfCorridor, type Corridor } from "./corridor";
 import type { QuoteId } from "./quote";
 import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "./record";
 
@@ -367,6 +371,64 @@ const restoredAssetId = (network: NetworkRef, id: string): AssetId<"arkade"> =>
     id === BTC_ASSET_ID
         ? btcOn("arkade", network)
         : arkadeAsset(network, asset.AssetId.fromString(id));
+
+/** The corridors each v1 kind gave and took on (`KIND_OF` in `accept.ts`, inverted). */
+const RESTORED_CORRIDORS = {
+    lightning_send: ["arkade", "lightning"],
+    lightning_receive: ["lightning", "arkade"],
+    onchain_send: ["arkade", "onchain"],
+} as const satisfies Record<CorridorSwapRecord["kind"], readonly [Corridor, Corridor]>;
+
+/**
+ * A corridor record for a v1 `rfqSwaps` row. v1 kept one display `amount` and no quote, invoice or
+ * solver key, so both legs carry that amount, the fee is zero, Lightning legs stand in as
+ * `wallet`, and `market.kind` is `"restored"`. Throws when the row has no payment hash or its
+ * lockup address does not decode.
+ */
+export const restoredCorridorRecord = (
+    stored: RfqSwapRecord,
+    network: NetworkRef,
+    refundLocktime: number,
+): CorridorSwapRecord => {
+    const v1 = normalizeRfqSwapRecord(stored);
+    const hashlock = v1.profile.hashlock as { paymentHash?: unknown } | undefined;
+    const hash =
+        typeof hashlock?.paymentHash === "string"
+            ? hashlock.paymentHash
+            : v1.settlementPreimageHex === undefined
+              ? undefined
+              : hex.encode(sha256(hex.decode(v1.settlementPreimageHex)));
+    if (hash === undefined) throw new Error(`v1 rfq swap ${v1.rfqId} has no payment hash`);
+    const [giveCorridor, takeCorridor] = RESTORED_CORRIDORS[v1.kind];
+    const give = btcOn(railOfCorridor(giveCorridor), network);
+    const take = btcOn(railOfCorridor(takeCorridor), network);
+    const amount = toAtomicDecimal(BigInt(v1.amount ?? 0));
+    return {
+        id: v1.rfqId,
+        family: "rfq",
+        route: {
+            give: { corridor: giveCorridor, asset: give, instrument: { kind: "wallet" } },
+            take: { corridor: takeCorridor, asset: take, instrument: { kind: "wallet" } },
+        },
+        give: { asset: give, amount },
+        take: { asset: take, amount },
+        fee: { asset: give, amount: toAtomicDecimal(0n) },
+        market: { kind: "restored", backend: "rfq" },
+        expiresAt: v1.createdAt,
+        state: v1.state,
+        kind: v1.kind,
+        rfqId: v1.rfqId,
+        lockupAddress: v1.lockupAddress,
+        lockupPkScript: hex.encode(ArkAddress.decode(v1.lockupAddress).pkScript),
+        lock: { hash },
+        refundLocktime,
+        profile: v1.profile,
+        ...(v1.fundingTxid === undefined ? {} : { fundingTxid: v1.fundingTxid }),
+        ...mutableHalfOf(v1),
+        createdAt: v1.createdAt,
+        updatedAt: v1.updatedAt,
+    };
+};
 
 /**
  * The wallet's own reader, as the manager's required observation seam. The reader reads NAMED
