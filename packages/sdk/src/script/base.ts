@@ -1,7 +1,9 @@
-import { Address, p2tr, TAPROOT_UNSPENDABLE_KEY, NETWORK } from "@scure/btc-signer";
+import { Address, p2tr, taprootNumsKey, NETWORK } from "@scure/btc-signer";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
+import { VarBytes } from "@scure/btc-signer/script.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
+import * as P from "micro-packed";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
 import { timelockToSequence } from "../utils/timelock";
@@ -22,7 +24,10 @@ export type TapLeafScript = [
     Bytes,
 ];
 
-export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = PSBTOutput.tapTree[2];
+export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = P.array(
+    null,
+    P.struct({ depth: P.U8, version: P.U8, script: VarBytes }),
+);
 
 export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
@@ -73,7 +78,7 @@ export class VtxoScript {
     constructor(readonly scripts: Bytes[]) {
         const tapTree = assembleBtcdTaprootTree(scripts);
 
-        const payment = p2tr(TAPROOT_UNSPENDABLE_KEY, tapTree, undefined, true);
+        const payment = p2tr(taprootNumsKey(), tapTree, undefined, true);
 
         if (!payment.tapLeafScript || payment.tapLeafScript.length !== scripts.length) {
             throw new Error("invalid scripts");
@@ -95,7 +100,7 @@ export class VtxoScript {
             this.scripts.map((script) => ({
                 depth: 1,
                 version: TAP_LEAF_VERSION,
-                script,
+                script: script as Uint8Array<ArrayBuffer>,
             })),
         );
         return tapTree;
@@ -168,6 +173,36 @@ export class VtxoScript {
         }
         return paths;
     }
+}
+
+/**
+ * Convert a `VtxoScript.encode()`-produced TapTree into a BIP-371
+ * (`PSBT_OUT_TAP_TREE`) compliant leaf list: entries in left-to-right DFS
+ * order, each carrying its *actual* depth in the btcd-assembled tree.
+ *
+ * `VtxoScript.encode()` stores leaves in the caller's original order with a
+ * placeholder `depth: 1` — a format `VtxoScript.decode()` can losslessly
+ * invert by re-running `assembleBtcdTaprootTree` over that same order, but
+ * NOT a valid BIP-371 field: for non-power-of-2 leaf counts (e.g. 3, 6) the
+ * tree is neither flat nor built in that original order (the algorithm's
+ * FIFO merge phase can reorder leaves for counts like 6), so per-index
+ * depths cannot be guessed from leaf position. This rebuilds the exact same
+ * `VtxoScript` (deterministic from the same script list) to read genuine
+ * depths off its `leaves` (populated by `p2tr()` from the real tree), in
+ * the tree's true DFS order.
+ *
+ * @param tapTree - Encoded TapTree bytes from `VtxoScript.encode()`
+ * @returns BIP-371-compliant TapTree leaves, ready for a PSBT output's
+ *          `tapTree` field
+ */
+export function toBIP371TapTree(tapTree: Bytes): ReturnType<typeof TapTreeCoder.decode> {
+    const scripts = TapTreeCoder.decode(tapTree).map((leaf) => leaf.script);
+    const vtxoScript = new VtxoScript(scripts);
+    return vtxoScript.leaves.map((leaf) => ({
+        depth: leaf[0].merklePath.length,
+        version: TAP_LEAF_VERSION,
+        script: scriptFromTapLeafScript(leaf) as Uint8Array<ArrayBuffer>,
+    }));
 }
 
 export type EncodedVtxoScript = { tapTree: Bytes };

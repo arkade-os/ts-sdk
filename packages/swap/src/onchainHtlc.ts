@@ -203,7 +203,7 @@ export function onchainHtlcScript(params: OnchainHtlcParams, network: OnchainNet
         "CHECKSIG",
     ]);
     const payment = btc.p2tr(
-        btc.TAPROOT_UNSPENDABLE_KEY,
+        btc.taprootNumsKey(),
         btc.taprootListToTree([{ script: claim }, { script: refund }]),
         L1_NETWORKS[network],
         true,

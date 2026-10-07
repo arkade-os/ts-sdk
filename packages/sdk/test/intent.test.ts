@@ -11,15 +11,8 @@ import {
     type IntentCoin,
 } from "../src";
 
-const PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE = 0x09;
-
 function globalSignedMessage(tx: unknown): Uint8Array | undefined {
-    const unknown =
-        (tx as { global?: { unknown?: [{ type: number; key: Uint8Array }, Uint8Array][] } }).global
-            ?.unknown ?? [];
-    return unknown.find(
-        ([k]) => k.type === PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE && k.key.length === 0,
-    )?.[1];
+    return (tx as { global?: { genericSignedMessage?: Uint8Array } }).global?.genericSignedMessage;
 }
 
 describe("Intent", () => {

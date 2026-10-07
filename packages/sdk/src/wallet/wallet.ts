@@ -83,7 +83,7 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
-import { TapTreeCoder, VtxoScript } from "../script/base";
+import { toBIP371TapTree, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry";
@@ -4825,7 +4825,7 @@ export class Wallet
             script: recipient.script,
             amount: BigInt(recipient.amount),
             // Already checked against the recipient address in `validateRecipients`.
-            ...(recipient.tapTree ? { tapTree: TapTreeCoder.decode(recipient.tapTree) } : {}),
+            ...(recipient.tapTree ? { tapTree: toBIP371TapTree(recipient.tapTree) } : {}),
         }));
 
         const totalBtcOutput = outputs.reduce((sum, o) => sum + Number(o.amount), 0);

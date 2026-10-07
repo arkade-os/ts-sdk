@@ -3,6 +3,7 @@ import { DEFAULT_SEQUENCE } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../src/utils/transaction";
 import { TxTree } from "../src/tree/txTree";
+import { CosignerPublicKey, getArkPsbtFields } from "../src/utils/unknownFields";
 
 const P2TR = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
 
@@ -86,5 +87,24 @@ describe("TxTree finality", () => {
         expect(() => TxTree.create([encode(node({ sequence: 1000 }))]).validate()).toThrow(
             /unexpected sequence: 1000/,
         );
+    });
+
+    // TxTree.create decodes with @scure/btc-signer's raw PSBT option defaults
+    // ('unknown: strip') unless the decode path explicitly opts in to keeping
+    // them. Arkade's cosigner pubkeys ride in a custom unknown field (key type
+    // 222), so a decode that silently strips unknown fields would make every
+    // cosigner lookup downstream (e.g. nonce aggregation) come up empty.
+    it("keeps custom Arkade unknown fields (e.g. cosigner pubkeys) across a PSBT round trip", () => {
+        const tx = node();
+        const cosignerKey = new Uint8Array(33).fill(0x02);
+        tx.updateInput(0, { unknown: [CosignerPublicKey.encode({ index: 0, key: cosignerKey })] });
+
+        const decoded = TxTree.create([
+            { txid: tx.id, tx: base64.encode(tx.toPSBT()), children: {} },
+        ]);
+
+        const cosigners = getArkPsbtFields(decoded.root, 0, CosignerPublicKey);
+        expect(cosigners).toHaveLength(1);
+        expect(hex.encode(cosigners[0]!.key)).toBe(hex.encode(cosignerKey));
     });
 });

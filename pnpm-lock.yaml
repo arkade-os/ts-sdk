@@ -52,40 +52,6 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@24.3.1)(lightningcss@1.32.0)(terser@5.48.0)(yaml@2.9.0)
 
-  packages/swap:
-    dependencies:
-      '@arkade-os/sdk':
-        specifier: workspace:*
-        version: link:../sdk
-      '@arkade-os/solver-discovery':
-        specifier: 0.2.7
-        version: 0.2.7
-      '@noble/ciphers':
-        specifier: 2.1.1
-        version: 2.1.1
-      '@noble/curves':
-        specifier: 2.0.1
-        version: 2.0.1
-      '@noble/hashes':
-        specifier: 2.0.1
-        version: 2.0.1
-      '@scure/base':
-        specifier: 2.0.0
-        version: 2.0.0
-      '@scure/btc-signer':
-        specifier: 2.0.1
-        version: 2.0.1
-      light-bolt11-decoder:
-        specifier: 3.2.0
-        version: 3.2.0
-    devDependencies:
-      fake-indexeddb:
-        specifier: 6.2.5
-        version: 6.2.5
-      nostr-tools:
-        specifier: ^2.12.0
-        version: 2.24.1(typescript@5.9.2)
-
   packages/sdk:
     dependencies:
       '@bitcoinerlab/descriptors-scure':
@@ -95,8 +61,8 @@ importers:
         specifier: 8.0.0
         version: 8.0.0
       '@noble/curves':
-        specifier: 2.0.1
-        version: 2.0.1
+        specifier: 2.4.0
+        version: 2.4.0
       '@noble/secp256k1':
         specifier: 3.0.0
         version: 3.0.0
@@ -104,14 +70,14 @@ importers:
         specifier: '>=1.0.0'
         version: 3.0.1(react-native@0.84.1(@babel/core@7.29.7)(react@19.2.4))(react@19.2.4)
       '@scure/base':
-        specifier: 2.0.0
-        version: 2.0.0
+        specifier: 2.4.0
+        version: 2.4.0
       '@scure/bip39':
-        specifier: 2.0.1
-        version: 2.0.1
+        specifier: 2.4.0
+        version: 2.4.0
       '@scure/btc-signer':
-        specifier: 2.0.1
-        version: 2.0.1
+        specifier: 2.4.1
+        version: 2.4.1
       bip68:
         specifier: 1.0.4
         version: 1.0.4
@@ -128,8 +94,8 @@ importers:
         specifier: ~14.0.9 || >=55.0.0
         version: 14.0.9(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.7)(react@19.2.4))
       micro-packed:
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.1
+        version: 0.11.1
       ws-electrumx-client:
         specifier: 1.0.5
         version: 1.0.5
@@ -152,6 +118,40 @@ importers:
       typescript:
         specifier: 5.9.2
         version: 5.9.2
+
+  packages/swap:
+    dependencies:
+      '@arkade-os/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@arkade-os/solver-discovery':
+        specifier: 0.2.7
+        version: 0.2.7
+      '@noble/ciphers':
+        specifier: 2.1.1
+        version: 2.1.1
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/btc-signer':
+        specifier: 2.4.1
+        version: 2.4.1
+      light-bolt11-decoder:
+        specifier: 3.2.0
+        version: 3.2.0
+    devDependencies:
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
+      nostr-tools:
+        specifier: ^2.12.0
+        version: 2.24.1(typescript@5.9.2)
 
 packages:
 
@@ -1255,8 +1255,16 @@ packages:
     resolution: {integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==}
     engines: {node: '>= 20.19.0'}
 
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
   '@noble/hashes@2.0.1':
     resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
   '@noble/secp256k1@3.0.0':
@@ -1490,14 +1498,20 @@ packages:
   '@scure/base@2.0.0':
     resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
 
+  '@scure/base@2.4.0':
+    resolution: {integrity: sha512-thZ1TuJwFwBblOhgsjDKvvGirBxNp+wSvY/DR6tJBJOTDhdAAcHJ8Vbr2eFnqaxeca4+t0i9KBf+uHYGWwZORg==}
+
   '@scure/bip32@2.0.1':
     resolution: {integrity: sha512-4Md1NI5BzoVP+bhyJaY3K6yMesEFzNS1sE/cP+9nuvE7p/b0kx9XbpDHHFl8dHtufcbdHRUUQdRqLIPHN/s7yA==}
 
   '@scure/bip39@2.0.1':
     resolution: {integrity: sha512-PsxdFj/d2AcJcZDX1FXN3dDgitDDTmwf78rKZq1a6c1P1Nan1X/Sxc7667zU3U+AN60g7SxxP0YCVw2H/hBycg==}
 
-  '@scure/btc-signer@2.0.1':
-    resolution: {integrity: sha512-vk5a/16BbSFZkhh1JIJ0+4H9nceZVo5WzKvJGGWiPp3sQOExeW+L53z3dI6u0adTPoE8ZbL+XEb6hEGzVZSvvQ==}
+  '@scure/bip39@2.4.0':
+    resolution: {integrity: sha512-82dxFbZUYboyOf0AXiydsQrFQ5Q4h9mX+O2UkE91ROYmsc0BKMGZLwDmy96Jpa2+vrtoxomjUhy1RPIgH/r2nA==}
+
+  '@scure/btc-signer@2.4.1':
+    resolution: {integrity: sha512-ch6h66o9nPhEoe/KciMMUJeH2MBPB8UAJI1if35Fxl6885lKTsc9YoCRqTW0/RjI0Vv9GSg1tmKtHHODyAw81g==}
 
   '@shikijs/engine-oniguruma@3.23.0':
     resolution: {integrity: sha512-1nWINwKXxKKLqPibT5f4pAFLej9oZzQTsby8942OTlsJzOBZ0MWKiwzMsd+jhzu8YPCHAswGnnN1YtQfirL35g==}
@@ -2841,8 +2855,8 @@ packages:
     engines: {node: '>=20.19.4'}
     hasBin: true
 
-  micro-packed@0.8.0:
-    resolution: {integrity: sha512-AKb8znIvg9sooythbXzyFeChEY0SkW0C6iXECpy/ls0e5BtwXO45J9wD9SLzBztnS4XmF/5kwZknsq+jyynd/A==}
+  micro-packed@0.11.1:
+    resolution: {integrity: sha512-agQGBnBCw8OoKQZMUxcaQPaOowdfxyEmBsq4CNAXAXCyB8KxlRG0lTl5GADJIsMEDaFb0trhXBHKYsjTWa5kuw==}
     engines: {node: '>= 20.19.0'}
 
   micromatch@4.0.8:
@@ -4549,27 +4563,27 @@ snapshots:
   '@biomejs/cli-win32-x64@2.5.9':
     optional: true
 
-  '@bitcoinerlab/descriptors-core@3.1.7(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)':
+  '@bitcoinerlab/descriptors-core@3.1.7(@noble/curves@2.4.0)(@noble/hashes@2.0.1)(@scure/base@2.4.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.4.1)':
     dependencies:
       '@bitcoinerlab/miniscript': 2.0.0
       lodash.memoize: 4.1.2
       uint8array-tools: 0.0.9
       varuint-bitcoin: 2.0.0
     optionalDependencies:
-      '@noble/curves': 2.0.1
+      '@noble/curves': 2.4.0
       '@noble/hashes': 2.0.1
-      '@scure/base': 2.0.0
+      '@scure/base': 2.4.0
       '@scure/bip32': 2.0.1
-      '@scure/btc-signer': 2.0.1
+      '@scure/btc-signer': 2.4.1
 
   '@bitcoinerlab/descriptors-scure@3.1.7':
     dependencies:
-      '@bitcoinerlab/descriptors-core': 3.1.7(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)
-      '@noble/curves': 2.0.1
+      '@bitcoinerlab/descriptors-core': 3.1.7(@noble/curves@2.4.0)(@noble/hashes@2.0.1)(@scure/base@2.4.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.4.1)
+      '@noble/curves': 2.4.0
       '@noble/hashes': 2.0.1
-      '@scure/base': 2.0.0
+      '@scure/base': 2.4.0
       '@scure/bip32': 2.0.1
-      '@scure/btc-signer': 2.0.1
+      '@scure/btc-signer': 2.4.1
     transitivePeerDependencies:
       - bip32
       - bitcoinjs-lib
@@ -5174,7 +5188,13 @@ snapshots:
     dependencies:
       '@noble/hashes': 2.0.1
 
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
   '@noble/hashes@2.0.1': {}
+
+  '@noble/hashes@2.4.0': {}
 
   '@noble/secp256k1@3.0.0': {}
 
@@ -5430,6 +5450,8 @@ snapshots:
 
   '@scure/base@2.0.0': {}
 
+  '@scure/base@2.4.0': {}
+
   '@scure/bip32@2.0.1':
     dependencies:
       '@noble/curves': 2.0.1
@@ -5441,12 +5463,16 @@ snapshots:
       '@noble/hashes': 2.0.1
       '@scure/base': 2.0.0
 
-  '@scure/btc-signer@2.0.1':
+  '@scure/bip39@2.4.0':
     dependencies:
-      '@noble/curves': 2.0.1
-      '@noble/hashes': 2.0.1
-      '@scure/base': 2.0.0
-      micro-packed: 0.8.0
+      '@noble/hashes': 2.4.0
+
+  '@scure/btc-signer@2.4.1':
+    dependencies:
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
+      '@scure/base': 2.4.0
+      micro-packed: 0.11.1
 
   '@shikijs/engine-oniguruma@3.23.0':
     dependencies:
@@ -7097,9 +7123,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  micro-packed@0.8.0:
+  micro-packed@0.11.1:
     dependencies:
-      '@scure/base': 2.0.0
+      '@scure/base': 2.4.0
 
   micromatch@4.0.8:
     dependencies:

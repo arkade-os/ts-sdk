@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Script } from "@scure/btc-signer";
+import { Script, type ScriptType } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Packet } from "./asset";
 import { BufferReader } from "./utils";
@@ -83,7 +83,7 @@ export class Extension {
             throw new Error("missing OP_RETURN");
         }
 
-        let decoded: ReturnType<typeof Script.decode>;
+        let decoded: ScriptType;
         try {
             decoded = Script.decode(script);
         } catch {
