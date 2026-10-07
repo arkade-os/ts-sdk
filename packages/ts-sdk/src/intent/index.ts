@@ -1,5 +1,6 @@
 import { OP, Script, SigHash } from "@scure/btc-signer";
-import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { PSBTGlobal, TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import type { PSBTKeyMapKeys } from "@scure/btc-signer/psbt.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
@@ -8,6 +9,17 @@ import { hex } from "@scure/base";
 import { getSequence, VtxoScript } from "../script/base";
 import { ExtendedCoin } from "../wallet";
 import type { WithPrevTx } from "../utils/prevoutTx";
+
+/**
+ * Decoded shape of `Transaction.global`, derived from scure's own
+ * `PSBTGlobal` key-map the same way it derives its public
+ * `TransactionInput`/`TransactionOutput` types. `Transaction.global` itself
+ * is private with no public setter, so writing to it still requires an
+ * `as unknown` cast; this type at least ties the cast target to scure's
+ * actual field definitions instead of a hand-written guess, so a future
+ * rename/removal of a field (e.g. `genericSignedMessage`) breaks the build.
+ */
+type TransactionGlobal = PSBTKeyMapKeys<typeof PSBTGlobal>;
 
 /**
  * A coin an intent proof proves ownership of. `prevTx` carries the raw wire
@@ -320,11 +332,15 @@ function craftToSignTx(
     // Set BIP-322's PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE (0x09) to the UTF-8
     // message being signed. Lets a co-signer recognise a message-signing PSBT
     // and recompute the to_spend commitment from PSBT-internal data alone.
-    // @scure/btc-signer exposes no public setter for PSBT global fields, so
-    // write the global entry directly.
-    (
-        tx as unknown as { global: { genericSignedMessage?: Uint8Array } }
-    ).global.genericSignedMessage = new TextEncoder().encode(message);
+    // @scure/btc-signer exposes no public setter for PSBT global fields (and
+    // marks `Transaction.global` private), so write the global entry
+    // directly. `TransactionGlobal` is derived from scure's own `PSBTGlobal`
+    // key-map (the same way it derives its public `TransactionInput`/
+    // `TransactionOutput` types), so a future scure release that renames or
+    // drops `genericSignedMessage` fails this file at compile time instead
+    // of silently writing into/reading from a stale field name.
+    (tx as unknown as { global: TransactionGlobal }).global.genericSignedMessage =
+        new TextEncoder().encode(message);
 
     return tx;
 }
