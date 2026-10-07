@@ -40,10 +40,12 @@ union, the asset-id vocabulary, the amount law and the sixteen-member error taxo
 ### Swaps in flight across the upgrade
 
 The client drives v2 records (`swapRecords`). Swaps a `0.0.x` client started stay in its stores, and
-the client keeps driving them on the same repository, with no migration:
+the client adopts them on the same repository:
 
-- `rfqSwaps` rows are restored, claimed and refunded, and their state is written back to `rfqSwaps`.
-  They are driven, not listed: `client.swaps()` and `onUpdate` never report them.
+- `rfqSwaps` rows, live or settled, are adopted once as v2 records with
+  `market: { kind: "restored", backend: "rfq" }`. v1 kept one amount, so both legs carry it and the
+  fee is 0. Live ones keep being driven. A live row whose lockup has no contract row is driven in
+  place and retried on the next start. `0.0.x` already pruned settled rows older than 30 days.
 - Offers in `swaps`, live or settled, are re-scanned and adopted once as v2 records. Live ones stay
   cancellable, and settled ones keep the history.
 

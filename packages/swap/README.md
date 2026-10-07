@@ -202,7 +202,8 @@ await client.ready;
 
 `client.ready` rebuilds a record for every offer deposit in that history, with
 `market: { kind: "restored" }`. A client created before `restore()` finishes rebuilds only what
-history held at that moment, until its next construction.
+history held at that moment, until its next construction. Corridor swaps a `0.0.x` client stored
+are adopted the same way, with `backend: "rfq"`.
 
 ## Runtime requirements
 

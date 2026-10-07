@@ -25,7 +25,7 @@ import {
     setArkPsbtField,
 } from "@arkade-os/sdk";
 import { createSwapDrive, SwapDriveRefusedError, type SwapDrive } from "../../src/client/drive";
-import type { SwapUpdate } from "../../src/client/outcome";
+import { corridorOutcome, type SwapUpdate } from "../../src/client/outcome";
 import {
     quoteIdOfSwapId,
     type CorridorSwapRecord,
@@ -311,7 +311,7 @@ describe("the v1 read-through", () => {
     const legacySend = (over: Partial<CorridorSwapRecord> = {}): RfqSwapRecord =>
         rfqRecordOf(signable({ fundingTxid: "aa".repeat(32), ...over }));
 
-    it("refunds a v1 swap and writes its state back to the v1 store", async () => {
+    it("adopts a live v1 swap and writes its state onto the v2 record", async () => {
         const legacy = legacySend();
         const h = await build({
             legacy: [legacy],
@@ -320,10 +320,33 @@ describe("the v1 read-through", () => {
             funded: [],
         });
 
+        expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
+        expect(await h.repository.getSwapRecord(legacy.rfqId)).toMatchObject({
+            family: "rfq",
+            state: "refunded",
+        });
+        expect(h.outcomes(legacy.rfqId)).toContain("refunded");
+        await h.drive.dispose();
+    });
+
+    it("drives a live v1 row it cannot adopt in place, in the v1 store", async () => {
+        const legacy = legacySend();
+        const contracts = fakeContracts([SEND_LOCKUP]);
+        const rows = contracts.getContracts;
+        // No row while adoption reads, the row once the manager rebuilds.
+        let reads = 0;
+        contracts.getContracts = (async (filter?: { script?: string }) =>
+            reads++ === 0 ? [] : rows(filter)) as typeof rows;
+        const h = await build({
+            legacy: [legacy],
+            contracts,
+            now: AFTER + REFUND_MTP_LAG_SECONDS,
+            vtxos: unspent(),
+            funded: [],
+        });
+
         expect((await h.repository.getRfqSwap(legacy.rfqId))?.state).toBe("refunded");
         expect(await collectSwapRecords(h.repository)).toEqual([]);
-        // driven, not listed
-        expect(h.seen).toEqual([]);
         await h.drive.dispose();
     });
 
@@ -358,28 +381,6 @@ describe("the v1 read-through", () => {
         await h.drive.dispose();
     });
 
-    it("reads a row under the field names 0.0.x wrote", async () => {
-        const { fundingTxid, ...current } = legacySend();
-        const legacy = {
-            ...current,
-            fundingArkTxid: fundingTxid,
-            lockupSpendArkTxids: ["bb".repeat(32)],
-        } as RfqSwapRecord;
-        const h = await build({
-            legacy: [legacy],
-            now: AFTER + REFUND_MTP_LAG_SECONDS,
-            vtxos: unspent(),
-            funded: [],
-        });
-
-        const stored = await h.repository.getRfqSwap(legacy.rfqId);
-        expect(stored?.state).toBe("refunded");
-        expect(stored).toMatchObject({ fundingTxid, lockupSpendTxids: ["bb".repeat(32)] });
-        expect(stored).not.toHaveProperty("fundingArkTxid");
-        expect(stored).not.toHaveProperty("lockupSpendArkTxids");
-        await h.drive.dispose();
-    });
-
     it("drives the v2 records when the v1 store cannot be read", async () => {
         const h = await build({
             records: [signable({ fundingTxid: "aa".repeat(32) })],
@@ -399,6 +400,173 @@ describe("the v1 read-through", () => {
         const h = await build({ legacy: [legacy], chain: null, vtxos: unspent() });
 
         expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
+        await h.drive.dispose();
+    });
+});
+
+describe("v1 corridor adoption", () => {
+    /** A v1 row as 0.0.24 stored it: txids under their `…ArkTxid` names, and a display amount. */
+    const v1Row = (
+        over: Partial<CorridorSwapRecord> = {},
+        stored: Record<string, unknown> = {},
+    ): RfqSwapRecord => {
+        const { fundingTxid: _, ...row } = rfqRecordOf(corridorRecord(over));
+        return {
+            ...row,
+            amount: 100_000,
+            fundingArkTxid: "aa".repeat(32),
+            ...stored,
+        } as RfqSwapRecord;
+    };
+
+    it("adopts a settled send as a restored corridor record", async () => {
+        const legacy = v1Row({ state: "settled" }, { lockupSpendArkTxids: ["bb".repeat(32)] });
+        const h = await build({ legacy: [legacy] });
+
+        expect(await h.repository.getSwapRecord(legacy.rfqId)).toMatchObject({
+            id: legacy.rfqId,
+            family: "rfq",
+            kind: "lightning_send",
+            state: "settled",
+            route: {
+                give: { corridor: "arkade", asset: "arkade:regtest/slip44:1" },
+                take: { corridor: "lightning", asset: "bolt11:regtest/slip44:1" },
+            },
+            give: { asset: "arkade:regtest/slip44:1", amount: "100000" },
+            take: { asset: "bolt11:regtest/slip44:1", amount: "100000" },
+            fee: { asset: "arkade:regtest/slip44:1", amount: "0" },
+            market: { kind: "restored", backend: "rfq" },
+            lockupPkScript: hex.encode(SEND_LOCKUP.pkScript),
+            lock: { hash: PAYMENT_HASH },
+            refundLocktime: REFUND_LOCKTIME,
+            fundingTxid: "aa".repeat(32),
+            lockupSpendTxids: ["bb".repeat(32)],
+        });
+        expect(h.drive.swap(legacy.rfqId)?.outcome).toBe(
+            corridorOutcome("lightning_send", "settled"),
+        );
+        expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
+        await h.drive.dispose();
+    });
+
+    it("adopts a settled receive with its claim txid", async () => {
+        const base = v1Row({ kind: "lightning_receive", state: "settled" });
+        const legacy = {
+            ...base,
+            profile: { ...base.profile, claimArkTxid: "cc".repeat(32) },
+        } as RfqSwapRecord;
+        const h = await build({ legacy: [legacy] });
+
+        const record = await h.repository.getSwapRecord(legacy.rfqId);
+        expect(record).toMatchObject({
+            kind: "lightning_receive",
+            route: { give: { corridor: "lightning" }, take: { corridor: "arkade" } },
+            profile: { claimTxid: "cc".repeat(32) },
+        });
+        expect((record as CorridorSwapRecord).profile).not.toHaveProperty("claimArkTxid");
+        await h.drive.dispose();
+    });
+
+    it("adopts once, and never over another record's id", async () => {
+        const held = signable({ id: "q-held", rfqId: "rfq-held", state: "settled" });
+        const taken = signable({ id: "rfq-taken", rfqId: "rfq-other", state: "settled" });
+        const h = await build({
+            records: [held, taken],
+            legacy: [
+                v1Row({ rfqId: "rfq-held", state: "settled" }),
+                v1Row({ rfqId: "rfq-taken", state: "settled" }),
+            ],
+        });
+
+        expect(await h.repository.getSwapRecord("rfq-held")).toBeUndefined();
+        expect(await h.repository.getSwapRecord("rfq-taken")).toEqual(taken);
+        await h.drive.dispose();
+    });
+
+    it("adopts a terminal row with no contract row, and leaves a live one", async () => {
+        const settled = v1Row({ rfqId: "rfq-settled", state: "settled" });
+        const live = v1Row({ rfqId: "rfq-live" });
+        const h = await build({ legacy: [settled, live], contracts: fakeContracts([]) });
+
+        expect(await h.repository.getSwapRecord("rfq-settled")).toMatchObject({
+            refundLocktime: 0,
+        });
+        expect(await h.repository.getSwapRecord("rfq-live")).toBeUndefined();
+        expect(await h.repository.getRfqSwap("rfq-live")).toEqual(live);
+        await h.drive.dispose();
+    });
+
+    it("hashes the settlement preimage when no payment hash was stored, else skips the row", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const profile = { signer: { signingDescriptor: "tr(deadbeef)" } };
+        const h = await build({
+            legacy: [
+                v1Row({
+                    rfqId: "rfq-preimage",
+                    state: "settled",
+                    profile,
+                    settlementPreimageHex: hex.encode(PREIMAGE),
+                }),
+                v1Row({ rfqId: "rfq-nohash", state: "settled", profile }),
+            ],
+        });
+
+        expect(await h.repository.getSwapRecord("rfq-preimage")).toMatchObject({
+            lock: { hash: PAYMENT_HASH },
+        });
+        expect(await h.repository.getSwapRecord("rfq-nohash")).toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(
+            "[swap] could not adopt v1 rfq swap rfq-nohash",
+            expect.any(Error),
+        );
+        warn.mockRestore();
+        await h.drive.dispose();
+    });
+
+    it("resolves ready when the contract store fails, adopting nothing", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const contracts = fakeContracts([SEND_LOCKUP]);
+        contracts.getContracts = (async () => {
+            throw new Error("contract store down");
+        }) as typeof contracts.getContracts;
+        const h = await build({ legacy: [v1Row({ state: "settled" })], contracts });
+
+        await expect(h.drive.ready).resolves.toBeUndefined();
+        expect(await collectSwapRecords(h.repository)).toEqual([]);
+        warn.mockRestore();
+        await h.drive.dispose();
+    });
+
+    it("adopts nothing while the contract manager is unavailable, so the next start retries", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = memoryRepository();
+        await repository.saveRfqSwap(v1Row({ state: "settled" }));
+        const { wallet } = fakeWallet({ contracts: fakeContracts([SEND_LOCKUP]) });
+        wallet.getContractManager = async () => {
+            throw new Error("contract manager down");
+        };
+        const drive = createSwapDrive({
+            wallet,
+            repository,
+            corridors: fakeCorridors(),
+            network: async () => "regtest",
+            operator: fakeOperator(),
+            indexer: fakeIndexer({}),
+            now: () => BEFORE,
+            pollIntervalMs: 10 * 60 * 1000,
+        });
+
+        await expect(drive.ready).resolves.toBeUndefined();
+        expect(await collectSwapRecords(repository)).toEqual([]);
+        warn.mockRestore();
+        await drive.dispose();
+    });
+
+    it("adopts under readonly", async () => {
+        const legacy = v1Row({ state: "settled" });
+        const h = await build({ legacy: [legacy], mode: "readonly" });
+
+        expect(await h.repository.getSwapRecord(legacy.rfqId)).toMatchObject({ family: "rfq" });
         await h.drive.dispose();
     });
 });
