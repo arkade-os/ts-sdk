@@ -315,6 +315,13 @@ describe("offer contract registration", () => {
         const offer = await create();
         expect(state.watched).toEqual([[hex.encode(offer.swapPkScript), "watched"]]);
     });
+
+    it("refuses a zero want before registering anything", async () => {
+        await expect(
+            createOffer(wallet, { wantAmount: BigInt(0), wantAsset: testAsset, emulatorPubkey }),
+        ).rejects.toThrow("wantAmount must be positive");
+        expect(state.created).toEqual([]);
+    });
 });
 
 // ── The exit closure createOffer builds by default ───────────────────────────
