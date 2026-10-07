@@ -6,8 +6,8 @@
  * carries no bolt11 dependency.
  */
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
-import type { PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
-import { assertNoAssets, assetsOf, invoiceTarget, makeHandle } from "@arkade-os/sdk";
+import type { PaymentRail, PaymentRequest, RouteQuote, RouterContext } from "@arkade-os/sdk";
+import { assertNoAssets, assetsOf, BIP21, invoiceTarget, makeHandle } from "@arkade-os/sdk";
 import { assertFundable, requestLightningSend, type InvoiceFacts, type RfqTransport } from "../rfq";
 import { solverRendezvous, type SolverRendezvous } from "./rendezvous";
 
@@ -57,6 +57,13 @@ const factsOf = (
     return facts;
 };
 
+/** A unified URI's invoice prices its own leg, often above `amount=` by the
+ *  receiver's swap fee, so an amount only restating `amount=` contradicts nothing. */
+const contradicts = (req: PaymentRequest, facts: InvoiceFacts): boolean =>
+    req.amount !== undefined &&
+    req.amount !== facts.amountSats &&
+    req.amount !== BIP21.amountSats(req.raw);
+
 export const solverLightningRendezvous = (
     markets: DiscoveredMarket[],
     amountSats: number,
@@ -78,7 +85,7 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
             const facts = factsOf(req.raw, deps.decodeInvoice, Math.floor(Date.now() / 1000));
             if (!facts) return false;
             // A request amount contradicting the invoice is unpayable.
-            if (req.amount !== undefined && req.amount !== facts.amountSats) return false;
+            if (contradicts(req, facts)) return false;
             return (await rendezvousFor(facts.amountSats)) !== undefined;
         },
 
@@ -91,7 +98,7 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
                         `(amountless, expired, or undecodable)`,
                 );
             }
-            if (req.amount !== undefined && req.amount !== facts.amountSats) {
+            if (contradicts(req, facts)) {
                 throw new Error(
                     `${SOLVER_LIGHTNING_RAIL}: the request names ${req.amount} sats but the ` +
                         `invoice is for ${facts.amountSats} — the payee is paid the invoice`,
