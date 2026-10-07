@@ -268,7 +268,7 @@ describe("submitOffchainTx sighash guard", () => {
     // survives the checkpoint matching that pins everything else.
     function withSighash(tx: Transaction, sighashType: number): Transaction {
         const copy = Transaction.fromPSBT(tx.toPSBT());
-        copy.updateInput(0, { sighashType });
+        copy.updateInput(0, { sighashType }, true);
         return copy;
     }
 

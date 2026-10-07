@@ -270,7 +270,7 @@ describe("claimCash drain-pending accounting", () => {
         expect(getPendingTxs).toHaveBeenCalledTimes(3);
         for (const [{ proof }] of getPendingTxs.mock.calls as [{ proof: string }][]) {
             const inputs = Transaction.fromPSBT(base64.decode(proof), {
-                allowUnknown: true,
+                unknown: "ignore",
             }).inputsLength;
             expect(inputs).toBeLessThanOrEqual(20 + 1);
         }
@@ -411,7 +411,7 @@ describe("claimCash drain-pending accounting", () => {
 
         expect(getPendingTxs).toHaveBeenCalledOnce();
         const { proof } = (getPendingTxs.mock.calls as unknown as [{ proof: string }][])[0][0];
-        const tx = Transaction.fromPSBT(base64.decode(proof), { allowUnknown: true });
+        const tx = Transaction.fromPSBT(base64.decode(proof), { unknown: "ignore" });
         const inputs = Array.from({ length: tx.inputsLength }, (_, i) =>
             hex.encode(tx.getInput(i).txid!),
         );

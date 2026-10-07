@@ -1,9 +1,9 @@
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
+import { Transaction } from "../utils/transaction";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
     new Error(`invalid settlement transaction: ${tx}`);
