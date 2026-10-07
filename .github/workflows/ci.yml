@@ -31,7 +31,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: pnpm exec biome format config && pnpm -r --filter="!@arkade-os/boltz-swap" lint
+        run: pnpm run lint
 
       - name: Type-check ts-sdk
         run: pnpm -C packages/ts-sdk run typecheck
@@ -40,7 +40,7 @@ jobs:
         run: pnpm -C packages/ts-sdk run typecheck:types
 
       - name: Build
-        run: pnpm -r --filter="!@arkade-os/boltz-swap" build
+        run: pnpm run build
 
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
@@ -102,9 +102,6 @@ jobs:
               test/e2e/onchain.test.ts
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
-          # boltz-swap is deprecated: no integration stack is spun up for it.
-          # The check job still type-checks, builds and smoke-tests it, since
-          # release.yml can still publish the package.
           - package: swap
             group: all
             test_files: ""

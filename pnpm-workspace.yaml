@@ -1,5 +1,7 @@
 packages:
   - packages/*
+  # Deprecated, pending removal: never installed, built, tested or released.
+  - "!packages/boltz-swap"
 
 overrides:
   esbuild: ">=0.28.1"

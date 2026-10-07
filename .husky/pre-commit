@@ -20,5 +20,5 @@ if [ "$probe_status" -eq 0 ] && [ -z "$selected" ] && [ -n "$projects" ] &&
 	exit 1
 fi
 
-pnpm --filter="...[HEAD]" --filter="!@arkade-os/boltz-swap" run --if-present lint
-pnpm --filter="...[HEAD]" --filter="!@arkade-os/boltz-swap" run --if-present test:unit
+pnpm --filter="...[HEAD]" run --if-present lint
+pnpm --filter="...[HEAD]" run --if-present test:unit
