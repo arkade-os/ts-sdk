@@ -58,17 +58,17 @@ importers:
         specifier: workspace:*
         version: link:../ts-sdk
       '@noble/curves':
-        specifier: 2.0.1
-        version: 2.0.1
+        specifier: 2.4.0
+        version: 2.4.0
       '@noble/hashes':
-        specifier: 2.0.1
-        version: 2.0.1
+        specifier: 2.4.0
+        version: 2.4.0
       '@scure/base':
-        specifier: 2.0.0
-        version: 2.0.0
+        specifier: 2.4.0
+        version: 2.4.0
       '@scure/btc-signer':
-        specifier: 2.0.1
-        version: 2.0.1
+        specifier: 2.4.1
+        version: 2.4.1
       bip68:
         specifier: 1.0.4
         version: 1.0.4
@@ -1544,9 +1544,6 @@ packages:
   '@scure/bip39@2.4.0':
     resolution: {integrity: sha512-82dxFbZUYboyOf0AXiydsQrFQ5Q4h9mX+O2UkE91ROYmsc0BKMGZLwDmy96Jpa2+vrtoxomjUhy1RPIgH/r2nA==}
 
-  '@scure/btc-signer@2.0.1':
-    resolution: {integrity: sha512-vk5a/16BbSFZkhh1JIJ0+4H9nceZVo5WzKvJGGWiPp3sQOExeW+L53z3dI6u0adTPoE8ZbL+XEb6hEGzVZSvvQ==}
-
   '@scure/btc-signer@2.4.1':
     resolution: {integrity: sha512-ch6h66o9nPhEoe/KciMMUJeH2MBPB8UAJI1if35Fxl6885lKTsc9YoCRqTW0/RjI0Vv9GSg1tmKtHHODyAw81g==}
 
@@ -2897,10 +2894,6 @@ packages:
 
   micro-packed@0.11.1:
     resolution: {integrity: sha512-agQGBnBCw8OoKQZMUxcaQPaOowdfxyEmBsq4CNAXAXCyB8KxlRG0lTl5GADJIsMEDaFb0trhXBHKYsjTWa5kuw==}
-    engines: {node: '>= 20.19.0'}
-
-  micro-packed@0.8.0:
-    resolution: {integrity: sha512-AKb8znIvg9sooythbXzyFeChEY0SkW0C6iXECpy/ls0e5BtwXO45J9wD9SLzBztnS4XmF/5kwZknsq+jyynd/A==}
     engines: {node: '>= 20.19.0'}
 
   micromatch@4.0.8:
@@ -5511,13 +5504,6 @@ snapshots:
     dependencies:
       '@noble/hashes': 2.4.0
 
-  '@scure/btc-signer@2.0.1':
-    dependencies:
-      '@noble/curves': 2.0.1
-      '@noble/hashes': 2.0.1
-      '@scure/base': 2.0.0
-      micro-packed: 0.8.0
-
   '@scure/btc-signer@2.4.1':
     dependencies:
       '@noble/curves': 2.4.0
@@ -7181,10 +7167,6 @@ snapshots:
   micro-packed@0.11.1:
     dependencies:
       '@scure/base': 2.4.0
-
-  micro-packed@0.8.0:
-    dependencies:
-      '@scure/base': 2.0.0
 
   micromatch@4.0.8:
     dependencies:
