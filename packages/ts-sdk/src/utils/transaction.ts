@@ -100,7 +100,13 @@ function legacyTapTreeToBIP371(value: Uint8Array): Uint8Array | undefined {
         return undefined;
     }
     if (leaves.length === 0 || leaves.some((leaf) => leaf.depth !== 1)) return undefined;
-    return TapTreeCoder.encode(toBIP371TapTree(value));
+    try {
+        return TapTreeCoder.encode(toBIP371TapTree(value));
+    } catch {
+        // Not a tree VtxoScript can rebuild: leave it, so the caller surfaces
+        // the original decode error rather than this one.
+        return undefined;
+    }
 }
 
 function psbtInputsCount(global: PsbtKeyValue[]): number {
