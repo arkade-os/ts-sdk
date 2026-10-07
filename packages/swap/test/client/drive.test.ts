@@ -537,6 +537,31 @@ describe("v1 corridor adoption", () => {
         await h.drive.dispose();
     });
 
+    it("adopts nothing while the contract manager is unavailable, so the next start retries", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const repository = memoryRepository();
+        await repository.saveRfqSwap(v1Row({ state: "settled" }));
+        const { wallet } = fakeWallet({ contracts: fakeContracts([SEND_LOCKUP]) });
+        wallet.getContractManager = async () => {
+            throw new Error("contract manager down");
+        };
+        const drive = createSwapDrive({
+            wallet,
+            repository,
+            corridors: fakeCorridors(),
+            network: async () => "regtest",
+            operator: fakeOperator(),
+            indexer: fakeIndexer({}),
+            now: () => BEFORE,
+            pollIntervalMs: 10 * 60 * 1000,
+        });
+
+        await expect(drive.ready).resolves.toBeUndefined();
+        expect(await collectSwapRecords(repository)).toEqual([]);
+        warn.mockRestore();
+        await drive.dispose();
+    });
+
     it("adopts under readonly", async () => {
         const legacy = v1Row({ state: "settled" });
         const h = await build({ legacy: [legacy], mode: "readonly" });

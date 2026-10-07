@@ -835,22 +835,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             const toAdopt = await legacyRfqSwapsToAdopt(store);
             if (toAdopt.length === 0) return;
             const network = await config.network();
-            let contracts: SwapContractRegistry | undefined;
-            try {
-                contracts = await contractsOf();
-            } catch (error) {
-                console.warn("[swap] v1 rfq swap adoption has no contract manager", error);
-            }
+            // A contract-manager failure may be transient: adopt nothing, retry next start.
+            const contracts = await contractsOf();
             for (const v1 of toAdopt) {
                 try {
-                    const params = contracts
-                        ? await lockupContractParams(contracts, v1.lockupAddress).catch(
-                              (error: unknown) => {
-                                  if (error instanceof LockupContractMissing) return undefined;
-                                  throw error;
-                              },
-                          )
-                        : undefined;
+                    const params = await lockupContractParams(contracts, v1.lockupAddress).catch(
+                        (error: unknown) => {
+                            if (error instanceof LockupContractMissing) return undefined;
+                            throw error;
+                        },
+                    );
                     if (params === undefined && !isRfqSwapTerminal(v1.state)) continue;
                     const refundLocktime = params ? Number(params.refundLocktime) : 0;
                     await store.saveSwapRecord(restoredCorridorRecord(v1, network, refundLocktime));
