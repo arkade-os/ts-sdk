@@ -236,13 +236,20 @@ describe("solverLightningRail.quote", () => {
         ).rejects.toThrow(/names 50000 sats but the invoice is for 100000/);
     });
 
-    it("quotes the invoice for a unified URI whose amount= it exceeds", async () => {
+    it("quotes the invoice's amount when the request restates the URI's lower amount=", async () => {
         rfqStub = vi.fn(async () => negotiated(101_500));
         const quote = await solverLightningRail(depsWith()).quote(
             { raw: UNIFIED, amount: 99_000 },
             ctxWith(),
         );
         expect(quote).toMatchObject({ amount: 100_000, fee: 1500, total: 101_500 });
+    });
+
+    it("refuses an amount a unified URI names nowhere", async () => {
+        rfqStub = vi.fn(async () => negotiated(101_500));
+        await expect(
+            solverLightningRail(depsWith()).quote({ raw: UNIFIED, amount: 50_000 }, ctxWith()),
+        ).rejects.toThrow(/names 50000 sats but the invoice is for 100000/);
     });
 
     it("refuses an unpayable invoice rather than quoting zero", async () => {
