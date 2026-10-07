@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { describe, expect, it } from "vitest";
 import { p2tr, taprootNumsKey } from "@scure/btc-signer";
 import { assembleBtcdTaprootTree, Transaction, VtxoScript } from "../src";
-import { toBIP371TapTree } from "../src/script/base";
+import { TapTreeCoder, toBIP371TapTree } from "../src/script/base";
 
 /**
  * Sanity tests for the btcd-compatible Taproot script tree builder.
@@ -117,4 +117,51 @@ describe("VtxoScript.encode as a PSBT output tapTree", () => {
             expect(hex.encode(rebuilt.tweakedPubkey)).toBe(hex.encode(script.tweakedPublicKey));
         },
     );
+});
+
+describe("VtxoScript.decode of a BIP-371 tapTree", () => {
+    const scriptWithLeaves = (n: number) =>
+        new VtxoScript(Array.from({ length: n }, (_, i) => new Uint8Array([0x51 + i])));
+
+    // 6, 7, 10, 11 and 12 are the counts whose DFS order differs from
+    // construction order, so decoding by leaf order alone derives another key.
+    it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])(
+        "rebuilds the same script from %i leaves",
+        (n) => {
+            const script = scriptWithLeaves(n);
+            const bip371 = TapTreeCoder.encode(toBIP371TapTree(script.encode()));
+
+            const decoded = VtxoScript.decode(bip371);
+            expect(hex.encode(decoded.pkScript)).toBe(hex.encode(script.pkScript));
+            expect(hex.encode(decoded.encode())).toBe(hex.encode(script.encode()));
+        },
+    );
+
+    it("rebuilds the script from a PSBT output tapTree", () => {
+        const script = scriptWithLeaves(6);
+        const tx = new Transaction();
+        tx.addOutput({
+            script: script.pkScript,
+            amount: 1000n,
+            tapTree: toBIP371TapTree(script.encode()),
+        });
+        const tapTree = Transaction.fromPSBT(tx.toPSBT()).getOutput(0).tapTree!;
+
+        const decoded = VtxoScript.decode(TapTreeCoder.encode(tapTree));
+        expect(hex.encode(decoded.pkScript)).toBe(hex.encode(script.pkScript));
+    });
+
+    it("rejects a valid BIP-371 tree that assembleBtcdTaprootTree cannot build", () => {
+        // A 3-leaf tree whose single leaf sits on the left: btcd puts it on
+        // the right (depths 2, 2, 1).
+        const tapTree = TapTreeCoder.encode(
+            [1, 2, 2].map((depth, i) => ({
+                depth,
+                version: 0xc0,
+                script: new Uint8Array([0x51 + i]),
+            })),
+        );
+
+        expect(() => VtxoScript.decode(tapTree)).toThrow(/btcd tree shape/);
+    });
 });

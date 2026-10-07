@@ -12,7 +12,7 @@ import {
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "./tapscript";
-import { assembleBtcdTaprootTree } from "./taprootTree";
+import { assembleBtcdTaprootTree, btcdLeafLayout } from "./taprootTree";
 import { DEFAULT_NETWORK } from "../networks";
 
 export type TapLeafScript = [
@@ -52,14 +52,31 @@ export class VtxoScript {
     /**
      * Decode a virtual output script from an encoded TapTree.
      *
+     * Accepts both the {@link encode} form (leaves in construction order, all
+     * at depth 1) and the BIP-371 form {@link toBIP371TapTree} writes (leaves
+     * in the tree's DFS order with their real depths). For some leaf counts
+     * (6, 7, 10, ...) the two orders differ, so a BIP-371 tree is mapped back
+     * to construction order before the tree is rebuilt.
+     *
      * @param tapTree - Encoded TapTree bytes
      * @returns Decoded virtual output script
-     * @throws Error if the TapTree cannot be decoded into a valid script set
+     * @throws Error if the TapTree cannot be decoded into a valid script set,
+     *         or its depths are not the shape `assembleBtcdTaprootTree` builds
      * @see encode
      */
     static decode(tapTree: Bytes): VtxoScript {
         const leaves = TapTreeCoder.decode(tapTree);
-        const scripts = leaves.map((leaf) => leaf.script);
+        if (leaves.every((leaf) => leaf.depth === 1)) {
+            return new VtxoScript(leaves.map((leaf) => leaf.script));
+        }
+        const layout = btcdLeafLayout(leaves.length);
+        if (layout.some((slot, i) => slot.depth !== leaves[i].depth)) {
+            throw new Error("tapTree: leaf depths do not match the btcd tree shape");
+        }
+        const scripts = new Array<Bytes>(leaves.length);
+        layout.forEach((slot, i) => {
+            scripts[slot.index] = leaves[i].script;
+        });
         return new VtxoScript(scripts);
     }
 
@@ -182,8 +199,8 @@ export class VtxoScript {
  *
  * `VtxoScript.encode()` stores leaves in the caller's original order with a
  * placeholder `depth: 1` — a format `VtxoScript.decode()` can losslessly
- * invert by re-running `assembleBtcdTaprootTree` over that same order, but
- * NOT a valid BIP-371 field: for non-power-of-2 leaf counts (e.g. 3, 6) the
+ * invert by re-running `assembleBtcdTaprootTree` over that same order (it
+ * decodes this function's output too), but NOT a valid BIP-371 field: for non-power-of-2 leaf counts (e.g. 3, 6) the
  * tree is neither flat nor built in that original order (the algorithm's
  * FIFO merge phase can reorder leaves for counts like 6), so per-index
  * depths cannot be guessed from leaf position. This rebuilds the exact same
