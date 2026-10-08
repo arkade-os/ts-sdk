@@ -7,6 +7,7 @@ import {
     AssetSwap,
 } from "../src/store";
 import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/repository";
+import { pageResult } from "@arkade-os/sdk";
 
 const swap = (id: string): AssetSwap => ({
     id,
@@ -73,15 +74,24 @@ describe("asset swap store", () => {
 
     it("reports failed add writes and keeps update writes best-effort", async () => {
         const broken = (existing: AssetSwap[] = []): AssetSwapRepository => ({
-            version: 4,
+            version: 5,
             saveSwap: async () => {
                 throw new Error("quota exceeded");
             },
-            getAllSwaps: async () => existing,
+            getAssetSwapsPage: async (page) =>
+                pageResult(
+                    existing.filter((s) => !page.after || s.id > page.after),
+                    page.limit,
+                    (s) => s.id,
+                ),
             saveRfqSwap: async () => {},
             getRfqSwap: async () => undefined,
-            getAllRfqSwaps: async () => [],
+            getRfqSwapsPage: async () => ({ items: [] }),
             removeRfqSwap: async () => {},
+            saveSwapRecord: async () => {},
+            getSwapRecord: async () => undefined,
+            getSwapRecordsPage: async () => ({ items: [] }),
+            removeSwapRecord: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
             getCachedMarkets: async () => undefined,
@@ -111,15 +121,19 @@ describe("asset swap store", () => {
 
     it("reads a failed read as empty history, but never writes on one", async () => {
         const broken: AssetSwapRepository = {
-            version: 4,
+            version: 5,
             saveSwap: async () => {},
-            getAllSwaps: async () => {
+            getAssetSwapsPage: async () => {
                 throw new Error("backend gone");
             },
             saveRfqSwap: async () => {},
             getRfqSwap: async () => undefined,
-            getAllRfqSwaps: async () => [],
+            getRfqSwapsPage: async () => ({ items: [] }),
             removeRfqSwap: async () => {},
+            saveSwapRecord: async () => {},
+            getSwapRecord: async () => undefined,
+            getSwapRecordsPage: async () => ({ items: [] }),
+            removeSwapRecord: async () => {},
             getScannedTxids: async () => new Set(),
             markTxidsScanned: async () => {},
             getCachedMarkets: async () => undefined,

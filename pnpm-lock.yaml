@@ -52,38 +52,7 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@24.3.1)(lightningcss@1.32.0)(terser@5.48.0)(yaml@2.9.0)
 
-  packages/swap:
-    dependencies:
-      '@arkade-os/sdk':
-        specifier: workspace:*
-        version: link:../ts-sdk
-      '@arkade-os/solver-discovery':
-        specifier: 0.2.7
-        version: 0.2.7
-      '@noble/ciphers':
-        specifier: 2.1.1
-        version: 2.1.1
-      '@noble/curves':
-        specifier: 2.4.0
-        version: 2.4.0
-      '@noble/hashes':
-        specifier: 2.4.0
-        version: 2.4.0
-      '@scure/base':
-        specifier: 2.4.0
-        version: 2.4.0
-      '@scure/btc-signer':
-        specifier: 2.4.1
-        version: 2.4.1
-    devDependencies:
-      fake-indexeddb:
-        specifier: 6.2.5
-        version: 6.2.5
-      nostr-tools:
-        specifier: ^2.12.0
-        version: 2.24.1(typescript@5.9.2)
-
-  packages/ts-sdk:
+  packages/sdk:
     dependencies:
       '@bitcoinerlab/descriptors-scure':
         specifier: 3.1.7
@@ -143,6 +112,40 @@ importers:
       typescript:
         specifier: 5.9.2
         version: 5.9.2
+
+  packages/swap:
+    dependencies:
+      '@arkade-os/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@arkade-os/solver-discovery':
+        specifier: 0.2.7
+        version: 0.2.7
+      '@noble/ciphers':
+        specifier: 2.1.1
+        version: 2.1.1
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/btc-signer':
+        specifier: 2.4.1
+        version: 2.4.1
+      light-bolt11-decoder:
+        specifier: 3.2.0
+        version: 3.2.0
+    devDependencies:
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
+      nostr-tools:
+        specifier: ^2.12.0
+        version: 2.24.1(typescript@5.9.2)
 
 packages:
 
@@ -1483,6 +1486,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@scure/base@1.1.1':
+    resolution: {integrity: sha512-ZxOhsSyxYwLJj3pLZCefNitxsj093tb2vq90mp2txoYeBqbcjDjqFhyM8eUjq/uFm6zJ+mUuqxlS2FkuSY1MTA==}
+
   '@scure/base@2.0.0':
     resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
 
@@ -2521,6 +2527,9 @@ packages:
   leven@3.1.0:
     resolution: {integrity: sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==}
     engines: {node: '>=6'}
+
+  light-bolt11-decoder@3.2.0:
+    resolution: {integrity: sha512-3QEofgiBOP4Ehs9BI+RkZdXZNtSys0nsJ6fyGeSiAGCBsMwHGUDS/JQlY/sTnWs91A2Nh0S9XXfA8Sy9g6QpuQ==}
 
   lighthouse-logger@1.4.2:
     resolution: {integrity: sha512-gPWxznF6TKmUHrOQjlVo2UbaL2EJ71mb2CCeRs/2qBpi4L/g4LUVc9+3lKQ6DTUZwJswfM7ainGrLO1+fOqa2g==}
@@ -4439,7 +4448,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.5.9':
     optional: true
 
-  '@bitcoinerlab/descriptors-core@3.1.7(@noble/curves@2.4.0)(@noble/hashes@2.4.0)(@scure/base@2.4.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.4.1)':
+  '@bitcoinerlab/descriptors-core@3.1.7(@noble/curves@2.4.0)(@noble/hashes@2.0.1)(@scure/base@2.4.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.4.1)':
     dependencies:
       '@bitcoinerlab/miniscript': 2.0.0
       lodash.memoize: 4.1.2
@@ -4447,16 +4456,16 @@ snapshots:
       varuint-bitcoin: 2.0.0
     optionalDependencies:
       '@noble/curves': 2.4.0
-      '@noble/hashes': 2.4.0
+      '@noble/hashes': 2.0.1
       '@scure/base': 2.4.0
       '@scure/bip32': 2.0.1
       '@scure/btc-signer': 2.4.1
 
   '@bitcoinerlab/descriptors-scure@3.1.7':
     dependencies:
-      '@bitcoinerlab/descriptors-core': 3.1.7(@noble/curves@2.4.0)(@noble/hashes@2.4.0)(@scure/base@2.4.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.4.1)
+      '@bitcoinerlab/descriptors-core': 3.1.7(@noble/curves@2.4.0)(@noble/hashes@2.0.1)(@scure/base@2.4.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.4.1)
       '@noble/curves': 2.4.0
-      '@noble/hashes': 2.4.0
+      '@noble/hashes': 2.0.1
       '@scure/base': 2.4.0
       '@scure/bip32': 2.0.1
       '@scure/btc-signer': 2.4.1
@@ -5321,6 +5330,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.59.0':
     optional: true
+
+  '@scure/base@1.1.1': {}
 
   '@scure/base@2.0.0': {}
 
@@ -6472,6 +6483,10 @@ snapshots:
   lan-network@0.2.0: {}
 
   leven@3.1.0: {}
+
+  light-bolt11-decoder@3.2.0:
+    dependencies:
+      '@scure/base': 1.1.1
 
   lighthouse-logger@1.4.2:
     dependencies:
