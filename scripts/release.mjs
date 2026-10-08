@@ -18,8 +18,8 @@ const PACKAGES = [
     {
         key: "sdk",
         name: "@arkade-os/sdk",
-        dir: path.join(ROOT_DIR, "packages/ts-sdk"),
-        pkgJson: path.join(ROOT_DIR, "packages/ts-sdk/package.json"),
+        dir: path.join(ROOT_DIR, "packages/sdk"),
+        pkgJson: path.join(ROOT_DIR, "packages/sdk/package.json"),
         tagPrefix: "@arkade-os/sdk/",
         order: 1,
     },
@@ -36,9 +36,8 @@ const PACKAGES = [
 ];
 
 const PACKAGE_BY_KEY = Object.fromEntries(PACKAGES.map((p) => [p.key, p]));
-const ACTIVE_PACKAGES = PACKAGES.filter((p) => !p.excludedFromRelease);
-const ALL_KEYS = ACTIVE_PACKAGES.map((p) => p.key);
-const DEPENDENT_PACKAGES = ACTIVE_PACKAGES.filter((p) => p.dependsOnSdk);
+const ALL_KEYS = PACKAGES.map((p) => p.key);
+const DEPENDENT_PACKAGES = PACKAGES.filter((p) => p.dependsOnSdk);
 const PACKAGE_BY_BUMP_FLAG = Object.fromEntries(
     DEPENDENT_PACKAGES.map((p) => [p.bumpFlag, p.key]),
 );
@@ -317,10 +316,6 @@ function parseArgs(argv) {
 
 function validateTarget(target) {
     if (!VALID_TARGETS.has(target)) {
-        const excluded = PACKAGES.find((p) => p.key === target && p.excludedFromRelease);
-        if (excluded) {
-            die(`${excluded.name} is excluded from the release cycle until further notice.`);
-        }
         die(`Invalid target: ${target}. Use ${[...ALL_KEYS, "all"].join(", ")}.`);
     }
 }
@@ -339,9 +334,12 @@ function validatePreid(preid) {
 
 function primarySelection(target) {
     // Releasing the SDK drags its dependents along, because each would otherwise
-    // stay published against the previous SDK version.
-    if (target === "sdk") return ALL_KEYS;
-    if (target === "all") return ALL_KEYS;
+    // stay published against the previous SDK version — except those opted out,
+    // which are deliberately left pinned to the SDK they last shipped with.
+    if (target === "sdk") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
+    // `all` is a bulk convenience, not an implication of the SDK bump; packages
+    // marked `excludeFromAll` opt out of it but remain releasable directly.
+    if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
     if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }
@@ -707,8 +705,14 @@ function release(args) {
             console.log(`Set ${pkg.name} to ${plan.get(key).next}`);
         }
 
-        console.log("Building packages...");
-        run("pnpm", ["-r", "build"]);
+        if (!selectedKeys.includes("sdk")) {
+            // Dependents resolve @arkade-os/sdk to its built dist via the workspace
+            // link, so it must be fresh even when SDK isn't part of this release.
+            // When SDK *is* selected, its own publish below builds it (via `prepack`)
+            // before any dependent's turn, since packages publish in dependency order.
+            console.log("Building @arkade-os/sdk (workspace dependency)...");
+            run("pnpm", ["run", "build"], { cwd: PACKAGE_BY_KEY.sdk.dir });
+        }
 
         const manifestPaths = selectedKeys.map((k) => PACKAGE_BY_KEY[k].pkgJson);
         run("git", ["add", ...manifestPaths]);

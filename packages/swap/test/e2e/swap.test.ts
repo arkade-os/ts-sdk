@@ -30,6 +30,7 @@ import {
     Wallet,
 } from "@arkade-os/sdk";
 import { discover, quoteOffer, type Market } from "@arkade-os/solver-discovery";
+import { type AssetSwap, InMemoryAssetSwapRepository } from "../../src";
 import {
     addAssetSwap,
     ASSET_CARRIER_SATS,
@@ -37,13 +38,11 @@ import {
     createOffer,
     decodeOffer,
     getAssetSwaps,
-    InMemoryAssetSwapRepository,
     QUOTE_OPTIONS,
     restoreAssetSwaps,
     watchOfferSwaps,
-    type AssetSwap,
     type Tx,
-} from "../../src";
+} from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI
@@ -106,7 +105,7 @@ describe("maker-side swap loop (regtest)", () => {
 
     it("derives, funds, and restores a pending offer from its funding transaction alone", async () => {
         // no override — asserts the default pin matches the regtest stack
-        offer = await createOffer(wallet, OPERATOR_URL, {
+        offer = await createOffer(wallet, {
             wantAmount: WANT_AMOUNT,
             wantAsset,
         });
@@ -128,10 +127,10 @@ describe("maker-side swap loop (regtest)", () => {
             redeemTxid: fundingTxid,
             createdAt: Math.floor(Date.now() / 1000),
         });
-        // Pending deposits have no spend to classify; serverPubkey is required
+        // Pending deposits have no spend to classify; operatorPubkey is required
         // by the restore API but does not affect this assertion.
         const { restored, scannedTxids } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
         });
 
         expect(scannedTxids).toEqual([fundingTxid]);
@@ -213,7 +212,7 @@ describe("maker-side swap loop (regtest)", () => {
         // outpoint, so the escrow marker must not close the one spend route the
         // maker actually owns. A future tightening that gates explicit inputs
         // would strand every offer deposit, and would fail here.
-        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, restoredOfferHex, {
+        const cancelTxid = await cancelOffer(wallet, restoredOfferHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -236,7 +235,7 @@ describe("maker-side swap loop (regtest)", () => {
             createdAt: Math.floor(Date.now() / 1000),
         });
         const { restored } = await restoreAssetSwaps(indexer, history, new Set(), {
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
         });
         expect(restored).toHaveLength(1);
         expect(restored[0]).toMatchObject({
@@ -267,13 +266,12 @@ describe("maker-side swap loop (regtest)", () => {
         const updates: AssetSwap[] = [];
         const watcher = await watchOfferSwaps({
             wallet,
-            arkServerUrl: OPERATOR_URL,
             repository: swapRepository,
             onUpdate: (swap) => updates.push(swap),
         });
 
         try {
-            const second = await createOffer(wallet, OPERATOR_URL, {
+            const second = await createOffer(wallet, {
                 wantAmount: WANT_AMOUNT + 1n,
                 wantAsset,
             });
@@ -304,7 +302,7 @@ describe("maker-side swap loop (regtest)", () => {
                 createdAt: Date.now(),
             });
 
-            await cancelOffer(wallet, OPERATOR_URL, second.offerHex, {
+            await cancelOffer(wallet, second.offerHex, {
                 repository: elsewhere,
                 fundingTxid: secondFundingTxid,
                 swapAddress: second.address,
@@ -409,13 +407,13 @@ describe("asset swaps against solverd (regtest)", () => {
         // matching, before any price check — the solver never acknowledges it.
         // (No case under the minimum: the minimum is 1 unit, and a zero want
         // would let anyone take the deposit without paying anything.)
-        const offer = await createOffer(wallet, OPERATOR_URL, {
+        const offer = await createOffer(wallet, {
             wantAmount: BigInt(market.max_quote_amount) + 1n,
             wantAsset: asset.AssetId.fromString(assetLeg.id),
         });
         const fundingTxid = await fundAndExpectNoFill(offer, { amount: DEPOSIT_SATS });
 
-        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+        const cancelTxid = await cancelOffer(wallet, offer.offerHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -433,13 +431,13 @@ describe("asset swaps against solverd (regtest)", () => {
             giveAmount: BigInt(DEPOSIT_SATS),
             safetyBps: QUOTE_OPTIONS.safetyBps,
         });
-        const offer = await createOffer(wallet, OPERATOR_URL, {
+        const offer = await createOffer(wallet, {
             wantAmount: plan.receive.atomic * 10n,
             wantAsset: asset.AssetId.fromString(assetLeg.id),
         });
         const fundingTxid = await fundAndExpectNoFill(offer, { amount: DEPOSIT_SATS });
 
-        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+        const cancelTxid = await cancelOffer(wallet, offer.offerHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -461,7 +459,7 @@ describe("asset swaps against solverd (regtest)", () => {
             giveAmount: 1_000n,
             safetyBps: QUOTE_OPTIONS.safetyBps,
         });
-        const offer = await createOffer(wallet, OPERATOR_URL, {
+        const offer = await createOffer(wallet, {
             wantAmount: plan.receive.atomic * 10n,
             offerAsset: asset.AssetId.fromString(assetLeg.id),
         });
@@ -470,7 +468,7 @@ describe("asset swaps against solverd (regtest)", () => {
             assets: [{ assetId: assetLeg.id, amount: 1_000n }],
         });
 
-        const cancelTxid = await cancelOffer(wallet, OPERATOR_URL, offer.offerHex, {
+        const cancelTxid = await cancelOffer(wallet, offer.offerHex, {
             repository,
             fundingTxid,
             swapAddress: offer.address,
@@ -557,7 +555,7 @@ const fundAndAwaitFill = async (
     legs: { fromAsset: string; toAsset: string; fromAmount: string; toAmount: string },
 ): Promise<void> => {
     const repository = new InMemoryAssetSwapRepository();
-    const watcher = await watchOfferSwaps({ wallet, arkServerUrl: OPERATOR_URL, repository });
+    const watcher = await watchOfferSwaps({ wallet, repository });
     const fundingTxid = await wallet.send({
         address: offer.address,
         extensions: [offer.extension],
@@ -634,7 +632,7 @@ const buyAssetWithBtc = async (sats: number) => {
     expect(plan.receive.asset.id).toBe(assetLeg.id);
     expect(plan.receive.atomic).toBeGreaterThan(0n);
 
-    const offer = await createOffer(wallet, OPERATOR_URL, {
+    const offer = await createOffer(wallet, {
         wantAmount: plan.receive.atomic,
         wantAsset: asset.AssetId.fromString(assetLeg.id),
     });
@@ -666,7 +664,7 @@ const sellAssetForBtc = async (amount: bigint) => {
     expect(plan.receive.asset.id).toBe("btc");
     expect(plan.receive.atomic).toBeGreaterThan(0n);
 
-    const offer = await createOffer(wallet, OPERATOR_URL, {
+    const offer = await createOffer(wallet, {
         wantAmount: plan.receive.atomic,
         offerAsset: asset.AssetId.fromString(assetLeg.id),
     });

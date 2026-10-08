@@ -1,0 +1,62 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RestDelegateProvider } from "../src";
+import { jsonResponse } from "./helpers/response";
+
+const { mockFetch } = vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+}));
+
+vi.mock("../src/utils/fetch", () => ({
+    fetch: mockFetch,
+    baseFetch: mockFetch,
+}));
+
+describe("RestDelegateProvider.getDelegateInfo", () => {
+    beforeEach(() => {
+        mockFetch.mockReset();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const respondWith = (body: unknown) => mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    it("rejects a non-string delegateAddress even when the legacy field is present", async () => {
+        respondWith({
+            pubkey: "02abc",
+            fee: "0",
+            delegateAddress: 123,
+            delegatorAddress: "tark1validaddress",
+        });
+
+        await expect(
+            new RestDelegateProvider("http://localhost:7012").getDelegateInfo(),
+        ).rejects.toThrow("Invalid delegate info");
+    });
+
+    it("prefers delegateAddress when it is a valid string", async () => {
+        respondWith({
+            pubkey: "02abc",
+            fee: "0",
+            delegateAddress: "tark1delegate",
+        });
+
+        const info = await new RestDelegateProvider("http://localhost:7012").getDelegateInfo();
+
+        expect(info.delegateAddress).toBe("tark1delegate");
+    });
+
+    it("rejects payloads where neither address is a non-empty string", async () => {
+        respondWith({
+            pubkey: "02abc",
+            fee: "0",
+            delegateAddress: 123,
+            delegatorAddress: 456,
+        });
+
+        await expect(
+            new RestDelegateProvider("http://localhost:7012").getDelegateInfo(),
+        ).rejects.toThrow("Invalid delegate info");
+    });
+});

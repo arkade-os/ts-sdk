@@ -10,7 +10,9 @@ const mode = process.argv[3] ?? "page-since";
 if (
     !Number.isSafeInteger(count) ||
     count < 1 ||
-    !["read", "upgrade", "restore-recent", "restore-expired", "page-recent", "page-since"].includes(mode)
+    !["read", "upgrade", "restore-recent", "restore-expired", "page-recent", "page-since"].includes(
+        mode,
+    )
 ) {
     throw new Error(
         "usage: node --expose-gc --experimental-sqlite scripts/bench-rfq-history.mjs <count> <read|upgrade|restore-recent|restore-expired|page-recent|page-since>",
@@ -23,7 +25,7 @@ const file =
 const { SQLiteAssetSwapRepository } = await import(
     "../packages/swap/dist/repositories/sqlite/index.js"
 );
-const { RfqSwapManager } = await import("../packages/swap/dist/index.js");
+const { RfqSwapManager } = await import("../packages/swap/dist/protocol.js");
 const db = new DatabaseSync(file);
 const bind = (params = []) => params.map((value) => (value === undefined ? null : value));
 const sql = {
@@ -34,6 +36,14 @@ const sql = {
     all: async (query, params) => db.prepare(query).all(...bind(params)),
 };
 const repository = new SQLiteAssetSwapRepository(sql);
+const eachPage = async (filter, visit) => {
+    let after;
+    do {
+        const page = await repository.getRfqSwapsPage(filter, { limit: 500, after });
+        visit(page.items);
+        after = page.nextCursor;
+    } while (after);
+};
 
 if (mode === "upgrade") {
     db.exec(
@@ -41,7 +51,7 @@ if (mode === "upgrade") {
     );
     db.exec("CREATE INDEX idx_arkade_rfq_swaps_state ON arkade_rfq_swaps (state)");
 } else {
-    await repository.getAllRfqSwaps();
+    await repository.getRfqSwapsPage({}, { limit: 1 });
 }
 
 const insert = db.prepare(
@@ -85,7 +95,8 @@ const sample = setInterval(() => {
 const started = performance.now();
 let returned;
 if (mode === "read") {
-    let records = await repository.getAllRfqSwaps();
+    let records = [];
+    await eachPage({}, (items) => records.push(...items));
     returned = records.length;
     records = undefined;
 } else if (mode === "restore-recent" || mode === "restore-expired") {
@@ -100,25 +111,10 @@ if (mode === "read") {
         failed: result.failed.length,
         pruned: result.pruned.length,
     };
-} else if (mode === "page-recent") {
+} else {
     returned = 0;
-    let cursor;
-    for (;;) {
-        const page = await repository.getRfqSwapsPage("settled", cursor, 500);
-        returned += page.length;
-        if (page.length < 500) break;
-        cursor = page[page.length - 1].rfqId;
-    }
-} else if (mode === "page-since") {
-    returned = 0;
-    let cursor;
-    for (;;) {
-        const page = await repository.getRfqSwapsUpdatedPage("settled", 1_800_000_000, cursor, 500);
-        returned += page.length;
-        if (page.length < 500) break;
-        const last = page[page.length - 1];
-        cursor = { updatedAt: last.updatedAt, rfqId: last.rfqId };
-    }
+    const since = mode === "page-since" ? 1_800_000_000 : undefined;
+    await eachPage({ state: "settled", since }, (items) => (returned += items.length));
 }
 const elapsedMs = Math.round(performance.now() - started);
 clearInterval(sample);
