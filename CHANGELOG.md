@@ -325,6 +325,10 @@ style and have not been backfilled.
   `ContractWatcher.updateContract` now registers a watched contract it
   does not hold instead of throwing, and ignores a retained one.
 
+- **`SQLiteContractRepository` indexes `(watch, script)`.** The startup
+  read above no longer walks the whole contracts table, page by page, to
+  find its few watched rows.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

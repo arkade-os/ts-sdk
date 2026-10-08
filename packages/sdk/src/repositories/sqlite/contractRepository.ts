@@ -72,6 +72,9 @@ export class SQLiteContractRepository implements ContractRepository {
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_state ON ${this.table} (state)`,
         );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_watch ON ${this.table} (watch, script)`,
+        );
     }
 
     private async addColumnIfMissing(column: string, type: string): Promise<void> {

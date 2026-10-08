@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
 import type { SQLExecutor } from "../src/repositories/sqlite/types";
 import type { Contract, ContractState } from "../src/contracts/types";
+import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 
 // ── Mock SQLExecutor ────────────────────────────────────────────────────
 // A lightweight in-memory SQL engine that supports the subset of SQL
@@ -507,6 +508,35 @@ describe("SQLiteContractRepository", () => {
             // ...and the column is now writable.
             await migrated.saveContract(createMockContract({ script: "s1", watch: "retained" }));
             expect((await collectContracts(migrated, { script: "s1" }))[0].watch).toBe("retained");
+        });
+
+        it("serves the watched set from the watch index on every page", async () => {
+            // A real engine: the mock executor accepts CREATE INDEX and ignores it.
+            const db = createNodeSQLExecutor();
+            const selects: [string, unknown[]][] = [];
+            const repo = new SQLiteContractRepository({
+                ...db,
+                all<T>(sql: string, params?: unknown[]) {
+                    if (sql.startsWith("SELECT")) selects.push([sql, params ?? []]);
+                    return db.all<T>(sql, params);
+                },
+            });
+            await repo.getContractsPage({ watch: ["watched", "awaiting-funds"] }, { limit: 10 });
+            await repo.getContractsPage(
+                { watch: ["watched", "awaiting-funds"] },
+                { limit: 10, after: "00" },
+            );
+
+            expect(selects).toHaveLength(2);
+            for (const [sql, params] of selects) {
+                const plan: { detail: string }[] = await db.all(
+                    `EXPLAIN QUERY PLAN ${sql}`,
+                    params,
+                );
+                const steps = plan.map((step) => step.detail).join("\n");
+                expect(steps).toContain("idx_ark_contracts_watch");
+                expect(steps).not.toMatch(/\bSCAN\b/);
+            }
         });
     });
 
