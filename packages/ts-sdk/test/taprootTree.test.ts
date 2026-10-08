@@ -186,6 +186,25 @@ describe("VtxoScript.decode of a BIP-371 tapTree", () => {
         expect(hex.encode(VtxoScript.decode(tapTree).pkScript)).toBe(hex.encode(script.pkScript));
     });
 
+    // decode rebuilds every leaf as base tapscript, so another version would
+    // derive a different key; it must fail on every decode path.
+    it.each([
+        ["flat", [1, 1, 1, 1, 1, 1]],
+        ["BIP-371", btcdLeafLayout(6).map((slot) => slot.depth)],
+        ["other", [1, 2, 3, 4, 5, 5]],
+    ])("rejects a non-tapscript leaf version in a %s tree", (_, depths) => {
+        const script = scriptWithLeaves(6);
+        const tapTree = TapTreeCoder.encode(
+            script.scripts.map((leafScript, i) => ({
+                depth: depths[i],
+                version: i === 3 ? 0xc2 : 0xc0,
+                script: leafScript as Uint8Array<ArrayBuffer>,
+            })),
+        );
+
+        expect(() => VtxoScript.decode(tapTree)).toThrow("unsupported tap leaf version 0xc2");
+    });
+
     // Reordering is keyed on the depth sequence, so it must never match a
     // construction-order writer's depths when the two orders differ.
     it("never mistakes a construction-order encoding for the BIP-371 form", () => {

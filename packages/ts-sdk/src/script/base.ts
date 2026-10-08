@@ -63,13 +63,22 @@ export class VtxoScript {
      * that depth sequence when the two orders differ, so this never reorders
      * a tree that decoded correctly before.
      *
+     * Every leaf must carry the base tapscript version: the tree is rebuilt
+     * with {@link TAP_LEAF_VERSION} leaves, so any other version would
+     * silently derive a different taproot key.
+     *
      * @param tapTree - Encoded TapTree bytes
      * @returns Decoded virtual output script
      * @throws Error if the TapTree cannot be decoded into a valid script set
+     *         or a leaf carries a version other than {@link TAP_LEAF_VERSION}
      * @see encode
      */
     static decode(tapTree: Bytes): VtxoScript {
         const leaves = TapTreeCoder.decode(tapTree);
+        const foreign = leaves.find((leaf) => leaf.version !== TAP_LEAF_VERSION);
+        if (foreign) {
+            throw new Error(`unsupported tap leaf version 0x${foreign.version.toString(16)}`);
+        }
         const scripts = leaves.map((leaf) => leaf.script);
         if (leaves.every((leaf) => leaf.depth === 1)) {
             return new VtxoScript(scripts);
