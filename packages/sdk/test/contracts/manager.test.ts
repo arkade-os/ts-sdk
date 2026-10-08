@@ -2,6 +2,7 @@ import { collectVtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
+    type Contract,
     ContractManager,
     type ContractWithVtxos,
     DefaultContractHandler,
@@ -840,6 +841,102 @@ describe("ContractManager", () => {
             } finally {
                 await mgr.dispose();
             }
+        });
+
+        describe("after a restart", () => {
+            // Rows an earlier process wrote: this manager meets them only in the repository.
+            const row = (script: string, watch?: Contract["watch"]): Contract => ({
+                type: "default",
+                params: createDefaultContractParams(),
+                script,
+                address: `address-${script}`,
+                state: "active",
+                createdAt: 1,
+                ...(watch && { watch }),
+            });
+            const fakeScript = (i: number) => `5120${i.toString(16).padStart(64, "0")}`;
+            const start = (
+                contractRepository: ContractRepository,
+                walletRepository = new InMemoryWalletRepository(),
+            ) =>
+                ContractManager.create({
+                    indexerProvider: mockIndexer,
+                    contractRepository,
+                    walletRepository,
+                    watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
+                });
+
+            it("reads only the contracts it watches", async () => {
+                const contractRepository = new InMemoryContractRepository();
+                const walletRepository = new InMemoryWalletRepository();
+                for (let i = 0; i < 20; i++) {
+                    await contractRepository.saveContract(row(fakeScript(i), "retained"));
+                }
+                const live = [fakeScript(100), fakeScript(101), fakeScript(102)];
+                await contractRepository.saveContract(row(live[0], "watched"));
+                await contractRepository.saveContract(row(live[1], "awaiting-funds"));
+                await contractRepository.saveContract(row(live[2])); // written before `watch` existed
+                const contractReads = vi.spyOn(contractRepository, "getContractsPage");
+                const vtxoReads = vi.spyOn(walletRepository, "getVtxosForScriptPage");
+
+                const mgr = await start(contractRepository, walletRepository);
+                try {
+                    const pages = await Promise.all(contractReads.mock.results.map((r) => r.value));
+                    const rows = pages.flatMap((page) => page.items);
+                    expect(rows.map((c) => c.script).sort()).toEqual([...live].sort());
+                    expect(new Set(vtxoReads.mock.calls.map(([script]) => script))).toEqual(
+                        new Set(live),
+                    );
+                } finally {
+                    await mgr.dispose();
+                }
+            });
+
+            it("serves a retained contract's reads from the repository", async () => {
+                const contractRepository = new InMemoryContractRepository();
+                await contractRepository.saveContract(row(TEST_DEFAULT_SCRIPT, "retained"));
+                const mgr = await start(contractRepository);
+                try {
+                    const vtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+                        txid: "ef".repeat(32),
+                    });
+                    (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [vtxo] });
+
+                    const [contract] = await mgr.getContracts({ script: TEST_DEFAULT_SCRIPT });
+                    expect(contract?.watch).toBe("retained");
+                    const [withVtxos] = await mgr.getContractsWithVtxos({
+                        script: TEST_DEFAULT_SCRIPT,
+                    });
+                    expect(withVtxos?.vtxos.map((v) => v.txid)).toEqual([vtxo.txid]);
+                } finally {
+                    await mgr.dispose();
+                }
+            });
+
+            it("subscribes a retained contract again once it is re-watched", async () => {
+                const contractRepository = new InMemoryContractRepository();
+                await contractRepository.saveContract(row(fakeScript(0), "watched"));
+                await contractRepository.saveContract(row(TEST_DEFAULT_SCRIPT, "retained"));
+                const mgr = await start(contractRepository);
+                const subscribed = () =>
+                    (mockIndexer.subscribeForScripts as any).mock.calls.flatMap((c: any) => c[0]);
+                try {
+                    (mockIndexer.subscribeForScripts as any).mockClear();
+                    // An update that keeps it retained must neither fail nor wake it up.
+                    await mgr.updateContract(TEST_DEFAULT_SCRIPT, { label: "settled" });
+                    expect(subscribed()).not.toContain(TEST_DEFAULT_SCRIPT);
+
+                    await mgr.setContractWatchState(TEST_DEFAULT_SCRIPT, "watched");
+                    expect(subscribed()).toContain(TEST_DEFAULT_SCRIPT);
+                    (mockIndexer.getVtxos as any).mockClear();
+                    await mgr.refreshVtxos();
+                    expect(collectRequestedScripts(mockIndexer).has(TEST_DEFAULT_SCRIPT)).toBe(
+                        true,
+                    );
+                } finally {
+                    await mgr.dispose();
+                }
+            });
         });
     });
 

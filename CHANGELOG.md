@@ -314,6 +314,17 @@ style and have not been backfilled.
   worker read first; it is now counted whenever its own row is unspent,
   as `getSpendableVtxos` already does.
 
+- **`ContractManager` starts from the contracts it watches.** Startup
+  read every contract row, `retained` ones included, and seeded the
+  watcher from each one's stored VTXOs, so a service that retires its
+  finished contracts still paid for its whole history at every start.
+  It now reads `watched` and `awaiting-funds` rows only. Retained rows
+  stay in the repository, where `getContracts`, `getContractsWithVtxos`,
+  annotation and history already read them, and re-watching one with
+  `setContractWatchState` registers and subscribes it then. For that,
+  `ContractWatcher.updateContract` now registers a watched contract it
+  does not hold instead of throwing, and ignores a retained one.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

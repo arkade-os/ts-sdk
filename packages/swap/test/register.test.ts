@@ -439,8 +439,7 @@ const offlineIndexer = () =>
         getSubscription: async function* () {},
     }) as Partial<IndexerProvider> as IndexerProvider;
 
-const realWallet = async () => {
-    const contractRepository = new InMemoryContractRepository();
+const realWallet = async (contractRepository = new InMemoryContractRepository()) => {
     const wallet = await ReadonlyWallet.create({
         arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
         indexerProvider: offlineIndexer(),
@@ -472,6 +471,23 @@ describe("an offer at a script an earlier offer retired", () => {
         await create(wallet);
 
         const row = (await collectContracts(contractRepository)).find((c) => c.script === script);
+        expect(row?.watch).toBe("watched");
+    });
+
+    it("is watched again after a restart, though the new manager never loaded it", async () => {
+        const first = await realWallet();
+        const offer = await create(first.wallet);
+        const script = hex.encode(offer.swapPkScript);
+        const firstManager = await first.wallet.getContractManager();
+        await firstManager.setContractWatchState(script, "retained");
+        firstManager.dispose();
+
+        const { wallet } = await realWallet(first.contractRepository);
+        await create(wallet);
+
+        const row = (await collectContracts(first.contractRepository)).find(
+            (c) => c.script === script,
+        );
         expect(row?.watch).toBe("watched");
     });
 });
