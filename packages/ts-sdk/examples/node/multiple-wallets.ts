@@ -10,7 +10,7 @@
  * $ npx tsx examples/node/multiple-wallets.ts
  * ```
  *
- * Requires Node.js with the built-in `node:sqlite` module (v22.5+).
+ * Requires Node.js with the built-in `node:sqlite` module (v22.13+).
  */
 
 import {

@@ -1169,13 +1169,13 @@ import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
 import { DatabaseSync } from 'node:sqlite'
 
-const db = new  DatabaseSync('my-wallet.sqlite')
+const db = new DatabaseSync('my-wallet.sqlite')
 db.exec('PRAGMA journal_mode = WAL')
 
 const executor: SQLExecutor = {
-  run: async (sql, params) => { db.prepare(sql).run(params) },
-  get: async (sql, params) => db.prepare(sql).get(params) as any,
-  all: async (sql, params) => db.prepare(sql).all(params) as any,
+  run: async (sql, params) => { db.prepare(sql).run(...(params ?? [])) },
+  get: async (sql, params) => db.prepare(sql).get(...(params ?? [])) as any,
+  all: async (sql, params) => db.prepare(sql).all(...(params ?? [])) as any,
 }
 
 const wallet = await Wallet.create({
