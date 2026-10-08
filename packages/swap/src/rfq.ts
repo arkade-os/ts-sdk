@@ -64,8 +64,7 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-// Type-only, and it has to stay that way: `evmRfq.ts` imports the pair
-// helpers from here, so a value import would close the cycle at run time.
+// Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
