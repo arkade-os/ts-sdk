@@ -576,6 +576,12 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
     state?: ContractState;
 };
 
+function assertNonNegativeMs(name: string, ms: number | undefined): void {
+    if (ms !== undefined && (!Number.isSafeInteger(ms) || ms < 0)) {
+        throw new Error(`${name} must be a non-negative safe integer`);
+    }
+}
+
 /**
  * Central manager for contract lifecycle: creates and persists contracts, queries them with
  * their virtual outputs, selects spendable paths, and emits contract events. The only component
@@ -647,6 +653,7 @@ export class ContractManager implements IContractManager {
     private disposed = false;
 
     private constructor(config: ContractManagerConfig) {
+        assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
         this.config = config;
 
         this.watcher = new ContractWatcher({
@@ -682,6 +689,7 @@ export class ContractManager implements IContractManager {
 
     /** @see ContractManagerConfig.vtxoSyncMaxAgeMs — for factory-built managers. */
     setVtxoSyncMaxAge(maxAgeMs: number): void {
+        assertNonNegativeMs("vtxoSyncMaxAgeMs", maxAgeMs);
         this.config.vtxoSyncMaxAgeMs = maxAgeMs;
     }
 
@@ -1337,12 +1345,7 @@ export class ContractManager implements IContractManager {
         pageSize?: number,
         options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
-        if (
-            options?.maxSyncAgeMs !== undefined &&
-            (!Number.isSafeInteger(options.maxSyncAgeMs) || options.maxSyncAgeMs < 0)
-        ) {
-            throw new Error("maxSyncAgeMs must be a non-negative safe integer");
-        }
+        assertNonNegativeMs("maxSyncAgeMs", options?.maxSyncAgeMs);
         const contracts = await this.getContracts(filter);
         // Best-effort: a retryable failure serves repository state (no partial write or cursor move).
         if (

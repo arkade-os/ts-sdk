@@ -293,6 +293,12 @@ style and have not been backfilled.
   refused when the artifact is read. `$param` operands are still bound
   as block counts. (#1012)
 
+- **`vtxoSyncMaxAgeMs` is validated however it is set.** Only the
+  per-read `maxSyncAgeMs` was checked; `setVtxoSyncMaxAge` and the
+  `ContractManager.create` config accepted any number, and `Infinity`
+  silently stopped every read from syncing. Both now reject a value that
+  is not a non-negative safe integer, as the per-read option does.
+
 ### Performance
 
 - **`getVtxos` and `getBalance` no longer read spent history.** Both

@@ -193,4 +193,16 @@ describe("ContractManager vtxoSyncMaxAgeMs", () => {
 
         expect(reads(indexer)).toBe(0);
     });
+
+    it("rejects a budget the per-read option would, however it is set", async () => {
+        const { manager } = await setup();
+        for (const bad of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+            await expect(setup(bad)).rejects.toThrow(
+                "vtxoSyncMaxAgeMs must be a non-negative safe integer",
+            );
+            expect(() => manager.setVtxoSyncMaxAge(bad)).toThrow(
+                "vtxoSyncMaxAgeMs must be a non-negative safe integer",
+            );
+        }
+    });
 });
