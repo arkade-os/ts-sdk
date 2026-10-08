@@ -2,6 +2,7 @@ import { hex } from "@scure/base";
 import { describe, expect, it } from "vitest";
 import { p2tr, taprootNumsKey } from "@scure/btc-signer";
 import { assembleBtcdTaprootTree, Transaction, VtxoScript } from "../src";
+import { btcdLeafLayout } from "../src/script/taprootTree";
 import { TapTreeCoder, toBIP371TapTree } from "../src/script/base";
 
 /**
@@ -151,17 +152,55 @@ describe("VtxoScript.decode of a BIP-371 tapTree", () => {
         expect(hex.encode(decoded.pkScript)).toBe(hex.encode(script.pkScript));
     });
 
-    it("rejects a valid BIP-371 tree that assembleBtcdTaprootTree cannot build", () => {
-        // A 3-leaf tree whose single leaf sits on the left: btcd puts it on
-        // the right (depths 2, 2, 1).
+    // arkd >= v0.9.14 (`txutils.TapTree.Encode`) writes leaves in
+    // construction order with placeholder depths min(i + 1, n - 1).
+    it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])(
+        "decodes arkd's %i-leaf encoding in construction order",
+        (n) => {
+            const script = scriptWithLeaves(n);
+            const tapTree = TapTreeCoder.encode(
+                script.scripts.map((leafScript, i) => ({
+                    depth: n === 1 ? 0 : Math.min(i + 1, n - 1),
+                    version: 0xc0,
+                    script: leafScript as Uint8Array<ArrayBuffer>,
+                })),
+            );
+
+            expect(hex.encode(VtxoScript.decode(tapTree).pkScript)).toBe(
+                hex.encode(script.pkScript),
+            );
+        },
+    );
+
+    it("decodes any other depth shape in construction order", () => {
+        const script = scriptWithLeaves(3);
+        // Valid BIP-371 shape, but not the one assembleBtcdTaprootTree builds.
         const tapTree = TapTreeCoder.encode(
-            [1, 2, 2].map((depth, i) => ({
-                depth,
+            script.scripts.map((leafScript, i) => ({
+                depth: [1, 2, 2][i],
                 version: 0xc0,
-                script: new Uint8Array([0x51 + i]),
+                script: leafScript as Uint8Array<ArrayBuffer>,
             })),
         );
 
-        expect(() => VtxoScript.decode(tapTree)).toThrow(/btcd tree shape/);
+        expect(hex.encode(VtxoScript.decode(tapTree).pkScript)).toBe(hex.encode(script.pkScript));
+    });
+
+    // Reordering is keyed on the depth sequence, so it must never match a
+    // construction-order writer's depths when the two orders differ.
+    it("never mistakes a construction-order encoding for the BIP-371 form", () => {
+        for (let n = 1; n <= 256; n++) {
+            const layout = btcdLeafLayout(n);
+            if (layout.every((slot, i) => slot.index === i)) continue;
+            const dfsDepths = layout.map((slot) => slot.depth);
+            const constructionOrderWriters = [
+                Array(n).fill(1), // VtxoScript.encode, rust-sdk, dotnet-sdk
+                Array.from({ length: n }, (_, i) => Math.min(i + 1, n - 1)), // arkd
+                Array.from({ length: n }, (_, i) => layout.find((s) => s.index === i)!.depth),
+            ];
+            for (const depths of constructionOrderWriters) {
+                expect(depths).not.toEqual(dfsDepths);
+            }
+        }
     });
 });

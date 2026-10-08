@@ -52,32 +52,37 @@ export class VtxoScript {
     /**
      * Decode a virtual output script from an encoded TapTree.
      *
-     * Accepts both the {@link encode} form (leaves in construction order, all
-     * at depth 1) and the BIP-371 form {@link toBIP371TapTree} writes (leaves
-     * in the tree's DFS order with their real depths). For some leaf counts
-     * (6, 7, 10, ...) the two orders differ, so a BIP-371 tree is mapped back
-     * to construction order before the tree is rebuilt.
+     * Leaves are normally read in construction order and their depths
+     * ignored: that covers the {@link encode} form (every depth 1) and the
+     * placeholder depths other writers use, such as arkd's. The exception is
+     * the BIP-371 form {@link toBIP371TapTree} writes, whose leaves are in the
+     * tree's DFS order: for some leaf counts (6, 7, 10, ...) that differs from
+     * construction order. A tree whose depths are exactly the shape
+     * `assembleBtcdTaprootTree` builds is that form, so its leaves are mapped
+     * back to construction order first. No construction-order writer produces
+     * that depth sequence when the two orders differ, so this never reorders
+     * a tree that decoded correctly before.
      *
      * @param tapTree - Encoded TapTree bytes
      * @returns Decoded virtual output script
-     * @throws Error if the TapTree cannot be decoded into a valid script set,
-     *         or its depths are not the shape `assembleBtcdTaprootTree` builds
+     * @throws Error if the TapTree cannot be decoded into a valid script set
      * @see encode
      */
     static decode(tapTree: Bytes): VtxoScript {
         const leaves = TapTreeCoder.decode(tapTree);
+        const scripts = leaves.map((leaf) => leaf.script);
         if (leaves.every((leaf) => leaf.depth === 1)) {
-            return new VtxoScript(leaves.map((leaf) => leaf.script));
+            return new VtxoScript(scripts);
         }
         const layout = btcdLeafLayout(leaves.length);
         if (layout.some((slot, i) => slot.depth !== leaves[i].depth)) {
-            throw new Error("tapTree: leaf depths do not match the btcd tree shape");
+            return new VtxoScript(scripts);
         }
-        const scripts = new Array<Bytes>(leaves.length);
+        const ordered = new Array<Bytes>(leaves.length);
         layout.forEach((slot, i) => {
-            scripts[slot.index] = leaves[i].script;
+            ordered[slot.index] = scripts[i];
         });
-        return new VtxoScript(scripts);
+        return new VtxoScript(ordered);
     }
 
     /**
