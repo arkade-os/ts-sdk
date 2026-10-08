@@ -100,7 +100,7 @@
         "smoke:dist": "node scripts/smoke-dist.mjs"
     },
     "engines": {
-        "node": ">=22.12.0"
+        "node": ">=22.13.0"
     },
     "keywords": [
         "arkade",
