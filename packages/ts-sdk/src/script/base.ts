@@ -12,7 +12,7 @@ import {
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "./tapscript";
-import { assembleBtcdTaprootTree } from "./taprootTree";
+import { assembleBtcdTaprootTree, btcdLeafLayout } from "./taprootTree";
 import { DEFAULT_NETWORK } from "../networks";
 
 export type TapLeafScript = [
@@ -52,15 +52,46 @@ export class VtxoScript {
     /**
      * Decode a virtual output script from an encoded TapTree.
      *
+     * Leaves are normally read in construction order and their depths
+     * ignored: that covers the {@link encode} form (every depth 1) and the
+     * placeholder depths other writers use, such as arkd's. The exception is
+     * the BIP-371 form {@link toBIP371TapTree} writes, whose leaves are in the
+     * tree's DFS order: for some leaf counts (6, 7, 10, ...) that differs from
+     * construction order. A tree whose depths are exactly the shape
+     * `assembleBtcdTaprootTree` builds is that form, so its leaves are mapped
+     * back to construction order first. No construction-order writer produces
+     * that depth sequence when the two orders differ, so this never reorders
+     * a tree that decoded correctly before.
+     *
+     * Every leaf must carry the base tapscript version: the tree is rebuilt
+     * with {@link TAP_LEAF_VERSION} leaves, so any other version would
+     * silently derive a different taproot key.
+     *
      * @param tapTree - Encoded TapTree bytes
      * @returns Decoded virtual output script
      * @throws Error if the TapTree cannot be decoded into a valid script set
+     *         or a leaf carries a version other than {@link TAP_LEAF_VERSION}
      * @see encode
      */
     static decode(tapTree: Bytes): VtxoScript {
         const leaves = TapTreeCoder.decode(tapTree);
+        const foreign = leaves.find((leaf) => leaf.version !== TAP_LEAF_VERSION);
+        if (foreign) {
+            throw new Error(`unsupported tap leaf version 0x${foreign.version.toString(16)}`);
+        }
         const scripts = leaves.map((leaf) => leaf.script);
-        return new VtxoScript(scripts);
+        if (leaves.every((leaf) => leaf.depth === 1)) {
+            return new VtxoScript(scripts);
+        }
+        const layout = btcdLeafLayout(leaves.length);
+        if (layout.some((slot, i) => slot.depth !== leaves[i].depth)) {
+            return new VtxoScript(scripts);
+        }
+        const ordered = new Array<Bytes>(leaves.length);
+        layout.forEach((slot, i) => {
+            ordered[slot.index] = scripts[i];
+        });
+        return new VtxoScript(ordered);
     }
 
     /**
@@ -182,8 +213,8 @@ export class VtxoScript {
  *
  * `VtxoScript.encode()` stores leaves in the caller's original order with a
  * placeholder `depth: 1` — a format `VtxoScript.decode()` can losslessly
- * invert by re-running `assembleBtcdTaprootTree` over that same order, but
- * NOT a valid BIP-371 field: for non-power-of-2 leaf counts (e.g. 3, 6) the
+ * invert by re-running `assembleBtcdTaprootTree` over that same order (it
+ * decodes this function's output too), but NOT a valid BIP-371 field: for non-power-of-2 leaf counts (e.g. 3, 6) the
  * tree is neither flat nor built in that original order (the algorithm's
  * FIFO merge phase can reorder leaves for counts like 6), so per-index
  * depths cannot be guessed from leaf position. This rebuilds the exact same

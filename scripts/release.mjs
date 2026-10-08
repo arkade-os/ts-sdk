@@ -24,26 +24,12 @@ const PACKAGES = [
         order: 1,
     },
     {
-        key: "boltz-swap",
-        name: "@arkade-os/boltz-swap",
-        dir: path.join(ROOT_DIR, "packages/boltz-swap"),
-        pkgJson: path.join(ROOT_DIR, "packages/boltz-swap/package.json"),
-        tagPrefix: "@arkade-os/boltz-swap/",
-        order: 2,
-        dependsOnSdk: true,
-        bumpFlag: "--boltz-bump",
-        // Released only when named outright (`release.mjs boltz-swap <bump>`):
-        // out of `all`, and not dragged along by an SDK release either. The cost
-        // is that its published build keeps pinning whatever SDK it shipped with.
-        excludeFromAll: true,
-    },
-    {
         key: "swap",
         name: "@arkade-os/swap",
         dir: path.join(ROOT_DIR, "packages/swap"),
         pkgJson: path.join(ROOT_DIR, "packages/swap/package.json"),
         tagPrefix: "@arkade-os/swap/",
-        order: 3,
+        order: 2,
         dependsOnSdk: true,
         bumpFlag: "--swap-bump",
     },
@@ -353,12 +339,9 @@ function validatePreid(preid) {
 
 function primarySelection(target) {
     // Releasing the SDK drags its dependents along, because each would otherwise
-    // stay published against the previous SDK version — except those opted out,
-    // which are deliberately left pinned to the SDK they last shipped with.
-    if (target === "sdk") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
-    // `all` is a bulk convenience, not an implication of the SDK bump; packages
-    // marked `excludeFromAll` opt out of it but remain releasable directly.
-    if (target === "all") return ALL_KEYS.filter((k) => !PACKAGE_BY_KEY[k].excludeFromAll);
+    // stay published against the previous SDK version.
+    if (target === "sdk") return ALL_KEYS;
+    if (target === "all") return ALL_KEYS;
     if (PACKAGE_BY_KEY[target]) return [target];
     die(`Invalid target: ${target}`);
 }
