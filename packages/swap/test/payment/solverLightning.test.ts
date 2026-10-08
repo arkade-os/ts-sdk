@@ -16,6 +16,7 @@ import {
 import type { InvoiceFacts } from "../../src/rfq";
 
 const INVOICE = "lnbcrt1u1pjexampleinvoice";
+const UNIFIED = `bitcoin:bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080?lightning=${INVOICE}&amount=0.00099`;
 const SOLVER_PUBKEY = "aa".repeat(32);
 const EMULATOR_PUBKEY = "bb".repeat(32);
 const NOW = () => Math.floor(Date.now() / 1000);
@@ -169,6 +170,12 @@ describe("solverLightningRail.available", () => {
         expect(await rail.available?.({ raw: INVOICE, amount: 50_000 }, ctxWith())).toBe(false);
         expect(await rail.available?.({ raw: INVOICE, amount: 100_000 }, ctxWith())).toBe(true);
     });
+
+    it("takes an amount restating a unified URI's amount= as no contradiction", async () => {
+        const rail = solverLightningRail(depsWith());
+        expect(await rail.available?.({ raw: UNIFIED, amount: 99_000 }, ctxWith())).toBe(true);
+        expect(await rail.available?.({ raw: UNIFIED, amount: 50_000 }, ctxWith())).toBe(false);
+    });
 });
 
 describe("the router drops this rail rather than failing the payment", () => {
@@ -226,6 +233,22 @@ describe("solverLightningRail.quote", () => {
         rfqStub = vi.fn(async () => negotiated(101_500));
         await expect(
             solverLightningRail(depsWith()).quote({ raw: INVOICE, amount: 50_000 }, ctxWith()),
+        ).rejects.toThrow(/names 50000 sats but the invoice is for 100000/);
+    });
+
+    it("quotes the invoice's amount when the request restates the URI's lower amount=", async () => {
+        rfqStub = vi.fn(async () => negotiated(101_500));
+        const quote = await solverLightningRail(depsWith()).quote(
+            { raw: UNIFIED, amount: 99_000 },
+            ctxWith(),
+        );
+        expect(quote).toMatchObject({ amount: 100_000, fee: 1500, total: 101_500 });
+    });
+
+    it("refuses an amount a unified URI names nowhere", async () => {
+        rfqStub = vi.fn(async () => negotiated(101_500));
+        await expect(
+            solverLightningRail(depsWith()).quote({ raw: UNIFIED, amount: 50_000 }, ctxWith()),
         ).rejects.toThrow(/names 50000 sats but the invoice is for 100000/);
     });
 
