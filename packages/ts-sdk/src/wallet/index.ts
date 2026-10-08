@@ -575,6 +575,9 @@ export interface SendParams {
      * @see IReadonlyWallet.getVtxos
      */
     selectedVtxos?: ExtendedVirtualCoin[];
+
+    /** Maximum sats of unavoidable change this send may pay as an offchain fee. Defaults to any change below the operator's VTXO minimum; 0 disables it. */
+    maxChangeFee?: number;
 }
 
 /**
