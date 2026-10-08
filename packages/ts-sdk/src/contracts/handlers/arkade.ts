@@ -13,6 +13,7 @@ import { extractPubKey, isDescriptor } from "../../identity/descriptor";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
+    resolveCsvTimelock,
     resolveTimelockValue,
     serializeArkadeContractParams,
     witnessRefToBytes,
@@ -104,9 +105,7 @@ function pathsFor(
 
         // `$param` timelock values resolved against the constructor args.
         const csvDef = fn.def.tapscript.csv;
-        const csv = csvDef
-            ? { type: csvDef.type, value: resolveTimelockValue(csvDef.value, script.args) }
-            : undefined;
+        const csv = csvDef ? resolveCsvTimelock(csvDef, script.args) : undefined;
         const cltv =
             fn.def.tapscript.cltv !== undefined
                 ? resolveTimelockValue(fn.def.tapscript.cltv, script.args)
