@@ -1,0 +1,2259 @@
+import {
+    IWallet,
+    WalletBalance,
+    SettleParams,
+    ArkTransaction,
+    ExtendedCoin,
+    GetVtxosFilter,
+    GetSpendableVtxosFilter,
+    GetNewAddressesOptions,
+    NewAddress,
+    StorageConfig,
+    IReadonlyWallet,
+    IReadonlyAssetManager,
+    IAssetManager,
+    AssetDetails,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
+    Recipient,
+    SendParams,
+} from "..";
+import { ArkadeInfo, INFO_FETCH_TIMEOUT_MS, SettlementEvent } from "../../providers/ark";
+import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
+import { hex } from "@scure/base";
+import {
+    Identity,
+    ReadonlyIdentity,
+    type SerializedIdentity,
+    serializeReadonlyIdentity,
+    serializeSigningIdentity,
+    isSigningIdentity,
+} from "../../identity";
+import type {
+    HDWalletCapable,
+    HDAllocationCapable,
+    AddressAllocationCapable,
+} from "../hdWalletCapable";
+import { resolveDescriptorSigner } from "../hdWalletCapable";
+import { runWalletRestoreHooks } from "../restoreHooks";
+import { WalletRepository } from "../../repositories/walletRepository";
+import { ContractRepository } from "../../repositories/contractRepository";
+import { setupServiceWorker } from "../../worker/browser/utils";
+import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../../repositories";
+import {
+    RequestClear,
+    RequestCreateContract,
+    RequestDeleteContract,
+    RequestGetAddress,
+    RequestGetArkadeInfo,
+    RequestIndexerGetVtxos,
+    RequestIndexerGetVirtualTxs,
+    RequestSubmitTx,
+    RequestFinalizeTx,
+    RequestGetBalance,
+    RequestGetBoardingAddress,
+    RequestGetBoardingUtxos,
+    RequestAnnotateVtxos,
+    RequestGetContracts,
+    RequestGetContractsWithVtxos,
+    RequestWatchScript,
+    RequestUnwatchScript,
+    RequestGetWatchedScripts,
+    RequestGetContractSyncState,
+    RequestGetStatus,
+    RequestGetSpendablePaths,
+    RequestGetTransactionHistory,
+    RequestGetVtxos,
+    RequestGetSpendableVtxos,
+    RequestInitWallet,
+    RequestIsContractManagerWatching,
+    RequestRefreshVtxos,
+    RequestRefreshOutpoints,
+    RequestReloadWallet,
+    RequestSettle,
+    ResponseSettle,
+    ResponseSettleEvent,
+    RequestUpdateContract,
+    ResponseAnnotateVtxos,
+    ResponseGetAddress,
+    ResponseGetArkadeInfo,
+    ResponseIndexerGetVtxos,
+    ResponseIndexerGetVirtualTxs,
+    ResponseSubmitTx,
+    ResponseGetBalance,
+    ResponseGetBoardingAddress,
+    ResponseGetBoardingUtxos,
+    ResponseGetContracts,
+    ResponseGetContractsWithVtxos,
+    ResponseGetWatchedScripts,
+    ResponseGetContractSyncState,
+    ResponseGetStatus,
+    ResponseGetSpendablePaths,
+    ResponseGetTransactionHistory,
+    ResponseGetVtxos,
+    ResponseGetSpendableVtxos,
+    ResponseIsContractManagerWatching,
+    ResponseReloadWallet,
+    ResponseUpdateContract,
+    ResponseCreateContract,
+    ResponseContractEvent,
+    WalletUpdaterRequest,
+    WalletUpdaterResponse,
+    RequestGetAllSpendingPaths,
+    ResponseGetAllSpendingPaths,
+    RequestSend,
+    ResponseSend,
+    RequestGetAssetDetails,
+    ResponseGetAssetDetails,
+    RequestIssue,
+    ResponseIssue,
+    RequestReissue,
+    ResponseReissue,
+    RequestBurn,
+    ResponseBurn,
+    RequestDelegate,
+    ResponseDelegate,
+    RequestGetDelegateInfo,
+    ResponseGetDelegateInfo,
+    RequestRecoverVtxos,
+    ResponseRecoverVtxos,
+    ResponseRecoverVtxosEvent,
+    RequestGetRecoverableBalance,
+    ResponseGetRecoverableBalance,
+    RequestGetExpiringVtxos,
+    ResponseGetExpiringVtxos,
+    RequestRenewVtxos,
+    ResponseRenewVtxos,
+    ResponseRenewVtxosEvent,
+    RequestGetExpiredBoardingUtxos,
+    ResponseGetExpiredBoardingUtxos,
+    RequestSweepExpiredBoardingUtxos,
+    ResponseSweepExpiredBoardingUtxos,
+    RequestMigrateDeprecatedSignerVtxos,
+    ResponseMigrateDeprecatedSignerVtxos,
+    ResponseMigrateDeprecatedSignerVtxosEvent,
+    RequestGetDeprecatedSignerStatus,
+    ResponseGetDeprecatedSignerStatus,
+    deserializeMigrationReport,
+    deserializeDeprecatedSignerReport,
+    RequestRestoreWallet,
+    RequestGetCurrentSigningDescriptor,
+    ResponseGetCurrentSigningDescriptor,
+    RequestGetNextSigningDescriptor,
+    RequestGetNewAddresses,
+    ResponseGetNewAddresses,
+    ResponseGetNextSigningDescriptor,
+    RequestGetUsedSigningDescriptors,
+    ResponseGetUsedSigningDescriptors,
+    RequestAdvanceSigningDescriptorWatermark,
+    DEFAULT_MESSAGE_TAG,
+    deserializeAggregateError,
+    isSerializedAggregateError,
+} from "./wallet-message-handler";
+import type {
+    Contract,
+    ContractEventCallback,
+    ContractWithVtxos,
+    GetContractsFilter,
+    PathSelection,
+    WatchedScript,
+} from "../../contracts";
+import type {
+    ContractSyncState,
+    CreateContractParams,
+    GetAllSpendingPathsOptions,
+    GetSpendablePathsOptions,
+    IContractManager,
+    RefreshVtxosOptions,
+    ScanResult,
+} from "../../contracts/contractManager";
+import type { ContractState, ContractWatchState } from "../../contracts/types";
+import type { IDelegateManager } from "../delegate";
+import type {
+    IVtxoManager,
+    MigrateDeprecatedSignerOptions,
+    DeprecatedSignerMigrationReport,
+    DeprecatedSignerReport,
+    RenewVtxosOptions,
+    SettlementConfig,
+} from "../vtxo-manager";
+import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
+import type { DelegateInfo } from "../../providers/delegate";
+import { getRandomId } from "../utils";
+import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
+import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
+import {
+    isMessageBusInitializingError,
+    isMessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "../../worker/errors";
+import type { ProviderConnectionState } from "../wallet";
+import { normalizeVtxo, type NormalizedExtendedVirtualCoin } from "../vtxo";
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Undo the structured-clone algorithm's Error-name normalization: a custom
+ * `name` (ProviderUnavailableError, ReadonlyWalletError, …) reaches the page
+ * as `"Error"`, so the worker sends the original beside it as a plain string
+ * (`ResponseEnvelope.errorName`) and it is restored here before the reject.
+ * `instanceof` can never survive the boundary; `name` now genuinely does.
+ */
+const restoreErrorName = (response: { error?: Error; errorName?: string }): Error => {
+    const error = response.error as Error;
+    if (response.errorName && error instanceof Error && error.name !== response.errorName) {
+        error.name = response.errorName;
+    }
+    return error;
+};
+
+// Bounded backoff for waiting out an in-flight init: ~100ms, 200ms, … capped at
+// 2s, so a stuck init still surfaces an error instead of hanging the caller.
+const INIT_WAIT_BACKOFF_CAP_MS = 2_000;
+const MAX_INIT_WAITS = 8;
+const initWaitBackoffMs = (attempt: number) =>
+    Math.min(100 * 2 ** attempt, INIT_WAIT_BACKOFF_CAP_MS);
+
+type RequestType = WalletUpdaterRequest["type"];
+
+export type MessageTimeouts = Partial<Record<RequestType, number>>;
+
+export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
+
+export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
+    // Fast reads — fail quickly
+    GET_ADDRESS: 10_000,
+    GET_BALANCE: 10_000,
+    GET_BOARDING_ADDRESS: 10_000,
+    GET_STATUS: 10_000,
+    GET_CONTRACT_SYNC_STATE: 10_000,
+    GET_DELEGATE_INFO: 10_000,
+    IS_CONTRACT_MANAGER_WATCHING: 10_000,
+    GET_CURRENT_SIGNING_DESCRIPTOR: 10_000,
+    // Allocation is a local repository write plus a fire-and-forget band
+    // slide — no indexer round trip on the request path.
+    GET_NEXT_SIGNING_DESCRIPTOR: 10_000,
+    // Same shape as the bare allocation above, plus one contract write per
+    // requested type — still local, still no indexer round trip.
+    GET_NEW_ADDRESSES: 10_000,
+    GET_USED_SIGNING_DESCRIPTORS: 20_000,
+    ADVANCE_SIGNING_DESCRIPTOR_WATERMARK: 10_000,
+
+    // Medium reads — may involve indexer queries
+    // A live `/v1/info` fetch queued behind the same per-origin rate gate as
+    // the indexer, not a repository read. Derived from the fetch's own abort
+    // budget so the worker's snapshot fallback stays reachable before this
+    // page deadline fires — lowering it below the budget would time the page
+    // out while the worker is still seconds from answering from cache.
+    GET_ARKADE_INFO: INFO_FETCH_TIMEOUT_MS + 8_000,
+    INDEXER_GET_VTXOS: 20_000,
+    INDEXER_GET_VIRTUAL_TXS: 20_000,
+    GET_VTXOS: 20_000,
+    GET_SPENDABLE_VTXOS: 20_000,
+    GET_BOARDING_UTXOS: 20_000,
+    GET_TRANSACTION_HISTORY: 20_000,
+    GET_CONTRACTS: 20_000,
+    GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_WATCHED_SCRIPTS: 10_000,
+    ANNOTATE_VTXOS: 20_000,
+    GET_SPENDABLE_PATHS: 20_000,
+    GET_ALL_SPENDING_PATHS: 20_000,
+    GET_ASSET_DETAILS: 20_000,
+    GET_EXPIRING_VTXOS: 20_000,
+    GET_EXPIRED_BOARDING_UTXOS: 20_000,
+    GET_RECOVERABLE_BALANCE: 20_000,
+    GET_DEPRECATED_SIGNER_STATUS: 20_000,
+    RELOAD_WALLET: 20_000,
+
+    // Transactions — need more headroom.
+    // SETTLE / RECOVER_VTXOS / RENEW_VTXOS go through the streaming path and
+    // are treated as long-running on both sides of the bus: the values below
+    // are retained only for type completeness and are never enforced.
+    SEND: 50_000,
+    SETTLE: 50_000,
+    // Broadcast: the server round-trip a spend ends in, so it belongs
+    // with the writes rather than the reads above.
+    SUBMIT_TX: 50_000,
+    FINALIZE_TX: 50_000,
+    ISSUE: 50_000,
+    REISSUE: 50_000,
+    BURN: 50_000,
+    DELEGATE: 50_000,
+    RECOVER_VTXOS: 50_000,
+    RENEW_VTXOS: 50_000,
+    SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
+    // kept for type completeness and is never enforced as an inactivity deadline.
+    MIGRATE_DEPRECATED_SIGNER_VTXOS: 50_000,
+    // RESTORE_WALLET is a streaming/long-running path (sendMessageWithEvents)
+    // like SETTLE; the value here is kept for type completeness and is never
+    // enforced as an inactivity deadline.
+    RESTORE_WALLET: 50_000,
+
+    // Misc writes
+    INIT_WALLET: 30_000,
+    CLEAR: 10_000,
+    SIGN_TRANSACTION: 30_000,
+    CREATE_CONTRACT: 30_000,
+    UPDATE_CONTRACT: 30_000,
+    // Registering a watch is an in-memory map write plus one subscription
+    // update — no indexer round trip on the request path.
+    WATCH_SCRIPT: 10_000,
+    UNWATCH_SCRIPT: 10_000,
+    DELETE_CONTRACT: 10_000,
+    REFRESH_VTXOS: 30_000,
+    REFRESH_OUTPOINTS: 30_000,
+};
+
+const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
+    "GET_ADDRESS",
+    "GET_ARKADE_INFO",
+    "INDEXER_GET_VTXOS",
+    "INDEXER_GET_VIRTUAL_TXS",
+    "GET_BALANCE",
+    "GET_BOARDING_ADDRESS",
+    "GET_BOARDING_UTXOS",
+    "GET_STATUS",
+    "GET_TRANSACTION_HISTORY",
+    "IS_CONTRACT_MANAGER_WATCHING",
+    "GET_DELEGATE_INFO",
+    "GET_RECOVERABLE_BALANCE",
+    "GET_EXPIRED_BOARDING_UTXOS",
+    "GET_DEPRECATED_SIGNER_STATUS",
+    "GET_VTXOS",
+    "GET_SPENDABLE_VTXOS",
+    "GET_CONTRACTS",
+    "GET_CONTRACTS_WITH_VTXOS",
+    "GET_WATCHED_SCRIPTS",
+    "ANNOTATE_VTXOS",
+    "GET_SPENDABLE_PATHS",
+    "GET_ALL_SPENDING_PATHS",
+    "GET_ASSET_DETAILS",
+    "GET_EXPIRING_VTXOS",
+    "RELOAD_WALLET",
+]);
+
+function getRequestDedupKey(request: WalletUpdaterRequest): string {
+    const { id, tag, ...rest } = request;
+    return JSON.stringify(rest);
+}
+
+class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
+    constructor(
+        protected readonly sendMessage: (
+            msg: WalletUpdaterRequest,
+        ) => Promise<WalletUpdaterResponse>,
+        protected readonly messageTag: string,
+    ) {}
+
+    async getAssetDetails(assetId: string): Promise<AssetDetails> {
+        const message: RequestGetAssetDetails = {
+            tag: this.messageTag,
+            type: "GET_ASSET_DETAILS",
+            id: getRandomId(),
+            payload: { assetId },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseGetAssetDetails).payload.assetDetails;
+    }
+}
+
+class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implements IAssetManager {
+    async issue(params: IssuanceParams): Promise<IssuanceResult> {
+        const message: RequestIssue = {
+            tag: this.messageTag,
+            type: "ISSUE",
+            id: getRandomId(),
+            payload: { params },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseIssue).payload.result;
+    }
+
+    async reissue(params: ReissuanceParams): Promise<string> {
+        const message: RequestReissue = {
+            tag: this.messageTag,
+            type: "REISSUE",
+            id: getRandomId(),
+            payload: { params },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseReissue).payload.txid;
+    }
+
+    async burn(params: BurnParams): Promise<string> {
+        const message: RequestBurn = {
+            tag: this.messageTag,
+            type: "BURN",
+            id: getRandomId(),
+            payload: { params },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseBurn).payload.txid;
+    }
+}
+
+/**
+ * Service Worker-based wallet implementation for browser environments.
+ *
+ * This wallet uses a service worker as a backend to handle wallet logic,
+ * providing secure key storage and transaction signing in web applications.
+ * The service worker runs in a separate thread and can persist data between
+ * browser sessions.
+ *
+ * @example
+ * ```typescript
+ * // SIMPLE: Recommended approach
+ * const wallet = await ServiceWorkerWallet.setup({
+ *   serviceWorkerPath: '/service-worker.js',
+ *   arkServer: { url: 'https://arkade.computer' },
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
+ * });
+ *
+ * // ADVANCED: Manual setup with service worker control
+ * const serviceWorker = await setupServiceWorker("/service-worker.js");
+ * const wallet = await ServiceWorkerWallet.create({
+ *   serviceWorker,
+ *   arkServer: { url: 'https://arkade.computer' },
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
+ * });
+ *
+ * // Use like any other wallet
+ * const address = await wallet.getAddress();
+ * const balance = await wallet.getBalance();
+ * ```
+ */
+interface ServiceWorkerWalletOptions {
+    /** Arkade server endpoint and optional public key. */
+    arkServer?: {
+        url: string;
+        publicKey?: string;
+    };
+    /**
+     * Repository-backed storage configuration overrides.
+     * Defaults to IndexedDB if unset.
+     */
+    storage?: StorageConfig;
+    /** Identity used to derive addresses and optionally sign operations. */
+    identity: ReadonlyIdentity | Identity;
+    /** Optional delegation service URL. */
+    delegateUrl?: string;
+    /**
+     * Override the default tag used for messages sent to and received from the service worker.
+     * @see DEFAULT_MESSAGE_TAG
+     */
+    walletUpdaterTag?: string;
+    /** Timeout used while bootstrapping the message bus inside the service worker. */
+    messageBusTimeoutMs?: number;
+    /** Optional settlement configuration forwarded to the worker wallet. */
+    settlementConfig?: SettlementConfig | false;
+    /**
+     * Receive-address strategy forwarded to the worker wallet.
+     *
+     * Service workers can only receive serializable configuration, so the
+     * descriptor-provider object form accepted by `Wallet.create()` is not
+     * supported here.
+     */
+    walletMode?: ServiceWorkerWalletMode;
+    /** Optional contract watcher configuration forwarded to the worker wallet. */
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /**
+     * HD look-ahead window forwarded to the worker wallet. Only takes effect
+     * together with `walletMode: 'hd'`.
+     *
+     * @see WalletConfig.lookAheadWindow
+     */
+    lookAheadWindow?: number;
+    /**
+     * Timelock floors forwarded to the worker wallet. Lowering either below its
+     * per-network default relaxes a fund-safety bound; intended for local
+     * testing. The fast public test networks whose arkd runs below the
+     * mainnet-grade checkpoint floor (signet, mutinynet) are defaulted to their
+     * own advertised value, so neither needs these set.
+     *
+     * @see WalletConfig.minBatchExpirySeconds
+     */
+    minBatchExpirySeconds?: bigint;
+    /** @see WalletConfig.minCheckpointExitDelaySeconds */
+    minCheckpointExitDelaySeconds?: bigint;
+    /**
+     * Per-request timeout overrides for wallet-updater messages.
+     * @see DEFAULT_MESSAGE_TIMEOUTS
+     */
+    messageTimeouts?: MessageTimeouts;
+}
+
+/**
+ * Options for creating a service-worker wallet with an existing worker instance.
+ *
+ * @see ServiceWorkerReadonlyWallet.create
+ * @see ServiceWorkerWallet.create
+ */
+export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
+    /** Existing service worker instance used for messaging. */
+    serviceWorker: ServiceWorker;
+};
+
+/**
+ * Options for registering a service worker and then creating a wallet around it.
+ *
+ * @see ServiceWorkerReadonlyWallet.setup
+ * @see ServiceWorkerWallet.setup
+ */
+export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
+    /** Path to the service worker script to register. */
+    serviceWorkerPath: string;
+    /** Timeout while waiting for the service worker to activate. */
+    serviceWorkerActivationTimeoutMs?: number;
+};
+
+type MessageBusInitConfig = {
+    wallet: SerializedIdentity;
+    arkServer: {
+        url: string;
+        publicKey?: string;
+    };
+    delegateUrl?: string;
+    timeoutMs?: number;
+    settlementConfig?: SettlementConfig | false;
+    walletMode?: ServiceWorkerWalletMode;
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    lookAheadWindow?: number;
+    minBatchExpirySeconds?: bigint;
+    minCheckpointExitDelaySeconds?: bigint;
+    messageTimeouts?: Record<string, number>;
+};
+
+const initializeMessageBus = (
+    serviceWorker: ServiceWorker,
+    config: MessageBusInitConfig,
+    timeoutMs = 2000,
+) => {
+    const initCmd = {
+        tag: "INITIALIZE_MESSAGE_BUS",
+        id: getRandomId(),
+        config: { ...config, timeoutMs },
+    };
+
+    return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+            navigator.serviceWorker.removeEventListener("message", onMessage);
+            clearTimeout(timeoutId);
+        };
+
+        const onMessage = (event: any) => {
+            const response = event.data;
+            if (response?.id !== initCmd.id) return;
+            cleanup();
+            if (response.error) {
+                reject(restoreErrorName(response));
+            } else {
+                resolve();
+            }
+        };
+
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new ServiceWorkerTimeoutError("MessageBus timed out"));
+        }, timeoutMs);
+
+        navigator.serviceWorker.addEventListener("message", onMessage);
+        serviceWorker.postMessage(initCmd);
+    });
+};
+
+export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+    public readonly identity: ReadonlyIdentity;
+    readonly activity = createDefaultActivityRegistry();
+    private readonly _readonlyAssetManager: IReadonlyAssetManager;
+    protected initConfig: MessageBusInitConfig | null = null;
+    protected initWalletPayload: RequestInitWallet["payload"] | null = null;
+    protected messageBusTimeoutMs?: number;
+    protected messageTimeouts: Record<RequestType, number> = DEFAULT_MESSAGE_TIMEOUTS as Record<
+        RequestType,
+        number
+    >;
+    private reinitPromise: Promise<void> | null = null;
+    private pingPromise: Promise<void> | null = null;
+    private inflightRequests = new Map<string, Promise<WalletUpdaterResponse>>();
+
+    get assetManager(): IReadonlyAssetManager {
+        return this._readonlyAssetManager;
+    }
+
+    protected constructor(
+        public readonly serviceWorker: ServiceWorker,
+        identity: ReadonlyIdentity,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository,
+        protected readonly messageTag: string,
+    ) {
+        this.identity = identity;
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
+        this._readonlyAssetManager = new ServiceWorkerReadonlyAssetManager(
+            (msg) => this.sendMessage(msg),
+            messageTag,
+        );
+    }
+
+    private getTimeoutForRequest(request: WalletUpdaterRequest): number {
+        return this.messageTimeouts[request.type] ?? 30_000;
+    }
+
+    /**
+     * Create a readonly service-worker wallet bound to an already-registered worker.
+     *
+     * @param options - Service worker, identity, and backend configuration
+     * @returns Initialized readonly service-worker wallet
+     * @throws Error if service-worker initialization fails
+     */
+    static async create(
+        options: ServiceWorkerWalletCreateOptions,
+    ): Promise<ServiceWorkerReadonlyWallet> {
+        const walletRepository =
+            options.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ?? new IndexedDBContractRepository();
+
+        const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
+
+        // Create the wallet instance
+        const wallet = new ServiceWorkerReadonlyWallet(
+            options.serviceWorker,
+            options.identity,
+            walletRepository,
+            contractRepository,
+            messageTag,
+        );
+
+        const serializedWallet = await serializeReadonlyIdentity(options.identity);
+
+        return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
+            delegateUrl: options.delegateUrl,
+            watcherConfig: options.watcherConfig,
+        });
+    }
+
+    /** Shared tail of both `create()` factories: boot the bus, INIT_WALLET, cache for reinit. */
+    protected static async bootstrap<W extends ServiceWorkerReadonlyWallet>(
+        wallet: W,
+        options: ServiceWorkerWalletCreateOptions,
+        serializedWallet: SerializedIdentity,
+        busConfig: Omit<MessageBusInitConfig, "wallet" | "arkServer" | "messageTimeouts">,
+    ): Promise<W> {
+        const arkServer = options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL };
+        const initWalletPayload = {
+            arkServerUrl: arkServer.url,
+            arkServerPublicKey: arkServer.publicKey,
+        };
+
+        // Precompute the merged timeout map so page-side waiting and
+        // worker-side enforcement are derived from the same source.
+        const messageTimeouts = options.messageTimeouts
+            ? ({
+                  ...DEFAULT_MESSAGE_TIMEOUTS,
+                  ...options.messageTimeouts,
+              } as Record<RequestType, number>)
+            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+
+        const busInitConfig: MessageBusInitConfig = {
+            wallet: serializedWallet,
+            arkServer,
+            ...busConfig,
+            messageTimeouts,
+        };
+
+        await initializeMessageBus(
+            options.serviceWorker,
+            { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
+            options.messageBusTimeoutMs,
+        );
+
+        const initMessage: RequestInitWallet = {
+            tag: wallet.messageTag,
+            type: "INIT_WALLET",
+            id: getRandomId(),
+            payload: initWalletPayload,
+        };
+
+        await wallet.sendMessage(initMessage);
+
+        // Persist the full init config (including messageTimeouts) so
+        // reinitialize() re-sends the same map to a restarted worker.
+        wallet.initConfig = busInitConfig;
+        wallet.initWalletPayload = initWalletPayload;
+        wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
+        wallet.messageTimeouts = messageTimeouts;
+
+        // Refuse to return a wallet bound to a different identity than the
+        // worker ended up with (e.g. a stale/queued init rebinding it).
+        await wallet.assertWorkerIdentityMatches();
+
+        return wallet;
+    }
+
+    /**
+     * Simplified setup method that handles service worker registration
+     * and wallet initialization automatically.
+     *
+     * @see ServiceWorkerReadonlyWallet.create
+     *
+     * @example
+     * ```typescript
+     * const wallet = await ServiceWorkerReadonlyWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServer: { url: 'https://arkade.computer' },
+     *   identity: ReadonlySingleKey.fromPublicKey('your_public_key_hex')
+     * });
+     * ```
+     */
+    static async setup(
+        options: ServiceWorkerWalletSetupOptions,
+    ): Promise<ServiceWorkerReadonlyWallet> {
+        // Register and setup the service worker
+        const serviceWorker = await setupServiceWorker({
+            path: options.serviceWorkerPath,
+            activationTimeoutMs: options.serviceWorkerActivationTimeoutMs,
+        });
+
+        // Use the existing create method
+        return await ServiceWorkerReadonlyWallet.create({
+            ...options,
+            serviceWorker,
+        });
+    }
+
+    private sendMessageDirect(
+        request: WalletUpdaterRequest,
+        timeoutMs: number,
+    ): Promise<WalletUpdaterResponse> {
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                navigator.serviceWorker.removeEventListener("message", messageHandler);
+            };
+
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(
+                    new ServiceWorkerTimeoutError(
+                        `Service worker message timed out (${request.type})`,
+                    ),
+                );
+            }, timeoutMs);
+
+            const messageHandler = (event: MessageEvent<WalletUpdaterResponse>) => {
+                const response = event.data;
+                if (request.id !== response.id) {
+                    return;
+                }
+
+                cleanup();
+                if (response.error) {
+                    reject(restoreErrorName(response));
+                } else {
+                    resolve(response);
+                }
+            };
+
+            navigator.serviceWorker.addEventListener("message", messageHandler);
+            this.serviceWorker.postMessage(request);
+        });
+    }
+
+    // Like sendMessageDirect but supports streaming responses: intermediate
+    // messages are forwarded via onEvent while the promise resolves on the
+    // first response for which isComplete returns true. No inactivity deadline:
+    // settlement-class flows surrender control to remote peers and can sit
+    // idle for long stretches between protocol events. Service-worker death
+    // is detected out-of-band via concurrent short requests that surface
+    // MESSAGE_BUS_NOT_INITIALIZED.
+    private sendMessageStreaming(
+        request: WalletUpdaterRequest,
+        onEvent: (response: WalletUpdaterResponse) => void,
+        isComplete: (response: WalletUpdaterResponse) => boolean,
+    ): Promise<WalletUpdaterResponse> {
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                navigator.serviceWorker.removeEventListener("message", messageHandler);
+            };
+
+            const messageHandler = (event: MessageEvent<WalletUpdaterResponse>) => {
+                const response = event.data;
+                if (request.id !== response.id) return;
+
+                if (response.error) {
+                    cleanup();
+                    reject(restoreErrorName(response));
+                    return;
+                }
+
+                if (isComplete(response)) {
+                    cleanup();
+                    resolve(response);
+                } else {
+                    onEvent(response);
+                }
+            };
+
+            navigator.serviceWorker.addEventListener("message", messageHandler);
+            this.serviceWorker.postMessage(request);
+        });
+    }
+
+    protected async sendMessage(request: WalletUpdaterRequest): Promise<WalletUpdaterResponse> {
+        if (!DEDUPABLE_REQUEST_TYPES.has(request.type)) {
+            return this.sendMessageWithRetry(request);
+        }
+
+        const key = getRequestDedupKey(request);
+        const existing = this.inflightRequests.get(key);
+        if (existing) return existing;
+
+        const promise = this.sendMessageWithRetry(request).finally(() => {
+            this.inflightRequests.delete(key);
+        });
+        this.inflightRequests.set(key, promise);
+        return promise;
+    }
+
+    private pingServiceWorker(): Promise<void> {
+        if (this.pingPromise) return this.pingPromise;
+
+        this.pingPromise = new Promise<void>((resolve, reject) => {
+            const pingId = getRandomId();
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                navigator.serviceWorker.removeEventListener("message", onMessage);
+            };
+
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new ServiceWorkerTimeoutError("Service worker ping timed out"));
+            }, 2_000);
+
+            const onMessage = (event: MessageEvent) => {
+                if (event.data?.id === pingId && event.data?.tag === "PONG") {
+                    cleanup();
+                    resolve();
+                }
+            };
+
+            navigator.serviceWorker.addEventListener("message", onMessage);
+            this.serviceWorker.postMessage({
+                id: pingId,
+                tag: "PING",
+            });
+        }).finally(() => {
+            this.pingPromise = null;
+        });
+
+        return this.pingPromise;
+    }
+
+    // send a message, retrying up to 2 times if the service worker was
+    // killed and restarted by the OS (mobile browsers do this aggressively)
+    protected async sendMessageWithRetry(
+        request: WalletUpdaterRequest,
+        withEvents?: {
+            onEvent: (response: WalletUpdaterResponse) => void;
+            isComplete: (response: WalletUpdaterResponse) => boolean;
+        },
+    ): Promise<WalletUpdaterResponse> {
+        if (this.initConfig) {
+            try {
+                await this.pingServiceWorker();
+            } catch {
+                await this.reinitialize();
+            }
+        }
+
+        const timeoutMs = this.getTimeoutForRequest(request);
+        const maxRetries = 2;
+        for (let attempt = 0, initWaits = 0; ; attempt++) {
+            try {
+                if (withEvents) {
+                    return await this.sendMessageStreaming(
+                        request,
+                        withEvents.onEvent,
+                        withEvents.isComplete,
+                    );
+                }
+                return await this.sendMessageDirect(request, timeoutMs);
+            } catch (error: any) {
+                // If init is already in flight in the worker, wait for it
+                if (isMessageBusInitializingError(error)) {
+                    if (initWaits >= MAX_INIT_WAITS) throw error;
+                    await sleep(initWaitBackoffMs(initWaits++));
+                    attempt--;
+                    continue;
+                }
+                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
+                    throw error;
+                }
+
+                await this.reinitialize();
+            }
+        }
+    }
+
+    /** The init config cached by `create()`; manually constructed wallets have none. */
+    protected async buildInitConfig(): Promise<MessageBusInitConfig> {
+        if (!this.initConfig) {
+            throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
+        }
+        return this.initConfig;
+    }
+
+    protected buildInitWalletPayload(): RequestInitWallet["payload"] {
+        if (!this.initWalletPayload) {
+            throw new Error("Cannot re-initialize: wallet was not initialized via the SDK factory");
+        }
+        return this.initWalletPayload;
+    }
+
+    private async reinitialize(): Promise<void> {
+        if (this.reinitPromise) return this.reinitPromise;
+
+        this.reinitPromise = (async () => {
+            const config = await this.buildInitConfig();
+            const payload = this.buildInitWalletPayload();
+
+            await initializeMessageBus(this.serviceWorker, config, this.messageBusTimeoutMs);
+
+            const initMessage: RequestInitWallet = {
+                tag: this.messageTag,
+                type: "INIT_WALLET",
+                id: getRandomId(),
+                payload,
+            };
+
+            await this.sendMessageDirect(initMessage, this.getTimeoutForRequest(initMessage));
+            await this.assertWorkerIdentityMatches();
+        })().finally(() => {
+            this.reinitPromise = null;
+        });
+
+        return this.reinitPromise;
+    }
+
+    /**
+     * Verify the worker is bound to this wallet's identity before the SDK hands
+     * back (or recovers) a usable wallet object.
+     *
+     * Compares the stable baseline identity key (`identity.xOnlyPublicKey()`) to the one reported
+     * by the worker via GET_STATUS.
+     */
+    protected async assertWorkerIdentityMatches(): Promise<void> {
+        const expected = hex.encode(await this.identity.xOnlyPublicKey());
+
+        const message: RequestGetStatus = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_STATUS",
+        };
+        const response = (await this.sendMessageDirect(
+            message,
+            this.getTimeoutForRequest(message),
+        )) as ResponseGetStatus;
+
+        const workerKey = response.payload.xOnlyPublicKey;
+        if (!workerKey) {
+            throw new Error("Service worker identity mismatch: worker did not report an identity");
+        }
+        const actual = hex.encode(workerKey);
+        if (actual !== expected) {
+            throw new Error(
+                `Service worker identity mismatch: expected ${expected}, got ${actual}`,
+            );
+        }
+    }
+
+    /** This tells the service worker to wipe all locally persisted wallet data. */
+    async clear(): Promise<void> {
+        const message: RequestClear = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "CLEAR",
+        };
+        await this.sendMessage(message);
+    }
+
+    async getAddress(): Promise<string> {
+        const message: RequestGetAddress = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_ADDRESS",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetAddress).payload.address;
+        } catch (error) {
+            throw new Error(`Failed to get address: ${error}`);
+        }
+    }
+
+    async getBoardingAddress(): Promise<string> {
+        const message: RequestGetBoardingAddress = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_BOARDING_ADDRESS",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetBoardingAddress).payload.address;
+        } catch (error) {
+            throw new Error(`Failed to get boarding address: ${error}`);
+        }
+    }
+
+    /**
+     * Delegated to the worker, which holds the wallet that owns the connection.
+     * The payload crosses raw — see {@link ResponseGetArkadeInfo} for why.
+     */
+    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
+        const message: RequestGetArkadeInfo = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_ARKADE_INFO",
+            // omitted entirely for the default read: wire-shape hygiene
+            // toward workers built before the option existed. (Dedup is
+            // unaffected either way — the key is JSON.stringify, which drops
+            // undefined-valued properties.)
+            ...(opts?.requireLive ? { payload: { requireLive: true } } : {}),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetArkadeInfo).payload.info;
+        } catch (error) {
+            // Keep the original reachable as `cause`. Unlike its siblings, this
+            // call reaches `resolveArkInfo` in the worker, which distinguishes
+            // `ProviderUnavailableError` (offline — retry) from
+            // `MalformedArkInfoSnapshotError` (corrupt cache — re-onboard).
+            // structuredClone drops the prototype AND normalizes a custom
+            // `name` to "Error", so neither survives the boundary on its own;
+            // the worker sends the name beside the error as plain data and
+            // `restoreErrorName` puts it back — which is what makes
+            // `cause.name` the one thing a page can branch on.
+            throw new Error(`Failed to get arkade info: ${error}`, { cause: error });
+        }
+    }
+
+    /**
+     * An {@link ArkadeReader} that speaks to the worker rather than to the
+     * server. The page holds no provider, so a caller that built its own from a
+     * URL would open a second connection outside the worker's rate gate and
+     * caches — this proxy is what keeps chain reads in one place.
+     */
+    async getArkadeReader(): Promise<ArkadeReader> {
+        return {
+            getVtxos: async (opts) => {
+                const message: RequestIndexerGetVtxos = {
+                    id: getRandomId(),
+                    tag: this.messageTag,
+                    type: "INDEXER_GET_VTXOS",
+                    payload: { opts },
+                };
+                try {
+                    const response = await this.sendMessage(message);
+                    const { vtxos, page } = (response as ResponseIndexerGetVtxos).payload;
+                    // Re-normalize rather than trust the envelope, as every
+                    // other VTXO-returning method here does: the worker
+                    // normalizes, but a page can run against an older installed
+                    // one. `normalizeVtxo` is idempotent, so this costs a map —
+                    // which also gives each deduped concurrent caller its own
+                    // array. `page` is copied for the same reason: dedup
+                    // settles every caller with ONE shared response.
+                    return { vtxos: vtxos.map(normalizeVtxo), page: page && { ...page } };
+                } catch (error) {
+                    throw new Error(`Failed to get vtxos: ${error}`, { cause: error });
+                }
+            },
+            getVirtualTxs: async (txids, opts) => {
+                const message: RequestIndexerGetVirtualTxs = {
+                    id: getRandomId(),
+                    tag: this.messageTag,
+                    type: "INDEXER_GET_VIRTUAL_TXS",
+                    payload: { txids, opts },
+                };
+                try {
+                    const response = await this.sendMessage(message);
+                    const { txs, page } = (response as ResponseIndexerGetVirtualTxs).payload;
+                    // Own copies per caller: this request dedupes, so two
+                    // concurrent identical reads settle with ONE response —
+                    // returned by reference, a `txs.sort()` in one caller
+                    // would silently reorder the other's result.
+                    return { txs: [...txs], page: page && { ...page } };
+                } catch (error) {
+                    throw new Error(`Failed to get virtual txs: ${error}`, { cause: error });
+                }
+            },
+        };
+    }
+
+    async getBalance(): Promise<WalletBalance> {
+        const message: RequestGetBalance = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_BALANCE",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetBalance).payload;
+        } catch (error) {
+            throw new Error(`Failed to get balance: ${error}`);
+        }
+    }
+
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const message: RequestGetBoardingUtxos = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_BOARDING_UTXOS",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetBoardingUtxos).payload.utxos;
+        } catch (error) {
+            throw new Error(`Failed to get boarding UTXOs: ${error}`);
+        }
+    }
+
+    /**
+     * Return service-worker wallet status, including connectivity and sync state.
+     *
+     * @returns Current service-worker wallet status payload including `walletInitalized` and `xOnlyPublicKey`
+     */
+    async getStatus(): Promise<ResponseGetStatus["payload"]> {
+        const message: RequestGetStatus = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_STATUS",
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetStatus).payload;
+        } catch (error) {
+            throw new Error(`Failed to get status: ${error}`);
+        }
+    }
+
+    /**
+     * Wallet-level provider-connection freshness, delegated to the worker via
+     * `GET_STATUS`. Async by necessity (the worker boundary is asynchronous); no
+     * synchronous variant is offered because it would have the same transport
+     * mismatch as the contract-manager proxy's cached `getSyncState()`.
+     */
+    async getProviderConnectionState(): Promise<ProviderConnectionState> {
+        const { providerConnectionState } = await this.getStatus();
+        if (!providerConnectionState) {
+            throw new Error("Worker did not report provider connection state");
+        }
+        return providerConnectionState;
+    }
+
+    async getActivityHistory(): Promise<Activity[]> {
+        return buildActivities(await this.getTransactionHistory(), this.activity.all());
+    }
+
+    async getTransactionHistory(): Promise<ArkTransaction[]> {
+        const message: RequestGetTransactionHistory = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_TRANSACTION_HISTORY",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetTransactionHistory).payload.transactions;
+        } catch (error) {
+            throw new Error(`Failed to get transaction history: ${error}`);
+        }
+    }
+
+    async getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        const message: RequestGetVtxos = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_VTXOS",
+            payload: { filter },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetVtxos).payload.vtxos.map(normalizeVtxo);
+        } catch (error) {
+            throw new Error(`Failed to get vtxos: ${error}`);
+        }
+    }
+
+    /**
+     * The gate has to run *inside* the worker (no plugin object or contract row
+     * metadata exists on this side), so this is its own message rather than a
+     * post-filter over `GET_VTXOS`.
+     *
+     * A worker predating this message answers "Unknown message" and the call
+     * throws. That is deliberate: service workers activate asynchronously, so
+     * new page code runs against a stale worker for a window on every deploy,
+     * and falling back to `GET_VTXOS` there would silently spend ungated coins.
+     * Fail closed — loud and recoverable — rather than make the gate advisory.
+     */
+    async getSpendableVtxos(
+        filter?: GetSpendableVtxosFilter,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        const message: RequestGetSpendableVtxos = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_SPENDABLE_VTXOS",
+            payload: { filter },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            const payload = (response as ResponseGetSpendableVtxos).payload;
+            if (
+                (filter?.watchedOnly ||
+                    filter?.genericallySpendableOnly ||
+                    filter?.requireSynced) &&
+                payload.filterApplied !== true
+            ) {
+                throw new Error(
+                    "Service worker does not support the requested contract scope or freshness check",
+                );
+            }
+            return payload.vtxos.map(normalizeVtxo);
+        } catch (error) {
+            throw new Error(`Failed to get spendable vtxos: ${error}`);
+        }
+    }
+
+    /**
+     * Trigger a wallet reload inside the service worker.
+     *
+     * @returns `true` when the wallet was reloaded
+     */
+    async reload(): Promise<boolean> {
+        const message: RequestReloadWallet = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "RELOAD_WALLET",
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseReloadWallet).payload.reloaded;
+        } catch (error) {
+            throw new Error(`Failed to reload wallet: ${error}`);
+        }
+    }
+
+    async getContractManager(): Promise<IContractManager> {
+        const wallet = this;
+
+        const sendContractMessage = async <T extends WalletUpdaterRequest>(
+            message: T,
+        ): Promise<WalletUpdaterResponse> => {
+            return wallet.sendMessage(message as WalletUpdaterRequest);
+        };
+
+        const messageTag = this.messageTag;
+
+        // Page-side cache of the worker-owned ContractManager's sync health. The
+        // worker remains the authoritative owner (see the file-level ownership
+        // rules); this proxy is a cached VIEW refreshed at call boundaries, never
+        // a second source of truth. Synchronous IContractManager.getSyncState()
+        // reads this cache; async operations refresh it.
+        const fetchSyncState = async (): Promise<ContractSyncState> => {
+            const message: RequestGetContractSyncState = {
+                type: "GET_CONTRACT_SYNC_STATE",
+                id: getRandomId(),
+                tag: messageTag,
+            };
+            const response = await sendContractMessage(message);
+            return (response as ResponseGetContractSyncState).payload.syncState;
+        };
+        // Start degraded/unknown — NOT online — so a probe that times out, hits
+        // an old worker, or errors is never reported as fresh. Only a successful
+        // probe establishes a real state; after that, a failed probe preserves
+        // the last known good value (best-effort) rather than fabricating one.
+        const UNKNOWN_STATE: ContractSyncState = {
+            mode: "degraded",
+            reason: "contract sync state unavailable from the worker",
+        };
+        let syncState: ContractSyncState = UNKNOWN_STATE;
+        let everProbed = false;
+        const refreshSyncState = async (): Promise<void> => {
+            // Best-effort: a failed diagnostics refresh must never mask the
+            // caller's operation result/error, and must never throw.
+            try {
+                syncState = await fetchSyncState();
+                everProbed = true;
+            } catch {
+                // Keep the last known good state only once we've had one; before
+                // any successful probe, stay degraded/unknown instead of online.
+                if (!everProbed) {
+                    syncState = UNKNOWN_STATE;
+                }
+            }
+        };
+        // Seed the cache before returning the proxy (best-effort — never blocks
+        // or fails construction on a diagnostics hiccup).
+        await refreshSyncState();
+
+        const manager: IContractManager = {
+            async createContract(params: CreateContractParams): Promise<Contract> {
+                const message: RequestCreateContract = {
+                    type: "CREATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: params,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    // Hydration may have degraded the worker manager (or cleared
+                    // a prior degradation) — refresh the cached view.
+                    await refreshSyncState();
+                    return (response as ResponseCreateContract).payload.contract;
+                } catch (e) {
+                    throw new Error("Failed to create contract");
+                }
+            },
+
+            async getContracts(filter?: GetContractsFilter): Promise<Contract[]> {
+                const message: RequestGetContracts = {
+                    type: "GET_CONTRACTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { filter },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetContracts).payload.contracts;
+                } catch (e) {
+                    throw new Error("Failed to get contracts");
+                }
+            },
+
+            async getContractsWithVtxos(
+                filter?: GetContractsFilter,
+                _pageSize?: number,
+                options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
+            ): Promise<ContractWithVtxos[]> {
+                const message: RequestGetContractsWithVtxos = {
+                    type: "GET_CONTRACTS_WITH_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { filter, options },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    if (
+                        options?.requireSynced &&
+                        (response as ResponseGetContractsWithVtxos).payload.filterApplied !== true
+                    ) {
+                        throw new Error(
+                            "Service worker does not support the requested freshness check",
+                        );
+                    }
+                    // A best-effort sync ran on the worker; it may have degraded
+                    // to repository data or recovered — refresh the cached view.
+                    await refreshSyncState();
+                    return (response as ResponseGetContractsWithVtxos).payload.contracts;
+                } catch (e) {
+                    throw new Error("Failed to get contracts with vtxos");
+                }
+            },
+
+            async watchScript(
+                script: string | string[],
+                options?: { label?: string },
+            ): Promise<void> {
+                const message: RequestWatchScript = {
+                    type: "WATCH_SCRIPT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, label: options?.label },
+                };
+                try {
+                    await sendContractMessage(message);
+                } catch (e) {
+                    throw new Error("Failed to watch script");
+                }
+            },
+
+            async unwatchScript(script: string | string[]): Promise<void> {
+                const message: RequestUnwatchScript = {
+                    type: "UNWATCH_SCRIPT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script },
+                };
+                try {
+                    await sendContractMessage(message);
+                } catch (e) {
+                    throw new Error("Failed to unwatch script");
+                }
+            },
+
+            async getWatchedScripts(): Promise<WatchedScript[]> {
+                const message: RequestGetWatchedScripts = {
+                    type: "GET_WATCHED_SCRIPTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: {},
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetWatchedScripts).payload.scripts;
+                } catch (e) {
+                    throw new Error("Failed to get watched scripts");
+                }
+            },
+
+            getSyncState(): ContractSyncState {
+                // Synchronous read of the page-side cache, seeded at proxy
+                // construction and refreshed after operations that can move the
+                // worker manager between online and degraded.
+                return syncState;
+            },
+
+            /**
+             * The worker owns the spend paths this guards, so it runs the check
+             * on its own manager before submitting. Proxying it would only add a
+             * round-trip whose answer the worker already has.
+             */
+            async assertAnnotatable(): Promise<void> {},
+
+            /**
+             * Same reasoning as {@link assertAnnotatable}: the worker checks it.
+             *
+             * `unspendableNowReasons` is deliberately absent rather than stubbed
+             * alongside it. A stub returning an empty map reads as "nothing
+             * refused", and a filter acting on that silently drops its decision;
+             * absent, the optional call is skipped. Recovery — the only caller —
+             * runs inside the worker against the real manager anyway.
+             */
+            async assertSpendableNow(): Promise<void> {},
+
+            async annotateVtxos(vtxos: VirtualCoin[]): Promise<NormalizedExtendedVirtualCoin[]> {
+                if (vtxos.length === 0) return [];
+                const message: RequestAnnotateVtxos = {
+                    type: "ANNOTATE_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { vtxos },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseAnnotateVtxos).payload.vtxos.map(normalizeVtxo);
+                } catch (e) {
+                    throw new Error("Failed to annotate vtxos");
+                }
+            },
+
+            async updateContract(
+                script: string,
+                updates: Partial<Omit<Contract, "script" | "createdAt">>,
+            ): Promise<Contract> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseUpdateContract).payload.contract;
+                } catch (e) {
+                    throw new Error("Failed to update contract");
+                }
+            },
+
+            async setContractState(script: string, state: ContractState): Promise<void> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates: { state } },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to update contract state");
+                }
+            },
+
+            async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates: { watch } },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to update contract watch state");
+                }
+            },
+
+            async deleteContract(script: string): Promise<void> {
+                const message: RequestDeleteContract = {
+                    type: "DELETE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to delete contract");
+                }
+            },
+
+            async getSpendablePaths(options: GetSpendablePathsOptions): Promise<PathSelection[]> {
+                const message: RequestGetSpendablePaths = {
+                    type: "GET_SPENDABLE_PATHS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { options },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetSpendablePaths).payload.paths;
+                } catch (e) {
+                    throw new Error("Failed to get spendable paths");
+                }
+            },
+
+            async getAllSpendingPaths(
+                options: GetAllSpendingPathsOptions,
+            ): Promise<PathSelection[]> {
+                const message: RequestGetAllSpendingPaths = {
+                    type: "GET_ALL_SPENDING_PATHS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { options },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetAllSpendingPaths).payload.paths;
+                } catch (e) {
+                    throw new Error("Failed to get all spending paths");
+                }
+            },
+
+            onContractEvent(callback: ContractEventCallback): () => void {
+                const messageHandler = (event: MessageEvent) => {
+                    const response = event.data as WalletUpdaterResponse;
+                    if (response.type !== "CONTRACT_EVENT") {
+                        return;
+                    }
+                    if (response.tag !== messageTag) {
+                        return;
+                    }
+                    callback((response as ResponseContractEvent).payload.event);
+                };
+
+                navigator.serviceWorker.addEventListener("message", messageHandler);
+
+                return () => {
+                    navigator.serviceWorker.removeEventListener("message", messageHandler);
+                };
+            },
+
+            async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
+                const message: RequestRefreshVtxos = {
+                    type: "REFRESH_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: opts,
+                };
+                // Explicit remote refresh: it surfaces its own retryable error to
+                // the caller, but the proxy cache is refreshed either way so it
+                // doesn't stay stale after a thrown provider failure.
+                try {
+                    await sendContractMessage(message);
+                } finally {
+                    await refreshSyncState();
+                }
+            },
+
+            async refreshOutpoints(outpoints: { txid: string; vout: number }[]): Promise<void> {
+                const message: RequestRefreshOutpoints = {
+                    type: "REFRESH_OUTPOINTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { outpoints },
+                };
+                try {
+                    await sendContractMessage(message);
+                } finally {
+                    await refreshSyncState();
+                }
+            },
+
+            scanContracts(): Promise<ScanResult> {
+                // `scanContracts` takes a `materialize(index)` callback,
+                // which cannot cross the service-worker postMessage boundary
+                // (functions are not structured-cloneable). Service-worker
+                // wallets must drive recovery through the worker's own
+                // restore message protocol, not this proxy method.
+                return Promise.reject(
+                    new Error(
+                        "scanContracts is not available on the service-worker " +
+                            "contract-manager proxy: its materialize() callback " +
+                            "cannot be sent across the worker message boundary. " +
+                            "Use the wallet's restore entrypoint instead.",
+                    ),
+                );
+            },
+
+            refillLookAhead(): Promise<void> {
+                // The look-ahead is wired into the inner Wallet the worker
+                // owns, and every refill trigger fires there. A page-side call
+                // has nothing to schedule.
+                return Promise.resolve();
+            },
+
+            async getNextSigningDescriptor(): Promise<string | undefined> {
+                // Descriptor allocation is owned by the worker-side Wallet;
+                // proxy it as a plain string so the worker stays the single
+                // writer of the HD watermark.
+                const message: RequestGetNextSigningDescriptor = {
+                    type: "GET_NEXT_SIGNING_DESCRIPTOR",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                const response = await sendContractMessage(message);
+                return (response as ResponseGetNextSigningDescriptor).payload.descriptor;
+            },
+
+            advanceSigningDescriptorWatermark(): Promise<void> {
+                // The manager interface takes a raw index, which the wallet
+                // message protocol does not carry — so this cannot move the
+                // worker-owned watermark. It must not resolve: its sibling
+                // `getNextSigningDescriptor` really does allocate, and a caller
+                // that pairs the two would reserve nothing while believing an
+                // index was claimed, letting the next allocation reissue it.
+                return Promise.reject(
+                    new Error(
+                        "advanceSigningDescriptorWatermark is not available on the " +
+                            "service-worker contract-manager proxy: the manager API is " +
+                            "index-based and the worker message protocol carries " +
+                            "descriptors. Use ServiceWorkerWallet." +
+                            "advanceSigningDescriptorWatermark(descriptor) instead.",
+                    ),
+                );
+            },
+
+            async isWatching(): Promise<boolean> {
+                const message: RequestIsContractManagerWatching = {
+                    type: "IS_CONTRACT_MANAGER_WATCHING",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseIsContractManagerWatching).payload.isWatching;
+                } catch (e) {
+                    throw new Error("Failed to check if contract manager is watching");
+                }
+            },
+
+            dispose(): void {
+                return;
+            },
+
+            [Symbol.dispose](): void {
+                // no-op
+                return;
+            },
+        };
+
+        return manager;
+    }
+}
+
+export class ServiceWorkerWallet
+    extends ServiceWorkerReadonlyWallet
+    implements IWallet, HDWalletCapable, HDAllocationCapable, AddressAllocationCapable
+{
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+    public readonly identity: Identity;
+    private readonly _assetManager: IAssetManager;
+    private readonly hasDelegate: boolean;
+    private _restoreInFlight?: Promise<void>;
+
+    protected constructor(
+        public readonly serviceWorker: ServiceWorker,
+        identity: Identity,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository,
+        messageTag: string,
+        hasDelegate: boolean,
+    ) {
+        super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
+        this.identity = identity;
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
+        this._assetManager = new ServiceWorkerAssetManager(
+            (msg) => this.sendMessage(msg),
+            messageTag,
+        );
+        this.hasDelegate = hasDelegate;
+    }
+
+    get assetManager(): IAssetManager {
+        return this._assetManager;
+    }
+
+    static async create(options: ServiceWorkerWalletCreateOptions): Promise<ServiceWorkerWallet> {
+        // Same guard the inner `Wallet.create` applies, run here so a bad value
+        // fails at the call site instead of inside the worker.
+        if (
+            options.lookAheadWindow !== undefined &&
+            (!Number.isInteger(options.lookAheadWindow) || options.lookAheadWindow <= 0)
+        ) {
+            throw new Error(
+                `lookAheadWindow must be a positive integer (got ${String(options.lookAheadWindow)})`,
+            );
+        }
+
+        const walletRepository =
+            options.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ?? new IndexedDBContractRepository();
+
+        if (!isSigningIdentity(options.identity)) {
+            throw new Error(
+                "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity",
+            );
+        }
+        const identity: Identity = options.identity;
+        const serializedWallet = serializeSigningIdentity(identity);
+
+        const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
+
+        // Create the wallet instance
+        const wallet = new ServiceWorkerWallet(
+            options.serviceWorker,
+            identity,
+            walletRepository,
+            contractRepository,
+            messageTag,
+            !!options.delegateUrl,
+        );
+
+        return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
+            delegateUrl: options.delegateUrl,
+            settlementConfig: options.settlementConfig,
+            walletMode: options.walletMode,
+            watcherConfig: options.watcherConfig,
+            lookAheadWindow: options.lookAheadWindow,
+            minBatchExpirySeconds: options.minBatchExpirySeconds,
+            minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
+        });
+    }
+
+    /**
+     * Simplified setup method that handles service worker registration
+     * and wallet initialization automatically.
+     *
+     * @example
+     * ```typescript
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServer: { url: 'https://arkade.computer' },
+     *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
+     * });
+     * ```
+     */
+    static async setup(options: ServiceWorkerWalletSetupOptions): Promise<ServiceWorkerWallet> {
+        // Register and setup the service worker
+        const serviceWorker = await setupServiceWorker({
+            path: options.serviceWorkerPath,
+            activationTimeoutMs: options.serviceWorkerActivationTimeoutMs,
+        });
+
+        // Use the existing create method
+        return ServiceWorkerWallet.create({
+            ...options,
+            serviceWorker,
+        });
+    }
+
+    // ── HD signing-descriptor surface ({@link HDWalletCapable} +
+    // {@link HDAllocationCapable}), so descriptor-deriving plugins (RFQ swaps)
+    // keep their no-secrets-at-rest arm behind the service worker. Allocation
+    // and the watermark stay worker-owned (single writer over the shared
+    // repository) and cross the bus as plain strings; signing never crosses
+    // it — the page holds the identity and descriptor derivation is pure.
+
+    /** @see HDWalletCapable.getCurrentSigningDescriptor */
+    async getCurrentSigningDescriptor(): Promise<string | undefined> {
+        const message: RequestGetCurrentSigningDescriptor = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_CURRENT_SIGNING_DESCRIPTOR",
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetCurrentSigningDescriptor).payload.descriptor;
+        } catch (error) {
+            throw new Error(`Failed to get current signing descriptor: ${error}`);
+        }
+    }
+
+    /** @see HDAllocationCapable.getNextSigningDescriptor */
+    async getNextSigningDescriptor(): Promise<string | undefined> {
+        const message: RequestGetNextSigningDescriptor = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_NEXT_SIGNING_DESCRIPTOR",
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetNextSigningDescriptor).payload.descriptor;
+        } catch (error) {
+            throw new Error(`Failed to allocate next signing descriptor: ${error}`);
+        }
+    }
+
+    /**
+     * @see Wallet.getNewAddresses
+     *
+     * Proxied as a single request rather than rebuilt page-side out of
+     * {@link getNextSigningDescriptor}: the worker owns the HD watermark *and*
+     * the contract repository, so splitting the operation would let a page burn
+     * an index and then fail to register the script, leaving an address nothing
+     * watches.
+     *
+     * Note the error shape — `WalletCannotAllocateAddressError` is thrown
+     * worker-side and cannot cross the message boundary as a class, so a
+     * `forceNew` refusal surfaces here as a plain `Error` carrying its message
+     * (and the worker-side error as `cause`). Callers that must branch on the
+     * refusal match the message rather than `instanceof`.
+     */
+    async getNewAddresses(opts?: GetNewAddressesOptions): Promise<NewAddress[]> {
+        const message: RequestGetNewAddresses = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_NEW_ADDRESSES",
+            ...(opts ? { payload: opts } : {}),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetNewAddresses).payload.addresses;
+        } catch (error) {
+            throw new Error(`Failed to allocate new addresses: ${error}`, { cause: error });
+        }
+    }
+
+    /** @see HDWalletCapable.getUsedSigningDescriptors */
+    async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
+        const message: RequestGetUsedSigningDescriptors = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_USED_SIGNING_DESCRIPTORS",
+            ...(opts ? { payload: opts } : {}),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetUsedSigningDescriptors).payload.descriptors;
+        } catch (error) {
+            throw new Error(`Failed to get used signing descriptors: ${error}`);
+        }
+    }
+
+    /** @see HDAllocationCapable.advanceSigningDescriptorWatermark */
+    async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
+        const message: RequestAdvanceSigningDescriptorWatermark = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "ADVANCE_SIGNING_DESCRIPTOR_WATERMARK",
+            payload: { descriptor },
+        };
+        try {
+            await this.sendMessage(message);
+        } catch (error) {
+            throw new Error(`Failed to advance signing-descriptor watermark: ${error}`);
+        }
+    }
+
+    /**
+     * @see HDWalletCapable.signerForDescriptor
+     *
+     * Runs page-side: an `Identity` cannot cross the message bus, and it does
+     * not need to — the page owns the signing identity, and resolving a
+     * descriptor reads no allocation state. Shares
+     * {@link resolveDescriptorSigner} with {@link Wallet.signerForDescriptor}
+     * so the two sides of the bus cannot answer differently for one
+     * descriptor.
+     *
+     * No provider is passed, and none is needed: `HDDescriptorProvider`'s
+     * `isOurs` and signing members all delegate to the identity, which the
+     * page holds. Building one here would only add a page-side read of the
+     * wallet state the worker allocates from — shared mutable state on a path
+     * that has no business touching it.
+     */
+    async signerForDescriptor(descriptor: string): Promise<Identity> {
+        return resolveDescriptorSigner(descriptor, this.identity);
+    }
+
+    /**
+     * An {@link ArkadeBroadcaster} proxied to the worker, which holds the
+     * provider. Only `ServiceWorkerWallet` offers one: a readonly worker
+     * refuses `SUBMIT_TX`/`FINALIZE_TX` outright, so exposing it on the
+     * readonly class would promise something the boundary rejects.
+     */
+    async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
+        return {
+            submitTx: async (signedArkTx, checkpointTxs) => {
+                const message: RequestSubmitTx = {
+                    id: getRandomId(),
+                    tag: this.messageTag,
+                    type: "SUBMIT_TX",
+                    payload: { signedArkTx, checkpointTxs },
+                };
+                try {
+                    const response = await this.sendMessage(message);
+                    return (response as ResponseSubmitTx).payload;
+                } catch (error) {
+                    throw new Error(`Failed to submit tx: ${error}`, { cause: error });
+                }
+            },
+            finalizeTx: async (arkTxid, finalCheckpointTxs) => {
+                const message: RequestFinalizeTx = {
+                    id: getRandomId(),
+                    tag: this.messageTag,
+                    type: "FINALIZE_TX",
+                    payload: { arkTxid, finalCheckpointTxs },
+                };
+                try {
+                    await this.sendMessage(message);
+                } catch (error) {
+                    throw new Error(`Failed to finalize tx: ${error}`, { cause: error });
+                }
+            },
+        };
+    }
+
+    async settle(
+        params?: SettleParams,
+        callback?: (event: SettlementEvent) => void,
+    ): Promise<string> {
+        const message: RequestSettle = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "SETTLE",
+            payload: { params },
+        };
+
+        try {
+            const response = await this.sendMessageWithRetry(message, {
+                onEvent: (resp) => callback?.((resp as ResponseSettleEvent).payload),
+                isComplete: (resp) => resp.type === "SETTLE_SUCCESS",
+            });
+            return (response as ResponseSettle).payload.txid;
+        } catch (error) {
+            throw new Error(`Settlement failed: ${error}`);
+        }
+    }
+
+    /**
+     * Explicitly recover this wallet's contracts and balance on a fresh repo.
+     * Mirrors {@link Wallet.restore} but drives the scan inside the service
+     * worker — the materialize() callback used by `scanContracts` cannot
+     * cross the postMessage boundary, so the entire flow runs worker-side
+     * and only the gapLimit / outcome cross the wire.
+     *
+     * Uses the streaming send path so the bus deadline does not race a
+     * long indexer-bound scan. AggregateError thrown by the worker is
+     * reconstructed here so callers can inspect `.errors`.
+     */
+    async restore(opts?: { gapLimit?: number }): Promise<void> {
+        if (this._restoreInFlight) return this._restoreInFlight;
+        this._restoreInFlight = (async () => {
+            await this._restoreWorkerWallet(opts);
+            await runWalletRestoreHooks(this);
+        })().finally(() => {
+            this._restoreInFlight = undefined;
+        });
+        return this._restoreInFlight;
+    }
+
+    private async _restoreWorkerWallet(opts?: { gapLimit?: number }): Promise<void> {
+        const message: RequestRestoreWallet = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "RESTORE_WALLET",
+            payload: opts ?? {},
+        };
+
+        try {
+            await this.sendMessageWithRetry(message, {
+                onEvent: () => {},
+                isComplete: (resp) => resp.type === "RESTORE_WALLET_SUCCESS",
+            });
+        } catch (error: unknown) {
+            if (isSerializedAggregateError(error)) {
+                throw deserializeAggregateError(error);
+            }
+            throw error;
+        }
+    }
+
+    async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
+        const [first] = args;
+        const { recipients, selectedVtxos } =
+            args.length === 1 && first && "recipients" in first
+                ? (first as SendParams)
+                : { recipients: args as [Recipient, ...Recipient[]], selectedVtxos: undefined };
+        const message: RequestSend = {
+            tag: this.messageTag,
+            type: "SEND",
+            id: getRandomId(),
+            // Omitted rather than sent as `undefined`, so an older worker sees
+            // exactly the payload it saw before.
+            payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseSend).payload.txid;
+        } catch (error) {
+            throw new Error(`Send failed: ${error}`);
+        }
+    }
+
+    async getDelegateManager(): Promise<IDelegateManager | undefined> {
+        if (!this.hasDelegate) {
+            return undefined;
+        }
+
+        const wallet = this;
+        const messageTag = this.messageTag;
+
+        const manager: IDelegateManager = {
+            async delegate(vtxos, destination, delegateAt?) {
+                const message: RequestDelegate = {
+                    tag: messageTag,
+                    type: "DELEGATE",
+                    id: getRandomId(),
+                    payload: {
+                        vtxoOutpoints: vtxos.map((v) => ({
+                            txid: v.txid,
+                            vout: v.vout,
+                        })),
+                        destination,
+                        delegateAt: delegateAt?.getTime(),
+                    },
+                };
+
+                try {
+                    const response = await wallet.sendMessage(message);
+                    const payload = (response as ResponseDelegate).payload;
+                    return {
+                        delegated: payload.delegated,
+                        failed: payload.failed.map((f) => ({
+                            outpoints: f.outpoints,
+                            error: f.error,
+                        })),
+                    };
+                } catch (error) {
+                    throw new Error(`Delegation failed: ${error}`);
+                }
+            },
+
+            async getDelegateInfo(): Promise<DelegateInfo> {
+                const message: RequestGetDelegateInfo = {
+                    type: "GET_DELEGATE_INFO",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetDelegateInfo).payload.info;
+                } catch (e) {
+                    throw new Error("Failed to get delegate info");
+                }
+            },
+        };
+
+        return manager;
+    }
+
+    async getVtxoManager(): Promise<IVtxoManager> {
+        const wallet = this;
+        const messageTag = this.messageTag;
+
+        const manager: IVtxoManager = {
+            async recoverVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
+                const message: RequestRecoverVtxos = {
+                    tag: messageTag,
+                    type: "RECOVER_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            eventCallback?.((resp as ResponseRecoverVtxosEvent).payload),
+                        isComplete: (resp) => resp.type === "RECOVER_VTXOS_SUCCESS",
+                    });
+                    return (response as ResponseRecoverVtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to recover vtxos: ${e}`);
+                }
+            },
+
+            async getRecoverableBalance() {
+                const message: RequestGetRecoverableBalance = {
+                    tag: messageTag,
+                    type: "GET_RECOVERABLE_BALANCE",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    const payload = (response as ResponseGetRecoverableBalance).payload;
+                    return {
+                        recoverable: BigInt(payload.recoverable),
+                        subdust: BigInt(payload.subdust),
+                        includesSubdust: payload.includesSubdust,
+                        vtxoCount: payload.vtxoCount,
+                    };
+                } catch (e) {
+                    throw new Error(`Failed to get recoverable balance: ${e}`);
+                }
+            },
+
+            async getExpiringVtxos(thresholdMs?) {
+                const message: RequestGetExpiringVtxos = {
+                    tag: messageTag,
+                    type: "GET_EXPIRING_VTXOS",
+                    id: getRandomId(),
+                    payload: { thresholdMs },
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetExpiringVtxos).payload.vtxos.map(normalizeVtxo);
+                } catch (e) {
+                    throw new Error(`Failed to get expiring vtxos: ${e}`);
+                }
+            },
+
+            async renewVtxos(
+                eventCallback?: (event: SettlementEvent) => void,
+                options?: RenewVtxosOptions,
+            ): Promise<string> {
+                const message: RequestRenewVtxos = {
+                    tag: messageTag,
+                    type: "RENEW_VTXOS",
+                    id: getRandomId(),
+                    payload: options,
+                };
+                try {
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            eventCallback?.((resp as ResponseRenewVtxosEvent).payload),
+                        isComplete: (resp) => resp.type === "RENEW_VTXOS_SUCCESS",
+                    });
+                    return (response as ResponseRenewVtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to renew vtxos: ${e}`);
+                }
+            },
+
+            async getExpiredBoardingUtxos() {
+                const message: RequestGetExpiredBoardingUtxos = {
+                    tag: messageTag,
+                    type: "GET_EXPIRED_BOARDING_UTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetExpiredBoardingUtxos).payload.utxos;
+                } catch (e) {
+                    throw new Error(`Failed to get expired boarding utxos: ${e}`);
+                }
+            },
+
+            async sweepExpiredBoardingUtxos(): Promise<string> {
+                const message: RequestSweepExpiredBoardingUtxos = {
+                    tag: messageTag,
+                    type: "SWEEP_EXPIRED_BOARDING_UTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseSweepExpiredBoardingUtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to sweep expired boarding utxos: ${e}`);
+                }
+            },
+
+            async migrateDeprecatedSignerVtxos(
+                options?: MigrateDeprecatedSignerOptions,
+            ): Promise<DeprecatedSignerMigrationReport> {
+                const message: RequestMigrateDeprecatedSignerVtxos = {
+                    tag: messageTag,
+                    type: "MIGRATE_DEPRECATED_SIGNER_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessageWithRetry(message, {
+                        onEvent: (resp) =>
+                            options?.eventCallback?.(
+                                (resp as ResponseMigrateDeprecatedSignerVtxosEvent).payload,
+                            ),
+                        isComplete: (resp) =>
+                            resp.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS_SUCCESS",
+                    });
+                    return deserializeMigrationReport(
+                        (response as ResponseMigrateDeprecatedSignerVtxos).payload.report,
+                    );
+                } catch (e) {
+                    throw new Error(`Failed to migrate deprecated-signer vtxos: ${e}`);
+                }
+            },
+
+            async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
+                const message: RequestGetDeprecatedSignerStatus = {
+                    tag: messageTag,
+                    type: "GET_DEPRECATED_SIGNER_STATUS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetDeprecatedSignerStatus).payload.signers.map(
+                        deserializeDeprecatedSignerReport,
+                    );
+                } catch (e) {
+                    throw new Error(`Failed to get deprecated-signer status: ${e}`);
+                }
+            },
+
+            async dispose(): Promise<void> {
+                return;
+            },
+        };
+
+        return manager;
+    }
+}
