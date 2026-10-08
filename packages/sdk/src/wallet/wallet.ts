@@ -365,7 +365,10 @@ export function filterSnapshotVtxos(
     filter: GetVtxosFilter | undefined,
     pendingSpendOutpoints: ReadonlySet<string>,
 ): NormalizedExtendedVirtualCoin[] {
-    const f = filter ?? { withRecoverable: true, withUnrolled: false };
+    const f = {
+        withRecoverable: filter?.withRecoverable ?? true,
+        withUnrolled: filter?.withUnrolled ?? false,
+    };
     const now = { timestamp: new Date() };
     return snapshot
         .flatMap((_) => _.vtxos)
