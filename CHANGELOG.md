@@ -293,6 +293,14 @@ style and have not been backfilled.
   refused when the artifact is read. `$param` operands are still bound
   as block counts. (#1012)
 
+- **The missing-`EventSource` warning no longer promises polling.**
+  `ContractWatcher` warned it was "falling back to polling", but for the
+  wallet's own contracts its failsafe poll replays the wallet repository
+  rather than the indexer, so without server-sent events those contracts
+  see new and spent VTXOs only when the wallet syncs, on a read or
+  `refreshVtxos()`. Watch-only scripts are still polled against the
+  indexer. The warning now says both.
+
 ### Performance
 
 - **`getVtxos` and `getBalance` no longer read spent history.** Both

@@ -437,7 +437,7 @@ export class ContractWatcher {
      * Handle "this environment has no `EventSource`": warn once and return true so the caller
      * skips reconnecting. A missing global is not a dropped connection; unlimited backoff would
      * retry forever and fire a `connection_reset` (read as "resync, stream coming back") every
-     * few seconds. Failsafe polling keeps the watcher correct, just slower.
+     * few seconds.
      */
     private reportEventSourceUnavailable(error: unknown): boolean {
         if (!isEventSourceUnavailableError(error)) return false;
@@ -445,7 +445,8 @@ export class ContractWatcher {
             this.eventSourceReported = true;
             console.warn(
                 `ContractWatcher: contract events are OFF and will not be retried — ` +
-                    `falling back to polling every ${this.config.failsafePollIntervalMs}ms. ` +
+                    `the wallet's own contracts update only when it syncs (reads, refreshVtxos()); ` +
+                    `watch-only scripts are still polled. ` +
                     error.message,
             );
         }
@@ -480,6 +481,7 @@ export class ContractWatcher {
         }, delay);
     }
 
+    /** Replays repository state — only what a sync stored; watch-only scripts poll the indexer. */
     private startFailsafePolling(): void {
         if (this.failsafePollIntervalId) {
             clearInterval(this.failsafePollIntervalId);
