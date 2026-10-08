@@ -16,12 +16,16 @@
  * side does: arkd's parameters, the covenant, the contract row, the funding
  * transaction, the indexer sync and the spendability gate.
  */
+import { createServer } from "node:net";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { execSync } from "child_process";
+import { faucet } from "./harness";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     ArkAddress,
+    contractSigner,
+    provisionClaimSecret,
+    isVtxoSpent,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -33,6 +37,13 @@ import {
 } from "@arkade-os/sdk";
 import {
     LIGHTNING_SEND_PAIR,
+    InMemoryAssetSwapRepository,
+    RfqSwapManager,
+    arkadeRefunder,
+    pushClaim,
+    receiveVtxoScript,
+    rfqSecretsProfile,
+    type LightningReceiveSwap,
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
@@ -44,9 +55,9 @@ import {
     type RfqTransport,
 } from "../../src";
 
-const OPERATOR_URL = "http://localhost:7070";
-const ESPLORA_API_URL = "http://localhost:3000/api";
-const arkdExec = "docker exec -t arkd";
+const OPERATOR_URL = process.env.ARK_URL ?? "http://localhost:7070";
+const ESPLORA_API_URL = process.env.ESPLORA_URL ?? "http://localhost:3000/api";
+const arkdExec = `docker exec -t ${process.env.ARKD_CONTAINER ?? "arkd"}`;
 
 const FAUCET_SATS = 30_000;
 const LOCKUP_SATS = 1_000;
@@ -58,17 +69,6 @@ const xOnly = (key: Uint8Array): Uint8Array => {
         throw new Error("not a compressed or x-only public key");
     }
     return key.slice(1);
-};
-
-const execCommand = (command: string): string => {
-    const result = execSync(command, { encoding: "utf8" })
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((line) => !line.includes("WARN"))
-        .join("\n")
-        .trim();
-    if (result.startsWith("error:")) throw new Error(result);
-    return result;
 };
 
 // expect.poll would do, but it refuses to run outside a test (the beforeAll
@@ -172,10 +172,8 @@ beforeAll(async () => {
         settlementConfig: false,
     });
 
-    const note = execCommand(`${arkdExec} arkd note --amount 200000`);
-    execCommand(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     const address = await wallet.getAddress();
-    execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
+    faucet(arkdExec, [address], FAUCET_SATS);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
     // The stub solver has to derive the same script the maker will, so it needs
@@ -258,4 +256,130 @@ describe("RFQ lockup registration (regtest)", () => {
         const [after] = await manager.getContracts({ script: lockupScript });
         expect(after).toEqual(before);
     }, 120_000);
+});
+
+describe("receive claim wiring recovery (regtest)", () => {
+    it.each([
+        ["all callbacks were missing", false],
+        ["the claim callback was missing", true],
+    ] as const)(
+        "claims the funded lockup during an indexer outage after %s",
+        async (_reason, otherCallbacks) => {
+            const secrets = await provisionClaimSecret(wallet);
+            const paymentHash = hex.encode(secrets.paymentHash);
+            const payout = await wallet.getAddress();
+            const payoutPkScript = ArkAddress.decode(payout).pkScript;
+            const refundLocktime = NOW() + 3600;
+            const script = receiveVtxoScript({
+                solverPubkey: SOLVER,
+                refundLocktime,
+                serverPubkey: operatorPubkey,
+                paymentHash,
+                claimDelay,
+                emulatorPubkey,
+                solverRefundPkScript: RECEIVER_PK_SCRIPT,
+                payoutPubkey: secrets.pubkey,
+                payoutPkScript,
+            });
+            const address = script.address(hrp, operatorPubkey).encode();
+            const contracts = await wallet.getContractManager();
+            await registerLockupContract(contracts, script, address);
+            const before = (await wallet.getBalance()).available;
+            const fundingTxid = await wallet.send({ address, amount: LOCKUP_SATS });
+            await waitFor(async () => {
+                const [row] = await contracts.getContractsWithVtxos({
+                    script: hex.encode(script.pkScript),
+                });
+                return (
+                    row?.vtxos.some(
+                        (coin) => coin.txid === fundingTxid && coin.value === LOCKUP_SATS,
+                    ) ?? false
+                );
+            });
+
+            const endpoint = createServer();
+            await new Promise<void>((resolve) => endpoint.listen(0, "127.0.0.1", resolve));
+            const bound = endpoint.address();
+            if (!bound || typeof bound === "string")
+                throw new Error("outage endpoint did not bind");
+            await new Promise<void>((resolve, reject) =>
+                endpoint.close((error) => (error ? reject(error) : resolve())),
+            );
+            const unavailable = new RestIndexerProvider(`http://127.0.0.1:${bound.port}`);
+            await expect(
+                unavailable.getVtxos({ scripts: [hex.encode(script.pkScript)] }),
+            ).rejects.toThrow();
+            const repository = new InMemoryAssetSwapRepository();
+            const manager = new RfqSwapManager({ indexer: unavailable, contracts, repository });
+            const refundArkade = arkadeRefunder({
+                ark: wallet.arkProvider,
+                contracts,
+                wallet,
+                repository,
+            });
+            const swap: LightningReceiveSwap = {
+                kind: "lightning_receive",
+                rfqId: paymentHash,
+                state: "pending",
+                lockupPkScript: script.pkScript,
+                lockup: { script, address },
+                paymentHash,
+                refundLocktime,
+                expectedAmount: LOCKUP_SATS,
+                createdAt: NOW(),
+                updatedAt: NOW(),
+            };
+            await manager.addSwap(swap, {
+                kind: "lightning_receive",
+                lockupAddress: address,
+                profile: {
+                    ...rfqSecretsProfile(secrets, paymentHash),
+                    expectedAmount: LOCKUP_SATS,
+                    payoutAddress: payout,
+                },
+            });
+            if (otherCallbacks) manager.setCallbacks({ refundArkade });
+            try {
+                await manager.poll();
+                expect(swap.state).toBe("needs_counterparty");
+                expect(swap.blockedReason).toBe(
+                    otherCallbacks
+                        ? "no claimLockup callback is wired, so this wallet cannot claim the lockup"
+                        : "no callbacks are wired, so this wallet cannot claim the lockup",
+                );
+                const receiver = await contractSigner(wallet, secrets.descriptor);
+                manager.setCallbacks({
+                    refundArkade,
+                    claimLockup: (current, vtxos, options) =>
+                        pushClaim(wallet.arkProvider, {
+                            script,
+                            receiver,
+                            preimage: secrets.preimage,
+                            vtxos,
+                            destinationPkScript: payoutPkScript,
+                            expectedAmount: current.expectedAmount,
+                            partiallyClaimed: options.partiallyClaimed,
+                        }),
+                });
+                await manager.poll();
+                expect(swap.claimArkTxid).toMatch(/^[0-9a-f]{64}$/);
+                await waitFor(async () => {
+                    const { vtxos } = await indexer.getVtxos({
+                        scripts: [hex.encode(script.pkScript)],
+                    });
+                    return vtxos.some((coin) => coin.txid === fundingTxid && isVtxoSpent(coin));
+                });
+                await waitFor(async () =>
+                    (await wallet.getSpendableVtxos()).some(
+                        (coin) => coin.txid === swap.claimArkTxid && coin.value === LOCKUP_SATS,
+                    ),
+                );
+                expect((await wallet.getBalance()).available).toBe(before);
+                expect((await repository.getRfqSwap(swap.rfqId))?.state).toBe("claimed");
+            } finally {
+                await manager.stop();
+            }
+        },
+        120_000,
+    );
 });

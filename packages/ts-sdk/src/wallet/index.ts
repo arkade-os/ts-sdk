@@ -575,6 +575,9 @@ export interface SendParams {
      * @see IReadonlyWallet.getVtxos
      */
     selectedVtxos?: ExtendedVirtualCoin[];
+
+    /** Refuse before provider submission at or after this UNIX timestamp in seconds. */
+    validUntil?: number;
 }
 
 /**

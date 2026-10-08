@@ -2,6 +2,7 @@ import { expect, describe, it, beforeEach } from "vitest";
 import {
     Wallet,
     EsploraProvider,
+    Estimator,
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
@@ -9,6 +10,7 @@ import {
     RestDelegateProvider,
 } from "../../src";
 import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
+import { toOffchainInputFeeParams } from "../../src/wallet/vtxo";
 
 describe("Settlement - Auto-settle boarding UTXOs", () => {
     beforeEach(beforeEachFaucet, 20000);
@@ -752,4 +754,88 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             await walletA.dispose().catch(() => undefined);
         }
     });
+});
+
+describe("Settlement - Native registration outcomes", () => {
+    it("distinguishes local refusals from registration attempts while conserving funds", async () => {
+        const cli = `docker exec -t ${process.env.ARKD_CONTAINER ?? "arkd"}`;
+        const wallet = await Wallet.create({
+            identity: SingleKey.fromRandomBytes(),
+            arkServerUrl: process.env.ARK_URL ?? "http://localhost:7070",
+            onchainProvider: new EsploraProvider(
+                process.env.ESPLORA_URL ?? "http://localhost:3000/api",
+                { forcePolling: true },
+            ),
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+            settlementConfig: false,
+        });
+        try {
+            const address = await wallet.getAddress();
+            const note = execCommand(`${cli} arkd note --amount 20000`);
+            execCommand(`${cli} ark redeem-notes -n ${note} --password secret`);
+            execCommand(`${cli} ark send --to ${address} --amount 10000 --password secret`);
+            let coins: Awaited<ReturnType<typeof wallet.getSpendableVtxos>> = [];
+            await waitFor(async () => {
+                coins = await wallet.getSpendableVtxos();
+                return coins.length === 1 && coins[0].value === 10000;
+            });
+            const invalid = {
+                inputs: coins,
+                outputs: [{ address: "invalid-destination", amount: 10000n }],
+            };
+            const refusedPhases: string[] = [];
+            await expect(
+                wallet.settle(invalid, undefined, {
+                    onPhase: (phase) => refusedPhases.push(phase),
+                }),
+            ).rejects.toBeInstanceOf(Error);
+            expect(refusedPhases).toEqual(["preparing"]);
+            await expect(wallet.settle(invalid)).rejects.toBeInstanceOf(Error);
+            expect(await wallet.getSpendableVtxos()).toEqual(coins);
+
+            const estimator = new Estimator((await wallet.arkProvider.getInfo()).fees.intentFee);
+            const inputFee = estimator.evalOffchainInput(
+                toOffchainInputFeeParams(coins[0]),
+            ).satoshis;
+            const outputFee = estimator.evalOffchainOutput({
+                amount: BigInt(10000 - inputFee),
+                script: coins[0].script,
+            }).satoshis;
+            const net = 10000 - inputFee - outputFee;
+            const settledPhases: string[] = [];
+            const settledTxid = await wallet.settle(undefined, undefined, {
+                onPhase: (phase) => settledPhases.push(phase),
+            });
+            expect(settledTxid).toMatch(/^[0-9a-f]{64}$/);
+            expect(settledPhases).toEqual(["preparing", "registration_attempt"]);
+            await waitFor(async () => {
+                const landed = await wallet.getSpendableVtxos();
+                return (
+                    landed.length === 1 &&
+                    landed[0].value === net &&
+                    landed[0].txid !== coins[0].txid &&
+                    landed[0].virtualStatus.state === "settled"
+                );
+            });
+
+            const stalePhases: string[] = [];
+            await expect(
+                wallet.settle(
+                    {
+                        inputs: coins,
+                        outputs: [{ address, amount: BigInt(net) }],
+                    },
+                    undefined,
+                    { onPhase: (phase) => stalePhases.push(phase) },
+                ),
+            ).rejects.toBeInstanceOf(ArkError);
+            expect(stalePhases).toEqual(["preparing", "registration_attempt"]);
+            expect((await wallet.getSpendableVtxos()).map((coin) => coin.value)).toEqual([net]);
+        } finally {
+            await wallet.dispose();
+        }
+    }, 120000);
 });

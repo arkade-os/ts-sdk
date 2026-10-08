@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { contractPreimage } from "@arkade-os/sdk";
-import type { IWallet, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
+import type { IWallet, Outpoint, ProvisionedClaimSecret, ProvisionedKey } from "@arkade-os/sdk";
 import type { AssetSwapRepository } from "./repository";
 
 export type AssetSwapStatus =
@@ -20,6 +20,24 @@ export type AssetSwapStatus =
  * Lives here with the {@link AssetSwap} fields it describes so the market and
  * restore layers share one spelling instead of re-typing the literal. */
 export const BTC_ASSET_ID = "btc";
+
+export type FundingIntentState = "prepared" | "submitted" | "bound" | "abandoned";
+
+export interface FundingIntentOutput {
+    script: string;
+    value: string;
+    assetId?: string;
+    assetAmount?: string;
+}
+
+export interface FundingIntent {
+    version: 1;
+    state: FundingIntentState;
+    inputs: Outpoint[];
+    serverPubkey: string;
+    arkServerUrl: string;
+    output: FundingIntentOutput;
+}
 
 // ponytail: records carry only chain-recoverable facts — no quote-time display
 // snapshot (tickers, fee bps, fiat value); add an optional snapshot field back
@@ -67,7 +85,7 @@ export interface SwapSecretsProjection {
 }
 
 export interface AssetSwap extends SwapSecretsProjection {
-    /** Funding txid — the swap's identity. */
+    /** Stable operation id for prepared rows; legacy rows use the funding txid. */
     id: string;
     /** 'btc' or a 68-hex asset id. */
     fromAsset: string;
@@ -82,6 +100,7 @@ export interface AssetSwap extends SwapSecretsProjection {
     /** TLV offer — needed to rebuild the contract for cancel. */
     offerHex: string;
     fundingTxid: string;
+    fundingIntent?: FundingIntent;
     spentTxid?: string;
     status: AssetSwapStatus;
     createdAt: number;

@@ -45,6 +45,9 @@ jobs:
       - name: Type-check swap
         run: pnpm -C packages/swap run typecheck
 
+      - name: Type-check swap e2e
+        run: pnpm -C packages/swap run typecheck:e2e
+
       - name: Smoke-test ts-sdk dist
         run: pnpm -C packages/ts-sdk run smoke:dist
 
@@ -160,7 +163,7 @@ jobs:
           # the second LND node to `lnd-peer`; the swap stacks also run the
           # solver and covclaimd now. `|| true` kept a stale list quiet, which
           # is exactly why it went unnoticed — a Lightning failure dumped nothing.
-          for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd; do
+          for c in arkd arkd-wallet emulator lnd lnd-peer intent-solver covclaimd taxi; do
             echo "===== logs: $c ====="
             docker logs --tail 200 "$c" 2>&1 || true
           done

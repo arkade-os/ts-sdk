@@ -86,7 +86,7 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { ASSET_CARRIER_SATS, createOffer } from "./offer";
+import { ASSET_CARRIER_SATS, createOffer, receivePkScriptFor } from "./offer";
 
 /** Decode a solver-supplied hex field, turning a malformed value (odd length,
  * non-hex chars) into a solver-blaming diagnostic instead of a bare
@@ -1406,9 +1406,9 @@ const quoteCarrierSats = (quote: RfqQuote): bigint => {
  * (closed reason), {@link AddressMismatch} (never fund), or a gate error with
  * a stable `reason`.
  *
- * Funding (caller's job, immediately after, before `valid_until`):
- * - BTC->asset (`wantAsset`): `wallet.send({ address, amount: Number(fundAmount), extensions: [extension] })`
- * - asset->BTC or asset->asset (`offerAsset`): `wallet.send({ address, amount: Number(carrierSats), assets: [{ assetId: offerAsset, amount: fundAmount }], extensions: [extension] })`
+ * Funding remains the caller's next step, but should go through `fundOffer`
+ * with this result's `offerHex`, `fundAmount`, optional asset/carrier, stable
+ * `rfqId`, and a deadline no later than every verified quote expiry.
  */
 export async function requestArkadeSwap(
     wallet: IWallet,
@@ -1429,6 +1429,9 @@ export async function requestArkadeSwap(
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
+        /** Where the fill pays; see `createOffer`. Omitted, the wallet's own
+         * address is used and the request is unchanged. */
+        receiveAddress?: string;
         now?: number;
     },
 ): Promise<{
@@ -1450,26 +1453,43 @@ export async function requestArkadeSwap(
     /** Ready for `wallet.send`'s `extensions`. */
     extension: { type: number; payload: Uint8Array };
 }> {
-    if (!params.wantAsset && !params.offerAsset) {
+    const {
+        wantAsset,
+        offerAsset,
+        amount,
+        maxFromAmount,
+        minToAmount,
+        rfqId: requestedRfqId,
+        emulatorPubkey,
+        receiveAddress: requestedReceiveAddress,
+        now: requestedNow,
+    } = params;
+    const amountSide = params.amountSide ?? "from";
+    if (!wantAsset && !offerAsset) {
         throw new Error("set at least one of wantAsset or offerAsset; BTC-to-BTC is not a swap");
     }
-    const rfqId = params.rfqId ?? newRfqId();
-    const amountSide = params.amountSide ?? "from";
+    const rfqId = requestedRfqId ?? newRfqId();
     const [makerAddress, makerPublicKey] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    // Validated here, before the quote is asked for, through the same path
+    // createOffer uses below, so a substituted recipient never reaches a solver
+    // and the request profile and the derived offer cannot disagree.
+    const makerPkScript =
+        requestedReceiveAddress === undefined
+            ? ArkAddress.decode(makerAddress).pkScript
+            : await receivePkScriptFor(arkServerUrl, requestedReceiveAddress, makerAddress);
     const pair = rfqPair(
-        params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
-        params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
+        offerAsset ? arkadeAssetLeg(offerAsset) : ARKADE_BTC,
+        wantAsset ? arkadeAssetLeg(wantAsset) : ARKADE_BTC,
     );
     const quote = await transport.requestQuote(
         arkadeSwapRequest({
             rfqId,
-            ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
-            ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
-            amount: params.amount,
+            ...(offerAsset !== undefined ? { offerAsset } : {}),
+            ...(wantAsset !== undefined ? { wantAsset } : {}),
+            amount,
             amountSide,
             makerPkScript,
             makerPublicKey,
@@ -1478,19 +1498,19 @@ export async function requestArkadeSwap(
     if (quote.pair !== pair) {
         throw new Error(`solver quoted ${JSON.stringify(quote.pair)}, not the requested ${pair}`);
     }
-    assertArkadeFundable({ quote, ...(params.now !== undefined ? { now: params.now } : {}) });
+    assertArkadeFundable({ quote, ...(requestedNow !== undefined ? { now: requestedNow } : {}) });
     const terms = offerTermsFromQuote(quote, {
-        ...(params.offerAsset !== undefined ? { offerAsset: params.offerAsset } : {}),
-        ...(params.wantAsset !== undefined ? { wantAsset: params.wantAsset } : {}),
+        ...(offerAsset !== undefined ? { offerAsset } : {}),
+        ...(wantAsset !== undefined ? { wantAsset } : {}),
     });
     const quoted = amountSide === "from" ? quote.from_amount : quote.to_amount;
-    if (BigInt(quoted).toString() !== canonicalAssetAmount(params.amount)) {
+    if (BigInt(quoted).toString() !== canonicalAssetAmount(amount)) {
         throw new Error(
-            `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(params.amount)}`,
+            `quote ${amountSide}_amount ${quoted} does not match the requested ${canonicalAssetAmount(amount)}`,
         );
     }
-    if (params.maxFromAmount !== undefined) {
-        const cap = BigInt(canonicalAssetAmount(params.maxFromAmount));
+    if (maxFromAmount !== undefined) {
+        const cap = BigInt(canonicalAssetAmount(maxFromAmount));
         if (BigInt(quote.from_amount) > cap) {
             throw gateError(
                 "quote_amount_rejected",
@@ -1498,8 +1518,8 @@ export async function requestArkadeSwap(
             );
         }
     }
-    if (params.minToAmount !== undefined) {
-        const floorAmount = BigInt(canonicalAssetAmount(params.minToAmount));
+    if (minToAmount !== undefined) {
+        const floorAmount = BigInt(canonicalAssetAmount(minToAmount));
         if (BigInt(quote.to_amount) < floorAmount) {
             throw gateError(
                 "quote_amount_rejected",
@@ -1511,7 +1531,10 @@ export async function requestArkadeSwap(
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
-        ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+        ...(emulatorPubkey !== undefined ? { emulatorPubkey } : {}),
+        ...(requestedReceiveAddress !== undefined
+            ? { receiveAddress: requestedReceiveAddress }
+            : {}),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);
@@ -1521,7 +1544,7 @@ export async function requestArkadeSwap(
         pair,
         address: offer.address,
         fundAmount,
-        carrierSats: params.offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
+        carrierSats: offerAsset !== undefined ? quoteCarrierSats(quote) : 0n,
         swapPkScript: offer.swapPkScript,
         offerHex: offer.offerHex,
         extension: offer.extension,

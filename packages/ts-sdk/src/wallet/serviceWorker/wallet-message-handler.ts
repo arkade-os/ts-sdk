@@ -69,6 +69,7 @@ import {
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -510,6 +511,19 @@ export type RequestSend = RequestEnvelope & {
         selectedVtxos?: ExtendedVirtualCoin[];
     };
 };
+export type RequestSendWithDeadline = RequestEnvelope & {
+    type: "SEND_WITH_DEADLINE";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        selectedVtxos?: ExtendedVirtualCoin[];
+        validUntil: number;
+    };
+};
+export type ResponseSendDeadlineExceeded = ResponseEnvelope & {
+    type: "SEND_DEADLINE_EXCEEDED";
+    error: Error;
+    payload: { validUntil: number };
+};
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
     payload: { txid: string };
@@ -836,6 +850,7 @@ export type WalletUpdaterRequest =
     | RequestGetUsedSigningDescriptors
     | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
+    | RequestSendWithDeadline
     | RequestGetAssetDetails
     | RequestIssue
     | RequestReissue
@@ -893,6 +908,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
         | ResponseSend
+        | ResponseSendDeadlineExceeded
         | ResponseGetAssetDetails
         | ResponseIssue
         | ResponseReissue
@@ -1493,6 +1509,30 @@ export class WalletMessageHandler
                         type: "SEND_SUCCESS",
                         payload: { txid },
                     });
+                }
+                case "SEND_WITH_DEADLINE": {
+                    const {
+                        recipients,
+                        selectedVtxos,
+                        validUntil: wireDeadline,
+                    } = (message as RequestSendWithDeadline).payload;
+                    const validUntil = captureSendDeadline(wireDeadline, true)!;
+                    try {
+                        const txid = await (this.wallet as IWallet).send({
+                            recipients,
+                            ...(selectedVtxos ? { selectedVtxos } : {}),
+                            validUntil,
+                        });
+                        return this.tagged({ id, type: "SEND_SUCCESS", payload: { txid } });
+                    } catch (error) {
+                        if (!(error instanceof SendDeadlineExceededError)) throw error;
+                        return this.tagged({
+                            id,
+                            type: "SEND_DEADLINE_EXCEEDED",
+                            error,
+                            payload: { validUntil },
+                        });
+                    }
                 }
                 case "GET_ASSET_DETAILS": {
                     const { assetId } = (message as RequestGetAssetDetails).payload;

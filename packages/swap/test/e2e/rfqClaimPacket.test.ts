@@ -142,7 +142,9 @@ describe("claim packet, end to end (regtest)", () => {
             ],
             { stdio: "ignore" },
         );
-        onTestFinished(() => payment.kill());
+        onTestFinished(() => {
+            payment.kill();
+        });
 
         const lockupScript = hex.encode(receive.swapPkScript);
         await waitFor(

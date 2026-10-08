@@ -160,10 +160,10 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         // Assets land on the payout output, which the builder only creates when
         // there is a sats surplus. With none, the asset would have no output to
         // go to and arkd would refuse the spend without explaining why.
-        state.utxos = [{ ...coin, value: 50_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
+        state.utxos = [{ ...coin, value: 45_000, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] }];
         await expect(
             fillOffer(wallet, "http://ark", wantBtcHex, {
-                fund: fundingCoin({ value: 0 }),
+                fund: fundingCoin({ value: 5_000 }),
                 emulator: EMULATOR,
             }),
         ).rejects.toThrow(/no payout output/);

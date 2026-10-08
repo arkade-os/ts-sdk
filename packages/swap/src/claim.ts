@@ -41,6 +41,7 @@ import {
     type LockupContractSource,
     findLockupVtxos,
     type LockupVtxo,
+    lockupSpendOutputs,
     type RefundArkProvider,
 } from "./refund";
 
@@ -203,7 +204,7 @@ export async function pushClaim(
         })),
         // One aggregate output: unlike the covenant refund, this leaf inspects
         // nothing about the output set.
-        outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
+        outputs: lockupSpendOutputs(input.vtxos, input.destinationPkScript, BigInt(locked)),
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.script.options.server },
     });

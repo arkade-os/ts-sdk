@@ -1,0 +1,261 @@
+import { hex } from "@scure/base";
+import { Extension, Transaction, type Outpoint } from "@arkade-os/sdk";
+import { TXID } from "./fundingPersistence";
+import { OFFER_PACKET_TYPE } from "./offer";
+import type { AssetSwapRepository } from "./repository";
+import { fetchParsedTxs, type RestoreIndexer } from "./restore";
+import type { AssetSwap } from "./store";
+
+export interface FundingRecoveryResult {
+    changes: { previous: AssetSwap; current: AssetSwap }[];
+    candidateTxids: Set<string>;
+}
+
+const OUTPOINTS_PER_REQUEST = 64;
+
+const outpointKey = (input: Outpoint): string => `${input.txid}:${input.vout}`;
+
+const inputSetKey = (swap: AssetSwap): string =>
+    swap.fundingIntent!.inputs.map(outpointKey).sort().join("|");
+
+const inputAt = (tx: Transaction, index: number): Outpoint | undefined => {
+    const input = tx.getInput(index);
+    if (!input.txid || input.index === undefined) return undefined;
+    return { txid: hex.encode(input.txid), vout: input.index };
+};
+
+// A failed read is not an absence of evidence: swallowed, a funded operation
+// reads as having no candidate and the caller rebuilds it.
+const fetchTransactions = (indexer: RestoreIndexer, txids: Iterable<string>) =>
+    fetchParsedTxs(indexer, [...new Set(txids)], { strict: true });
+
+const exactCheckpoint = (checkpoint: Transaction | undefined, source: Outpoint): boolean => {
+    if (!checkpoint || checkpoint.inputsLength !== 1) return false;
+    const input = inputAt(checkpoint, 0);
+    return input !== undefined && input.txid === source.txid && input.vout === source.vout;
+};
+
+const exactFinalInputs = (final: Transaction, checkpointTxids: string[]): boolean => {
+    if (final.inputsLength !== checkpointTxids.length) return false;
+    const actual = new Set<string>();
+    for (let index = 0; index < final.inputsLength; index++) {
+        const input = inputAt(final, index);
+        if (!input || input.vout !== 0) return false;
+        actual.add(input.txid);
+    }
+    return actual.size === checkpointTxids.length && checkpointTxids.every((id) => actual.has(id));
+};
+
+const exactFundingOutput = (final: Transaction, swap: AssetSwap): boolean => {
+    const intent = swap.fundingIntent!;
+    const output = final.getOutput(0);
+    if (
+        !output?.script ||
+        hex.encode(output.script) !== intent.output.script ||
+        output.amount !== BigInt(intent.output.value)
+    ) {
+        return false;
+    }
+    let extension: Extension;
+    try {
+        extension = Extension.fromTx(final);
+    } catch {
+        return false;
+    }
+    const offer = extension.getPacketByType(OFFER_PACKET_TYPE);
+    if (!offer || hex.encode(offer.serialize()) !== swap.offerHex) return false;
+
+    const atFundingOutput = (extension.getAssetPacket()?.groups ?? []).flatMap((group) =>
+        group.outputs
+            .filter((assetOutput) => assetOutput.vout === 0)
+            .map((assetOutput) => ({
+                assetId: group.assetId?.toString(),
+                amount: assetOutput.amount,
+            })),
+    );
+    if (intent.output.assetId === undefined) return atFundingOutput.length === 0;
+    return (
+        atFundingOutput.length === 1 &&
+        atFundingOutput[0].assetId === intent.output.assetId &&
+        atFundingOutput[0].amount === BigInt(intent.output.assetAmount!)
+    );
+};
+
+export type FundingOutputCheck = "matches" | "mismatch" | "unavailable";
+
+/**
+ * Ask of one known txid the same question recovery binds on: does this transaction
+ * carry the intended covenant output? `unavailable` is the absence of an answer —
+ * the transaction is not retrievable yet — and is never a mismatch.
+ */
+export async function checkFundingOutput(
+    indexer: RestoreIndexer,
+    fundingTxid: string,
+    swap: AssetSwap,
+): Promise<FundingOutputCheck> {
+    const final = (await fetchTransactions(indexer, new Set([fundingTxid]))).get(fundingTxid);
+    if (!final) return "unavailable";
+    return exactFundingOutput(final, swap) ? "matches" : "mismatch";
+}
+
+const protectPendingHistory = async (
+    indexer: RestoreIndexer,
+    pending: AssetSwap[],
+    historyTxids: readonly string[],
+    protectedTxids: Set<string>,
+): Promise<void> => {
+    const finals = await fetchTransactions(
+        indexer,
+        new Set(historyTxids.filter((txid) => TXID.test(txid) && !protectedTxids.has(txid))),
+    );
+    const candidates = [...finals.values()].flatMap((final) => {
+        if (final.outputsLength === 0) return [];
+        const matches = pending.filter((swap) => exactFundingOutput(final, swap));
+        const inputs = Array.from({ length: final.inputsLength }, (_, index) =>
+            inputAt(final, index),
+        );
+        if (matches.length === 0 || inputs.some((input) => !input || input.vout !== 0)) return [];
+        const checkpointTxids = inputs.map((input) => input!.txid);
+        if (!exactFinalInputs(final, checkpointTxids)) return [];
+        return [{ final, matches, checkpointTxids }];
+    });
+    const checkpoints = await fetchTransactions(
+        indexer,
+        new Set(candidates.flatMap(({ checkpointTxids }) => checkpointTxids)),
+    );
+    for (const { final, matches, checkpointTxids } of candidates) {
+        for (const swap of matches) {
+            const sources = swap.fundingIntent!.inputs;
+            if (sources.length !== checkpointTxids.length) continue;
+            if (
+                checkpointTxids.some((txid) => !checkpoints.has(txid)) ||
+                sources.every((source) =>
+                    checkpointTxids.some((txid) => exactCheckpoint(checkpoints.get(txid), source)),
+                )
+            ) {
+                protectedTxids.add(final.id);
+                break;
+            }
+        }
+    }
+};
+
+export async function recoverPreparedOfferFunding(
+    indexer: RestoreIndexer,
+    repository: AssetSwapRepository,
+    swaps: AssetSwap[],
+    historyTxids: readonly string[] = [],
+): Promise<FundingRecoveryResult> {
+    const pending = swaps.filter(
+        (swap) =>
+            swap.fundingIntent?.state === "prepared" || swap.fundingIntent?.state === "submitted",
+    );
+    const result: FundingRecoveryResult = { changes: [], candidateTxids: new Set() };
+    if (pending.length === 0) return result;
+
+    const pendingByInputs = new Map<string, number>();
+    for (const swap of pending) {
+        const key = inputSetKey(swap);
+        pendingByInputs.set(key, (pendingByInputs.get(key) ?? 0) + 1);
+    }
+
+    const wanted = new Map<string, Outpoint>();
+    for (const swap of pending) {
+        for (const input of swap.fundingIntent!.inputs) wanted.set(outpointKey(input), input);
+    }
+    const sourceRows: Awaited<ReturnType<RestoreIndexer["getVtxos"]>>["vtxos"] = [];
+    const wantedInputs = [...wanted.values()];
+    for (let offset = 0; offset < wantedInputs.length; offset += OUTPOINTS_PER_REQUEST) {
+        const outpoints = wantedInputs.slice(offset, offset + OUTPOINTS_PER_REQUEST);
+        sourceRows.push(
+            ...(
+                await indexer.getVtxos({
+                    outpoints,
+                    pageSize: outpoints.length,
+                })
+            ).vtxos,
+        );
+    }
+    const byOutpoint = new Map<string, (typeof sourceRows)[number] | undefined>();
+    const requested = new Set<string>();
+    for (const row of sourceRows) {
+        const key = `${row.txid}:${row.vout}`;
+        if (
+            wanted.has(key) &&
+            row.spentBy &&
+            row.arkTxId &&
+            TXID.test(row.spentBy) &&
+            TXID.test(row.arkTxId)
+        ) {
+            requested.add(row.spentBy);
+            requested.add(row.arkTxId);
+            result.candidateTxids.add(row.arkTxId);
+        }
+        byOutpoint.set(key, byOutpoint.has(key) ? undefined : row);
+    }
+    const parsed = await fetchTransactions(indexer, requested);
+    await protectPendingHistory(indexer, pending, historyTxids, result.candidateTxids);
+
+    for (const initial of pending) {
+        if (pendingByInputs.get(inputSetKey(initial)) !== 1) continue;
+        const rows = initial.fundingIntent!.inputs.map((input) =>
+            byOutpoint.get(outpointKey(input)),
+        );
+        type SpentRow = NonNullable<(typeof rows)[number]> & {
+            spentBy: string;
+            arkTxId: string;
+        };
+        const evidence = rows.filter(
+            (row): row is SpentRow =>
+                !!row?.spentBy && !!row.arkTxId && TXID.test(row.spentBy) && TXID.test(row.arkTxId),
+        );
+        if (evidence.length !== rows.length) continue;
+        const checkpointTxids = evidence.map((row) => row.spentBy);
+        const finalTxids = new Set(evidence.map((row) => row.arkTxId));
+        if (new Set(checkpointTxids).size !== checkpointTxids.length || finalTxids.size !== 1) {
+            continue;
+        }
+        if (
+            !initial.fundingIntent!.inputs.every((source, index) =>
+                exactCheckpoint(parsed.get(checkpointTxids[index]), source),
+            )
+        ) {
+            continue;
+        }
+        const finalTxid = [...finalTxids][0];
+        const final = parsed.get(finalTxid);
+        if (
+            !final ||
+            !exactFinalInputs(final, checkpointTxids) ||
+            !exactFundingOutput(final, initial)
+        ) {
+            continue;
+        }
+
+        let current = await repository.getSwap(initial.id);
+        if (!current?.fundingIntent) continue;
+        if (current.fundingIntent.state === "bound") continue;
+        if (current.fundingIntent.state === "prepared") {
+            if (
+                !(await repository.advanceFundingState(initial.id, "prepared", {
+                    state: "submitted",
+                }))
+            ) {
+                continue;
+            }
+            current = await repository.getSwap(initial.id);
+        }
+        if (current?.fundingIntent?.state !== "submitted") continue;
+        if (
+            !(await repository.advanceFundingState(initial.id, "submitted", {
+                state: "bound",
+                fundingTxid: finalTxid,
+            }))
+        ) {
+            continue;
+        }
+        const bound = await repository.getSwap(initial.id);
+        if (bound) result.changes.push({ previous: initial, current: bound });
+    }
+    return result;
+}

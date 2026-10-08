@@ -65,7 +65,8 @@
         "test:unit": "vitest run --exclude test/e2e",
         "test:integration": "vitest run --exclude \"test/e2e/rfq*.test.ts\" test/e2e/",
         "test:integration:rfq": "vitest run test/e2e/rfq",
-        "smoke:dist": "node scripts/smoke-dist.mjs"
+        "smoke:dist": "node scripts/smoke-dist.mjs",
+        "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json"
     },
     "keywords": [
         "arkade",

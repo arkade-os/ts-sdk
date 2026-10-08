@@ -40,13 +40,16 @@ import {
     type IWallet,
     type NetworkName,
     type EmulatorProvider,
+    type Outpoint,
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
 import { promoteOfferContract, retireOfferContract, RETIRABLE } from "./coverage";
+import { hasBoundFunding, mayHaveSubmittedFunding } from "./fundingPersistence";
 import type { AssetSwapRepository } from "./repository";
+import { parseHex32 } from "./rfqProfileParts";
 import {
     getAssetSwapsOrThrow,
     updateAssetSwap,
@@ -480,7 +483,7 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  * is a watched address, and {@link promoteOfferContract} is what keeps a
  * settlement racing this call from taking it back.
  */
-async function registerOfferContract(
+export async function registerOfferContract(
     wallet: IWallet,
     arkServerUrl: string,
     network: NetworkName,
@@ -551,7 +554,7 @@ export async function restoreOfferCoverage(
     arkServerUrl: string,
     swaps: AssetSwap[],
 ): Promise<void> {
-    const live = swaps.filter((s) => !RETIRABLE.includes(s.status));
+    const live = swaps.filter((s) => mayHaveSubmittedFunding(s) && !RETIRABLE.includes(s.status));
     if (live.length === 0) return;
 
     const arkProvider = new RestArkProvider(arkServerUrl);
@@ -625,6 +628,53 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
     return assertExitDelay({ value: delay, type: delay < BigInt(512) ? "blocks" : "seconds" });
 }
 
+/** The offer's makerWP. Defaults to the wallet's own address; an override must
+ * be a canonical Arkade address for the connected server — same HRP, same
+ * server key — so no Bitcoin address or raw script can be bound. A covenant
+ * P2TR script is fine; the tapscript tree behind it is never inspected. */
+function resolveReceivePkScript(
+    receiveAddress: string | undefined,
+    walletAddress: string,
+    hrp: string,
+    serverPubKey: Uint8Array,
+): Uint8Array {
+    if (receiveAddress === undefined) return ArkAddress.decode(walletAddress).pkScript;
+    let address: ArkAddress;
+    try {
+        address = ArkAddress.decode(receiveAddress);
+    } catch (cause) {
+        throw new Error("receiveAddress is not a valid Arkade address", { cause });
+    }
+    if (address.hrp !== hrp) {
+        throw new Error(
+            `receiveAddress network ${address.hrp} does not match the server network ${hrp}`,
+        );
+    }
+    // uppercase decodes but re-encodes differently, so re-encoding is the proof
+    if (address.encode() !== receiveAddress) {
+        throw new Error("receiveAddress is not in canonical bech32m form");
+    }
+    if (hex.encode(address.serverPubKey) !== hex.encode(serverPubKey)) {
+        throw new Error(
+            "receiveAddress is bound to a different server public key than the connected server",
+        );
+    }
+    return address.pkScript;
+}
+
+/** Resolve an override against the connected server's network and signer key.
+ * Shared with the RFQ path; the public surface stays `receiveAddress` alone. */
+export async function receivePkScriptFor(
+    arkServerUrl: string,
+    receiveAddress: string,
+    walletAddress: string,
+): Promise<Uint8Array> {
+    const info = await new RestArkProvider(arkServerUrl).getInfo();
+    const network = getNetwork(info.network as NetworkName);
+    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
+    return resolveReceivePkScript(receiveAddress, walletAddress, network.hrp, serverPubKey);
+}
+
 /**
  * Build a new offer for `wallet` (the user). Fund `address` with the side
  * you deposit, embedding the returned extension, and the solver does the rest:
@@ -671,6 +721,10 @@ export async function createOffer(
         /** Publish without the exit closure, leaving `cancel` — which needs the
          * server — as the only way back out. See the note on this function. */
         noExit?: boolean;
+        /** Where the fill pays (the covenant's `makerWP`). Defaults to the
+         * wallet's own address; never moves the `cancel` signer. Must be an
+         * Arkade address for the connected server. */
+        receiveAddress?: string;
     },
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input
@@ -701,6 +755,13 @@ export async function createOffer(
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
     );
+    // before registration: a bad override must not leave a watched row behind
+    const makerPkScript = resolveReceivePkScript(
+        params.receiveAddress,
+        makerAddress,
+        network.hrp,
+        serverPubKey,
+    );
 
     // the script derives from every field but the script itself, so build the
     // binding first and complete the offer with it — an Offer value never
@@ -709,7 +770,7 @@ export async function createOffer(
         wantAmount: params.wantAmount,
         wantAsset: params.wantAsset,
         offerAsset: params.offerAsset,
-        makerPkScript: ArkAddress.decode(makerAddress).pkScript,
+        makerPkScript,
         makerPublicKey,
         emulatorPubkey: emuKey,
         // checked HERE, before the covenant is derived and registered below:
@@ -808,12 +869,27 @@ export async function cancelOffer(
     offerHex: string,
     opts: {
         repository: AssetSwapRepository;
+        /** The deposit's funding txid, or the stable id of the operation that funded it. */
         fundingTxid?: string;
+        /** Names the exact deposit when several share a `fundingTxid`. */
+        fundingOutpoint?: FillOutpoint;
         swapAddress?: string;
     },
 ): Promise<string> {
-    const { repository, fundingTxid, swapAddress } = opts;
+    const { repository, fundingTxid, fundingOutpoint, swapAddress } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
+    // Strict: a failed read must not pass for "no local record" and skip the marker.
+    const stored = await getAssetSwapsOrThrow(repository);
+    const matching = stored.filter((swap) => swap.offerHex === offerHex);
+    const requested = fundingTxid
+        ? matching.find((swap) => swap.id === fundingTxid || swap.fundingTxid === fundingTxid)
+        : undefined;
+    if (requested && !hasBoundFunding(requested)) {
+        throw new Error(`swap operation ${requested.id} is not funded and cannot be cancelled`);
+    }
+    if (!fundingTxid && matching.length > 0 && !matching.some(hasBoundFunding)) {
+        throw new Error(`swap operation ${matching[0].id} is not funded and cannot be cancelled`);
+    }
 
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
@@ -850,15 +926,12 @@ export async function cancelOffer(
     const contract = new arkade.ArkadeContract(client, program, args, keys);
 
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
-    if (!fundingTxid && vtxos.length > 1) {
-        // identical offers share one address: guessing here would cancel an
-        // arbitrary deposit while the caller believes it was a specific one
-        throw new Error(
-            "multiple spendable deposits at the swap address — pass fundingTxid to select one",
-        );
-    }
-    const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
-    if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+    // Same selection fill uses: identical offers share one address, and a
+    // case-sensitive first-match would cancel an arbitrary deposit.
+    const vtxo = resolveDeposit(vtxos, {
+        fundingTxid: requested?.fundingTxid ?? fundingTxid,
+        fundingOutpoint,
+    });
 
     const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
     const cancel = contract.functions
@@ -873,18 +946,21 @@ export async function cancelOffer(
             outputs: [{ vout: 0, amount: BigInt(a.amount) }],
         });
     }
-    const swapId = fundingTxid ?? vtxo.txid;
-    // Strict read: a failed one must not read as "no local record here" and
-    // send us past the marker into the broadcast.
-    const hasLocalRecord = (await getAssetSwapsOrThrow(repository)).some((s) => s.id === swapId);
+    const local = stored.filter(
+        (swap) =>
+            swap.fundingTxid.toLowerCase() === vtxo.txid.toLowerCase() &&
+            swap.swapPkScript === hex.encode(offer.swapPkScript),
+    );
+    const localSwap = local.find((swap) => swap.id === requested?.id) ?? local[0];
+    const swapId = localSwap?.id;
     // The in-flight marker is useful only when there is a local record to
     // update; a different or empty repository intentionally leaves the cancel
     // for event/restore classification. It gates the broadcast, so it throws:
     // the marker is what keeps a crash here from leaving a swap that still
     // looks pending.
-    if (hasLocalRecord) await updateAssetSwap(repository, swapId, { status: "cancelling" });
+    if (swapId) await updateAssetSwap(repository, swapId, { status: "cancelling" });
     const { txid } = await cancel.send();
-    if (hasLocalRecord) {
+    if (swapId) {
         // Past the point of no return: the cancel is broadcast, so a lost write
         // must not fail the caller. The watcher classifies by covenant leaf and
         // the restore scan re-derives the outcome.
@@ -929,6 +1005,39 @@ export type FillFunding = ArkTxInput & {
     assets?: readonly { assetId: string; amount: bigint | number }[];
 };
 
+/** Exact deposit reference: the funding transaction and its output index. */
+export type FillOutpoint = Outpoint;
+
+/** Who funds a fill input: the solver or the sponsor. A null owner marks the provider-signed deposit (input 0). */
+export type FillInputOwner = "solver" | "sponsor";
+
+/** Semantic role of a payment output in a fill. */
+export type FillOutputRole = "receiver" | "solver" | "sponsor-fare" | "sponsor-change";
+
+/** Sponsor leg, build-only. Sats-only and sponsor-owned; `fillOffer` never accepts it. */
+export interface SponsorFillInput {
+    /** Sponsor coins. Sats only — any declared asset is rejected. */
+    fund: FillFunding[];
+    /** Sats the sponsor approves spending; its change is inputs minus this. */
+    netContributionSats: bigint | number;
+    /** Fold a sats-only fare into sponsor change when both use the same script. */
+    combineSatsFareWithChange?: boolean;
+    /**
+     * Optional fare output paid from the joint inputs. Give `assetId` and
+     * `amount` together to charge in an asset, or omit both to charge in `sats`
+     * alone — the sats output exists either way, so an asset fare still needs a
+     * host amount in `sats`.
+     */
+    fare?: {
+        assetId?: string;
+        amount?: bigint | number;
+        script: Uint8Array;
+        sats: bigint | number;
+    };
+    /** Where the sponsor's change lands. */
+    changeScript: Uint8Array;
+}
+
 /**
  * Fill an offer — the TAKER's side, and the counterpart to {@link createOffer}.
  *
@@ -961,6 +1070,9 @@ export type FillFunding = ArkTxInput & {
  * `payoutScript` is where the taker's proceeds land — the deposit it just took,
  * plus any surplus over `wantAmount`. Defaults to the wallet's own address.
  *
+ * Sponsor funding belongs to the build-only `buildOfferFillPlan` and is
+ * not accepted here, so this never signs it.
+ *
  * Racing a cancel is a NORMAL outcome, not a failure: cancel is a 2-of-2 of the
  * funder and the server and does not involve the taker, so a funder may cancel
  * between this reading the deposit and broadcasting. That surfaces the same way
@@ -977,8 +1089,13 @@ export async function fillOffer(
         fund: FillFunding[];
         /** Where the taker's proceeds land. Defaults to the wallet's own address. */
         payoutScript?: Uint8Array;
-        /** Selects the deposit when the swap address holds more than one. */
+        /** Selects the deposit when the swap address holds more than one.
+         * Unambiguous only: when several deposits share the txid, pass
+         * `fundingOutpoint` instead. */
         fundingTxid?: string;
+        /** Exact deposit reference. Required when several deposits share one
+         * funding txid; must agree with `fundingTxid` when both are given. */
+        fundingOutpoint?: FillOutpoint;
         /** The funded address, to pin the server key the covenant was built with. */
         swapAddress?: string;
         /** Sats at output 0 on an asset want. Defaults to {@link ASSET_CARRIER_SATS};
@@ -1003,53 +1120,66 @@ export async function fillOffer(
         fund,
         payoutScript,
         fundingTxid,
+        fundingOutpoint,
         swapAddress,
         assetCarrierSats = ASSET_CARRIER_SATS,
         emulator,
         emulatorPubkey,
     } = opts;
     const offer = decodeOffer(hex.decode(offerHex));
-    const wantedAssetId = offer.wantAsset?.toString();
+    const contract = await connectFillContract(wallet, arkServerUrl, offer, {
+        swapAddress,
+        emulator,
+        emulatorPubkey,
+    });
+    const [vtxos, takerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
+    const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
+    const fill = contract.functions.fulfill();
+    assembleOfferFill(fill, {
+        offer,
+        vtxo,
+        solverFund: fund,
+        solverPayout: payoutScript ?? ArkAddress.decode(takerAddress).pkScript,
+        assetCarrierSats,
+    });
+    const { txid } = await fill.send();
+    return txid;
+}
 
-    if (fund.length === 0) {
-        throw new Error("fillOffer needs coins to pay wantAmount with — `fund` is empty");
-    }
-    // Checked before anything is read or spent: a fill that cannot deliver is
-    // refused here rather than by the emulator, which reports only that the
-    // covenant said no.
-    if (wantedAssetId !== undefined) {
-        const supplied = fund.reduce(
-            (sum, coin) => sum + amountOfAsset(coin.assets, wantedAssetId),
-            BigInt(0),
-        );
-        if (supplied < offer.wantAmount) {
-            throw new Error(
-                `fillOffer needs ${offer.wantAmount} of ${wantedAssetId} to pay the maker, but ` +
-                    `\`fund\` declares ${supplied} — pass coins carrying it, and declare their assets`,
-            );
-        }
-    }
-
+/**
+ * The contract derives from the OFFER's keys, so a rotated server key reads as
+ * a rotation rather than a missing deposit.
+ */
+export async function connectFillContract(
+    wallet: IWallet,
+    arkServerUrl: string,
+    offer: Offer,
+    opts: {
+        swapAddress?: string;
+        emulator?: EmulatorProvider | string;
+        emulatorPubkey?: string;
+    } = {},
+): Promise<arkade.ArkadeContract> {
+    const { swapAddress, emulator, emulatorPubkey } = opts;
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
         arkade: new RestArkProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
         contractManager,
-        // `fulfill` is a covenant path, so the emulator executes the arkade
-        // script and finalizes with arkd. Without it the spend is built and then
-        // refused at submission — there is no default to fall back on.
-        emulator: typeof emulator === "string" ? new RestEmulatorProvider(emulator) : emulator,
-        // Only reached for the client's own emulatorKey, which this fill never
+        // Submission only: without an emulator the builder refuses to submit.
+        ...(emulator !== undefined
+            ? {
+                  emulator:
+                      typeof emulator === "string" ? new RestEmulatorProvider(emulator) : emulator,
+              }
+            : {}),
+        // Only reached for the client's own emulatorKey, which a fill never
         // derives against — the offer's own key is bound below. It still has to
         // resolve, and on a network with no pinned key it throws without this.
         ...(emulatorPubkey ? { emulatorPubkey } : {}),
     });
 
-    // Rebuilt with the OFFER's keys, not the client's, for the same reason
-    // cancelOffer does it: the derived script must match the funded address
-    // exactly or `getUtxos` silently returns nothing and the failure reads as
-    // "no deposit" rather than "wrong key".
     const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, serverKey);
     const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
@@ -1060,23 +1190,190 @@ export async function fillOffer(
                 "funded address) to pin the original key",
         );
     }
-    const contract = new arkade.ArkadeContract(client, program, args, keys);
+    return new arkade.ArkadeContract(client, program, args, keys);
+}
 
-    const [vtxos, takerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
-    if (!fundingTxid && vtxos.length > 1) {
-        // Identical offers share one address, so guessing would fill an
-        // arbitrary deposit while the caller believes it filled a specific one.
+/** An outpoint always wins; a bare txid only when unambiguous, never first-match. */
+export function resolveDeposit<V extends { txid: string; vout: number }>(
+    vtxos: readonly V[],
+    sel: { fundingTxid?: string; fundingOutpoint?: FillOutpoint },
+): V {
+    const { fundingTxid, fundingOutpoint } = sel;
+    if (fundingOutpoint !== undefined) {
+        const txid = parseHex32(fundingOutpoint.txid, "fundingOutpoint.txid");
+        const vout = assertVout(fundingOutpoint.vout, "fundingOutpoint.vout");
+        if (fundingTxid !== undefined && fundingTxid.toLowerCase() !== txid) {
+            throw new Error(
+                `fundingTxid ${fundingTxid} does not match fundingOutpoint ${txid}:${vout} — pass one deposit reference`,
+            );
+        }
+        const vtxo = vtxos.find((v) => v.txid.toLowerCase() === txid && v.vout === vout);
+        if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+        return vtxo;
+    }
+    if (fundingTxid !== undefined) {
+        const txid = parseHex32(fundingTxid, "fundingTxid");
+        const matches = vtxos.filter((v) => v.txid.toLowerCase() === txid);
+        if (matches.length > 1) {
+            throw new Error(
+                `multiple spendable deposits share fundingTxid ${txid} — pass fundingOutpoint to select one`,
+            );
+        }
+        const [vtxo] = matches;
+        if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+        return vtxo;
+    }
+    if (vtxos.length > 1) {
         throw new Error(
             "multiple spendable deposits at the swap address — pass fundingTxid to select one",
         );
     }
-    const vtxo = fundingTxid ? vtxos.find((v) => v.txid === fundingTxid) : vtxos[0];
+    const [vtxo] = vtxos;
     if (!vtxo) throw new Error("no spendable VTXO at the swap address");
+    return vtxo;
+}
 
-    // The covenant checks OUTPUT 0 — what the maker is paid — and says nothing
-    // about what the deposit carries. `offerAsset` is a TLV claim, so a deposit
-    // holding a different asset or none at all still fills: the taker pays
-    // wantAmount and receives what was there, not what was advertised.
+export type FillCoin = {
+    txid: string;
+    vout: number;
+    value: number;
+    assets?: readonly { assetId: string; amount: bigint | number }[] | undefined;
+};
+
+export interface AssembledFillLayout {
+    inputs: { owner: FillInputOwner | null; txid: string; vout: number }[];
+    outputs: { role: FillOutputRole; script: Uint8Array; sats: bigint }[];
+}
+
+/**
+ * Inputs run deposit (0), solver, sponsor; outputs run maker (0), optional fare,
+ * sponsor change, solver. Returns the intended layout to check the built tx against.
+ */
+export function assembleOfferFill(
+    fill: arkade.ArkadeTransactionBuilder,
+    args: {
+        offer: Offer;
+        vtxo: FillCoin;
+        solverFund: FillFunding[];
+        solverPayout: Uint8Array;
+        assetCarrierSats?: bigint;
+        sponsor?: SponsorFillInput;
+    },
+): AssembledFillLayout {
+    const {
+        offer,
+        vtxo,
+        solverFund,
+        solverPayout,
+        assetCarrierSats = ASSET_CARRIER_SATS,
+        sponsor,
+    } = args;
+    const wantedAssetId = offer.wantAsset?.toString();
+
+    if (solverFund.length === 0) {
+        throw new Error("fillOffer needs coins to pay wantAmount with — `fund` is empty");
+    }
+    solverFund.forEach((coin, i) => assertFillCoin(coin, `fund[${i}]`));
+    assertScript(solverPayout, "payoutScript");
+    toAmount(vtxo.value, "deposit.value", "sats", BigInt(1));
+    assertAssetEntries(vtxo.assets, "deposit");
+    const carrier = toAmount(assetCarrierSats, "assetCarrierSats", "sats", BigInt(1));
+
+    let sponsorFund: FillFunding[] = [];
+    let sponsorChange = BigInt(0);
+    let fareAsset = "";
+    let fareAmount = BigInt(0);
+    let fareSats = BigInt(0);
+    let combineSatsFareWithChange = false;
+    if (sponsor !== undefined) {
+        if (sponsor.fund.length === 0) {
+            throw new Error("sponsor needs coins to contribute with — `sponsor.fund` is empty");
+        }
+        sponsor.fund.forEach((coin, i) => {
+            assertFillCoin(coin, `sponsor.fund[${i}]`);
+            if ((coin.assets?.length ?? 0) > 0) {
+                throw new Error(`sponsor.fund[${i}] carries assets — sponsor funding is sats-only`);
+            }
+        });
+        assertScript(sponsor.changeScript, "sponsor.changeScript");
+        const contribution = toAmount(
+            sponsor.netContributionSats,
+            "sponsor.netContributionSats",
+            "sats",
+        );
+        if (contribution <= BigInt(0)) {
+            throw new Error("sponsor.netContributionSats must be a positive amount of sats");
+        }
+        if (
+            sponsor.combineSatsFareWithChange !== undefined &&
+            typeof sponsor.combineSatsFareWithChange !== "boolean"
+        ) {
+            throw new Error("sponsor.combineSatsFareWithChange must be a boolean");
+        }
+        combineSatsFareWithChange = sponsor.combineSatsFareWithChange === true;
+        if (combineSatsFareWithChange && sponsor.fare === undefined) {
+            throw new Error("sponsor.combineSatsFareWithChange requires a fare");
+        }
+        if (sponsor.fare !== undefined) {
+            const { assetId, amount } = sponsor.fare;
+            if ((assetId === undefined) !== (amount === undefined)) {
+                throw new Error(
+                    "sponsor.fare needs assetId and amount together, or neither for a sats fare",
+                );
+            }
+            if (assetId !== undefined) {
+                fareAsset = assertAssetId(assetId, "sponsor.fare.assetId");
+                fareAmount = toAmount(amount, "sponsor.fare.amount", "asset units");
+                if (fareAmount <= BigInt(0)) {
+                    throw new Error("sponsor.fare.amount must be a positive amount of asset units");
+                }
+            }
+            assertScript(sponsor.fare.script, "sponsor.fare.script");
+            fareSats = toAmount(sponsor.fare.sats, "sponsor.fare.sats", "sats", BigInt(1));
+            if (combineSatsFareWithChange) {
+                if (assetId !== undefined) {
+                    throw new Error("sponsor.combineSatsFareWithChange requires a sats-only fare");
+                }
+                if (hex.encode(sponsor.fare.script) !== hex.encode(sponsor.changeScript)) {
+                    throw new Error(
+                        "sponsor.combineSatsFareWithChange requires fare and change to use the same script",
+                    );
+                }
+            }
+        }
+        const sponsorInputs = sponsor.fund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
+        if (contribution > sponsorInputs) {
+            throw new Error(
+                `sponsor.netContributionSats ${contribution} exceeds the sponsor inputs ${sponsorInputs}`,
+            );
+        }
+        sponsorFund = sponsor.fund;
+        const baseSponsorChange = sponsorInputs - contribution;
+        sponsorChange = combineSatsFareWithChange
+            ? toAmount(baseSponsorChange + fareSats, "combined sponsor change", "sats", BigInt(1))
+            : baseSponsorChange;
+    }
+
+    // Refused here because the emulator reports only that the covenant said no.
+    if (wantedAssetId !== undefined) {
+        const required =
+            offer.wantAmount +
+            (sponsor?.fare !== undefined && fareAsset === wantedAssetId ? fareAmount : BigInt(0));
+        const supplied = solverFund.reduce(
+            (sum, coin) => sum + amountOfAsset(coin.assets, wantedAssetId),
+            BigInt(0),
+        );
+        if (supplied < required) {
+            throw new Error(
+                `fillOffer needs ${required} of ${wantedAssetId} to pay the maker, but ` +
+                    `\`fund\` declares ${supplied} — pass coins carrying it, and declare their assets`,
+            );
+        }
+    }
+
+    // `offerAsset` is a TLV claim about a deposit the covenant never inspects:
+    // it gates output 0 only. A fill against an unbacked deposit succeeds
+    // on-chain and pays wantAmount for nothing.
     if (offer.offerAsset) {
         const offered = offer.offerAsset.toString();
         const deposited = amountOfAsset(vtxo.assets, offered);
@@ -1089,23 +1386,49 @@ export async function fillOffer(
         }
     }
 
-    const payout = payoutScript ?? ArkAddress.decode(takerAddress).pkScript;
+    // Case-insensitive txid, exact vout: the same coin twice self-double-spends.
+    const seen = new Set<string>();
+    const claim = (txid: string, vout: number, what: string) => {
+        const key = `${txid.toLowerCase()}:${vout}`;
+        if (seen.has(key)) throw new Error(`duplicate fill input ${key} (${what})`);
+        seen.add(key);
+    };
+    claim(parseHex32(vtxo.txid, "deposit.txid"), assertVout(vtxo.vout, "deposit.vout"), "deposit");
+    solverFund.forEach((coin, i) => claim(coin.txid, coin.vout, `fund[${i}]`));
+    sponsorFund.forEach((coin, i) => claim(coin.txid, coin.vout, `sponsor.fund[${i}]`));
+
     // A BTC want is paid in sats at output 0; an asset want is paid through the
     // packet, so its sats leg is only the carrier the output needs to exist.
-    const makerSats = wantedAssetId === undefined ? offer.wantAmount : assetCarrierSats;
-    const fill = contract.functions
-        .fulfill()
-        .from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
-        .fund(fund)
-        // Output 0, and the order is not cosmetic: the covenant inspects output
-        // 0 specifically, so this must be the first `to`.
-        .to(offer.makerPkScript, makerSats)
-        // The taker's proceeds — the deposit it just took, plus any surplus of
-        // its own funding. Appended after the outputs above, so it is vout 1.
-        .change(payout);
+    const makerSats =
+        wantedAssetId === undefined
+            ? toAmount(offer.wantAmount, "offer.wantAmount", "sats")
+            : carrier;
+    const outputs: AssembledFillLayout["outputs"] = [
+        { role: "receiver", script: offer.makerPkScript, sats: makerSats },
+    ];
+    const fareVout = outputs.length;
+    if (sponsor?.fare !== undefined && !combineSatsFareWithChange) {
+        outputs.push({ role: "sponsor-fare", script: sponsor.fare.script, sats: fareSats });
+    }
+    if (sponsor !== undefined && sponsorChange > BigInt(0)) {
+        outputs.push({ role: "sponsor-change", script: sponsor.changeScript, sats: sponsorChange });
+    }
+    const solverVout = outputs.length;
+
+    fill.from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
+        .fund(sponsorFund.length > 0 ? [...solverFund, ...sponsorFund] : solverFund)
+        // Not cosmetic: the covenant inspects output 0.
+        .to(offer.makerPkScript, makerSats);
+    if (sponsor?.fare !== undefined && !combineSatsFareWithChange)
+        fill.to(sponsor.fare.script, fareSats);
+    if (sponsor !== undefined && sponsorChange > BigInt(0))
+        fill.to(sponsor.changeScript, sponsorChange);
+    fill.change(solverPayout);
 
     // Every asset in the spend, by the input holding it. The deposit is input 0
-    // and the funding coins are 1..n, matching the order the builder assembles.
+    // and the funding coins follow in `fund` order, matching the owner mapping.
+    // A coin may name an asset at 0 without holding it; negatives and duplicates
+    // are rejected upstream, so they cannot skew the holdings.
     const held = new Map<string, { vin: number; amount: bigint }[]>();
     const hold = (vin: number, assets: FillFunding["assets"]) => {
         for (const a of assets ?? []) {
@@ -1115,54 +1438,110 @@ export async function fillOffer(
         }
     };
     hold(0, vtxo.assets);
-    fund.forEach((coin, i) => hold(i + 1, coin.assets));
+    solverFund.forEach((coin, i) => hold(i + 1, coin.assets));
+    sponsorFund.forEach((coin, i) => hold(1 + solverFund.length + i, coin.assets));
 
-    // The taker's asset proceeds land at vout 1 — but `change` only exists when
-    // there is a surplus, and an asset with nowhere to go is a spend arkd will
-    // refuse for a reason the error will not explain.
-    const outputsSum = makerSats;
-    const inputsSum = fund.reduce((s, c) => s + BigInt(c.value), BigInt(vtxo.value));
-    const hasPayoutOutput = inputsSum > outputsSum;
+    const explicitSats = outputs.reduce((s, o) => s + o.sats, BigInt(0));
+    const inputsSum =
+        BigInt(vtxo.value) +
+        solverFund.reduce((s, c) => s + BigInt(c.value), BigInt(0)) +
+        sponsorFund.reduce((s, c) => s + BigInt(c.value), BigInt(0));
+    if (inputsSum > MAX_SAFE_SATS) {
+        throw new Error(`fill inputs total ${inputsSum} sats exceeds the safe integer domain`);
+    }
+    if (explicitSats > MAX_SAFE_SATS) {
+        throw new Error(`fill outputs total ${explicitSats} sats exceeds the safe integer domain`);
+    }
+    // A sats-only underfund strands nothing, so the asset guards below never see
+    // it and the builder reports it in its own terms.
+    if (explicitSats > inputsSum) {
+        throw new Error(
+            `fill outputs total ${explicitSats} sats but the inputs carry ${inputsSum} — ` +
+                "increase solver or sponsor funding",
+        );
+    }
+    // The solver's asset proceeds land on the change output — but `change` only
+    // exists when there is a sats surplus, and an asset with nowhere to go is
+    // a spend arkd will refuse for a reason the error will not explain.
+    const hasPayoutOutput = inputsSum > explicitSats;
+
+    if (sponsor?.fare !== undefined && fareAsset !== "") {
+        const carried = (held.get(fareAsset) ?? []).reduce((s, i) => s + i.amount, BigInt(0));
+        if (carried < fareAmount) {
+            throw new Error(
+                `sponsor fare needs ${fareAmount} of ${fareAsset} but the inputs carry ${carried}`,
+            );
+        }
+    }
+
+    const stranded = (assetId: string, amount: bigint): Error =>
+        new Error(
+            `fillOffer has ${amount} of ${assetId} to return but no payout output — ` +
+                "fund with more sats than the maker's output takes",
+        );
 
     // THE WANTED ASSET FIRST — group index 0, which is the lookup index the
     // fulfill script uses. Any other order makes the covenant read the wrong
-    // group and refuse.
-    const emitWanted = () => {
-        if (wantedAssetId === undefined) return;
+    // group and refuse. A same-asset fare rides in this group, not a second one.
+    if (wantedAssetId !== undefined) {
         const supplying = held.get(wantedAssetId) ?? [];
         const supplied = supplying.reduce((s, i) => s + i.amount, BigInt(0));
-        const outputs = [{ vout: 0, amount: offer.wantAmount }];
-        const surplus = supplied - offer.wantAmount;
+        const group = [{ vout: 0, amount: offer.wantAmount }];
+        const farePart =
+            sponsor?.fare !== undefined && fareAsset === wantedAssetId ? fareAmount : BigInt(0);
+        if (farePart > BigInt(0)) group.push({ vout: fareVout, amount: farePart });
+        const surplus = supplied - offer.wantAmount - farePart;
         if (surplus > BigInt(0)) {
-            if (!hasPayoutOutput) {
-                throw new Error(
-                    `fillOffer has ${surplus} of ${wantedAssetId} to return but no payout output — ` +
-                        "fund with more sats than the maker's output takes",
-                );
-            }
-            outputs.push({ vout: 1, amount: surplus });
+            if (!hasPayoutOutput) throw stranded(wantedAssetId, surplus);
+            group.push({ vout: solverVout, amount: surplus });
         }
-        fill.withAsset({ assetId: wantedAssetId, inputs: supplying, outputs });
+        fill.withAsset({ assetId: wantedAssetId, inputs: supplying, outputs: group });
         held.delete(wantedAssetId);
-    };
-    emitWanted();
-
-    // Everything else goes to the taker: the deposit's own asset when the maker
-    // wanted sats, and anything a funding coin happened to carry. Declaring the
-    // latter is what keeps arkd from answering ASSET_NOT_FOUND.
-    for (const [assetId, inputs] of held) {
-        const amount = inputs.reduce((s, i) => s + i.amount, BigInt(0));
-        if (!hasPayoutOutput) {
-            throw new Error(
-                `fillOffer has ${amount} of ${assetId} to return but no payout output — ` +
-                    "fund with more sats than the maker's output takes",
-            );
-        }
-        fill.withAsset({ assetId, inputs, outputs: [{ vout: 1, amount }] });
     }
 
-    const { txid } = await fill.send();
-    return txid;
+    // A fare in any other asset gets its own group, remainder to the solver.
+    if (sponsor?.fare !== undefined && fareAsset !== "" && fareAsset !== wantedAssetId) {
+        const supplying = held.get(fareAsset) ?? [];
+        const carried = supplying.reduce((s, i) => s + i.amount, BigInt(0));
+        const group = [{ vout: fareVout, amount: fareAmount }];
+        const remainder = carried - fareAmount;
+        if (remainder > BigInt(0)) {
+            if (!hasPayoutOutput) throw stranded(fareAsset, remainder);
+            group.push({ vout: solverVout, amount: remainder });
+        }
+        fill.withAsset({ assetId: fareAsset, inputs: supplying, outputs: group });
+        held.delete(fareAsset);
+    }
+
+    // Declaring what funding coins happened to carry is what keeps arkd from
+    // answering ASSET_NOT_FOUND.
+    for (const [assetId, inputs] of held) {
+        const amount = inputs.reduce((s, i) => s + i.amount, BigInt(0));
+        if (!hasPayoutOutput) throw stranded(assetId, amount);
+        fill.withAsset({ assetId, inputs, outputs: [{ vout: solverVout, amount }] });
+    }
+
+    if (hasPayoutOutput) {
+        // Exact, not fee-adjusted: Ark pays fees through the P2A anchor, so
+        // VTXO values balance.
+        outputs.push({ role: "solver", script: solverPayout, sats: inputsSum - explicitSats });
+    }
+    return {
+        inputs: [
+            { owner: null, txid: vtxo.txid.toLowerCase(), vout: vtxo.vout },
+            ...solverFund.map((coin) => ({
+                owner: "solver" as const,
+                txid: coin.txid.toLowerCase(),
+                vout: coin.vout,
+            })),
+            ...sponsorFund.map((coin) => ({
+                owner: "sponsor" as const,
+                txid: coin.txid.toLowerCase(),
+                vout: coin.vout,
+            })),
+        ],
+        outputs,
+    };
 }
 
 /** How much of `assetId` a coin's declared assets add up to. */
@@ -1173,3 +1552,71 @@ const amountOfAsset = (assets: FillFunding["assets"], assetId: string): bigint =
     }
     return total;
 };
+
+const U64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
+/** Largest sats amount representable exactly — SDK coin values are numbers. */
+const MAX_SAFE_SATS = BigInt(Number.MAX_SAFE_INTEGER);
+
+function assertVout(vout: unknown, what: string): number {
+    if (typeof vout !== "number" || !Number.isSafeInteger(vout) || vout < 0 || vout > 0xffffffff) {
+        throw new Error(`${what} must be a non-negative output index`);
+    }
+    return vout;
+}
+
+/** `isSafeInteger`, never `isInteger`: past 2^53 the parse is already rounded. */
+function toAmount(
+    value: unknown,
+    what: string,
+    unit: "sats" | "asset units",
+    min = BigInt(0),
+): bigint {
+    const max = unit === "sats" ? MAX_SAFE_SATS : U64_MAX;
+    let amount: bigint | undefined;
+    if (typeof value === "bigint") {
+        if (value >= BigInt(0) && value <= max) amount = value;
+    } else if (typeof value === "number") {
+        if (Number.isSafeInteger(value) && value >= 0) amount = BigInt(value);
+    }
+    if (amount === undefined) {
+        throw new Error(`${what} must be a safe integer amount of ${unit} (0 to ${max})`);
+    }
+    if (amount < min) {
+        throw new Error(`${what} must be a positive amount of ${unit}`);
+    }
+    return amount;
+}
+
+function assertScript(script: unknown, what: string): asserts script is Uint8Array {
+    if (!(script instanceof Uint8Array) || script.length === 0) {
+        throw new Error(`${what} must be a non-empty output script`);
+    }
+}
+
+function assertAssetId(assetId: unknown, what: string): string {
+    if (typeof assetId !== "string") throw new Error(`${what} must be an asset id string`);
+    try {
+        return asset.AssetId.fromString(assetId).toString();
+    } catch {
+        throw new Error(`${what} is not a valid asset id`);
+    }
+}
+
+function assertAssetEntries(assets: FillFunding["assets"], what: string): void {
+    const seen = new Set<string>();
+    for (const [i, a] of (assets ?? []).entries()) {
+        const id = assertAssetId(a.assetId, `${what}.assets[${i}].assetId`);
+        if (seen.has(id)) {
+            throw new Error(`${what} declares ${id} twice — merge the entries instead`);
+        }
+        seen.add(id);
+        toAmount(a.amount, `${what}.assets[${i}].amount`, "asset units");
+    }
+}
+
+function assertFillCoin(coin: FillFunding, what: string): void {
+    parseHex32(coin.txid, `${what}.txid`);
+    assertVout(coin.vout, `${what}.vout`);
+    toAmount(coin.value, `${what}.value`, "sats", BigInt(1));
+    assertAssetEntries(coin.assets, what);
+}

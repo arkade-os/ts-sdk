@@ -7,10 +7,20 @@ export {
     decodeOffer,
     offerVtxoScript,
     swapPrograms,
+    // The pieces an out-of-tree fill planner assembles a spend from.
+    assembleOfferFill,
+    connectFillContract,
+    resolveDeposit,
     ASSET_CARRIER_SATS,
     OFFER_PACKET_TYPE,
+    type AssembledFillLayout,
+    type FillCoin,
     type FillFunding,
+    type FillInputOwner,
+    type FillOutpoint,
+    type FillOutputRole,
     type Offer,
+    type SponsorFillInput,
 } from "./offer";
 export {
     discoverMarkets,
@@ -42,9 +52,21 @@ export {
     PreimageNotRecoverableError,
     type AssetSwap,
     type AssetSwapStatus,
+    type FundingIntent,
+    type FundingIntentOutput,
+    type FundingIntentState,
     type PreimageBlockedReason,
     type SwapSecretsProjection,
 } from "./store";
+export { type FundingStateAdvance } from "./fundingPersistence";
+export {
+    FundingNotCompletedError,
+    FundingOutcomeUnknownError,
+    FundingOutputMismatchError,
+    fundOffer,
+    type FundOfferParams,
+    type FundingExpiryFloor,
+} from "./funding";
 export {
     type AssetSwapRepository,
     type MarketsCacheEntry,

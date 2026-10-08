@@ -99,6 +99,7 @@ import {
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
     RequestSend,
+    RequestSendWithDeadline,
     ResponseSend,
     RequestGetAssetDetails,
     ResponseGetAssetDetails,
@@ -147,6 +148,7 @@ import {
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
 import type {
     Contract,
     ContractEventCallback,
@@ -244,6 +246,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are retained only for type completeness and are never enforced.
     SEND_BITCOIN: 50_000,
     SEND: 50_000,
+    SEND_WITH_DEADLINE: 50_000,
     SETTLE: 50_000,
     ISSUE: 50_000,
     REISSUE: 50_000,
@@ -760,6 +763,23 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 }
 
+                if (response.type === "SEND_DEADLINE_EXCEEDED") {
+                    if (event.source !== this.serviceWorker || response.tag !== request.tag) return;
+                    cleanup();
+                    if (
+                        request.type === "SEND_WITH_DEADLINE" &&
+                        response.error instanceof Error &&
+                        (response.broadcast === undefined || response.broadcast === false) &&
+                        Number.isSafeInteger(response.payload?.validUntil) &&
+                        response.payload.validUntil > 0 &&
+                        response.payload.validUntil === request.payload.validUntil
+                    ) {
+                        reject(new SendDeadlineExceededError(request.payload.validUntil));
+                    } else {
+                        reject(new Error("Invalid timed-send refusal response"));
+                    }
+                    return;
+                }
                 cleanup();
                 if (response.error) {
                     reject(response.error);
@@ -2032,23 +2052,42 @@ export class ServiceWorkerWallet
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const [first] = args;
-        const { recipients, selectedVtxos } =
-            args.length === 1 && first && "recipients" in first
-                ? (first as SendParams)
-                : { recipients: args as [Recipient, ...Recipient[]], selectedVtxos: undefined };
-        const message: RequestSend = {
-            tag: this.messageTag,
-            type: "SEND",
-            id: getRandomId(),
-            // Omitted rather than sent as `undefined`, so an older worker sees
-            // exactly the payload it saw before.
-            payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
-        };
+        const {
+            recipients,
+            selectedVtxos,
+            validUntil: wireDeadline,
+        } = args.length === 1 && first && "recipients" in first
+            ? (first as SendParams)
+            : {
+                  recipients: args as [Recipient, ...Recipient[]],
+                  selectedVtxos: undefined,
+                  validUntil: undefined,
+              };
+        const validUntil = captureSendDeadline(wireDeadline);
+        const message: RequestSend | RequestSendWithDeadline =
+            validUntil === undefined
+                ? {
+                      tag: this.messageTag,
+                      type: "SEND",
+                      id: getRandomId(),
+                      // Omitted rather than sent as `undefined`, so an older worker sees
+                      // exactly the payload it saw before.
+                      payload: selectedVtxos ? { recipients, selectedVtxos } : { recipients },
+                  }
+                : {
+                      tag: this.messageTag,
+                      type: "SEND_WITH_DEADLINE",
+                      id: getRandomId(),
+                      payload: selectedVtxos
+                          ? { recipients, selectedVtxos, validUntil }
+                          : { recipients, validUntil },
+                  };
 
         try {
             const response = await this.sendMessage(message);
             return (response as ResponseSend).payload.txid;
         } catch (error) {
+            if (error instanceof SendDeadlineExceededError) throw error;
             throw new Error(`Send failed: ${error}`);
         }
     }

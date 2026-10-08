@@ -127,6 +127,40 @@ beforeEach(() => {
 });
 
 describe("restoreOfferCoverage", () => {
+    it("skips prepared and abandoned rows while keeping submitted-unknown coverage", async () => {
+        const offer = makeOffer();
+        const base = restored(offer, {
+            id: "operation-a",
+            fundingTxid: "",
+            swapAddress: "tark1qprepared",
+            fundingIntent: {
+                version: 1,
+                state: "prepared",
+                inputs: [{ txid: "11".repeat(32), vout: 0 }],
+                serverPubkey: hex.encode(SERVER_KEY),
+                arkServerUrl: "https://ark.example/",
+                output: { script: hex.encode(offer.swapPkScript), value: "10000" },
+            },
+        });
+        await restoreOfferCoverage(wallet, "http://ark", [
+            base,
+            {
+                ...base,
+                id: "operation-b",
+                status: "cancelled",
+                fundingIntent: { ...base.fundingIntent!, state: "abandoned" },
+            },
+        ]);
+        expect(state.getInfoCalls).toBe(0);
+        expect(state.created).toEqual([]);
+
+        await restoreOfferCoverage(wallet, "http://ark", [
+            { ...base, fundingIntent: { ...base.fundingIntent!, state: "submitted" } },
+        ]);
+        expect(state.created).toHaveLength(1);
+        expect(state.watched).toEqual([[hex.encode(offer.swapPkScript), "watched"]]);
+    });
+
     it("registers the covenant behind a record the scan rebuilt", async () => {
         const offer = makeOffer();
         const record = restored(offer);
