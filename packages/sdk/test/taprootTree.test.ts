@@ -2,7 +2,8 @@ import { hex } from "@scure/base";
 import { describe, expect, it } from "vitest";
 import { p2tr, taprootNumsKey } from "@scure/btc-signer";
 import { assembleBtcdTaprootTree, Transaction, VtxoScript } from "../src";
-import { toBIP371TapTree } from "../src/script/base";
+import { btcdLeafLayout } from "../src/script/taprootTree";
+import { TapTreeCoder, toBIP371TapTree } from "../src/script/base";
 
 /**
  * Sanity tests for the btcd-compatible Taproot script tree builder.
@@ -117,4 +118,108 @@ describe("VtxoScript.encode as a PSBT output tapTree", () => {
             expect(hex.encode(rebuilt.tweakedPubkey)).toBe(hex.encode(script.tweakedPublicKey));
         },
     );
+});
+
+describe("VtxoScript.decode of a BIP-371 tapTree", () => {
+    const scriptWithLeaves = (n: number) =>
+        new VtxoScript(Array.from({ length: n }, (_, i) => new Uint8Array([0x51 + i])));
+
+    // 6, 7, 10, 11 and 12 are the counts whose DFS order differs from
+    // construction order, so decoding by leaf order alone derives another key.
+    it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])(
+        "rebuilds the same script from %i leaves",
+        (n) => {
+            const script = scriptWithLeaves(n);
+            const bip371 = TapTreeCoder.encode(toBIP371TapTree(script.encode()));
+
+            const decoded = VtxoScript.decode(bip371);
+            expect(hex.encode(decoded.pkScript)).toBe(hex.encode(script.pkScript));
+            expect(hex.encode(decoded.encode())).toBe(hex.encode(script.encode()));
+        },
+    );
+
+    it("rebuilds the script from a PSBT output tapTree", () => {
+        const script = scriptWithLeaves(6);
+        const tx = new Transaction();
+        tx.addOutput({
+            script: script.pkScript,
+            amount: 1000n,
+            tapTree: toBIP371TapTree(script.encode()),
+        });
+        const tapTree = Transaction.fromPSBT(tx.toPSBT()).getOutput(0).tapTree!;
+
+        const decoded = VtxoScript.decode(TapTreeCoder.encode(tapTree));
+        expect(hex.encode(decoded.pkScript)).toBe(hex.encode(script.pkScript));
+    });
+
+    // arkd >= v0.9.14 (`txutils.TapTree.Encode`) writes leaves in
+    // construction order with placeholder depths min(i + 1, n - 1).
+    it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])(
+        "decodes arkd's %i-leaf encoding in construction order",
+        (n) => {
+            const script = scriptWithLeaves(n);
+            const tapTree = TapTreeCoder.encode(
+                script.scripts.map((leafScript, i) => ({
+                    depth: n === 1 ? 0 : Math.min(i + 1, n - 1),
+                    version: 0xc0,
+                    script: leafScript as Uint8Array<ArrayBuffer>,
+                })),
+            );
+
+            expect(hex.encode(VtxoScript.decode(tapTree).pkScript)).toBe(
+                hex.encode(script.pkScript),
+            );
+        },
+    );
+
+    it("decodes any other depth shape in construction order", () => {
+        const script = scriptWithLeaves(3);
+        // Valid BIP-371 shape, but not the one assembleBtcdTaprootTree builds.
+        const tapTree = TapTreeCoder.encode(
+            script.scripts.map((leafScript, i) => ({
+                depth: [1, 2, 2][i],
+                version: 0xc0,
+                script: leafScript as Uint8Array<ArrayBuffer>,
+            })),
+        );
+
+        expect(hex.encode(VtxoScript.decode(tapTree).pkScript)).toBe(hex.encode(script.pkScript));
+    });
+
+    // decode rebuilds every leaf as base tapscript, so another version would
+    // derive a different key; it must fail on every decode path.
+    it.each([
+        ["flat", [1, 1, 1, 1, 1, 1]],
+        ["BIP-371", btcdLeafLayout(6).map((slot) => slot.depth)],
+        ["other", [1, 2, 3, 4, 5, 5]],
+    ])("rejects a non-tapscript leaf version in a %s tree", (_, depths) => {
+        const script = scriptWithLeaves(6);
+        const tapTree = TapTreeCoder.encode(
+            script.scripts.map((leafScript, i) => ({
+                depth: depths[i],
+                version: i === 3 ? 0xc2 : 0xc0,
+                script: leafScript as Uint8Array<ArrayBuffer>,
+            })),
+        );
+
+        expect(() => VtxoScript.decode(tapTree)).toThrow("unsupported tap leaf version 0xc2");
+    });
+
+    // Reordering is keyed on the depth sequence, so it must never match a
+    // construction-order writer's depths when the two orders differ.
+    it("never mistakes a construction-order encoding for the BIP-371 form", () => {
+        for (let n = 1; n <= 256; n++) {
+            const layout = btcdLeafLayout(n);
+            if (layout.every((slot, i) => slot.index === i)) continue;
+            const dfsDepths = layout.map((slot) => slot.depth);
+            const constructionOrderWriters = [
+                Array(n).fill(1), // VtxoScript.encode, rust-sdk, dotnet-sdk
+                Array.from({ length: n }, (_, i) => Math.min(i + 1, n - 1)), // arkd
+                Array.from({ length: n }, (_, i) => layout.find((s) => s.index === i)!.depth),
+            ];
+            for (const depths of constructionOrderWriters) {
+                expect(depths).not.toEqual(dfsDepths);
+            }
+        }
+    });
 });

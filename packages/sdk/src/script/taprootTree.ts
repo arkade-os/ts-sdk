@@ -61,3 +61,28 @@ export function assembleBtcdTaprootTree(scripts: Bytes[]): TaprootTreeNode {
 
     return branches[0];
 }
+
+/**
+ * Left-to-right leaf layout of the tree {@link assembleBtcdTaprootTree} builds
+ * for `count` leaves: for each position, the leaf's index in the input list
+ * and its depth. The shape depends only on the leaf count, never on the
+ * scripts, so this also tells where each input leaf lands in any such tree.
+ *
+ * @param count - Number of leaves
+ * @returns One `{ index, depth }` entry per leaf, in left-to-right DFS order
+ */
+export function btcdLeafLayout(count: number): { index: number; depth: number }[] {
+    const placeholders = Array.from({ length: count }, () => new Uint8Array());
+    const indexOf = new Map<Bytes, number>(placeholders.map((script, index) => [script, index]));
+    const layout: { index: number; depth: number }[] = [];
+    const walk = (node: TaprootTreeNode, depth: number): void => {
+        if (Array.isArray(node)) {
+            walk(node[0], depth + 1);
+            walk(node[1], depth + 1);
+        } else {
+            layout.push({ index: indexOf.get(node.script)!, depth });
+        }
+    };
+    walk(assembleBtcdTaprootTree(placeholders), 0);
+    return layout;
+}

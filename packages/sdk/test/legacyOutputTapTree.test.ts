@@ -66,6 +66,21 @@ describe("Transaction.fromPSBT with a legacy PSBT_OUT_TAP_TREE", () => {
         expect(() => Transaction.fromPSBT(psbt)).toThrow(/tapTree/);
     });
 
+    it("surfaces the decode error when a legacy tree cannot be rebuilt", () => {
+        const script = scriptWithLeaves(3);
+        // A bare OP_PUSHDATA1 is not a parseable leaf, so VtxoScript cannot
+        // rebuild the tree to repair it.
+        const unparseable = TapTreeCoder.encode(
+            TapTreeCoder.decode(script.encode()).map((leaf, i) => ({
+                ...leaf,
+                script: i === 0 ? new Uint8Array([0x4c]) : leaf.script,
+            })),
+        );
+        const { psbt } = psbtWithOutputTapTree(script, unparseable);
+
+        expect(() => Transaction.fromPSBT(psbt)).toThrow(/tapTree/);
+    });
+
     it("decodes valid PSBTs unchanged", () => {
         const script = scriptWithLeaves(6);
         const valid = TapTreeCoder.encode(toBIP371TapTree(script.encode()));

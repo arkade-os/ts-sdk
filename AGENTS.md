@@ -66,6 +66,16 @@ keys and never branch on wallet *type* — they ask the wallet and use what come
   needs back, not a capability, and knowing it grants nothing without the seed. Apply the same test
   to anything new: could a reader of the repository spend with it?
 
+## Decoding PSBTs
+
+Decode PSBTs only through the SDK's `Transaction` (`packages/sdk/src/utils/transaction.ts`,
+exported as `Transaction` from `@arkade-os/sdk`), never through `@scure/btc-signer`'s own
+`Transaction.fromPSBT`. This applies to both `sdk` and its plugins. Since scure 2.4, the raw
+decoder strips unknown PSBT fields by default, which drops every Ark field (taptree, condition
+witness, cosigner keys, ...). It also rejects the legacy output tap trees that older SDK releases
+wrote, which the wrapper repairs. No lint enforces this, so the plan, code and review steps must
+each check for it: any `fromPSBT` call that resolves to scure's class is a defect.
+
 ## Local Scratch Files
 
 `.gitignore` excludes `*.agents.md`, `TASKS.md`, `CLAUDE.md`, `REVIEW.md`, and `.claude/`. These are local scratch notes — drafts, review snapshots, AI session state — and are **not** authoritative project guidance. Authoritative guidance lives in this `AGENTS.md` (and the package READMEs); treat anything in an ignored file as transient context that may be stale or contradict the codebase.

@@ -3,7 +3,7 @@ import { collectIntents } from "../repositories/intentRepository";
 import { collectContracts } from "../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
+import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
@@ -105,6 +105,7 @@ import {
     type OffchainTxSigner,
 } from "../utils/arkTransaction";
 import { toXOnly } from "../utils/keys";
+import { Transaction } from "../utils/transaction";
 import {
     byValueDescending,
     DEFAULT_SETTLEMENT_CONFIG,
