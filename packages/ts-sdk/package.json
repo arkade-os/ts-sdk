@@ -181,9 +181,7 @@
         "ws-electrumx-client": "1.0.5"
     },
     "devDependencies": {
-        "@types/better-sqlite3": "7.6.13",
         "@vitest/coverage-v8": "3.2.7",
-        "better-sqlite3": "12.6.2",
         "tsup": "^8.5.0",
         "typedoc": "^0.28.19",
         "typescript": "5.9.2"
