@@ -541,8 +541,8 @@ const matchQuotedLockup = (
  *
  * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
  * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
- * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: their
- * contract, finality and deadline checks are not implemented yet. */
+ * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: this gate
+ * prices in sats, so EVM sends use `assertEvmSendFundable`, and EVM receives have no gate yet. */
 export const assertFundable = (input: {
     quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
@@ -574,7 +574,7 @@ export const assertFundable = (input: {
     if (input.quote.pair.split("->").some((leg) => leg.startsWith("ethereum:"))) {
         fail(
             "evm_funding_unavailable",
-            "EVM funding is unavailable until local contract, finality, and deadline verification is implemented",
+            "EVM funding is unavailable through this gate: sends use assertEvmSendFundable",
         );
     }
     // `valid_until` feeds the expiry gate AND the v2 TTL floor; absent or NaN it deletes both.
@@ -1487,7 +1487,7 @@ export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
 /** The covenant terms the trader's OWN live server info supplies. */
-const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
+export const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
     const network = networkFromArkadeInfo(info);
     return {
         operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
