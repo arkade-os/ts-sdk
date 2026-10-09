@@ -1,8 +1,9 @@
-import { collectContracts } from "../src/repositories/contractRepository";
+import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
 import type { SQLExecutor } from "../src/repositories/sqlite/types";
 import type { Contract, ContractState } from "../src/contracts/types";
+import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 
 // ── Mock SQLExecutor ────────────────────────────────────────────────────
 // A lightweight in-memory SQL engine that supports the subset of SQL
@@ -15,14 +16,9 @@ interface TableDef {
     rows: Map<string, Record<string, unknown>>;
 }
 
-/**
- * `in_or_null` is the nullable-column form the repository emits for
- * `watch`: a row written before the column existed stores NULL and must
- * still match `"watched"`.
- */
 interface Condition {
     column: string;
-    op: "eq" | "in" | "in_or_null";
+    op: "eq" | "in";
     paramCount: number;
 }
 
@@ -85,9 +81,7 @@ function createMockSQLExecutor(): SQLExecutor {
                     const placeholders = inMatch[2].split(",").map((s) => s.trim());
                     conditions.push({
                         column,
-                        op: new RegExp(`${column}\\s+IS\\s+NULL`, "i").test(part)
-                            ? "in_or_null"
-                            : "in",
+                        op: "in",
                         paramCount: placeholders.length,
                     });
                     continue;
@@ -153,10 +147,7 @@ function createMockSQLExecutor(): SQLExecutor {
                 paramIdx += 1;
             } else {
                 const values = params.slice(paramIdx, paramIdx + cond.paramCount);
-                const value = row[cond.column];
-                const nullMatches =
-                    cond.op === "in_or_null" && (value === null || value === undefined);
-                if (!values.includes(value) && !nullMatches) return false;
+                if (!values.includes(row[cond.column])) return false;
                 paramIdx += cond.paramCount;
             }
         }
@@ -445,6 +436,12 @@ describe("SQLiteContractRepository", () => {
     // ── Watch state ────────────────────────────────────────────────────
 
     describe("watch state", () => {
+        // A real engine: the mock evaluates no IFNULL, ignores CREATE INDEX and plans nothing.
+        beforeEach(() => {
+            db = createNodeSQLExecutor();
+            repository = new SQLiteContractRepository(db);
+        });
+
         it("round-trips the watch state", async () => {
             await repository.saveContract(createMockContract({ script: "s1", watch: "retained" }));
             await repository.saveContract(
@@ -461,23 +458,32 @@ describe("SQLiteContractRepository", () => {
             // A contract saved before the field existed — the shape every
             // deployed row has.
             await repository.saveContract(createMockContract({ script: "legacy" }));
+            await repository.saveContract(createMockContract({ script: "other", type: "vhtlc" }));
             await repository.saveContract(createMockContract({ script: "s1", watch: "watched" }));
             await repository.saveContract(createMockContract({ script: "s2", watch: "retained" }));
+            await repository.saveContract(
+                createMockContract({ script: "s3", watch: "awaiting-funds" }),
+            );
+            const scripts = async (filter: ContractFilter) =>
+                (await collectContracts(repository, filter)).map((c) => c.script);
 
-            const watched = await collectContracts(repository, { watch: "watched" });
-            expect(watched.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
-
-            const retained = await collectContracts(repository, { watch: "retained" });
-            expect(retained.map((c) => c.script)).toEqual(["s2"]);
-
-            const live = await collectContracts(repository, {
-                watch: ["watched", "awaiting-funds"],
-            });
-            expect(live.map((c) => c.script).sort()).toEqual(["legacy", "s1"]);
+            expect(await scripts({ watch: "watched" })).toEqual(["legacy", "other", "s1"]);
+            expect(await scripts({ watch: ["watched", "awaiting-funds"] })).toEqual([
+                "legacy",
+                "other",
+                "s1",
+                "s3",
+            ]);
+            expect(await scripts({ watch: "retained" })).toEqual(["s2"]);
+            expect(await scripts({ watch: ["awaiting-funds", "retained"] })).toEqual(["s2", "s3"]);
+            expect(
+                await scripts({ type: "default", watch: ["watched", "awaiting-funds"] }),
+            ).toEqual(["legacy", "s1", "s3"]);
+            expect(await scripts({ type: "vhtlc", watch: "retained" })).toEqual([]);
         });
 
         it("adds the column to a table created before it existed", async () => {
-            const legacyDb = createMockSQLExecutor();
+            const legacyDb = createNodeSQLExecutor();
             await legacyDb.run(`
                 CREATE TABLE IF NOT EXISTS ark_contracts (
                     script TEXT PRIMARY KEY,
@@ -507,6 +513,37 @@ describe("SQLiteContractRepository", () => {
             // ...and the column is now writable.
             await migrated.saveContract(createMockContract({ script: "s1", watch: "retained" }));
             expect((await collectContracts(migrated, { script: "s1" }))[0].watch).toBe("retained");
+        });
+
+        it.each<[string, ContractFilter, string]>([
+            ["startup", { watch: ["watched", "awaiting-funds"] }, "idx_ark_contracts_watch_state"],
+            [
+                "typed",
+                { type: "default", watch: ["watched", "awaiting-funds"] },
+                "idx_ark_contracts_type_watch_state",
+            ],
+        ])("seeks the %s watch read through its index on every page", async (_, filter, index) => {
+            const selects: [string, unknown[]][] = [];
+            const repo = new SQLiteContractRepository({
+                ...db,
+                all<T>(sql: string, params?: unknown[]) {
+                    if (sql.startsWith("SELECT")) selects.push([sql, params ?? []]);
+                    return db.all<T>(sql, params);
+                },
+            });
+            await repo.getContractsPage(filter, { limit: 10 });
+            await repo.getContractsPage(filter, { limit: 10, after: "00" });
+
+            expect(selects).toHaveLength(2);
+            for (const [sql, params] of selects) {
+                const plan: { detail: string }[] = await db.all(
+                    `EXPLAIN QUERY PLAN ${sql}`,
+                    params,
+                );
+                const steps = plan.map((step) => step.detail).join("\n");
+                expect(steps).toContain(`SEARCH ark_contracts USING INDEX ${index} (`);
+                expect(steps).not.toMatch(/\bSCAN\b/);
+            }
         });
     });
 

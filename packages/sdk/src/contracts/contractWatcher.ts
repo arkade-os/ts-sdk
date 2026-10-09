@@ -198,7 +198,9 @@ export class ContractWatcher {
     async updateContract(contract: Contract): Promise<void> {
         const existing = this.contracts.get(contract.script);
         if (!existing) {
-            throw new Error(`Contract ${contract.script} not found`);
+            // startup skips `retained` rows, so re-watching one registers it here
+            if (isWatchedContract(contract)) await this.addContract(contract);
+            return;
         }
 
         existing.contract = contract;
@@ -230,7 +232,7 @@ export class ContractWatcher {
      * Feeds both the subscription and the sweep scope. `state` must never narrow it: an Ark
      * receive address can be paid again after the wallet rotated past it, and such a payment
      * would stay invisible. Only an owner's explicit {@link ContractWatchState} narrows it; the
-     * row stays in {@link getAllContracts} for reads, annotation and history.
+     * row stays in the repository for reads, annotation and history.
      */
     getWatchedContracts(): Contract[] {
         return this.getAllContracts().filter(isWatchedContract);

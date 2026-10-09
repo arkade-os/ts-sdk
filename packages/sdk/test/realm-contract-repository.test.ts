@@ -1,6 +1,6 @@
 import { createMockRealm as mockRealm } from "../../../config/test-helpers/mockRealm";
 import { collectContracts } from "../src/repositories/contractRepository";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { RealmContractRepository } from "../src/repositories/realm/contractRepository";
 import type { Contract, ContractState } from "../src/contracts/types";
 
@@ -211,6 +211,50 @@ describe("RealmContractRepository", () => {
 
             const retained = await collectContracts(repository, { watch: "retained" });
             expect(retained.map((c) => c.script)).toEqual(["s2"]);
+        });
+
+        it("queries each live watch state alone, its term leading and the rest grouped", async () => {
+            // The mock plans no query, so the query's shape is what can be pinned here.
+            const queries: string[] = [];
+            const objects = realm.objects.bind(realm);
+            vi.spyOn(realm, "objects").mockImplementation(((name: string) => {
+                const results = objects(name);
+                const filtered = results.filtered.bind(results);
+                results.filtered = (query: string, ...args: unknown[]) => {
+                    queries.push(query);
+                    return filtered(query, ...args);
+                };
+                return results;
+            }) as typeof realm.objects);
+            await repository.saveContract(createMockContract({ script: "legacy" }));
+            await repository.saveContract(
+                createMockContract({ script: "s1", watch: "awaiting-funds" }),
+            );
+            await repository.saveContract(createMockContract({ script: "s2", watch: "retained" }));
+
+            const retained = await repository.getContractsPage(
+                { type: "default", watch: "retained" },
+                { limit: 10 },
+            );
+            expect(retained.items.map((c) => c.script)).toEqual(["s2"]);
+            expect(queries.splice(0)).toEqual(["type == $0 AND (watch == $1)"]);
+
+            const typed = await repository.getContractsPage(
+                {
+                    type: "default",
+                    state: ["active", "inactive"],
+                    watch: ["watched", "awaiting-funds"],
+                },
+                { limit: 10, after: "a" },
+            );
+            const watched = await repository.getContractsPage({ watch: "watched" }, { limit: 10 });
+
+            expect(typed.items.map((c) => c.script)).toEqual(["legacy", "s1"]);
+            expect(watched.items.map((c) => c.script)).toEqual(["legacy"]);
+            expect(queries).toHaveLength(5);
+            for (const query of queries) {
+                expect(query).toMatch(/^watch == (\$\d+|null)( AND \((?!.*\bwatch\b).*\))?$/);
+            }
         });
     });
 

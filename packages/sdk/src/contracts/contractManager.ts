@@ -751,8 +751,11 @@ export class ContractManager implements IContractManager {
         }
         this.disposed = false;
 
-        // Register persisted contracts BEFORE the first sync so it scopes to the real watched set.
-        const contracts = await collectContracts(this.config.contractRepository);
+        // Register watched contracts BEFORE the first sync so it scopes to the real watched set.
+        // Retained rows are read from the repository on demand.
+        const contracts = await collectContracts(this.config.contractRepository, {
+            watch: ["watched", "awaiting-funds"],
+        });
         for (const contract of contracts) {
             await this.watcher.addContract(contract);
         }

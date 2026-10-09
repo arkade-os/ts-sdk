@@ -7,7 +7,6 @@ import {
     warnAndFilterVtxosForScript,
     saveVtxosForContract,
 } from "../../../contracts/vtxoOwnership";
-import { isWatchedContract } from "../../../contracts/types";
 
 export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
 
@@ -38,7 +37,9 @@ export const contractPollProcessor: TaskProcessor = {
 
         // Background channel, so it covers exactly what the watcher's
         // subscription covers: `retained` rows are kept for reads only.
-        const contracts = (await collectContracts(contractRepository)).filter(isWatchedContract);
+        const contracts = await collectContracts(contractRepository, {
+            watch: ["watched", "awaiting-funds"],
+        });
         let contractsProcessed = 0;
         let vtxosSaved = 0;
 

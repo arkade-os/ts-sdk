@@ -38,7 +38,7 @@ describe("IndexedDB wallet history index migration", () => {
 
     // v4 is the released 0.4.77 shape: `scriptUnspent` without the history index.
     it.each([3, 4])(
-        "upgrades v%i to v5 without losing history or adding intent stores",
+        "upgrades v%i to the current version without losing history or adding intent stores",
         async (from) => {
             const dbName = `wallet-history-v${from}-${crypto.randomUUID()}`;
 
@@ -70,7 +70,7 @@ describe("IndexedDB wallet history index migration", () => {
                 await contract.getContractsPage(undefined, { limit: 1 });
 
                 const { version, names, historyIndex, unspentIndex } = await schema(dbName);
-                expect(version).toBe(5);
+                expect(version).toBe(DB_VERSION);
                 expect(historyIndex).toBe(true);
                 expect(unspentIndex).toBe(true);
                 expect(names).not.toContain("intents");

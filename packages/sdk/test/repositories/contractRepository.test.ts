@@ -223,4 +223,25 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         expect(contracts).toHaveLength(1);
         expect(contracts[0].script).toBe("unique-script-hex");
     });
+
+    it("filters by watch state, counting rows without one as watched", async () => {
+        const row = (script: string, watch?: Contract["watch"]): Contract => ({
+            type: "default",
+            params: {},
+            script,
+            address: `address-${script}`,
+            state: "active",
+            createdAt: Date.now(),
+            ...(watch && { watch }),
+        });
+        await repository.saveContract(row("legacy"));
+        await repository.saveContract(row("s1", "watched"));
+        await repository.saveContract(row("s2", "awaiting-funds"));
+        await repository.saveContract(row("s3", "retained"));
+
+        const live = await collectContracts(repository, { watch: ["watched", "awaiting-funds"] });
+        expect(live.map((c) => c.script).sort()).toEqual(["legacy", "s1", "s2"]);
+        const retained = await collectContracts(repository, { watch: "retained" });
+        expect(retained.map((c) => c.script)).toEqual(["s3"]);
+    });
 });
