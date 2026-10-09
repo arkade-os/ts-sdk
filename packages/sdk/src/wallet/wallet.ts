@@ -5590,6 +5590,20 @@ export class Wallet
     }
 }
 
+/** Earliest expiry first, then largest value: the order {@link selectVirtualCoins} spends in. */
+export function bySelectionOrder(
+    a: NormalizedExtendedVirtualCoin,
+    b: NormalizedExtendedVirtualCoin,
+): number {
+    const expiryA = a.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
+    const expiryB = b.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
+    if (expiryA !== expiryB) {
+        return expiryA - expiryB; // Earlier expiry first
+    }
+
+    return b.value - a.value; // Larger amount first
+}
+
 /**
  * Select virtual outputs to reach a target amount, prioritizing those closer to expiry
  * @param coins List of virtual outputs to select from
@@ -5603,17 +5617,9 @@ export function selectVirtualCoins(
     inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
-    // Sort virtual outputs by expiry (ascending) and amount (descending). Normalized once up
-    // front rather than per comparison, which would be O(n log n) normalizations.
-    const sortedCoins = coins.map(normalizeVtxo).sort((a, b) => {
-        const expiryA = a.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
-        const expiryB = b.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
-        if (expiryA !== expiryB) {
-            return expiryA - expiryB; // Earlier expiry first
-        }
-
-        return b.value - a.value; // Larger amount first
-    });
+    // Normalized once up front rather than per comparison, which would be O(n log n)
+    // normalizations.
+    const sortedCoins = coins.map(normalizeVtxo).sort(bySelectionOrder);
 
     const selectedCoins: ExtendedVirtualCoin[] = [];
     let selectedAmount = 0;

@@ -7,6 +7,8 @@ import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import { getDustAmount } from "./utils";
+import { MAX_VTXOS_PER_SETTLEMENT } from "./vtxo-manager";
+import { bySelectionOrder } from "./wallet";
 
 /**
  * Thrown when a collaborative-exit / offboard would leave a change VTXO below
@@ -119,6 +121,13 @@ function reportUngatedInputs(wallet: IWallet, inputs: readonly ExtendedCoin[]): 
         logUngatedInputs(source: string, inputs: readonly ExtendedCoin[]): Promise<void>;
     };
     void logger.logUngatedInputs("Ramps.offboard({ vtxos })", inputs);
+}
+
+const MAX_EXIT_PICKS = 3;
+
+/** `Wallet.concurrentSpending`, probed like `logUngatedInputs`: other `IWallet`s lack it. */
+function picksCovering(wallet: IWallet): boolean {
+    return (wallet as { concurrentSpending?: boolean }).concurrentSpending === true;
 }
 
 /** Price inputs, dropping the uneconomic ones — except from a NAMED set, where
@@ -341,35 +350,44 @@ export class Ramps {
         eventCallback?: (event: SettlementEvent) => void,
         vtxos?: NormalizedExtendedVirtualCoin[],
     ): ReturnType<IWallet["settle"]> {
-        const { estimator, inputs, subtotal } = await this.offboardInputs(feeInfo, vtxos);
+        return this.withRepick(vtxos !== undefined, async () => {
+            const {
+                estimator,
+                inputs: candidates,
+                subtotal,
+            } = await this.offboardInputs(feeInfo, vtxos);
 
-        if (amount && amount > subtotal) {
-            throw new Error("Amount is greater than total amount of vtxos after fees");
-        }
-        const handed = amount || subtotal;
+            if (amount && amount > subtotal) {
+                throw new Error("Amount is greater than total amount of vtxos after fees");
+            }
+            const handed = amount || subtotal;
 
-        // The change is an offchain output charged on its own size, so fee and amount define
-        // each other. Unpaid, the outputs outclaim the inputs and arkd rejects the settlement.
-        const { change, changeAddress } = await this.fundChange(
-            amount ? subtotal - handed : 0n,
-            estimator,
-        );
-
-        const outputFee = estimator.evalOnchainOutput({
-            amount: handed,
-            script: hex.encode(offboardDestinationScript(destinationAddress)),
-        });
-        if (BigInt(outputFee.satoshis) > handed) {
-            throw new Error(
-                `can't deduct fees from offboard amount (${outputFee.satoshis} > ${handed})`,
+            // The change is an offchain output charged on its own size, so fee and amount define
+            // each other. Unpaid, the outputs outclaim the inputs and arkd rejects the settlement.
+            const { inputs, change, changeAddress } = await this.fundExit(
+                candidates,
+                subtotal,
+                handed,
+                estimator,
+                Boolean(amount) && vtxos === undefined,
             );
-        }
 
-        const outputs = [
-            { address: destinationAddress, amount: handed - BigInt(outputFee.satoshis) },
-        ];
-        if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
-        return this.wallet.settle({ inputs, outputs }, eventCallback);
+            const outputFee = estimator.evalOnchainOutput({
+                amount: handed,
+                script: hex.encode(offboardDestinationScript(destinationAddress)),
+            });
+            if (BigInt(outputFee.satoshis) > handed) {
+                throw new Error(
+                    `can't deduct fees from offboard amount (${outputFee.satoshis} > ${handed})`,
+                );
+            }
+
+            const outputs = [
+                { address: destinationAddress, amount: handed - BigInt(outputFee.satoshis) },
+            ];
+            if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
+            return this.wallet.settle({ inputs, outputs }, eventCallback);
+        });
     }
 
     /**
@@ -391,27 +409,39 @@ export class Ramps {
             throw new Error(`offboard amount must be positive, got ${amount}`);
         }
 
-        const { estimator, inputs, subtotal } = await this.offboardInputs(feeInfo, vtxos);
+        return this.withRepick(vtxos !== undefined, async () => {
+            const {
+                estimator,
+                inputs: candidates,
+                subtotal,
+            } = await this.offboardInputs(feeInfo, vtxos);
 
-        const outputFee = BigInt(
-            estimator.evalOnchainOutput({
-                amount,
-                script: hex.encode(offboardDestinationScript(destinationAddress)),
-            }).satoshis,
-        );
-        const needed = amount + outputFee;
-        if (needed > subtotal) {
-            throw new Error(
-                `selected vtxos net ${subtotal} sats, ${needed} needed to deliver ${amount} ` +
-                    `exactly (${amount} + a ${outputFee} sat exit fee)`,
+            const outputFee = BigInt(
+                estimator.evalOnchainOutput({
+                    amount,
+                    script: hex.encode(offboardDestinationScript(destinationAddress)),
+                }).satoshis,
             );
-        }
+            const needed = amount + outputFee;
+            if (needed > subtotal) {
+                throw new Error(
+                    `selected vtxos net ${subtotal} sats, ${needed} needed to deliver ${amount} ` +
+                        `exactly (${amount} + a ${outputFee} sat exit fee)`,
+                );
+            }
 
-        const { change, changeAddress } = await this.fundChange(subtotal - needed, estimator);
+            const { inputs, change, changeAddress } = await this.fundExit(
+                candidates,
+                subtotal,
+                needed,
+                estimator,
+                vtxos === undefined,
+            );
 
-        const outputs = [{ address: destinationAddress, amount }];
-        if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
-        return this.wallet.settle({ inputs, outputs }, eventCallback);
+            const outputs = [{ address: destinationAddress, amount }];
+            if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
+            return this.wallet.settle({ inputs, outputs }, eventCallback);
+        });
     }
 
     private async offboardInputs(feeInfo: FeeInfo, vtxos?: NormalizedExtendedVirtualCoin[]) {
@@ -427,6 +457,60 @@ export class Ramps {
 
         const estimator = new Estimator(feeInfo?.intentFee ?? {});
         return { estimator, ...filterOffboardInputs(spendable, feeInfo, named) };
+    }
+
+    /** Every candidate, or with `concurrentSpending` the shortest covering prefix in send order. */
+    private async fundExit(
+        candidates: NormalizedExtendedVirtualCoin[],
+        subtotal: bigint,
+        needed: bigint,
+        estimator: Estimator,
+        cover: boolean,
+    ): Promise<{
+        inputs: NormalizedExtendedVirtualCoin[];
+        change: bigint;
+        changeAddress?: string;
+    }> {
+        if (!cover || !picksCovering(this.wallet)) {
+            return { inputs: candidates, ...(await this.fundChange(subtotal - needed, estimator)) };
+        }
+        const ordered = [...candidates].sort(bySelectionOrder);
+        let covered = 0n;
+        for (let i = 0; i < ordered.length && i < MAX_VTXOS_PER_SETTLEMENT; i++) {
+            const fee = estimator.evalOffchainInput(toOffchainInputFeeParams(ordered[i])).satoshis;
+            covered += BigInt(ordered[i].value) - BigInt(fee);
+            if (covered < needed) continue;
+            try {
+                return {
+                    inputs: ordered.slice(0, i + 1),
+                    ...(await this.fundChange(covered - needed, estimator)),
+                };
+            } catch (error) {
+                if (!(error instanceof DustChangeError) || i + 1 === ordered.length) throw error;
+            }
+        }
+        throw new Error(
+            `this exit needs more than ${MAX_VTXOS_PER_SETTLEMENT} inputs; exit less, or consolidate first`,
+        );
+    }
+
+    /** Re-runs an SDK-picked exit that lost a coin to a concurrent spend. */
+    private async withRepick<T>(named: boolean, exit: () => Promise<T>): Promise<T> {
+        for (let attempt = 1; ; attempt++) {
+            try {
+                return await exit();
+            } catch (error) {
+                const lostRace = (error as { name?: unknown } | null)?.name === "VtxoReservedError";
+                if (
+                    named ||
+                    !lostRace ||
+                    !picksCovering(this.wallet) ||
+                    attempt >= MAX_EXIT_PICKS
+                ) {
+                    throw error;
+                }
+            }
+        }
     }
 
     /** Fund the change output: pay its own fee, then judge it against both
