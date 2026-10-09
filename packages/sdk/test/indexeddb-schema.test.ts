@@ -2,9 +2,7 @@ import { describe, it, expect } from "vitest";
 import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
 import {
     initDatabase,
-    initDatabaseWithIntents,
     DB_VERSION,
-    INTENT_DB_VERSION,
     STORE_CONTRACTS,
     STORE_INTENTS,
     STORE_TRANSACTIONS,
@@ -12,6 +10,9 @@ import {
 import { awaitTransaction, promisifyRequest } from "../src/repositories/indexedDB/idbUtils";
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
+import { IndexedDBIntentRepository } from "../src/repositories/indexedDB/intentRepository";
+import { IndexedDBVirtualTxRepository } from "../src/repositories/indexedDB/virtualTxRepository";
+import { collectIntents } from "../src/repositories/intentRepository";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim);
 // no per-file shim import needed — matches existing IDB repo tests.
@@ -41,11 +42,9 @@ function countRows(db: IDBDatabase, store: string): Promise<number> {
 }
 
 describe("IndexedDB schema", () => {
-    // The shared wallet/contract schema adds a history index at v5 and contract
-    // watch indexes at v6, but does not activate the opt-in intent-persistence stores.
-    it("keeps intent/virtualtx stores out of the shared v6 schema", async () => {
+    it("creates the intent/virtualtx/branch stores in the shared schema", async () => {
         expect(DB_VERSION).toBe(6);
-        const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
+        const db = await openDatabase("schema-shared-fresh-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
         expect(
             db
@@ -53,26 +52,84 @@ describe("IndexedDB schema", () => {
                 .objectStore(STORE_TRANSACTIONS)
                 .indexNames.contains("addressCreatedAt"),
         ).toBe(true);
-        expect(names).not.toContain("intents");
-        expect(names).not.toContain("virtualTxs");
-        expect(names).not.toContain("vtxoBranches");
-        await closeDatabase("schema-shared-inert-test");
-    });
-
-    it("creates the intent/virtualtx/branch stores with a unique intentId index", async () => {
-        expect(INTENT_DB_VERSION).toBe(5);
-        const db = await openDatabase(
-            "schema-fresh-test",
-            INTENT_DB_VERSION,
-            initDatabaseWithIntents,
-        );
-        const names = Array.from(db.objectStoreNames);
         expect(names).toEqual(expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"]));
         expect(indexIsUnique(db, STORE_INTENTS, "intentId")).toBe(true);
-        await closeDatabase("schema-fresh-test");
+        await closeDatabase("schema-shared-fresh-test");
     });
 
-    it("migrates an existing v4 database to a unique intentId index", async () => {
+    it("adds the intent stores to a v5 wallet database, keeping its rows", async () => {
+        const name = "schema-wallet-v5-to-v6-test";
+        // A v5 wallet database: every wallet store, no intent store.
+        const v5 = await openDatabase(name, 5, (db, oldVersion, transaction) => {
+            initDatabase(db, oldVersion, transaction);
+            for (const store of ["intents", "virtualTxs", "vtxoBranches"])
+                db.deleteObjectStore(store);
+        });
+        expect(Array.from(v5.objectStoreNames)).not.toContain("intents");
+        await put(v5, STORE_CONTRACTS, {
+            script: "s1",
+            address: "a1",
+            type: "default",
+            state: "active",
+            params: {},
+            createdAt: 1,
+            watchState: "watched",
+        });
+        await closeDatabase(name);
+
+        const v6 = await openDatabase(name, DB_VERSION, initDatabase);
+        expect(Array.from(v6.objectStoreNames)).toEqual(
+            expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"]),
+        );
+        expect(indexIsUnique(v6, STORE_INTENTS, "intentId")).toBe(true);
+        expect(await countRows(v6, STORE_CONTRACTS)).toBe(1);
+        await closeDatabase(name);
+    });
+
+    it("keeps the intents of a database the dedicated intent ladder created at v5", async () => {
+        const name = "schema-intent-v5-to-v6-test";
+        const v5 = await openDatabase(name, 5, (db) => {
+            const s = db.createObjectStore(STORE_INTENTS, { keyPath: "intentTxId" });
+            s.createIndex("intentId", "intentId", { unique: true });
+            s.createIndex("state", "state", { unique: false });
+        });
+        await put(v5, STORE_INTENTS, { intentTxId: "a", intentId: "srv1", state: "batch_started" });
+        await closeDatabase(name);
+
+        const v6 = await openDatabase(name, DB_VERSION, initDatabase);
+        expect(await countRows(v6, STORE_INTENTS)).toBe(1);
+        expect(indexIsUnique(v6, STORE_INTENTS, "intentId")).toBe(true);
+        await closeDatabase(name);
+    });
+
+    // On the default name, the wallet/contract and intent/virtualtx repositories open one
+    // database: they must agree on its version and schema whichever opens first.
+    for (const intentFirst of [false, true]) {
+        it(`shares one database with the contract repository (${intentFirst ? "intent" : "contract"} repository first)`, async () => {
+            const name = `schema-shared-name-${intentFirst ? "intent" : "contract"}-first`;
+            const contracts = new IndexedDBContractRepository(name);
+            const intents = new IndexedDBIntentRepository(name);
+            const virtualTxs = new IndexedDBVirtualTxRepository(name);
+            const readContracts = () => collectContracts(contracts, {});
+            const readIntents = () => collectIntents(intents, {});
+            try {
+                if (intentFirst) {
+                    await expect(readIntents()).resolves.toEqual([]);
+                    await expect(readContracts()).resolves.toEqual([]);
+                } else {
+                    await expect(readContracts()).resolves.toEqual([]);
+                    await expect(readIntents()).resolves.toEqual([]);
+                }
+                await expect(virtualTxs.getVirtualTx("00".repeat(32))).resolves.toBeNull();
+            } finally {
+                await virtualTxs[Symbol.asyncDispose]();
+                await intents[Symbol.asyncDispose]();
+                await contracts[Symbol.asyncDispose]();
+            }
+        });
+    }
+
+    it("migrates a dedicated-ladder v4 database to a unique intentId index", async () => {
         const name = "schema-v4-to-v5-test";
 
         // Reproduce the old v4 intents store: NON-unique intentId index, one row.
@@ -84,8 +141,8 @@ describe("IndexedDB schema", () => {
         await put(v4, STORE_INTENTS, { intentTxId: "a", intentId: "srv1" });
         await closeDatabase(name);
 
-        // Reopen at the activation version: the upgrade must rebuild the index.
-        const v5 = await openDatabase(name, INTENT_DB_VERSION, initDatabaseWithIntents);
+        // Reopen at the shared version: the upgrade must rebuild the index.
+        const v5 = await openDatabase(name, DB_VERSION, initDatabase);
         expect(indexIsUnique(v5, STORE_INTENTS, "intentId")).toBe(true);
         // ...and it now rejects a second row reusing the same intentId.
         await expect(
@@ -111,7 +168,7 @@ describe("IndexedDB schema", () => {
 
         // The upgrade must complete despite the duplicate, dropping the extra
         // row and leaving a working unique index behind.
-        const v5 = await openDatabase(name, INTENT_DB_VERSION, initDatabaseWithIntents);
+        const v5 = await openDatabase(name, DB_VERSION, initDatabase);
         expect(indexIsUnique(v5, STORE_INTENTS, "intentId")).toBe(true);
         // One duplicate removed: srv1 collapses to a single row, srv2 and the
         // intentId-less row stay.
@@ -183,7 +240,7 @@ describe("IndexedDB schema", () => {
 
             const db = await openDatabase(name, DB_VERSION, initDatabase);
             try {
-                expect(db.version).toBe(6);
+                expect(db.version).toBe(DB_VERSION);
                 expect(await watchedKeys(db)).toEqual(["legacy", "s1", "v1"]);
             } finally {
                 await closeDatabase(name);

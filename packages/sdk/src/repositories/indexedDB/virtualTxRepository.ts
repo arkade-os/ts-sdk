@@ -7,30 +7,19 @@ import {
 } from "../virtualTxRepository";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import {
-    initDatabaseWithIntents,
-    INTENT_DB_VERSION,
-    STORE_VIRTUAL_TXS,
-    STORE_VTXO_BRANCHES,
-} from "./schema";
+import { DB_VERSION, initDatabase, STORE_VIRTUAL_TXS, STORE_VTXO_BRANCHES } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
 /**
- * @experimental Virtual-tx persistence is inert by default. This repository
- * opens its DB at {@link INTENT_DB_VERSION} and creates the virtualtx stores,
- * so it must be given a *dedicated* `dbName` distinct from the wallet/contract
- * DB until this persistence is activated in the shared schema — otherwise the
- * shared DB's version-conflict guard rejects the mismatched open.
+ * @experimental Virtual-tx persistence is opt-in: nothing writes virtual txs
+ * unless this repository is used. Its stores are part of the shared wallet
+ * schema, so it can share the wallet/contract DB name.
  */
 export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
     private readonly connection: ManagedConnection;
     constructor(dbName: string = DEFAULT_DB_NAME) {
-        this.connection = createManagedConnection(
-            dbName,
-            INTENT_DB_VERSION,
-            initDatabaseWithIntents,
-        );
+        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
     }
 
     private getDB(): Promise<IDBDatabase> {

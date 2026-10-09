@@ -2,11 +2,7 @@ import { describe, it, expect } from "vitest";
 import { intentRepositoryConformance } from "./conformance/intentRepository.conformance";
 import { collectIntents } from "../src/repositories/intentRepository";
 import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
-import {
-    initDatabaseWithIntents,
-    INTENT_DB_VERSION,
-    STORE_INTENTS,
-} from "../src/repositories/indexedDB/schema";
+import { DB_VERSION, initDatabase, STORE_INTENTS } from "../src/repositories/indexedDB/schema";
 import { IndexedDBIntentRepository } from "../src/repositories/indexedDB/intentRepository";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim).
@@ -32,7 +28,7 @@ describe("IndexedDBIntentRepository", () => {
             intentVtxos: [{ txid: "x", vout: 0 }],
         };
         for (const id of ["a", "b", "c"]) await repo.saveIntent({ ...base, intentTxId: id });
-        const db = await openDatabase(name, INTENT_DB_VERSION, initDatabaseWithIntents);
+        const db = await openDatabase(name, DB_VERSION, initDatabase);
         const proto = Object.getPrototypeOf(
             db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS),
         ) as { openCursor: (...args: unknown[]) => unknown };

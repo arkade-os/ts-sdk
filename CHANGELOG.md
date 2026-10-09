@@ -20,14 +20,22 @@ style and have not been backfilled.
 
 - **The shared IndexedDB wallet schema upgrades from v4 to v6.** v5 adds an
   `(address, createdAt)` transaction-history index without rewriting
-  history rows or activating the separate experimental intent stores. v6
-  adds two contract indexes on watch state and writes the state they key
-  on into every stored contract, `watched` for one stored without a state;
-  contracts read back unchanged. That rewrites each stored contract once,
-  so the first open after updating takes longer the more contracts are
-  stored. Both upgrades are one-way: an older SDK, a 0.5.0 release
-  candidate at v5 included, cannot reopen the upgraded database and fails
-  with `VersionError`.
+  history rows. v6 adds two contract indexes on watch state and writes the
+  state they key on into every stored contract, `watched` for one stored
+  without a state; contracts read back unchanged. That rewrites each stored
+  contract once, so the first open after updating takes longer the more
+  contracts are stored. v6 also adds the empty intent, virtual-tx and
+  VTXO-branch stores. Both upgrades are one-way: an older SDK, a 0.5.0
+  release candidate at v5 included, cannot reopen the upgraded database
+  and fails with `VersionError`.
+
+- **`IndexedDBIntentRepository` and `IndexedDBVirtualTxRepository` share
+  the wallet database.** They default to the wallet's database name but
+  created their stores only when they opened it first, so beside a wallet
+  that had already created it, intent reads failed and the wallet counted
+  intent-locked VTXOs as available. Their stores are now part of the
+  shared schema, and the default name works. A database the intent
+  repository created keeps its intents.
 
 - **`@arkade-os/boltz-swap` is removed from the repo and will not be
   published on the 0.5 line.** The package's Boltz-routed rails are
