@@ -35,7 +35,6 @@ import {
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
-    isSubdust,
     IWallet,
     NewAddress,
     Recipient,
@@ -46,13 +45,12 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegate";
 import {
-    canSpendOffchain,
     fetchVtxoCreatedAtByTxid,
-    isVtxoSpent,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVtxoPage,
 } from "../vtxo";
 import {
+    filterFlatVtxos,
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
     Wallet,
@@ -2133,28 +2131,7 @@ export class WalletMessageHandler
         const withUnrolled = message.payload.filter?.withUnrolled ?? false;
         // Only an unrolled coin is returned spent.
         const allVtxos = await this.getVtxosFromRepo({ unspentOnly: !withUnrolled });
-        const dustAmount = this.readonlyWallet.dustAmount;
-        const includeRecoverable = message.payload.filter?.withRecoverable ?? false;
-
-        // Same shape as `filterSnapshotVtxos`: location first, so `withUnrolled`
-        // is authoritative for an exited coin and `prepareUnrollTransaction`
-        // finds it behind the worker. (The `withRecoverable` default differs
-        // from the main thread's — pre-existing, not touched here.)
-        return allVtxos.filter((v) => {
-            if (v.isUnrolled) {
-                return withUnrolled;
-            }
-            if (isVtxoSpent(v)) {
-                return false;
-            }
-            if (includeRecoverable) {
-                return true;
-            }
-            if (dustAmount != null && isSubdust(v, dustAmount)) {
-                return false;
-            }
-            return canSpendOffchain(v, { timestamp: new Date() });
-        });
+        return filterFlatVtxos(allVtxos, message.payload.filter, new Set());
     }
 
     /** Tear down handler subscriptions, then delegate the full wipe to the wallet. */
