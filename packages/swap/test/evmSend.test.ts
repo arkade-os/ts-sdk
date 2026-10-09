@@ -82,19 +82,20 @@ const QUOTE = quoteFor(PAYMENT_HASH, key(13));
 const LOCK: EvmLock = evmSendLock(QUOTE, CLAIM_ADDRESS);
 
 describe("ERC20Swap encodings", () => {
-    // Vectors from the solver's own `erc20Swap.ts` over the same lock.
+    // Vectors from the solver's `erc20Swap.ts` and `claimEvidence.ts` over the same lock.
     it("keys the lock as the contract's hashValues", () => {
         expect(hex.encode(evmSwapKey(LOCK))).toBe(
             "a0ded6d021310885bb5b4bb375a3fdb7b3bd504d6887c2daa2ea89433d59cde6",
         );
     });
 
-    it("encodes the five-argument claim", () => {
+    it("encodes the claim any account may send", () => {
         expect(evmClaimCalldata(LOCK, PREIMAGE)).toBe(
-            "0xcd413efa" +
+            "0xbc586b28" +
                 "07".repeat(32) +
                 "00000000000000000000000000000000000000000000000d89fa3dc48dcf0000" +
                 "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" +
+                "0000000000000000000000002222222222222222222222222222222222222222" +
                 "0000000000000000000000004444444444444444444444444444444444444444" +
                 "0000000000000000000000000000000000000000000000000000000001406f40",
         );

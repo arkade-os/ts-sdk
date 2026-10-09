@@ -55,7 +55,7 @@ export interface EvmChain {
     call(tx: { to: string; data: string }, block: number): Promise<string>;
 }
 
-/** Must send from the lock's `claimAddress`: the contract takes the claimer from `msg.sender`. */
+/** Any account may send it: the claim names `claimAddress`, and the tokens go there. */
 export type EvmSendClaim = (tx: { to: string; data: string }) => Promise<string>;
 
 export interface EvmClaimPolicy {
@@ -72,7 +72,7 @@ const selector = (signature: string): Uint8Array =>
     keccak_256(new TextEncoder().encode(signature)).subarray(0, 4);
 
 const SWAPS = selector("swaps(bytes32)");
-const CLAIM = selector("claim(bytes32,uint256,address,address,uint256)");
+const CLAIM = selector("claim(bytes32,uint256,address,address,address,uint256)");
 
 const uintWord = (value: bigint): Uint8Array => {
     if (value < 0n || value >= 1n << 256n) throw new Error(`${value} does not fit uint256`);
@@ -138,6 +138,7 @@ export const evmClaimCalldata = (lock: EvmLock, preimage: Uint8Array): string =>
         preimage,
         uintWord(lock.amount),
         addressWord(lock.tokenAddress),
+        addressWord(lock.claimAddress),
         addressWord(lock.refundAddress),
         uintWord(lock.timelock),
     );
@@ -213,7 +214,7 @@ export async function requestEvmSend(
         amountSats: number;
         chainId: number;
         contractAddress: string;
-        /** Where the tokens go, and the account that must send the claim. */
+        /** Where the tokens go; it need not send the claim, or hold gas. */
         evmClaimAddress: string;
         rfqId?: string;
         emulatorPubkey?: string;
