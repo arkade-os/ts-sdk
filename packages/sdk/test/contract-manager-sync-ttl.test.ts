@@ -41,14 +41,15 @@ describe("ContractManager vtxoSyncMaxAgeMs", () => {
         const walletRepository = new InMemoryWalletRepository();
         await contractRepository.saveContract(seeded(TEST_DEFAULT_SCRIPT, "addr"));
         const indexer: IndexerProvider = createMockIndexerProvider();
-        const manager = await ContractManager.create({
+        const config = {
             indexerProvider: indexer,
             contractRepository,
             walletRepository,
             watcherConfig,
             vtxoSyncMaxAgeMs,
-        }).then(track);
-        return { manager, indexer, contractRepository, walletRepository };
+        };
+        const manager = await ContractManager.create(config).then(track);
+        return { manager, indexer, contractRepository, walletRepository, config };
     };
 
     const reads = (indexer: IndexerProvider) => (indexer.getVtxos as any).mock.calls.length;
@@ -192,5 +193,28 @@ describe("ContractManager vtxoSyncMaxAgeMs", () => {
         await manager.getContractsWithVtxos();
 
         expect(reads(indexer)).toBe(0);
+    });
+
+    it("rejects a budget the per-read option would, however it is set", async () => {
+        const { manager } = await setup();
+        for (const bad of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+            await expect(setup(bad)).rejects.toThrow(
+                "vtxoSyncMaxAgeMs must be a non-negative safe integer",
+            );
+            expect(() => manager.setVtxoSyncMaxAge(bad)).toThrow(
+                "vtxoSyncMaxAgeMs must be a non-negative safe integer",
+            );
+        }
+    });
+
+    it("is not reconfigured by mutating the config it was created with", async () => {
+        const { manager, indexer, config } = await setup();
+        config.vtxoSyncMaxAgeMs = Number.POSITIVE_INFINITY;
+        await manager.getContractsWithVtxos();
+        (indexer.getVtxos as any).mockClear();
+
+        await manager.getContractsWithVtxos();
+
+        expect(reads(indexer)).toBeGreaterThan(0);
     });
 });

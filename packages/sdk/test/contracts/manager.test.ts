@@ -1186,7 +1186,7 @@ describe("ContractManager", () => {
         // bounded it.
         const SEEDED_CURSOR = Date.now() - 60_000; // recent enough to clear OVERLAP_MS
 
-        async function makeFreshManager(): Promise<{
+        async function makeFreshManager(extra?: { vtxoSyncOverlapMs?: number }): Promise<{
             mgr: ContractManager;
             repo: InMemoryWalletRepository;
         }> {
@@ -1199,6 +1199,7 @@ describe("ContractManager", () => {
                     failsafePollIntervalMs: 1000,
                     reconnectDelayMs: 500,
                 },
+                ...extra,
             });
             // Need at least one watched contract so syncContracts has
             // something to query.
@@ -1240,6 +1241,52 @@ describe("ContractManager", () => {
             // Cursor advanced past the seeded value (the bug left it pinned).
             const stateAfter = await repo.getWalletState();
             expect((stateAfter?.lastSyncTime ?? 0) >= SEEDED_CURSOR).toBe(true);
+        });
+
+        const refreshFromSeededCursor = async (
+            mgr: ContractManager,
+            repo: InMemoryWalletRepository,
+        ) => {
+            await repo.saveWalletState({
+                lastSyncTime: SEEDED_CURSOR,
+                settings: { vtxoCursorMigrated: true },
+            });
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+            await mgr.refreshVtxos();
+            const calls: any[][] = (mockIndexer.getVtxos as any).mock.calls;
+            return [...new Set(calls.map((args) => args[0]?.after))];
+        };
+
+        it("re-reads OVERLAP_MS behind the cursor by default", async () => {
+            const { mgr, repo } = await makeFreshManager();
+            expect(await refreshFromSeededCursor(mgr, repo)).toEqual([SEEDED_CURSOR - OVERLAP_MS]);
+        });
+
+        it("re-reads only the configured overlap behind the cursor", async () => {
+            const viaConfig = await makeFreshManager({ vtxoSyncOverlapMs: 600_000 });
+            expect(await refreshFromSeededCursor(viaConfig.mgr, viaConfig.repo)).toEqual([
+                SEEDED_CURSOR - 600_000,
+            ]);
+
+            const viaSetter = await makeFreshManager();
+            viaSetter.mgr.setVtxoSyncOverlap(600_000);
+            expect(await refreshFromSeededCursor(viaSetter.mgr, viaSetter.repo)).toEqual([
+                SEEDED_CURSOR - 600_000,
+            ]);
+        });
+
+        it("rejects an overlap that is not a non-negative safe integer", async () => {
+            const { mgr } = await makeFreshManager();
+            expect(() => mgr.setVtxoSyncOverlap(0)).not.toThrow();
+            for (const bad of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+                expect(() => mgr.setVtxoSyncOverlap(bad)).toThrow(
+                    "vtxoSyncOverlapMs must be a non-negative safe integer",
+                );
+                await expect(makeFreshManager({ vtxoSyncOverlapMs: bad })).rejects.toThrow(
+                    "vtxoSyncOverlapMs must be a non-negative safe integer",
+                );
+            }
         });
 
         it("does not advance the cursor when an explicit `after` is provided", async () => {
