@@ -33,9 +33,10 @@ style and have not been backfilled.
   their own database, `arkade-batches`.** They defaulted to the wallet's
   database name while running their own schema version on it, so beside the
   wallet and contract repositories one of the opens failed, or the intent
-  stores were never created. Their stores now live only in `arkade-batches`.
-  Intents and virtual txs already stored under the wallet's name are not
-  migrated. A repository given an explicit name keeps it.
+  stores were never created. Their stores now live only in `arkade-batches`,
+  or in the database a custom `dbName` creates. Nothing an earlier SDK
+  stored is migrated, under the wallet's name or a custom one: a database
+  it created cannot be reopened and fails with `VersionError`.
 
 - **`@arkade-os/boltz-swap` is removed from the repo and will not be
   published on the 0.5 line.** The package's Boltz-routed rails are
