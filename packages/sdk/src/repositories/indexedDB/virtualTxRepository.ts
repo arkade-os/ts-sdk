@@ -7,19 +7,23 @@ import {
 } from "../virtualTxRepository";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { DB_VERSION, initDatabase, STORE_VIRTUAL_TXS, STORE_VTXO_BRANCHES } from "./schema";
-import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
+import {
+    BATCHES_DB_NAME,
+    BATCHES_DB_VERSION,
+    initBatchesDatabase,
+    STORE_VIRTUAL_TXS,
+    STORE_VTXO_BRANCHES,
+} from "./batchesSchema";
 
 /**
- * @experimental Virtual-tx persistence is opt-in: nothing writes virtual txs
- * unless this repository is used. Its stores are part of the shared wallet
- * schema, so it can share the wallet/contract DB name.
+ * @experimental Virtual-tx persistence is opt-in. Stored in its own database,
+ * {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
  */
 export class IndexedDBVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
     private readonly connection: ManagedConnection;
-    constructor(dbName: string = DEFAULT_DB_NAME) {
-        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    constructor(dbName: string = BATCHES_DB_NAME) {
+        this.connection = createManagedConnection(dbName, BATCHES_DB_VERSION, initBatchesDatabase);
     }
 
     private getDB(): Promise<IDBDatabase> {

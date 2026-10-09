@@ -13,7 +13,8 @@ import { TxType } from "../src/wallet";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim).
 
-// The shared wallet DB upgrades its history index and gains the (empty) intent stores.
+// The shared wallet DB upgrades only its history index; opt-in intent stores
+// remain confined to a separate database name.
 describe("IndexedDB wallet history index migration", () => {
     async function schema(dbName: string) {
         // Opening at DB_VERSION returns the repos' cached connection (refcount++),
@@ -36,51 +37,54 @@ describe("IndexedDB wallet history index migration", () => {
     }
 
     // v4 is the released 0.4.77 shape: `scriptUnspent` without the history index.
-    it.each([3, 4])("upgrades v%i to the current version without losing history", async (from) => {
-        const dbName = `wallet-history-v${from}-${crypto.randomUUID()}`;
+    it.each([3, 4])(
+        "upgrades v%i to the current version without losing history or adding intent stores",
+        async (from) => {
+            const dbName = `wallet-history-v${from}-${crypto.randomUUID()}`;
 
-        const seeded = await openDatabase(dbName, from, (db, oldVersion, transaction) => {
-            initDatabase(db, oldVersion, transaction);
-            transaction?.objectStore(STORE_TRANSACTIONS).deleteIndex("addressCreatedAt");
-        });
-        expect(seeded.version).toBe(from);
-        const tx = seeded.transaction(STORE_TRANSACTIONS, "readwrite");
-        tx.objectStore(STORE_TRANSACTIONS).put({
-            address: "mine",
-            keyBoardingTxid: "",
-            keyCommitmentTxid: "",
-            keyArkTxid: "legacy",
-            key: { boardingTxid: "", commitmentTxid: "", arkTxid: "legacy" },
-            type: TxType.TxSent,
-            amount: 100,
-            settled: true,
-            createdAt: 123,
-        });
-        await awaitTransaction(tx);
-        await closeDatabase(dbName);
+            const seeded = await openDatabase(dbName, from, (db, oldVersion, transaction) => {
+                initDatabase(db, oldVersion, transaction);
+                transaction?.objectStore(STORE_TRANSACTIONS).deleteIndex("addressCreatedAt");
+            });
+            expect(seeded.version).toBe(from);
+            const tx = seeded.transaction(STORE_TRANSACTIONS, "readwrite");
+            tx.objectStore(STORE_TRANSACTIONS).put({
+                address: "mine",
+                keyBoardingTxid: "",
+                keyCommitmentTxid: "",
+                keyArkTxid: "legacy",
+                key: { boardingTxid: "", commitmentTxid: "", arkTxid: "legacy" },
+                type: TxType.TxSent,
+                amount: 100,
+                settled: true,
+                createdAt: 123,
+            });
+            await awaitTransaction(tx);
+            await closeDatabase(dbName);
 
-        // Open the same DB through the default repos, exercising both.
-        const wallet = new IndexedDBWalletRepository(dbName);
-        const contract = new IndexedDBContractRepository(dbName);
-        try {
-            await wallet.getWalletState();
-            await contract.getContractsPage(undefined, { limit: 1 });
+            // Open the same DB through the default repos, exercising both.
+            const wallet = new IndexedDBWalletRepository(dbName);
+            const contract = new IndexedDBContractRepository(dbName);
+            try {
+                await wallet.getWalletState();
+                await contract.getContractsPage(undefined, { limit: 1 });
 
-            const { version, names, historyIndex, unspentIndex } = await schema(dbName);
-            expect(version).toBe(DB_VERSION);
-            expect(historyIndex).toBe(true);
-            expect(unspentIndex).toBe(true);
-            expect(names).toEqual(
-                expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"]),
-            );
-            const history = await wallet.getTransactionHistoryPage(
-                { address: "mine" },
-                { limit: 1 },
-            );
-            expect(history.items.map((row) => row.key.arkTxid)).toEqual(["legacy"]);
-        } finally {
-            await wallet[Symbol.asyncDispose]();
-            await contract[Symbol.asyncDispose]();
-        }
-    });
+                const { version, names, historyIndex, unspentIndex } = await schema(dbName);
+                expect(version).toBe(DB_VERSION);
+                expect(historyIndex).toBe(true);
+                expect(unspentIndex).toBe(true);
+                expect(names).not.toContain("intents");
+                expect(names).not.toContain("virtualTxs");
+                expect(names).not.toContain("vtxoBranches");
+                const history = await wallet.getTransactionHistoryPage(
+                    { address: "mine" },
+                    { limit: 1 },
+                );
+                expect(history.items.map((row) => row.key.arkTxid)).toEqual(["legacy"]);
+            } finally {
+                await wallet[Symbol.asyncDispose]();
+                await contract[Symbol.asyncDispose]();
+            }
+        },
+    );
 });

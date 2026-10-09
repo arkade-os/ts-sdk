@@ -9,19 +9,22 @@ import {
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { DB_VERSION, initDatabase, STORE_INTENTS } from "./schema";
-import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
+import {
+    BATCHES_DB_NAME,
+    BATCHES_DB_VERSION,
+    initBatchesDatabase,
+    STORE_INTENTS,
+} from "./batchesSchema";
 
 /**
- * @experimental Intent persistence is opt-in: nothing writes intents unless this
- * repository is passed to the wallet. Its stores are part of the shared wallet
- * schema, so it can share the wallet/contract DB name.
+ * @experimental Intent persistence is opt-in. Stored in its own database,
+ * {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
  */
 export class IndexedDBIntentRepository implements IntentRepository {
     readonly version = 1 as const;
     private readonly connection: ManagedConnection;
-    constructor(dbName: string = DEFAULT_DB_NAME) {
-        this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+    constructor(dbName: string = BATCHES_DB_NAME) {
+        this.connection = createManagedConnection(dbName, BATCHES_DB_VERSION, initBatchesDatabase);
     }
 
     private getDB(): Promise<IDBDatabase> {
