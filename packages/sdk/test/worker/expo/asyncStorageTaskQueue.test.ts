@@ -3,7 +3,7 @@ import {
     AsyncStorageTaskQueue,
     type AsyncStorageLike,
 } from "../../../src/worker/expo/asyncStorageTaskQueue";
-import type { TaskItem, TaskResult } from "../../../src/worker/expo/taskQueue";
+import { testTaskQueueContract } from "./taskQueue.contract";
 
 class FakeAsyncStorage implements AsyncStorageLike {
     readonly values = new Map<string, string>();
@@ -21,43 +21,35 @@ class FakeAsyncStorage implements AsyncStorageLike {
     }
 }
 
+testTaskQueueContract("AsyncStorageTaskQueue", () => {
+    return new AsyncStorageTaskQueue(new FakeAsyncStorage(), "queue:contract");
+});
+
 describe("AsyncStorageTaskQueue", () => {
-    it("supports inbox, outbox, and config happy paths", async () => {
+    it("uses prefix-scoped storage keys", async () => {
         const storage = new FakeAsyncStorage();
         const queue = new AsyncStorageTaskQueue(storage, "queue:test");
 
-        const task: TaskItem = {
+        await queue.addTask({
             id: "task-1",
             type: "contract-poll",
             data: {},
-            createdAt: 10,
-        };
-
-        await queue.addTask(task);
-        expect(await queue.getTasks()).toEqual([task]);
-        expect(await queue.getTasks("contract-poll")).toEqual([task]);
+            createdAt: 1,
+        });
         expect(storage.values.has("queue:test:inbox")).toBe(true);
 
-        await queue.removeTask(task.id);
-        expect(await queue.getTasks()).toEqual([]);
-
-        await queue.addTask(task);
-        await queue.clearTasks();
-        expect(await queue.getTasks()).toEqual([]);
-
-        const result: TaskResult = {
+        await queue.pushResult({
             id: "result-1",
-            taskItemId: task.id,
-            type: task.type,
-            status: "success",
-            executedAt: 11,
-        };
-        await queue.pushResult(result);
-        expect(await queue.getResults()).toEqual([result]);
+            taskItemId: "task-1",
+            type: "contract-poll",
+            status: "noop",
+            executedAt: 2,
+        });
+        expect(storage.values.has("queue:test:outbox")).toBe(true);
+    });
 
-        await queue.acknowledgeResults([result.id]);
-        expect(await queue.getResults()).toEqual([]);
-
+    it("persists config", async () => {
+        const queue = new AsyncStorageTaskQueue(new FakeAsyncStorage(), "queue:test");
         const config = { arkServerUrl: "https://ark.example", version: 1 };
         await queue.persistConfig(config);
         expect(await queue.loadConfig()).toEqual(config);

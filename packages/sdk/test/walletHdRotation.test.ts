@@ -1023,77 +1023,50 @@ describe("Wallet HD rotation", () => {
             return sigs.map(([data]) => hex.encode(data.pubKey));
         }
 
-        it("intent proof after rotation: tx-input 0 AND tx-input 1 carry a tapScriptSig keyed to coin[0]'s rotated pubkey", async () => {
-            // Direct regression for `INVALID_INTENT_PROOF (23): input 0
-            // has no tapscript signatures`. `Intent.create` lays out
-            // tx-input 0 as a synthetic toSpend reference whose
-            // witnessUtxo.script is copied from coin[0]'s real
-            // pkScript — both tx-input 0 and tx-input 1 must therefore
-            // carry coin[0]'s pubkey signature.
+        it.each([
+            {
+                name: "intent proof after rotation",
+                rationale:
+                    "guards INVALID_INTENT_PROOF (23): the synthetic input 0 and coin input 1 both need the rotated key's signature",
+                operation: "register",
+            },
+            {
+                name: "delete-intent proof after rotation",
+                rationale:
+                    "safeRegisterIntent uses this path to recover from duplicated input; an unsigned proof would wedge retry",
+                operation: "delete",
+            },
+            {
+                name: "get-pending-tx intent proof after rotation",
+                rationale:
+                    "finalizePendingTxs uses this recovery path and must produce an owner-routed signed proof",
+                operation: "get-pending-tx",
+            },
+        ])("$name: $rationale", async ({ operation }) => {
             const walletRepo = new InMemoryWalletRepository();
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
-            const rotated = await rotateOnce(wallet, contractRepo);
-            const rotatedPubKeyHex = rotated.params.pubKey;
-            const baselinePubKeyHex = hex.encode(await wallet.identity.xOnlyPublicKey());
-            // Sanity: rotation must have produced a non-baseline pubkey,
-            // otherwise the test isn't exercising the descriptor branch.
-            expect(rotatedPubKeyHex).not.toBe(baselinePubKeyHex);
+            try {
+                const rotated = await rotateOnce(wallet, contractRepo);
+                const rotatedPubKeyHex = rotated.params.pubKey;
+                const baselinePubKeyHex = hex.encode(await wallet.identity.xOnlyPublicKey());
+                expect(rotatedPubKeyHex).not.toBe(baselinePubKeyHex);
 
-            const coin = makeVtxoForContract(rotated);
-            const intent = await wallet.makeRegisterIntentSignature([coin], [], [], []);
-            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+                const coin = makeVtxoForContract(rotated);
+                const intent =
+                    operation === "register"
+                        ? await wallet.makeRegisterIntentSignature([coin], [], [], [])
+                        : operation === "delete"
+                          ? await wallet.makeDeleteIntentSignature([coin])
+                          : await wallet.makeGetPendingTxIntentSignature([coin]);
+                const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
-
-            await wallet.dispose();
-        });
-
-        it("delete-intent proof after rotation also signs both inputs with the rotated pubkey", async () => {
-            // `safeRegisterIntent` uses `makeDeleteIntentSignature` to
-            // recover from `duplicated input`. If that path silently
-            // produced an unsigned PSBT, send-after-rotation would
-            // wedge on the retry loop instead of recovering.
-            const walletRepo = new InMemoryWalletRepository();
-            const contractRepo = new InMemoryContractRepository();
-            const wallet = await makeHdWallet(walletRepo, contractRepo);
-
-            const rotated = await rotateOnce(wallet, contractRepo);
-            const coin = makeVtxoForContract(rotated);
-
-            const intent = await wallet.makeDeleteIntentSignature([coin]);
-            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
-            const rotatedPubKeyHex = rotated.params.pubKey;
-
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
-
-            await wallet.dispose();
-        });
-
-        it("get-pending-tx intent proof after rotation signs with the rotated pubkey", async () => {
-            // The auto-renewal recovery path in `finalizePendingTxs`
-            // calls `makeGetPendingTxIntentSignature`. Same shape as
-            // the other two intent helpers; if owner-routed signing
-            // weren't wired in, recovery would also produce unsigned
-            // proofs.
-            const walletRepo = new InMemoryWalletRepository();
-            const contractRepo = new InMemoryContractRepository();
-            const wallet = await makeHdWallet(walletRepo, contractRepo);
-
-            const rotated = await rotateOnce(wallet, contractRepo);
-            const coin = makeVtxoForContract(rotated);
-
-            const intent = await wallet.makeGetPendingTxIntentSignature([coin]);
-            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
-            const rotatedPubKeyHex = rotated.params.pubKey;
-
-            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
-            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
-
-            await wallet.dispose();
+                expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
+                expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(rotatedPubKeyHex);
+            } finally {
+                await wallet.dispose();
+            }
         });
 
         it("mixed baseline + rotated VTXO in one intent: each input is signed by its own pubkey", async () => {
