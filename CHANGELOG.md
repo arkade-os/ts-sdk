@@ -264,6 +264,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A partial VTXO filter no longer drops recoverable coins.**
+  `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
+  so any filter object, even one carrying only `maxSyncAgeMs`,
+  `watchedOnly`, `genericallySpendableOnly` or `requireSynced`, turned
+  `withRecoverable` off and silently left swept-but-unspent VTXOs out.
+  Each flag now defaults on its own, `withRecoverable` to `true` and
+  `withUnrolled` to `false`, and an explicit `false` still applies.
+  `getVtxos({ withUnrolled: true })` now returns recoverable coins too.
+
 - **`BIP21.parse` no longer lowercases the address in a URI, and
   `BIP21.create` no longer lowercases the one it writes.** Base58 is
   case-sensitive, so `bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn` parsed
@@ -278,6 +287,7 @@ style and have not been backfilled.
   address that `arkTarget` claims happily when it arrives bare. Same fix
   in `BIP21.create`. One destination classifying differently bare than
   as a parameter was the defect; both forms now agree.
+
 - **Settlement forfeits a VTXO past expiry that the operator has not
   swept.** The forfeit-skip decision read `canRecoverOnchain`, which is
   true for any VTXO past its wall-clock expiry, so renewing one whose

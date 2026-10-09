@@ -17,6 +17,7 @@ import {
     Wallet,
     type ArkProvider,
     type Contract,
+    type GetSpendableVtxosFilter,
     type GetVtxosFilter,
     type IndexerProvider,
     type OnchainProvider,
@@ -375,9 +376,11 @@ describe("getSpendableVtxos", () => {
 
         const ownTxid = defaultScript.slice(-2).repeat(32);
         const markedTxid = MARKED_SCRIPT.slice(-2).repeat(32);
-        const cases: [GetVtxosFilter | undefined, string[]][] = [
+        const cases: [GetSpendableVtxosFilter | undefined, string[]][] = [
             // The default filter is { withRecoverable: true, withUnrolled: false }.
             [undefined, [ownTxid, markedTxid, recoverableTxid]],
+            [{ maxSyncAgeMs: 5_000 }, [ownTxid, markedTxid, recoverableTxid]],
+            [{ withUnrolled: true }, [ownTxid, markedTxid, recoverableTxid, unrolledTxid]],
             [{ withRecoverable: false }, [ownTxid, markedTxid]],
             [{ withRecoverable: true }, [ownTxid, markedTxid, recoverableTxid]],
             [
