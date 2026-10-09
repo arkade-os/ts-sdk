@@ -2,6 +2,7 @@ import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyFactsOfRow } from "../legacyVtxoFacts";
 import { isVtxoSpent } from "../../wallet/vtxo";
 import type { VirtualCoin } from "../../wallet";
+import { type Contract, type ContractWatchState, watchStateOf } from "../../contracts/types";
 
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
@@ -23,9 +24,22 @@ export const STORE_VTXO_BRANCHES = "vtxoBranches";
 //   v4 — add the `scriptUnspent` index; existing rows are backfilled.
 //   v5 — add the `(address, createdAt)` history index; existing rows are
 //        indexed without changing their stored values.
+//   v6 — add the contract watch-state indexes; existing rows are backfilled.
 // An older SDK cannot reopen a newer database. The intent ladder below runs on a
 // dedicated DB name: its v4/v5 are not these.
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
+
+export const CONTRACT_WATCH_INDEX = "watchState";
+export const CONTRACT_TYPE_WATCH_INDEX = "typeWatchState";
+
+/** A stored contract. `watchState` is what the watch indexes key on: an index skips
+ * a record missing its key path, and a contract without `watch` counts as watched. */
+export type ContractRow = Contract & { watchState: ContractWatchState };
+
+export const contractRow = (contract: Contract): ContractRow => ({
+    ...contract,
+    watchState: watchStateOf(contract),
+});
 
 //   dedicated-DB v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
 //        `vtxoBranches` object stores (new, empty — no backfill).
@@ -190,6 +204,7 @@ export function initDatabase(
                 unique: false,
             });
         }
+        createContractWatchIndexes(contractsStore);
     }
 
     // v1–v3 → v4: one cursor pass backfills both indexed fields. `transaction`
@@ -213,6 +228,44 @@ export function initDatabase(
             });
         }
     }
+
+    if (oldVersion > 0 && oldVersion < 6 && transaction) {
+        const contractsStore = transaction.objectStore(STORE_CONTRACTS);
+        createContractWatchIndexes(contractsStore);
+        backfillContractWatchState(contractsStore);
+    }
+}
+
+function createContractWatchIndexes(store: IDBObjectStore): void {
+    if (!store.indexNames.contains(CONTRACT_WATCH_INDEX)) {
+        store.createIndex(CONTRACT_WATCH_INDEX, ["watchState", "script"], { unique: false });
+    }
+    if (!store.indexNames.contains(CONTRACT_TYPE_WATCH_INDEX)) {
+        store.createIndex(CONTRACT_TYPE_WATCH_INDEX, ["type", "watchState", "script"], {
+            unique: false,
+        });
+    }
+}
+
+// Inside the upgrade transaction, so an interrupted run commits nothing and the next open repeats it.
+function backfillContractWatchState(store: IDBObjectStore): void {
+    const pageSize = 1000;
+    const readPage = (after?: string) => {
+        const request = store.getAll(
+            after === undefined ? undefined : IDBKeyRange.lowerBound(after, true),
+            pageSize,
+        );
+        request.onsuccess = () => {
+            const rows = request.result as ContractRow[];
+            for (const row of rows) {
+                const next = contractRow(row);
+                if (next.watchState !== row.watchState) store.put(next);
+            }
+            const last = rows.at(-1);
+            if (rows.length === pageSize && last) readPage(last.script);
+        };
+    };
+    readPage();
 }
 
 // Booleans are not valid IndexedDB keys, so unspent rows carry `unspent: 1`

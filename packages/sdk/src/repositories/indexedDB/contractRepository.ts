@@ -3,7 +3,15 @@ import { ContractFilter, ContractRepository } from "../contractRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { DB_VERSION, initDatabase, STORE_CONTRACTS } from "./schema";
+import {
+    CONTRACT_TYPE_WATCH_INDEX,
+    CONTRACT_WATCH_INDEX,
+    contractRow,
+    type ContractRow,
+    DB_VERSION,
+    initDatabase,
+    STORE_CONTRACTS,
+} from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
 /**
@@ -45,43 +53,56 @@ export class IndexedDBContractRepository implements ContractRepository {
                 .filter((script) => page.after === undefined || script > page.after)
                 .sort();
             const contracts = await Promise.all(
-                keys.map((script) => promisifyRequest<Contract | undefined>(store.get(script))),
+                keys.map((script) => promisifyRequest<ContractRow | undefined>(store.get(script))),
             );
             return pageResult(
-                this.applyContractFilter(contracts, normalized),
+                this.applyContractFilter(contracts.map(contractOf), normalized),
                 page.limit,
                 (contract) => contract.script,
             );
         }
-        const range =
-            page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
-        const cursorRequest = store.openCursor(range);
-        return new Promise((resolve, reject) => {
-            const rows: Contract[] = [];
-            cursorRequest.onerror = () => reject(cursorRequest.error);
-            cursorRequest.onsuccess = () => {
-                const cursor = cursorRequest.result;
-                if (!cursor) {
-                    resolve(pageResult(rows, page.limit, (contract) => contract.script));
-                    return;
-                }
-                if (this.applyContractFilter([cursor.value as Contract], normalized).length) {
-                    rows.push(cursor.value as Contract);
-                }
-                if (rows.length > page.limit) {
-                    resolve(pageResult(rows, page.limit, (contract) => contract.script));
-                    return;
-                }
-                cursor.continue();
-            };
-        });
+        const watch = normalized.get("watch");
+        const types = normalized.get("type");
+        const after = page.after ?? "";
+        // Each watch state, or (type, watch state) pair, is one run of its index in script order.
+        const reads = watch
+            ? [...new Set(watch)]
+                  .flatMap((state) =>
+                      types ? [...new Set(types)].map((type) => [type, state]) : [[state]],
+                  )
+                  .map((prefix) =>
+                      this.readMatching(
+                          store.index(types ? CONTRACT_TYPE_WATCH_INDEX : CONTRACT_WATCH_INDEX),
+                          IDBKeyRange.bound(
+                              [...prefix, after],
+                              [...prefix, []],
+                              page.after !== undefined,
+                          ),
+                          normalized,
+                          page.limit,
+                      ),
+                  )
+            : [
+                  this.readMatching(
+                      store,
+                      page.after === undefined
+                          ? undefined
+                          : IDBKeyRange.lowerBound(page.after, true),
+                      normalized,
+                      page.limit,
+                  ),
+              ];
+        const rows = (await Promise.all(reads))
+            .flat()
+            .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0));
+        return pageResult(rows, page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {
         try {
             const db = await this.getDB();
             const transaction = db.transaction([STORE_CONTRACTS], "readwrite");
-            transaction.objectStore(STORE_CONTRACTS).put(contract);
+            transaction.objectStore(STORE_CONTRACTS).put(contractRow(contract));
             await awaitTransaction(transaction);
         } catch (error) {
             console.error("Failed to save contract:", error);
@@ -99,6 +120,27 @@ export class IndexedDBContractRepository implements ContractRepository {
             console.error(`Failed to delete contract ${script}:`, error);
             throw error;
         }
+    }
+
+    /** Up to `limit + 1` rows of `range` that pass `filter`, in key order. */
+    private readMatching(
+        source: IDBObjectStore | IDBIndex,
+        range: IDBKeyRange | undefined,
+        filter: ReturnType<typeof normalizeFilter>,
+        limit: number,
+    ): Promise<Contract[]> {
+        const request = source.openCursor(range);
+        return new Promise((resolve, reject) => {
+            const rows: Contract[] = [];
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) return resolve(rows);
+                rows.push(...this.applyContractFilter([contractOf(cursor.value)], filter));
+                if (rows.length > limit) return resolve(rows);
+                cursor.continue();
+            };
+        });
     }
 
     private applyContractFilter(
@@ -129,8 +171,12 @@ export class IndexedDBContractRepository implements ContractRepository {
     }
 }
 
-// `watch` has no index — it is filtered in memory by `applyContractFilter`,
-// after whichever indexed field narrowed the read.
+const contractOf = (row: ContractRow | undefined): Contract | undefined => {
+    if (!row) return undefined;
+    const { watchState: _watchState, ...contract } = row;
+    return contract;
+};
+
 const FILTER_FIELDS = ["script", "state", "type", "watch"] as (keyof ContractFilter)[];
 
 // Transform all filter fields into an array of values

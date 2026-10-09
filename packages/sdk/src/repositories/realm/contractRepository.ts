@@ -48,6 +48,34 @@ export class RealmContractRepository implements ContractRepository {
     ): Promise<PageResult<Contract>> {
         assertPageRequest(page);
         if (contractFilterMatchesNothing(filter)) return { items: [] };
+        const toPage = (rows: RealmRow[]) =>
+            pageResult(rows.map(contractObjectToDomain), page.limit, (contract) => contract.script);
+        // Realm seeks the `watch` index only for a lone leading `watch ==`, other terms grouped
+        // behind it: an OR of states, or `type` beside it, reads every row of the type or table.
+        // So each live state gets its own query, unless a script list already narrows the read;
+        // `retained`, the bulk of the rows, keeps the other terms first.
+        if (filter?.watch === undefined || filter.script !== undefined) {
+            return toPage(this.readRows(filter, page));
+        }
+        const merged = [...new Set([filter.watch].flat())]
+            .flatMap((state) => (state === "watched" ? [state, null] : [state]))
+            .flatMap((state) =>
+                state === "retained"
+                    ? this.readRows({ ...filter, watch: state }, page)
+                    : this.readRows({ ...filter, watch: undefined }, page, state),
+            )
+            .map((row) => ({ script: row.script as string, row }))
+            .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0));
+        // Converted after the merge, so only the page's own rows pay for it.
+        return toPage(merged.slice(0, page.limit + 1).map(({ row }) => row));
+    }
+
+    /** Up to `limit + 1` rows in script order, led by `watch == leadingWatch` when one is given. */
+    private readRows(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+        leadingWatch?: string | null,
+    ): RealmRow[] {
         let results = this.realm.objects("ArkContract");
         const parts: string[] = [];
         const args: unknown[] = [];
@@ -62,13 +90,19 @@ export class RealmContractRepository implements ContractRepository {
             parts.push(`script > $${argIndex}`);
             args.push(page.after);
         }
-        if (parts.length) results = results.filtered(parts.join(" AND "), ...args);
-        const rows: Contract[] = [];
+        let query = parts.join(" AND ");
+        if (leadingWatch !== undefined) {
+            const lead = leadingWatch === null ? "watch == null" : `watch == $${args.length}`;
+            if (leadingWatch !== null) args.push(leadingWatch);
+            query = query ? `${lead} AND (${query})` : lead;
+        }
+        if (query) results = results.filtered(query, ...args);
+        const rows: RealmRow[] = [];
         for (const row of results.sorted("script")) {
-            rows.push(contractObjectToDomain(row));
+            rows.push(row);
             if (rows.length > page.limit) break;
         }
-        return pageResult(rows, page.limit, (contract) => contract.script);
+        return rows;
     }
 
     async saveContract(contract: Contract): Promise<void> {
@@ -150,6 +184,8 @@ export class RealmContractRepository implements ContractRepository {
 }
 
 // ── Realm object → Domain converter ──────────────────────────────────────
+
+type RealmRow = Record<string, unknown>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function contractObjectToDomain(obj: any): Contract {

@@ -5,9 +5,13 @@ import {
     initDatabaseWithIntents,
     DB_VERSION,
     INTENT_DB_VERSION,
+    STORE_CONTRACTS,
     STORE_INTENTS,
     STORE_TRANSACTIONS,
 } from "../src/repositories/indexedDB/schema";
+import { awaitTransaction, promisifyRequest } from "../src/repositories/indexedDB/idbUtils";
+import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
+import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim);
 // no per-file shim import needed — matches existing IDB repo tests.
@@ -37,10 +41,10 @@ function countRows(db: IDBDatabase, store: string): Promise<number> {
 }
 
 describe("IndexedDB schema", () => {
-    // The shared wallet/contract schema adds a history index at v5 but does
-    // not activate the opt-in intent-persistence stores.
-    it("keeps intent/virtualtx stores out of the shared v5 schema", async () => {
-        expect(DB_VERSION).toBe(5);
+    // The shared wallet/contract schema adds a history index at v5 and contract
+    // watch indexes at v6, but does not activate the opt-in intent-persistence stores.
+    it("keeps intent/virtualtx stores out of the shared v6 schema", async () => {
+        expect(DB_VERSION).toBe(6);
         const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
         expect(
@@ -117,5 +121,100 @@ describe("IndexedDB schema", () => {
             put(v5, STORE_INTENTS, { intentTxId: "e", intentId: "srv2" }),
         ).rejects.toThrow();
         await closeDatabase(name);
+    });
+
+    describe("v5 to v6: contracts indexed by watch state", () => {
+        const contract = (script: string, type: string, watch?: string) => ({
+            script,
+            address: `address-${script}`,
+            type,
+            state: "active",
+            params: {},
+            createdAt: 1,
+            ...(watch && { watch }),
+        });
+        const rows = [
+            contract("legacy", "default"),
+            contract("s1", "default", "watched"),
+            contract("s2", "default", "awaiting-funds"),
+            contract("s3", "default", "retained"),
+            contract("v1", "vhtlc"),
+        ];
+
+        // The v5 contracts store, holding rows as v5 wrote them.
+        async function seedV5(name: string) {
+            const db = await openDatabase(name, 5, (db, oldVersion, transaction) => {
+                initDatabase(db, oldVersion, transaction);
+                const store = transaction!.objectStore(STORE_CONTRACTS);
+                for (const index of Array.from(store.indexNames)) {
+                    if (index !== "type" && index !== "state") store.deleteIndex(index);
+                }
+            });
+            const tx = db.transaction(STORE_CONTRACTS, "readwrite");
+            for (const row of rows) tx.objectStore(STORE_CONTRACTS).put(row);
+            await awaitTransaction(tx);
+            await closeDatabase(name);
+        }
+        const watchedKeys = (db: IDBDatabase) =>
+            promisifyRequest(
+                db
+                    .transaction(STORE_CONTRACTS, "readonly")
+                    .objectStore(STORE_CONTRACTS)
+                    .index("watchState")
+                    .getAllKeys(IDBKeyRange.bound(["watched"], ["watched", []])),
+            );
+
+        it("indexes every existing contract, one without a state as watched", async () => {
+            const name = `contracts-v5-${crypto.randomUUID()}`;
+            await seedV5(name);
+
+            await using repository = new IndexedDBContractRepository(name);
+            const scripts = async (filter: ContractFilter) =>
+                (await collectContracts(repository, filter)).map((c) => c.script);
+            expect(await scripts({ watch: ["watched", "awaiting-funds"] })).toEqual([
+                "legacy",
+                "s1",
+                "s2",
+                "v1",
+            ]);
+            expect(await scripts({ type: "default", watch: "watched" })).toEqual(["legacy", "s1"]);
+            expect(await scripts({ watch: "retained" })).toEqual(["s3"]);
+            expect((await collectContracts(repository, { script: "legacy" }))[0]).toEqual(rows[0]);
+
+            const db = await openDatabase(name, DB_VERSION, initDatabase);
+            try {
+                expect(db.version).toBe(6);
+                expect(await watchedKeys(db)).toEqual(["legacy", "s1", "v1"]);
+            } finally {
+                await closeDatabase(name);
+            }
+        });
+
+        it("leaves v5 untouched when the upgrade aborts, and the next open completes it", async () => {
+            const name = `contracts-v5-abort-${crypto.randomUUID()}`;
+            await seedV5(name);
+
+            await expect(
+                openDatabase(name, DB_VERSION, (db, oldVersion, transaction) => {
+                    initDatabase(db, oldVersion, transaction);
+                    transaction!.abort();
+                }),
+            ).rejects.toThrow();
+            const v5 = await openDatabase(name, 5, () => {});
+            try {
+                const store = v5
+                    .transaction(STORE_CONTRACTS, "readonly")
+                    .objectStore(STORE_CONTRACTS);
+                expect(v5.version).toBe(5);
+                expect(Array.from(store.indexNames).sort()).toEqual(["state", "type"]);
+                expect(await promisifyRequest(store.getAll())).toEqual(rows);
+            } finally {
+                await closeDatabase(name);
+            }
+
+            await using repository = new IndexedDBContractRepository(name);
+            const watched = await collectContracts(repository, { watch: "watched" });
+            expect(watched.map((c) => c.script)).toEqual(["legacy", "s1", "v1"]);
+        });
     });
 });

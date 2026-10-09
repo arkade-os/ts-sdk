@@ -18,9 +18,16 @@ style and have not been backfilled.
   should sort the collected result explicitly. `IntentFilter.skip` and `take`
   are replaced by `PageRequest` cursors.
 
-- **The shared IndexedDB wallet schema upgrades from v4 to v5.** The upgrade
-  adds an `(address, createdAt)` transaction-history index without rewriting
-  history rows or activating the separate experimental intent stores.
+- **The shared IndexedDB wallet schema upgrades from v4 to v6.** v5 adds an
+  `(address, createdAt)` transaction-history index without rewriting
+  history rows or activating the separate experimental intent stores. v6
+  adds two contract indexes on watch state and writes the state they key
+  on into every stored contract, `watched` for one stored without a state;
+  contracts read back unchanged. That rewrites each stored contract once,
+  so the first open after updating takes longer the more contracts are
+  stored. Both upgrades are one-way: an older SDK, a 0.5.0 release
+  candidate at v5 included, cannot reopen the upgraded database and fails
+  with `VersionError`.
 
 - **`@arkade-os/boltz-swap` is removed from the repo and will not be
   published on the 0.5 line.** The package's Boltz-routed rails are
@@ -325,11 +332,18 @@ style and have not been backfilled.
   `ContractWatcher.updateContract` now registers a watched contract it
   does not hold instead of throwing, and ignores a retained one.
 
-- **`SQLiteContractRepository` indexes contracts by watch state.** The
+- **Every contract repository answers watch reads from an index.** The
   startup read above, and a watch read narrowed by type such as
   `getContracts({ type, watch })`, now seek their few live rows instead
   of walking every contract, or every contract of that type, page by
-  page. A row stored without a watch state still counts as `watched`.
+  page. SQLite indexes the watch state, and IndexedDB does from schema v6
+  (see Breaking Changes). Realm already indexed `watch`, but a typed read
+  and every page after the first walked past that index; each live state
+  is now queried on its own, which the index serves. A row stored
+  without a watch state still counts as `watched`. The in-memory
+  repository still filters in memory. The Expo background poll now
+  reads only watched and awaiting-funds contracts too, instead of every
+  row.
 
 ## [0.4.77] - 2026-09-30
 
