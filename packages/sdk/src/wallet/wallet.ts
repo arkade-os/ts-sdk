@@ -169,6 +169,7 @@ import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
+    inVtxoWriteOrder,
     validateVtxosForScript,
     saveVtxosForContract,
     vtxoOutpoint,
@@ -5478,14 +5479,20 @@ export class Wallet
                 }
             }
 
-            for (const [address, toRemove] of boardingRemovalsByAddress) {
-                const currentUtxos = await collectUtxos(this.walletRepository, address);
-                const filtered = currentUtxos.filter((u) => !toRemove.has(`${u.txid}:${u.vout}`));
-                // Clear and re-save the filtered list for this address bucket.
-                await this.walletRepository.deleteUtxos(address);
-                if (filtered.length > 0) {
-                    await this.walletRepository.saveUtxos(address, filtered);
-                }
+            if (boardingRemovalsByAddress.size > 0) {
+                await inVtxoWriteOrder(this.walletRepository, async () => {
+                    for (const [address, toRemove] of boardingRemovalsByAddress) {
+                        const currentUtxos = await collectUtxos(this.walletRepository, address);
+                        const filtered = currentUtxos.filter(
+                            (u) => !toRemove.has(`${u.txid}:${u.vout}`),
+                        );
+                        // Clear and re-save the filtered list for this address bucket.
+                        await this.walletRepository.deleteUtxos(address);
+                        if (filtered.length > 0) {
+                            await this.walletRepository.saveUtxos(address, filtered);
+                        }
+                    }
+                });
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);
