@@ -154,6 +154,19 @@ style and have not been backfilled.
 
 ### Features
 
+- **`concurrentSpending` lets spends overlap on disjoint VTXOs, and
+  `reserveVtxos` keeps VTXOs out of SDK-chosen spends.** Opt-in
+  (`Wallet.create({ concurrentSpending: true })`): the wallet lock covers only
+  picking and reserving inputs, so a send no longer waits for another
+  operation's batch swap; amount-bearing `Ramps` exits spend only the VTXOs
+  they need; naming a VTXO another operation is spending throws
+  `VtxoReservedError`. `wallet.reserveVtxos(outpoints)` holds VTXOs out of
+  `send`, `settle()`, exits, renewal, router rails and swap funding until
+  released. `WalletBalance` gains `reserved`, so
+  `settled + preconfirmed === available + gated + intentLocked + reserved`; no
+  existing field changes value. Without the setting and without holds,
+  behavior is unchanged.
+
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
   under the platform config directory (XDG /
