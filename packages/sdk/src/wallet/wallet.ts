@@ -634,6 +634,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     // Outpoints committed to an in-flight settle/send, filtered from getVtxos() so concurrent
     // callers can't reselect them. In-memory only: a stale entry only hides a VTXO.
     protected _pendingSpendOutpoints = new Set<string>();
+    protected _heldOutpoints = new Set<string>();
 
     /** Activity resolvers consumed by {@link getActivityHistory}. */
     readonly activity = createDefaultActivityRegistry();
@@ -1162,12 +1163,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
             (vtxo) =>
-                !isGatedVtxo(vtxo, gated) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+                !isGatedVtxo(vtxo, gated) &&
+                !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`) &&
+                !this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
         logExcludedVtxos("getSpendableVtxos", vtxos, [
             gateExclusion(gated),
             outpointExclusion(pendingRecovery, PENDING_RECOVERY_REASON),
+            outpointExclusion(this._heldOutpoints, "is held by reserveVtxos"),
             outpointExclusion(
                 omittedOutpoints(selectable, unlocked),
                 "is locked by an in-flight settlement intent",
@@ -1319,6 +1323,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            isReserved: (vtxo) => this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             dustCarrier: getDustAmount(this),
         };
     }
@@ -2725,6 +2730,29 @@ export class Wallet
                 this._pendingSpendOutpoints.delete(`${input.txid}:${input.vout}`);
             }
         }
+    }
+
+    /**
+     * Hold VTXOs so no SDK-chosen spend picks them; the holder still spends them by naming them.
+     * All-or-nothing: throws {@link VtxoReservedError} if any is held or already being spent.
+     * In-memory, for this `Wallet` instance only.
+     */
+    reserveVtxos(outpoints: readonly Outpoint[]): VtxoReservation {
+        const keys = outpoints.map((o) => `${o.txid}:${o.vout}`);
+        const inFlight = keys.filter((k) => this._pendingSpendOutpoints.has(k));
+        if (inFlight.length > 0) throw new VtxoReservedError(inFlight, "in-flight");
+        const held = keys.filter((k) => this._heldOutpoints.has(k));
+        if (held.length > 0) throw new VtxoReservedError(held, "held");
+        for (const k of keys) this._heldOutpoints.add(k);
+        let released = false;
+        return {
+            outpoints: [...outpoints],
+            release: () => {
+                if (released) return;
+                released = true;
+                for (const k of keys) this._heldOutpoints.delete(k);
+            },
+        };
     }
 
     private _withTxLock<T>(fn: (release: () => void) => Promise<T>): Promise<T> {
@@ -5616,6 +5644,13 @@ export class VtxoReservedError extends Error {
             `${outpoints.join(", ")} ${holder === "held" ? "held by reserveVtxos" : "already being spent by another operation"}`,
         );
     }
+}
+
+/** A hold placed by {@link Wallet.reserveVtxos}. */
+export interface VtxoReservation {
+    readonly outpoints: readonly Outpoint[];
+    /** Idempotent. */
+    release(): void;
 }
 
 /** Options for {@link waitForIncomingFunds}. */
