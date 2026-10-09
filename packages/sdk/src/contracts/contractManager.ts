@@ -654,7 +654,8 @@ export class ContractManager implements IContractManager {
 
     private constructor(config: ContractManagerConfig) {
         assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
-        this.config = config;
+        // A copy, so a caller mutating its object later cannot skip the check.
+        this.config = { ...config };
 
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,

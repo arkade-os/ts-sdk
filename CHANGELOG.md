@@ -297,7 +297,10 @@ style and have not been backfilled.
   per-read `maxSyncAgeMs` was checked; `setVtxoSyncMaxAge` and the
   `ContractManager.create` config accepted any number, and `Infinity`
   silently stopped every read from syncing. Both now reject a value that
-  is not a non-negative safe integer, as the per-read option does.
+  is not a non-negative safe integer, as the per-read option does. The
+  manager keeps its own copy of the config, so mutating the object passed
+  to `create` no longer reconfigures it, and `setVtxoSyncMaxAge` no longer
+  writes into the caller's object.
 
 ### Performance
 
