@@ -260,6 +260,49 @@ describe("a hold placed while the SDK is picking", () => {
         await wallet.dispose();
     });
 
+    it("a bare settle that loses a VTXO to a hold never blocks the holder spending it", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, arkProvider, coins, outpoints } = await fundedWallet({
+            concurrentSpending: true,
+        });
+        parkSettle(wallet, arkProvider);
+        const submits = stallSubmits(wallet);
+        let open!: () => void;
+        const signing = new Promise<void>((resolve) => (open = resolve));
+        const sign = vi
+            .spyOn(wallet as any, "makeRegisterIntentSignature")
+            .mockImplementation(async () => {
+                await signing;
+                return { proof: "", message: {} };
+            });
+        let deleted!: () => void;
+        arkProvider.deleteIntent.mockImplementation(
+            () => new Promise<undefined>((resolve) => (deleted = () => resolve(undefined))),
+        );
+
+        const settling = wallet.settle();
+        await vi.waitFor(() => expect(sign).toHaveBeenCalled());
+        const hold = wallet.reserveVtxos([coins[0]]);
+        const sent = wallet
+            .send({
+                recipients: [{ address: await wallet.getAddress(), amount: 2_000 }],
+                selectedVtxos: [coins[0]],
+            })
+            .catch((error) => error);
+        open();
+        await vi.waitFor(() => expect(arkProvider.deleteIntent).toHaveBeenCalled());
+        await new Promise((r) => setTimeout(r, 20));
+        deleted();
+
+        await expect(settling).rejects.toMatchObject({ holder: "held" });
+        await vi.waitFor(() => expect(submits).toHaveLength(1));
+        expect(submits[0].inputs).toEqual([outpoints[0]]);
+        submits[0].finish();
+        expect(await sent).toBe("1".repeat(64));
+        hold.release();
+        await wallet.dispose();
+    });
+
     it("a settle of SDK-picked inputs refuses one held since, while a named one spends it", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const { wallet, arkProvider, coins } = await fundedWallet({ concurrentSpending: true });

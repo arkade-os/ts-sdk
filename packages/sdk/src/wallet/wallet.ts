@@ -2769,7 +2769,8 @@ export class Wallet
 
     /**
      * @internal For `AssetManager`: with `concurrentSpending`, runs `fn` under the wallet lock and
-     * reserves what it submits, releasing the lock once reserved. Otherwise exactly as before.
+     * reserves what it submits, releasing the lock once reserved. Otherwise runs `fn` unlocked,
+     * exactly as before.
      */
     withSpendLock<T>(fn: (submit: OffchainSubmit) => Promise<T>): Promise<T> {
         if (!this._concurrentSpending) {
@@ -3601,16 +3602,17 @@ export class Wallet
             hex.encode(await this.identity.xOnlyPublicKey()),
         );
 
-        // Hide the inputs from concurrent getVtxos() callers before the intent registers.
-        this._addPendingSpends(params.inputs);
         const boardingKeys = onReserved
             ? coinKeys(params.inputs.filter((i) => !isVirtualCoin(i)))
             : [];
-        for (const key of boardingKeys) this._pendingSpendOutpoints.add(key);
-        onReserved?.();
-
         try {
+            // After the last await, so a hold placed during signing is caught; before the inputs
+            // go pending, so the holder can spend them while this settle unwinds.
             if (picked) this._assertNotHeld(params.inputs);
+            // Hide the inputs from concurrent getVtxos() callers before the intent registers.
+            this._addPendingSpends(params.inputs);
+            for (const key of boardingKeys) this._pendingSpendOutpoints.add(key);
+            onReserved?.();
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
 
             // Prime the iterator so the provider opens the SSE subscription
@@ -5713,7 +5715,10 @@ export class AbortError extends Error {
     }
 }
 
-/** A VTXO named for a spend or a hold is held, or already being spent by another operation. */
+/**
+ * A VTXO named for a spend or a hold is held, or already being spent by another operation.
+ * Match on `name`, not `instanceof`: only the name survives the service-worker boundary.
+ */
 export class VtxoReservedError extends Error {
     readonly name = "VtxoReservedError";
 

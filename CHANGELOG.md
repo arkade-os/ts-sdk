@@ -164,8 +164,9 @@ style and have not been backfilled.
   `send`, `settle()`, exits, renewal, router rails and swap funding until
   released. `WalletBalance` gains `reserved`, so
   `settled + preconfirmed === available + gated + intentLocked + reserved`; no
-  existing field changes value. Without the setting and without holds,
-  behavior is unchanged.
+  existing field changes value, but code that builds `WalletBalance` objects
+  (custom `IWallet` implementations, test doubles) must add `reserved`. Without
+  the setting and without holds, behavior is unchanged.
 
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
