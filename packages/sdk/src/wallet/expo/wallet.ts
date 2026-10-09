@@ -352,6 +352,10 @@ export class ExpoWallet
         return this.wallet.getContractManager();
     }
 
+    getDelegateeManager() {
+        return this.wallet.getDelegateeManager();
+    }
+
     // Descriptor surface, delegated like everything else here. Without these
     // the structural probes see a wallet with no HD state, so an Expo wallet
     // running `walletMode: 'hd'` would bind every artifact to its baseline

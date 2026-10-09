@@ -151,12 +151,14 @@ import {
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
+import type { DelegateeProvider } from "../providers/delegatee";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension, type ExtensionPacket } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
+import { DelegateeManagerImpl, IDelegateeManager } from "./delegatee";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import type {
@@ -166,7 +168,8 @@ import type {
 } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
-import { timelockToSequence } from "../utils/timelock";
+import { DelegateeContractHandler } from "../contracts/handlers/delegatee";
+import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
     validateVtxosForScript,
@@ -215,6 +218,25 @@ import {
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./signingErrors";
+
+// A delegatee renewal contract as the wallet's receive tapscript: forfeit and exit are the
+// wallet's own leaves, the renewal covenant leaf rides along. Checked against the contract row.
+function delegatedTapscript(contract: Contract): DefaultVtxo.Script {
+    const p = DelegateeContractHandler.deserializeParams(contract.params);
+    const derived = DelegateeContractHandler.createScript(contract.params);
+    const script = new DefaultVtxo.Script(
+        {
+            pubKey: p.owner.subarray(1),
+            serverPubKey: p.serverPubKey.subarray(1),
+            csvTimelock: sequenceToTimelock(p.exitDelay),
+        },
+        derived.scripts.slice(2),
+    );
+    if (hex.encode(script.pkScript) !== contract.script) {
+        throw new Error(`delegatee contract ${contract.script} is not forfeit, exit and covenant`);
+    }
+    return script;
+}
 
 // Build per-input jobs for an intent proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -749,6 +771,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegateProvider?: DelegateProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
         walletContractTimelocks?: RelativeTimelock[],
+        readonly delegateeProvider?: DelegateeProvider,
     ) {
         // Duplicates setupWalletConfig()'s network-mismatch check for callers bypassing create().
         if ("descriptor" in identity) {
@@ -833,7 +856,48 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Currently-active receive tapscript; changes only on receive rotation. */
     get offchainTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
-        return this._offchainTapscript;
+        return this._delegatedTapscript ?? this._offchainTapscript;
+    }
+
+    /** The delegatee renewal contract standing in for the receive tapscript, see syncDelegatedDefaults. */
+    private _delegatedTapscript?: DefaultVtxo.Script;
+    private _delegatedBoardingAddress?: string;
+
+    /**
+     * With a delegatee configured, the wallet's own delegatee contracts (newest renewal and
+     * boarding rows for its key and current server) are its default addresses: receiving, change
+     * and settlement land in delegated coins. Without one, the defaults are the wallet's own and
+     * the delegatee rows stay watched, so their coins still count and spend. Read from the
+     * contract repository, so it follows registrations made through any wallet front-end.
+     */
+    protected async syncDelegatedDefaults(): Promise<void> {
+        if (!this.delegateeProvider) {
+            this._delegatedTapscript = undefined;
+            this._delegatedBoardingAddress = undefined;
+            return;
+        }
+        const owner = hex.encode(await this.identity.xOnlyPublicKey());
+        const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+        const rows = (await collectContracts(this.contractRepository, { type: ["delegatee"] }))
+            .filter(
+                (c) =>
+                    c.params.owner?.slice(2).toLowerCase() === owner &&
+                    toXOnlySignerHex(c.params.serverPubKey ?? "") === server,
+            )
+            .sort((a, b) => b.createdAt - a.createdAt);
+        const renewal = rows.find((c) => c.params.template === "renewal");
+        const boarding = rows.find((c) => c.params.template === "boarding");
+        if (!renewal) {
+            this._delegatedTapscript = undefined;
+        } else if (
+            !this._delegatedTapscript ||
+            hex.encode(this._delegatedTapscript.pkScript) !== renewal.script
+        ) {
+            this._delegatedTapscript = delegatedTapscript(renewal);
+        }
+        this._delegatedBoardingAddress = boarding
+            ? DelegateeContractHandler.createScript(boarding.params).onchainAddress(this.network)
+            : undefined;
     }
 
     /** Current active server signer (x-only, 32 bytes); changes only on server-signer rotation. */
@@ -1048,6 +1112,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             serverInfoSource,
             serverInfoLastOnlineAt,
             delegateProvider: config.delegateProvider,
+            delegateeProvider: config.delegateeProvider,
             walletContractTimelocks,
         };
     }
@@ -1081,6 +1146,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.delegateProvider,
             config.watcherConfig,
             setup.walletContractTimelocks,
+            setup.delegateeProvider,
         );
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
@@ -1113,12 +1179,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Returns the wallet's Arkade address. */
     async getAddress(): Promise<string> {
+        await this.syncDelegatedDefaults();
         return this.arkAddress.encode();
     }
 
-    /** Returns the onchain boarding address used to move funds into Arkade. */
+    /**
+     * Returns the onchain boarding address used to move funds into Arkade: the delegatee's
+     * boarding address when the wallet delegates, which the service boards into the renewal
+     * address. Deposits there are not boarding UTXOs of the wallet until the service boards them.
+     */
     async getBoardingAddress(): Promise<string> {
-        return this.boardingTapscript.onchainAddress(this.network);
+        await this.syncDelegatedDefaults();
+        return (
+            this._delegatedBoardingAddress ?? this.boardingTapscript.onchainAddress(this.network)
+        );
     }
 
     /**
@@ -2091,6 +2165,7 @@ export class Wallet
 
     override readonly identity: Identity;
     private readonly _delegateManager?: IDelegateManager;
+    private readonly _delegateeManager?: IDelegateeManager;
     private _vtxoManager?: VtxoManager;
     private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
@@ -2918,6 +2993,7 @@ export class Wallet
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
         /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
         protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
+        delegateeProvider?: DelegateeProvider,
     ) {
         super(
             identity,
@@ -2934,6 +3010,7 @@ export class Wallet
             delegateProvider,
             watcherConfig,
             walletContractTimelocks,
+            delegateeProvider,
         );
         this.identity = identity;
 
@@ -2941,6 +3018,9 @@ export class Wallet
             settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
         this._delegateManager = delegateProvider
             ? new DelegateManagerImpl(delegateProvider, arkProvider, identity)
+            : undefined;
+        this._delegateeManager = delegateeProvider
+            ? new DelegateeManagerImpl(delegateeProvider, this)
             : undefined;
         this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
@@ -3116,6 +3196,7 @@ export class Wallet
                     : {}),
             },
             checkpointExitDelayOverrides,
+            setup.delegateeProvider,
         );
         wallet._serverInfoSource = setup.serverInfoSource;
         // Construction validated the response, so it is now safe to refresh the cached snapshot.
@@ -3206,6 +3287,7 @@ export class Wallet
             this.delegateProvider,
             this.watcherConfig,
             this.walletContractTimelocks,
+            this.delegateeProvider,
         );
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
         // boarding watch path and spendability split match the source wallet's.
@@ -3217,6 +3299,11 @@ export class Wallet
     /** Returns the delegate manager when delegation support is configured. */
     async getDelegateManager(): Promise<IDelegateManager | undefined> {
         return this._delegateManager;
+    }
+
+    /** Returns the covenant-based delegatee manager when configured. */
+    async getDelegateeManager(): Promise<IDelegateeManager | undefined> {
+        return this._delegateeManager;
     }
 
     /**
@@ -4665,6 +4752,7 @@ export class Wallet
      */
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const params = asSendParams(args);
+        await this.syncDelegatedDefaults();
         return this._withTxLock(() => this._sendImpl(params));
     }
 
@@ -5072,6 +5160,7 @@ export class Wallet
         if (inputs.length === 0) {
             throw new Error("sendSelectedVtxosToSelf: no inputs");
         }
+        await this.syncDelegatedDefaults();
         return this._withTxLock(async () => {
             // Snapshot the signer epoch synchronously before any `await` (see `_sendImpl`).
             const offchainTapscript = this.offchainTapscript;

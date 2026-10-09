@@ -1233,10 +1233,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({
-            withRecoverable: true,
-            genericallySpendableOnly: true,
-        });
+        const vtxos = await this.withoutDelegated(
+            await this.wallet.getSpendableVtxos({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            }),
+        );
 
         // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
         const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
@@ -1247,6 +1249,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             getDustAmount(this.wallet),
             now ?? (await fetchTimeHeight(this.wallet)),
         );
+    }
+
+    /**
+     * Coins at the wallet's delegatee contracts are the service's to renew, in place, even with
+     * delegation turned off: its watch stays registered, so renewing them too would race it.
+     */
+    private async withoutDelegated<T extends { script?: string }>(vtxos: T[]): Promise<T[]> {
+        const manager = await this.wallet.getContractManager();
+        const delegated = new Set(
+            (await manager.getContracts({ type: ["delegatee"] })).map((c) => c.script),
+        );
+        return vtxos.filter((v) => v.script === undefined || !delegated.has(v.script));
     }
 
     /**

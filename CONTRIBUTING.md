@@ -46,6 +46,21 @@ CI fans the sdk e2e suite out across parallel groups by passing each group's fil
 definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups` run matches CI, and
 `--check` (wired into `pnpm lint`) fails when an e2e file belongs to no group or to two.
 
+### Delegatee e2e
+
+`packages/sdk/test/e2e/delegatee.test.ts` runs on its own stack, `sdk-delegatee`: arkade-regtest's
+`delegatee` profile (the delegatee daemon on :7280) with seconds-typed arkd timelocks, set in
+`packages/sdk/.env.regtest.delegatee`. It skips with a message when no delegatee answers.
+
+```bash
+pnpm run regtest:up:sdk-delegatee
+pnpm run regtest:test:sdk-delegatee test/e2e/delegatee.test.ts
+```
+
+`DELEGATEE_URL` (default `http://localhost:7280`), `ESPLORA_URL` and `DELEGATEE_RENEWAL_WINDOW`
+(seconds, default 256: below the stack's VTXO lifetime, so a coin comes due during the test) adjust
+it. The renewal step waits for the daemon's next renewal, up to 14 minutes.
+
 ### The stack itself
 
 `regtest/` is a git submodule pointing to

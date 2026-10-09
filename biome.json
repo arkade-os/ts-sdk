@@ -22,7 +22,8 @@
             "!**/pnpm-lock.yaml",
             "!**/*.md",
             "!packages/swap/src/*.program.json",
-            "!**/fixtures/arkadec/**"
+            "!**/fixtures/arkadec/**",
+            "!packages/sdk/test/fixtures/delegatee/*.json"
         ]
     },
     "linter": { "enabled": false },

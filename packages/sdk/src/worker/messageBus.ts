@@ -4,6 +4,7 @@ import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/servic
 import { ArkProvider, RestArkProvider } from "../providers/ark";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
+import { RestDelegateeProvider } from "../providers/delegatee";
 import {
     type Identity,
     type ReadonlyIdentity,
@@ -164,7 +165,9 @@ type Initialize = {
             url: string;
             publicKey?: string;
         };
+        /** @deprecated Legacy pre-signed delegator endpoint; use delegateeUrl. */
         delegateUrl?: string;
+        delegateeUrl?: string;
         settlementConfig?: SettlementConfig | false;
         walletMode?: "auto" | "static" | "hd";
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
@@ -514,6 +517,9 @@ export class MessageBus {
             ? new RestDelegateProvider(config.delegateUrl)
             : undefined;
         const indexerProvider = new RestIndexerProvider(config.arkServer.url);
+        const delegateeProvider = config.delegateeUrl
+            ? new RestDelegateeProvider(config.delegateeUrl)
+            : undefined;
 
         const serialized = normalizeSerializedIdentity(config.wallet);
 
@@ -526,6 +532,7 @@ export class MessageBus {
                 indexerProvider,
                 storage,
                 delegateProvider,
+                delegateeProvider,
                 settlementConfig: config.settlementConfig,
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
@@ -544,6 +551,7 @@ export class MessageBus {
             indexerProvider,
             storage,
             delegateProvider,
+            delegateeProvider,
             watcherConfig: config.watcherConfig,
         });
         return { readonlyWallet, arkProvider };

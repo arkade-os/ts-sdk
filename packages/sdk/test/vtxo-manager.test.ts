@@ -74,6 +74,7 @@ const createMockWallet = (
     // mock omits one — the pre-flight `revalidateBeforeSettle` invokes it
     // before every settle attempt.
     const contractManager = options.contractManager ?? {
+        getContracts: vi.fn().mockResolvedValue([]),
         onContractEvent: vi.fn().mockReturnValue(() => {}),
         refreshOutpoints: vi.fn().mockResolvedValue(undefined),
     };
@@ -81,6 +82,9 @@ const createMockWallet = (
         (contractManager as Record<string, unknown>).refreshOutpoints = vi
             .fn()
             .mockResolvedValue(undefined);
+    }
+    if (contractManager && !(contractManager as Record<string, unknown>).getContracts) {
+        (contractManager as Record<string, unknown>).getContracts = vi.fn().mockResolvedValue([]);
     }
 
     return {
@@ -508,6 +512,7 @@ describe("VtxoManager - Recovery", () => {
             ) => {
                 const wallet = createMockWallet(vtxos, arkAddress, {
                     contractManager: {
+                        getContracts: vi.fn().mockResolvedValue([]),
                         onContractEvent: vi.fn().mockReturnValue(() => {}),
                         refreshOutpoints: vi.fn().mockResolvedValue(undefined),
                         unspendableNowReasons: vi.fn().mockResolvedValue(refused),
@@ -717,6 +722,7 @@ describe("VtxoManager - Lifecycle", () => {
     it("should subscribe to contract events when settlement is enabled", async () => {
         const unsubscribe = vi.fn();
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -735,6 +741,7 @@ describe("VtxoManager - Lifecycle", () => {
 
     it("should not subscribe to contract events when settlement is disabled", async () => {
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -754,6 +761,7 @@ describe("VtxoManager - Lifecycle", () => {
     it("should unsubscribe from contract events on dispose", async () => {
         const unsubscribe = vi.fn();
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -1137,6 +1145,37 @@ describe("VtxoManager - Renewal", () => {
             expect(expiring).toHaveLength(2);
             expect(expiring[0].txid).toBe("vtxo1");
             expect(expiring[1].txid).toBe("vtxo2");
+        });
+
+        it("leaves coins at delegatee contracts to the delegatee", async () => {
+            const now = Date.now();
+            const soon = (txid: string, script: string) =>
+                ({
+                    txid,
+                    vout: 0,
+                    value: 5000,
+                    script,
+                    createdAt: new Date(now - 100_000),
+                    virtualStatus: { state: "settled", batchExpiry: now + 40_000 },
+                    isSpent: false,
+                    isSwept: false,
+                    isPreconfirmed: false,
+                    spentBy: "",
+                    commitmentTxIds: [],
+                    expiresAt: new Date(now + 40_000),
+                }) as ExtendedVirtualCoin;
+            const contractManager = {
+                onContractEvent: vi.fn().mockReturnValue(() => {}),
+                getContracts: vi.fn().mockResolvedValue([{ script: "51delegated" }]),
+            };
+            const vtxos = [soon("own", "51own"), soon("delegated", "51delegated")];
+            const config = { enabled: true, thresholdMs: 100_000 };
+
+            // no delegatee manager: delegation turned off still leaves them to the service
+            const wallet = createMockWallet(vtxos, undefined, { contractManager } as never);
+            const expiring = await new VtxoManager(wallet, config).getExpiringVtxos();
+            expect(expiring.map((v) => v.txid)).toEqual(["own"]);
+            expect(contractManager.getContracts).toHaveBeenCalledWith({ type: ["delegatee"] });
         });
 
         it("should exclude an unrolled VTXO expiring within the threshold", async () => {
@@ -1935,6 +1974,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
     ) => {
         const { boardingAddress = "bcrt1qtest", feeRate = 1, chainTipHeight = 1000 } = opts;
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -2136,6 +2176,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 getDelegateManager: vi.fn().mockResolvedValue(undefined),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
+                    getContracts: vi.fn().mockResolvedValue([]),
                     onContractEvent: vi.fn().mockReturnValue(() => {}),
                     refreshOutpoints: vi.fn().mockResolvedValue(undefined),
                 }),
@@ -2170,6 +2211,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         const createBlockBasedWallet = (boardingUtxos: ExtendedCoin[], chainTipHeight: number) => {
             const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
             const contractManager = {
+                getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),
             };
@@ -2295,6 +2337,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         let eventHandler: ((event: any) => void) | undefined;
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockImplementation((handler) => {
                 eventHandler = handler;
                 return () => {};
@@ -2318,6 +2361,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         // First vtxo_received triggers renewVtxos. `contract` marks it as ours.
         eventHandler!({ type: "vtxo_received", vtxos: [], contract: {} });
+        await flushMicrotasks();
         await flushMicrotasks();
 
         // settle() was called once
@@ -2352,6 +2396,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         let eventHandler: ((event: any) => void) | undefined;
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockImplementation((handler) => {
                 eventHandler = handler;
                 return () => {};
@@ -2398,6 +2443,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         let eventHandler: ((event: any) => void) | undefined;
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockImplementation((handler) => {
                 eventHandler = handler;
                 return () => {};
@@ -2459,6 +2505,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
             let eventHandler: ((event: any) => void) | undefined;
             const contractManager = {
+                getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockImplementation((handler) => {
                     eventHandler = handler;
                     return () => {};
@@ -2529,6 +2576,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
     const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
         const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -2813,6 +2861,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         const canonicalVtxos = vtxos.map(canonicalizeVtxoForTest);
         const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -3240,6 +3289,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
     const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
         const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -3378,6 +3428,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         const canonicalVtxos = vtxos.map(canonicalizeVtxoForTest);
         const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
