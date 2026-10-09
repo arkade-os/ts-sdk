@@ -10,9 +10,6 @@ export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
 export const STORE_CONTRACTS = "contracts";
-export const STORE_INTENTS = "intents";
-export const STORE_VIRTUAL_TXS = "virtualTxs";
-export const STORE_VTXO_BRANCHES = "vtxoBranches";
 
 // Version history:
 //   v1 — initial wallet repo schema, `contractsCollections` store.
@@ -25,8 +22,7 @@ export const STORE_VTXO_BRANCHES = "vtxoBranches";
 //   v5 — add the `(address, createdAt)` history index; existing rows are
 //        indexed without changing their stored values.
 //   v6 — add the contract watch-state indexes; existing rows are backfilled.
-// An older SDK cannot reopen a newer database. The intent ladder below runs on a
-// dedicated DB name: its v4/v5 are not these.
+// An older SDK cannot reopen a newer database.
 export const DB_VERSION = 6;
 
 export const CONTRACT_WATCH_INDEX = "watchState";
@@ -40,15 +36,6 @@ export const contractRow = (contract: Contract): ContractRow => ({
     ...contract,
     watchState: watchStateOf(contract),
 });
-
-//   dedicated-DB v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
-//        `vtxoBranches` object stores (new, empty — no backfill).
-//   v5 — make `intents.intentId` unique (was non-unique in v4), matching the
-//        "unique when present" contract enforced by the other backends.
-// Experimental activation version for intent/virtualtx persistence. Reaching
-// it requires deliberately constructing the opt-in repos; the shared wallet
-// DB never advertises this version.
-export const INTENT_DB_VERSION = 5;
 
 export function initDatabase(
     db: IDBDatabase,
@@ -272,85 +259,6 @@ function backfillContractWatchState(store: IDBObjectStore): void {
 // to enter the `scriptUnspent` index; spent history stays out of it.
 export const unspentFlag = (vtxo: VirtualCoin): { unspent?: 1 } =>
     isVtxoSpent(vtxo) ? {} : { unspent: 1 };
-
-// Experimental / inert: creates the intent, virtualtx and vtxoBranch stores on
-// top of the shared wallet schema. Invoked ONLY by the opt-in
-// `IndexedDBIntentRepository`/`IndexedDBVirtualTxRepository` when they open a
-// dedicated DB at `INTENT_DB_VERSION`. The default wallet path uses
-// `initDatabase` and never reaches this code, so an existing user's database is
-// never upgraded to hold these stores.
-export function initDatabaseWithIntents(
-    db: IDBDatabase,
-    oldVersion: number,
-    transaction: IDBTransaction | null,
-): void {
-    initDatabase(db, oldVersion, transaction);
-
-    // v4: intent + virtualtx persistence
-    if (!db.objectStoreNames.contains(STORE_INTENTS)) {
-        const intentsStore = db.createObjectStore(STORE_INTENTS, {
-            keyPath: "intentTxId",
-        });
-        // Unique-when-present: records with no intentId aren't indexed, so many
-        // pre-registration intents coexist; a duplicate intentId is rejected.
-        intentsStore.createIndex("intentId", "intentId", { unique: true });
-        intentsStore.createIndex("state", "state", { unique: false });
-    }
-    if (!db.objectStoreNames.contains(STORE_VIRTUAL_TXS)) {
-        db.createObjectStore(STORE_VIRTUAL_TXS, { keyPath: "txid" });
-    }
-    if (!db.objectStoreNames.contains(STORE_VTXO_BRANCHES)) {
-        const branchesStore = db.createObjectStore(STORE_VTXO_BRANCHES, {
-            keyPath: ["vtxoTxid", "vtxoVout", "position"],
-        });
-        branchesStore.createIndex("vtxo", ["vtxoTxid", "vtxoVout"], { unique: false });
-        branchesStore.createIndex("virtualTxid", "virtualTxid", { unique: false });
-    }
-
-    // v4 → v5: the intents store already exists with a NON-unique intentId
-    // index; recreate it as unique. Only oldVersion === 4 hits this — a store
-    // created fresh (or via a <4 upgrade) already gets the unique index above.
-    if (oldVersion === 4 && transaction) {
-        const intentsStore = transaction.objectStore(STORE_INTENTS);
-        if (intentsStore.indexNames.contains("intentId")) {
-            intentsStore.deleteIndex("intentId");
-        }
-        // The v4 index was non-unique, so duplicate intentId values may exist.
-        // Building the unique index directly would abort the whole upgrade on
-        // the first collision, so drop duplicate rows first (keeping the first
-        // seen per intentId), then create the index once the store is clean.
-        // Absent/null intentIds are never indexed and can't collide.
-        dedupeIntentIds(intentsStore, () => {
-            intentsStore.createIndex("intentId", "intentId", { unique: true });
-        });
-    }
-}
-
-// Walk the intents store, deleting rows whose `intentId` repeats an
-// already-seen value, then invoke `onComplete` once the walk finishes. The
-// version-change transaction stays open while the cursor requests are pending,
-// and every delete is applied before the terminal (null-cursor) callback, so
-// `onComplete` observes a store free of duplicate intentIds.
-function dedupeIntentIds(store: IDBObjectStore, onComplete: () => void): void {
-    const seen = new Set<string>();
-    const cursorRequest = store.openCursor();
-    cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) {
-            onComplete();
-            return;
-        }
-        const id = (cursor.value as { intentId?: string | null }).intentId;
-        if (id != null) {
-            if (seen.has(id)) {
-                cursor.delete();
-            } else {
-                seen.add(id);
-            }
-        }
-        cursor.continue();
-    };
-}
 
 // Exported for unit tests — the `onupgradeneeded` transaction can't be
 // forged in-process, so tests exercise the backfill with a regular

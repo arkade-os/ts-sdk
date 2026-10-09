@@ -9,25 +9,22 @@ import {
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { awaitTransaction, promisifyRequest } from "./idbUtils";
 import { createManagedConnection, ManagedConnection } from "./managedConnection";
-import { initDatabaseWithIntents, INTENT_DB_VERSION, STORE_INTENTS } from "./schema";
-import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
+import {
+    BATCHES_DB_NAME,
+    BATCHES_DB_VERSION,
+    initBatchesDatabase,
+    STORE_INTENTS,
+} from "./batchesSchema";
 
 /**
- * @experimental Intent persistence is inert by default. This repository opens
- * its DB at {@link INTENT_DB_VERSION} and creates the intent stores, so it must
- * be given a *dedicated* `dbName` distinct from the wallet/contract DB until
- * intent persistence is activated in the shared schema — otherwise the shared
- * DB's version-conflict guard rejects the mismatched open.
+ * @experimental Intent persistence is opt-in. Stored in its own database,
+ * {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
  */
 export class IndexedDBIntentRepository implements IntentRepository {
     readonly version = 1 as const;
     private readonly connection: ManagedConnection;
-    constructor(dbName: string = DEFAULT_DB_NAME) {
-        this.connection = createManagedConnection(
-            dbName,
-            INTENT_DB_VERSION,
-            initDatabaseWithIntents,
-        );
+    constructor(dbName: string = BATCHES_DB_NAME) {
+        this.connection = createManagedConnection(dbName, BATCHES_DB_VERSION, initBatchesDatabase);
     }
 
     private getDB(): Promise<IDBDatabase> {

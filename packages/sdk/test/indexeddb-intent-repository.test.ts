@@ -3,10 +3,10 @@ import { intentRepositoryConformance } from "./conformance/intentRepository.conf
 import { collectIntents } from "../src/repositories/intentRepository";
 import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
 import {
-    initDatabaseWithIntents,
-    INTENT_DB_VERSION,
+    BATCHES_DB_VERSION,
+    initBatchesDatabase,
     STORE_INTENTS,
-} from "../src/repositories/indexedDB/schema";
+} from "../src/repositories/indexedDB/batchesSchema";
 import { IndexedDBIntentRepository } from "../src/repositories/indexedDB/intentRepository";
 
 // IndexedDB is provided globally by test/polyfill.js (indexeddbshim).
@@ -32,7 +32,7 @@ describe("IndexedDBIntentRepository", () => {
             intentVtxos: [{ txid: "x", vout: 0 }],
         };
         for (const id of ["a", "b", "c"]) await repo.saveIntent({ ...base, intentTxId: id });
-        const db = await openDatabase(name, INTENT_DB_VERSION, initDatabaseWithIntents);
+        const db = await openDatabase(name, BATCHES_DB_VERSION, initBatchesDatabase);
         const proto = Object.getPrototypeOf(
             db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS),
         ) as { openCursor: (...args: unknown[]) => unknown };
