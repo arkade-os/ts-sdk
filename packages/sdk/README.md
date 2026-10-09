@@ -1163,17 +1163,19 @@ SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
 driver, the SDK handles the schema.
 Paged wallet reads require SQLite 3.15.0 or newer because they use
 [row-value comparisons](https://sqlite.org/rowvalue.html#backwards_compatibility).
+The built-in `node:sqlite` module is experimental in Node.js 22.12.x and stable
+from Node.js 22.13.0 onward.
 
 See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
-a full working example using `better-sqlite3`.
+a full working example using `node:sqlite`.
 
 ```typescript
 import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 
-const db = new Database('my-wallet.sqlite')
-db.pragma('journal_mode = WAL')
+const db = new DatabaseSync('my-wallet.sqlite')
+db.exec('PRAGMA journal_mode = WAL')
 
 const executor: SQLExecutor = {
   run: async (sql, params) => { db.prepare(sql).run(...(params ?? [])) },

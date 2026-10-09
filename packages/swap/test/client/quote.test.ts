@@ -21,6 +21,7 @@ import {
 import { AmountEncodingUnsupported } from "../../src/client/errors";
 import { MIN_HEADROOM_SECONDS, SwapRefusal } from "../../src/rfq";
 import { MissingCorridorDep } from "../../src/client/errors";
+import { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "../../src/client/policy";
 import type { QuoteInput } from "../../src/client/quote";
 import {
     EMULATOR_PUBKEY_HEX,
@@ -457,6 +458,51 @@ describe("verification, one failure per check", () => {
         expect(error).toBeInstanceOf(SwapRefusal);
         expect(error).not.toBeInstanceOf(QuoteVerificationFailed);
         expect(error.reason).toBe("amount_out_of_range");
+    });
+
+    it("refuses a refund locktime past the policy's refund window", async () => {
+        const long = { ...CLOCK, refundLocktime: NOW + DEFAULT_MAX_REFUND_WINDOW_SECONDS + 3600 };
+        const { client } = await setup({
+            answer: (payload) => lightningSendAnswer(payload, long),
+        });
+        const error = await client.quote(sendInput()).catch((e) => e);
+        expect(error).toBeInstanceOf(QuoteVerificationFailed);
+        expect(error.check).toBe("refund_window");
+        expect(error.expected).toMatch(/at most/);
+    });
+
+    it("refuses a solo-refund delay past the policy's refund window", async () => {
+        const { client } = await setup({
+            answer: (payload) =>
+                lightningSendAnswer(payload, CLOCK, { refundWithoutReceiverDelay: 0xffff * 512 }),
+        });
+        const error = await client.quote(sendInput()).catch((e) => e);
+        expect(error).toBeInstanceOf(QuoteVerificationFailed);
+        expect(error.check).toBe("refund_window");
+        expect(error.expected).toMatch(/at most/);
+    });
+
+    it("refuses an onchain send's refund locktime past the refund window", async () => {
+        const long = { ...CLOCK, refundLocktime: NOW + DEFAULT_MAX_REFUND_WINDOW_SECONDS + 3600 };
+        const { client } = await setup({
+            answer: (payload) => onchainSendAnswer(payload, long),
+        });
+        const error = await client
+            .quote({ to: BCRT1, amount: 100_000n, amountOn: "give" })
+            .catch((e) => e);
+        expect(error).toBeInstanceOf(QuoteVerificationFailed);
+        expect(error.check).toBe("refund_window");
+        expect(error.expected).toMatch(/at most/);
+    });
+
+    it("takes a longer refund window when the policy allows it", async () => {
+        const long = { ...CLOCK, refundLocktime: NOW + DEFAULT_MAX_REFUND_WINDOW_SECONDS + 3600 };
+        const { client } = await setup({
+            answer: (payload) => lightningSendAnswer(payload, long),
+            policy: { maxRefundWindowSeconds: 2 * DEFAULT_MAX_REFUND_WINDOW_SECONDS },
+        });
+        const quote = await client.quote(sendInput());
+        expect(quote.refundLocktime).toBe(long.refundLocktime);
     });
 
     it("refuses a quote already inside the policy's TTL floor", async () => {

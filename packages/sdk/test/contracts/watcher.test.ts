@@ -468,6 +468,8 @@ describe("ContractWatcher", () => {
                 expect(warning).toBeDefined();
                 // The remedy has to travel with the warning, not just the type.
                 expect(String(warning?.[0])).toContain("configureEventSource");
+                expect(String(warning?.[0])).not.toContain("falling back to polling");
+                expect(String(warning?.[0])).toContain("refreshVtxos()");
                 // A ReferenceError used to land here every few seconds.
                 expect(errorSpy).not.toHaveBeenCalled();
 
@@ -495,6 +497,7 @@ describe("ContractWatcher", () => {
                 ]);
                 await vi.advanceTimersByTimeAsync(2_000);
                 expect(events.map((e) => e.type)).toContain("vtxo_received");
+                expect(indexer.getVtxos).not.toHaveBeenCalled();
             } finally {
                 await watcher.stopWatching();
                 warnSpy.mockRestore();

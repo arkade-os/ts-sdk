@@ -2,7 +2,7 @@ import { collectVtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { ArkAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
 import type { ExtendedVirtualCoin } from "../../src/wallet";
@@ -593,7 +593,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
 
 describe("SQLite migration: migrateVtxosTable", () => {
     // Exercises the legacy→v1 paths against a real SQLite database
-    // (better-sqlite3 in-memory). The in-memory mock used elsewhere cannot
+    // (node:sqlite in-memory). The in-memory mock used elsewhere cannot
     // cover these paths: its `PRAGMA table_info` response hardcodes
     // `notnull: 1` (so any `script` column looks already-migrated) and its
     // WHERE parser doesn't handle `IS NULL` (so the backfill probe would
@@ -635,7 +635,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
     // 0.4.x fresh install: `script` already NOT NULL, so the v1 check fires with the blob present.
     const LEGACY_V04_SCHEMA = LEGACY_V0B_SCHEMA.replace("script TEXT,", "script TEXT NOT NULL,");
 
-    function createExecutor(db: Database.Database): SQLExecutor {
+    function createExecutor(db: DatabaseSync): SQLExecutor {
         return {
             async run(sql: string, params?: unknown[]) {
                 db.prepare(sql).run(...((params ?? []) as unknown[] as []));
@@ -651,7 +651,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
 
     // Insert into a table matching `LEGACY_V0_SCHEMA` — no script column.
     function insertV0Row(
-        db: Database.Database,
+        db: DatabaseSync,
         txid: string,
         address: string,
         virtualStatus: Record<string, unknown> = {},
@@ -666,12 +666,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
     }
 
     // Insert into a table matching `LEGACY_V0B_SCHEMA` — nullable script.
-    function insertV0bRow(
-        db: Database.Database,
-        txid: string,
-        address: string,
-        script: string | null,
-    ) {
+    function insertV0bRow(db: DatabaseSync, txid: string, address: string, script: string | null) {
         db.prepare(
             `INSERT INTO ark_vtxos (
                 txid, vout, value, address, tap_tree,
@@ -682,7 +677,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
     }
 
     function insertV04Row(
-        db: Database.Database,
+        db: DatabaseSync,
         txid: string,
         address: string,
         script: string,
@@ -697,14 +692,14 @@ describe("SQLite migration: migrateVtxosTable", () => {
         ).run(txid, address, JSON.stringify(virtualStatus), script);
     }
 
-    function vtxosCols(db: Database.Database): Array<{ name: string; notnull: number }> {
+    function vtxosCols(db: DatabaseSync): Array<{ name: string; notnull: number }> {
         return db.prepare(`PRAGMA table_info(ark_vtxos)`).all() as Array<{
             name: string;
             notnull: number;
         }>;
     }
 
-    function tempTableExists(db: Database.Database): boolean {
+    function tempTableExists(db: DatabaseSync): boolean {
         return !!db
             .prepare(
                 `SELECT name FROM sqlite_master
@@ -713,12 +708,12 @@ describe("SQLite migration: migrateVtxosTable", () => {
             .get();
     }
 
-    let db: Database.Database;
+    let db: DatabaseSync;
     let executor: SQLExecutor;
     let repo: SQLiteWalletRepository;
 
     beforeEach(() => {
-        db = new Database(":memory:");
+        db = new DatabaseSync(":memory:");
         executor = createExecutor(db);
         repo = new SQLiteWalletRepository(executor);
     });

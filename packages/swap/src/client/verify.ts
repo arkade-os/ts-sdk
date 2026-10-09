@@ -18,6 +18,7 @@ import {
     type RfqQuote,
 } from "../rfq";
 import { QuoteExpired, QuoteVerificationFailed, type QuoteCheck } from "./errors";
+import { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "./policy";
 import type { Pubkey } from "./primitives";
 import type { QuoteId } from "./quote";
 
@@ -290,6 +291,35 @@ export const verifyQuoteTtl = (input: {
     const floor = input.floorSeconds ?? 0;
     if (input.expiresAt - input.now <= floor) {
         throw new QuoteExpired(input.quoteId, input.expiresAt, input.now);
+    }
+};
+
+/** Sequence-lock granularity: a CSV delay covering a window rounds up to this. */
+const CSV_GRANULARITY_SECONDS = 512;
+
+/**
+ * The policy ceiling on how long a send's funds stay locked: a solver that never pays could
+ * otherwise hold them for as long as it quotes.
+ */
+export const verifyRefundWindow = (input: {
+    readonly refundLocktime: number;
+    /** Lightning send's solo-refund CSV delay. */
+    readonly refundWithoutReceiverDelay?: number;
+    readonly now: number;
+    readonly maxSeconds?: number;
+}): void => {
+    const max = input.maxSeconds ?? DEFAULT_MAX_REFUND_WINDOW_SECONDS;
+    const window = input.refundLocktime - input.now;
+    if (!(window <= max)) {
+        throw new QuoteVerificationFailed("refund_window", `at most ${max}s`, `${window}s`);
+    }
+    const delay = input.refundWithoutReceiverDelay;
+    if (delay !== undefined && !(delay < max + CSV_GRANULARITY_SECONDS)) {
+        throw new QuoteVerificationFailed(
+            "refund_window",
+            `a solo-refund delay of at most ${max}s`,
+            `${delay}s`,
+        );
     }
 };
 

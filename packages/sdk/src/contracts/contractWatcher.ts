@@ -198,7 +198,9 @@ export class ContractWatcher {
     async updateContract(contract: Contract): Promise<void> {
         const existing = this.contracts.get(contract.script);
         if (!existing) {
-            throw new Error(`Contract ${contract.script} not found`);
+            // startup skips `retained` rows, so re-watching one registers it here
+            if (isWatchedContract(contract)) await this.addContract(contract);
+            return;
         }
 
         existing.contract = contract;
@@ -230,7 +232,7 @@ export class ContractWatcher {
      * Feeds both the subscription and the sweep scope. `state` must never narrow it: an Ark
      * receive address can be paid again after the wallet rotated past it, and such a payment
      * would stay invisible. Only an owner's explicit {@link ContractWatchState} narrows it; the
-     * row stays in {@link getAllContracts} for reads, annotation and history.
+     * row stays in the repository for reads, annotation and history.
      */
     getWatchedContracts(): Contract[] {
         return this.getAllContracts().filter(isWatchedContract);
@@ -437,7 +439,7 @@ export class ContractWatcher {
      * Handle "this environment has no `EventSource`": warn once and return true so the caller
      * skips reconnecting. A missing global is not a dropped connection; unlimited backoff would
      * retry forever and fire a `connection_reset` (read as "resync, stream coming back") every
-     * few seconds. Failsafe polling keeps the watcher correct, just slower.
+     * few seconds.
      */
     private reportEventSourceUnavailable(error: unknown): boolean {
         if (!isEventSourceUnavailableError(error)) return false;
@@ -445,7 +447,8 @@ export class ContractWatcher {
             this.eventSourceReported = true;
             console.warn(
                 `ContractWatcher: contract events are OFF and will not be retried — ` +
-                    `falling back to polling every ${this.config.failsafePollIntervalMs}ms. ` +
+                    `the wallet's own contracts update only when it syncs (reads, refreshVtxos()); ` +
+                    `watch-only scripts are still polled. ` +
                     error.message,
             );
         }
@@ -480,6 +483,7 @@ export class ContractWatcher {
         }, delay);
     }
 
+    /** Replays repository state — only what a sync stored; watch-only scripts poll the indexer. */
     private startFailsafePolling(): void {
         if (this.failsafePollIntervalId) {
             clearInterval(this.failsafePollIntervalId);

@@ -10,7 +10,7 @@
  * $ npx tsx examples/node/multiple-wallets.ts
  * ```
  *
- * Requires `better-sqlite3` (included as a devDependency).
+ * Requires Node.js with the built-in `node:sqlite` module (v22.13+).
  */
 
 import {
@@ -28,7 +28,7 @@ import {
     SQLiteContractRepository,
     SQLExecutor,
 } from "../../src/repositories/sqlite";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "child_process";
 
 // EventSource is used internally by the SDK for settlement events (SSE).
@@ -37,17 +37,17 @@ import { EventSource } from "eventsource";
 (globalThis as any).EventSource = EventSource;
 
 function createSQLExecutor(dbPath: string): SQLExecutor {
-    const db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
+    const db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA journal_mode = WAL");
 
     return {
         run: async (sql, params) => {
-            db.prepare(sql).run(...(params ?? []));
+            db.prepare(sql).run(...((params ?? []) as any[]));
         },
         get: async <T>(sql: string, params?: unknown[]) =>
-            db.prepare(sql).get(...(params ?? [])) as T | undefined,
+            db.prepare(sql).get(...((params ?? []) as any[])) as unknown as T | undefined,
         all: async <T>(sql: string, params?: unknown[]) =>
-            db.prepare(sql).all(...(params ?? [])) as T[],
+            db.prepare(sql).all(...((params ?? []) as any[])) as unknown as T[],
     };
 }
 

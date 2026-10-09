@@ -8,6 +8,11 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
 import { SQLExecutor } from "./types";
 import { sanitizeTablePrefix } from "./prefix";
 
+/** A row stored before the `watch` column existed holds NULL and counts as "watched".
+ * Indexes and filters must share this expression: SQLite uses an expression index
+ * only for a WHERE term with the same expression. */
+const WATCH_STATE = "IFNULL(watch, 'watched')";
+
 interface SQLiteContractRepositoryOptions {
     /** Table name prefix (default: "ark_") */
     prefix?: string;
@@ -72,6 +77,12 @@ export class SQLiteContractRepository implements ContractRepository {
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_state ON ${this.table} (state)`,
         );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_watch_state ON ${this.table} (${WATCH_STATE}, script)`,
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}contracts_type_watch_state ON ${this.table} (type, ${WATCH_STATE}, script)`,
+        );
     }
 
     private async addColumnIfMissing(column: string, type: string): Promise<void> {
@@ -106,7 +117,7 @@ export class SQLiteContractRepository implements ContractRepository {
             this.addFilterCondition(conditions, params, "script", filter.script);
             this.addFilterCondition(conditions, params, "state", filter.state);
             this.addFilterCondition(conditions, params, "type", filter.type);
-            this.addWatchCondition(conditions, params, filter.watch);
+            this.addFilterCondition(conditions, params, WATCH_STATE, filter.watch);
         }
         if (page.after !== undefined) {
             conditions.push("script > ?");
@@ -166,26 +177,6 @@ export class SQLiteContractRepository implements ContractRepository {
             conditions.push(`${column} = ?`);
             params.push(value);
         }
-    }
-
-    /**
-     * Same as {@link addFilterCondition}, except a row predating the
-     * column stores NULL and must match `"watched"`.
-     */
-    private addWatchCondition(
-        conditions: string[],
-        params: unknown[],
-        value?: ContractWatchState | ContractWatchState[],
-    ): void {
-        if (value === undefined) return;
-
-        const wanted = Array.isArray(value) ? value : [value];
-        if (wanted.length === 0) return;
-
-        const placeholders = wanted.map(() => "?").join(", ");
-        const clause = `watch IN (${placeholders})`;
-        conditions.push(wanted.includes("watched") ? `(${clause} OR watch IS NULL)` : clause);
-        params.push(...wanted);
     }
 }
 

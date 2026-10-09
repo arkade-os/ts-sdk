@@ -41,6 +41,9 @@ export type DriveMode =
      */
     | "readonly";
 
+/** Default {@link SwapPolicy.maxRefundWindowSeconds}: 30 days. */
+export const DEFAULT_MAX_REFUND_WINDOW_SECONDS = 30 * 24 * 3600;
+
 export interface SwapPolicy {
     /** How much the client drives on its own. Default `"auto"`. */
     readonly drive?: DriveMode;
@@ -79,6 +82,13 @@ export interface SwapPolicy {
      * `QuoteExpired`, rather than handing back terms that would fail at `accept()`.
      */
     readonly quoteTtlFloorSeconds?: number;
+
+    /**
+     * The longest a send's funds may stay locked before the trader can refund, in seconds.
+     * Caps `refund_locktime` and the solo-refund delay; above it `quote()` throws
+     * `QuoteVerificationFailed("refund_window")`. Default {@link DEFAULT_MAX_REFUND_WINDOW_SECONDS}.
+     */
+    readonly maxRefundWindowSeconds?: number;
 
     /**
      * §10, reserved and inert: the published-RFQ auction's parameters.

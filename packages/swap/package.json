@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.1.0-rc.20",
+    "version": "0.1.0-rc.21",
     "type": "module",
     "description": "Client-side Arkade Intents asset swaps: state a route, get an outcome. Pay a bolt11 invoice, receive over Lightning, exchange assets, or withdraw onchain.",
     "repository": {
@@ -100,7 +100,7 @@
         "smoke:dist": "node scripts/smoke-dist.mjs"
     },
     "engines": {
-        "node": ">=22.12.0"
+        "node": ">=22.13.0"
     },
     "keywords": [
         "arkade",
