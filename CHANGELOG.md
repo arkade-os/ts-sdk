@@ -325,9 +325,11 @@ style and have not been backfilled.
   `ContractWatcher.updateContract` now registers a watched contract it
   does not hold instead of throwing, and ignores a retained one.
 
-- **`SQLiteContractRepository` indexes `(watch, script)`.** The startup
-  read above no longer walks the whole contracts table, page by page, to
-  find its few watched rows.
+- **`SQLiteContractRepository` indexes contracts by watch state.** The
+  startup read above, and a watch read narrowed by type such as
+  `getContracts({ type, watch })`, now seek their few live rows instead
+  of walking every contract, or every contract of that type, page by
+  page. A row stored without a watch state still counts as `watched`.
 
 ## [0.4.77] - 2026-09-30
 
