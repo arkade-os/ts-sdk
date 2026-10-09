@@ -11,6 +11,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
+import type { IntentRepository } from "../src/repositories/intentRepository";
 import { SingleKey } from "../src/identity/singleKey";
 
 const SERVER_KEY = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -54,7 +55,9 @@ const offlineIndexer = () =>
 const outpoint = (coin: { txid: string; vout: number }) => `${coin.txid}:${coin.vout}`;
 
 /** Three 10,000-sat VTXOs on the wallet's own script, expiring 10h, 20h and 30h out. */
-export async function fundedWallet() {
+export async function fundedWallet(
+    opts: { concurrentSpending?: boolean; intentRepository?: IntentRepository } = {},
+) {
     const walletRepository = new InMemoryWalletRepository();
     const arkProvider = {
         getInfo: vi.fn(async () => arkInfo()),
@@ -73,8 +76,15 @@ export async function fundedWallet() {
             getTransactions: async () => [],
             getTxOutspends: async () => [],
         } as Partial<OnchainProvider> as OnchainProvider,
-        storage: { walletRepository, contractRepository: new InMemoryContractRepository() },
+        storage: {
+            walletRepository,
+            contractRepository: new InMemoryContractRepository(),
+            ...(opts.intentRepository ? { intentRepository: opts.intentRepository } : {}),
+        },
         settlementConfig: false,
+        ...(opts.concurrentSpending === undefined
+            ? {}
+            : { concurrentSpending: opts.concurrentSpending }),
     });
     const coins = ["aa", "bb", "cc"].map(
         (fill, i) =>
@@ -118,4 +128,21 @@ export function stallSubmits(wallet: Wallet): Submit[] {
             }),
     );
     return submits;
+}
+
+/** Hold the next settle inside `Batch.join` until `open()`; its event stream then fails. */
+export function parkSettle(
+    wallet: Wallet,
+    arkProvider: { getEventStream: ReturnType<typeof vi.fn> },
+) {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    arkProvider.getEventStream.mockImplementation(async function* () {
+        await gate;
+        throw new Error("event stream closed by test");
+    });
+    const intent = { proof: "", message: {} };
+    vi.spyOn(wallet as any, "makeRegisterIntentSignature").mockResolvedValue(intent);
+    vi.spyOn(wallet as any, "makeDeleteIntentSignature").mockResolvedValue(intent);
+    return { open };
 }

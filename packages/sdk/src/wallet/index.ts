@@ -215,6 +215,16 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `20`
      */
     lookAheadWindow?: number;
+
+    /**
+     * Let spends run concurrently on disjoint VTXOs: the wallet lock covers only picking and
+     * reserving inputs, amount-bearing `Ramps` exits spend only the VTXOs they need, and naming a
+     * VTXO another operation is spending throws `VtxoReservedError`. One `Wallet` instance is one
+     * reservation ledger; it does not coordinate across processes.
+     *
+     * @defaultValue `false`
+     */
+    concurrentSpending?: boolean;
 }
 
 /**
