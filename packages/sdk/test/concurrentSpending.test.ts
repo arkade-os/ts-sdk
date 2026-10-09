@@ -148,6 +148,29 @@ describe("concurrentSpending", () => {
         await wallet.dispose();
     });
 
+    it("issues an asset from a free coin and releases the lock once it is reserved", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, outpoints } = await fundedWallet({ concurrentSpending: true });
+        const submits = stallSubmits(wallet);
+        const to = await wallet.getAddress();
+
+        const sending = wallet.send({ address: to, amount: 2_000 });
+        await vi.waitFor(() => expect(submits).toHaveLength(1));
+        const issuing = wallet.assetManager.issue({ amount: 100n });
+        await vi.waitFor(() => expect(submits).toHaveLength(2));
+        const next = wallet.send({ address: to, amount: 2_000 });
+        await vi.waitFor(() => expect(submits).toHaveLength(3));
+        expect(submits.map((s) => s.inputs)).toEqual([
+            [outpoints[0]],
+            [outpoints[1]],
+            [outpoints[2]],
+        ]);
+
+        submits.forEach((s) => s.finish());
+        await Promise.all([sending, issuing, next]);
+        await wallet.dispose();
+    });
+
     it("ignores boarding inputs when checking for in-flight conflicts", () => {
         const txid = "aa".repeat(32);
         const thisArg = { _pendingSpendOutpoints: new Set([`${txid}:0`]) };

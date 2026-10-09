@@ -2755,6 +2755,28 @@ export class Wallet
         };
     }
 
+    /**
+     * @internal For `AssetManager`: with `concurrentSpending`, runs `fn` under the wallet lock and
+     * reserves what it submits, releasing the lock once reserved. Otherwise exactly as before.
+     */
+    withSpendLock<T>(fn: (submit: OffchainSubmit) => Promise<T>): Promise<T> {
+        if (!this._concurrentSpending) {
+            return fn((inputs, outputs) => this.buildAndSubmitOffchainTx(inputs, outputs));
+        }
+        return this._withTxLock((release) =>
+            fn(async (inputs, outputs) => {
+                this._assertNotInFlight(inputs);
+                this._addPendingSpends(inputs);
+                release();
+                try {
+                    return await this.buildAndSubmitOffchainTx(inputs, outputs);
+                } finally {
+                    this._removePendingSpends(inputs);
+                }
+            }),
+        );
+    }
+
     private _withTxLock<T>(fn: (release: () => void) => Promise<T>): Promise<T> {
         let release!: () => void;
         const lock = new Promise<void>((r) => (release = r));
@@ -5652,6 +5674,12 @@ export interface VtxoReservation {
     /** Idempotent. */
     release(): void;
 }
+
+/** @internal Submits an Arkade transaction for {@link Wallet.withSpendLock}'s caller. */
+export type OffchainSubmit = (
+    inputs: ExtendedVirtualCoin[],
+    outputs: TransactionOutput[],
+) => Promise<{ arkTxid: string; signedCheckpointTxs: string[] }>;
 
 /** Options for {@link waitForIncomingFunds}. */
 export interface WaitForIncomingFundsOptions {
