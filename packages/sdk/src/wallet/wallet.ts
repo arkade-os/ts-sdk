@@ -356,12 +356,27 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
 /**
- * Apply {@link GetVtxosFilter} to a contract snapshot; the single definition shared by `getVtxos`
- * and {@link IReadonlyWallet.getSpendableVtxos}. No chain tip (offline-first), so height-encoded
- * expiry reads as not expired.
+ * Flatten a contract snapshot and apply the shared VTXO filtering rules used by `getVtxos` and
+ * {@link IReadonlyWallet.getSpendableVtxos}.
  */
 export function filterSnapshotVtxos(
     snapshot: readonly ContractWithVtxos[],
+    filter: GetVtxosFilter | undefined,
+    pendingSpendOutpoints: ReadonlySet<string>,
+): NormalizedExtendedVirtualCoin[] {
+    return filterFlatVtxos(
+        snapshot.flatMap((contract) => contract.vtxos),
+        filter,
+        pendingSpendOutpoints,
+    );
+}
+
+/**
+ * Apply {@link GetVtxosFilter} to a flat VTXO list, including the wallet's in-flight spend
+ * exclusions. No chain tip (offline-first), so height-encoded expiry reads as not expired.
+ */
+export function filterFlatVtxos(
+    vtxos: readonly NormalizedExtendedVirtualCoin[],
     filter: GetVtxosFilter | undefined,
     pendingSpendOutpoints: ReadonlySet<string>,
 ): NormalizedExtendedVirtualCoin[] {
@@ -370,25 +385,23 @@ export function filterSnapshotVtxos(
         withUnrolled: filter?.withUnrolled ?? false,
     };
     const now = { timestamp: new Date() };
-    return snapshot
-        .flatMap((_) => _.vtxos)
-        .filter((vtxo) => {
-            if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                return false;
-            }
-            // Location before spend: `withUnrolled` is authoritative for an exited coin, even
-            // an unrolled-and-spent one.
-            if (vtxo.isUnrolled) {
-                return !!f.withUnrolled;
-            }
-            if (isVtxoSpent(vtxo)) {
-                return false;
-            }
-            if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
-                return false;
-            }
-            return true;
-        });
+    return vtxos.filter((vtxo) => {
+        if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+            return false;
+        }
+        // Location before spend: `withUnrolled` is authoritative for an exited coin, even
+        // an unrolled-and-spent one.
+        if (vtxo.isUnrolled) {
+            return !!f.withUnrolled;
+        }
+        if (isVtxoSpent(vtxo)) {
+            return false;
+        }
+        if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+            return false;
+        }
+        return true;
+    });
 }
 
 /**

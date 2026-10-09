@@ -9,6 +9,13 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
+  `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
+  no longer hide subdust outputs. Explicit filter flags, spent-output
+  exclusions, and the separate spendability-gated accessor are unchanged.
+
 ### Breaking Changes
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
