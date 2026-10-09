@@ -192,6 +192,18 @@ export function getRandomId(): string {
     return hex.encode(randomValue);
 }
 
+const sdkPicked = new WeakSet<object>();
+
+/** Marks settle params whose inputs the SDK picked, so `settle` refuses any held since. */
+export function markSdkPicked<T extends object>(params: T): T {
+    sdkPicked.add(params);
+    return params;
+}
+
+export function isSdkPicked(params: object | undefined): boolean {
+    return params !== undefined && sdkPicked.has(params);
+}
+
 type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {
     script: Bytes;
     extensions?: Recipient["extensions"];

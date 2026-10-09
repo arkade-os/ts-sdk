@@ -166,6 +166,8 @@ type Initialize = {
         };
         delegateUrl?: string;
         settlementConfig?: SettlementConfig | false;
+        /** @see WalletConfig.concurrentSpending */
+        concurrentSpending?: boolean;
         walletMode?: "auto" | "static" | "hd";
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
@@ -527,6 +529,7 @@ export class MessageBus {
                 storage,
                 delegateProvider,
                 settlementConfig: config.settlementConfig,
+                concurrentSpending: config.concurrentSpending,
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,

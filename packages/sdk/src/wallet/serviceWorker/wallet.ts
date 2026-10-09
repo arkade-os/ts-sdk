@@ -449,6 +449,8 @@ interface ServiceWorkerWalletOptions {
     messageBusTimeoutMs?: number;
     /** Optional settlement configuration forwarded to the worker wallet. */
     settlementConfig?: SettlementConfig | false;
+    /** Forwarded to the worker wallet. @see WalletConfig.concurrentSpending */
+    concurrentSpending?: boolean;
     /**
      * Receive-address strategy forwarded to the worker wallet.
      *
@@ -518,6 +520,7 @@ type MessageBusInitConfig = {
     delegateUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
+    concurrentSpending?: boolean;
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     lookAheadWindow?: number;
@@ -1699,6 +1702,12 @@ export class ServiceWorkerWallet
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
     private _restoreInFlight?: Promise<void>;
+    private _concurrentSpending = false;
+
+    /** @see WalletConfig.concurrentSpending */
+    get concurrentSpending(): boolean {
+        return this._concurrentSpending;
+    }
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -1760,10 +1769,12 @@ export class ServiceWorkerWallet
             messageTag,
             !!options.delegateUrl,
         );
+        wallet._concurrentSpending = options.concurrentSpending === true;
 
         return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
             settlementConfig: options.settlementConfig,
+            concurrentSpending: options.concurrentSpending,
             walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
@@ -1973,6 +1984,8 @@ export class ServiceWorkerWallet
             });
             return (response as ResponseSettle).payload.txid;
         } catch (error) {
+            // Kept whole: callers such as Ramps retry on this name.
+            if (error instanceof Error && error.name === "VtxoReservedError") throw error;
             throw new Error(`Settlement failed: ${error}`);
         }
     }
@@ -2039,6 +2052,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessage(message);
             return (response as ResponseSend).payload.txid;
         } catch (error) {
+            if (error instanceof Error && error.name === "VtxoReservedError") throw error;
             throw new Error(`Send failed: ${error}`);
         }
     }
