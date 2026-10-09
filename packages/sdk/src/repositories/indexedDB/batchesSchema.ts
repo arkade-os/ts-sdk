@@ -8,7 +8,11 @@ export const STORE_INTENTS = "intents";
 export const STORE_VIRTUAL_TXS = "virtualTxs";
 export const STORE_VTXO_BRANCHES = "vtxoBranches";
 
-export function initBatchesDatabase(db: IDBDatabase): void {
+export function initBatchesDatabase(
+    db: IDBDatabase,
+    _oldVersion: number,
+    _transaction: IDBTransaction | null,
+): void {
     if (!db.objectStoreNames.contains(STORE_INTENTS)) {
         const intentsStore = db.createObjectStore(STORE_INTENTS, {
             keyPath: "intentTxId",
