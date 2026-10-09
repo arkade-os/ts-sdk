@@ -1984,6 +1984,8 @@ export class ServiceWorkerWallet
             });
             return (response as ResponseSettle).payload.txid;
         } catch (error) {
+            // Kept whole: callers such as Ramps retry on this name.
+            if (error instanceof Error && error.name === "VtxoReservedError") throw error;
             throw new Error(`Settlement failed: ${error}`);
         }
     }
@@ -2050,6 +2052,7 @@ export class ServiceWorkerWallet
             const response = await this.sendMessage(message);
             return (response as ResponseSend).payload.txid;
         } catch (error) {
+            if (error instanceof Error && error.name === "VtxoReservedError") throw error;
             throw new Error(`Send failed: ${error}`);
         }
     }
