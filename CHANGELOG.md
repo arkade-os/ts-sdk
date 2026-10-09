@@ -163,8 +163,9 @@ style and have not been backfilled.
   `VtxoReservedError`. `wallet.reserveVtxos(outpoints)` holds VTXOs out of
   `send`, `settle()`, exits, renewal, router rails and swap funding until
   released. `WalletBalance` gains `reserved`, so
-  `settled + preconfirmed === available + gated + intentLocked + reserved`; no
-  existing field changes value, but code that builds `WalletBalance` objects
+  `settled + preconfirmed === available + gated + intentLocked + reserved`: a
+  held VTXO's value moves from `available` to `reserved`, and without holds no
+  existing field changes value. Code that builds `WalletBalance` objects
   (custom `IWallet` implementations, test doubles) must add `reserved`. Without
   the setting and without holds, behavior is unchanged.
 

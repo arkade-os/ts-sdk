@@ -262,8 +262,10 @@ describe("a hold placed while the SDK is picking", () => {
 
     it("a bare settle that loses a VTXO to a hold never blocks the holder spending it", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
+        const intentRepository = new InMemoryIntentRepository();
         const { wallet, arkProvider, coins, outpoints } = await fundedWallet({
             concurrentSpending: true,
+            intentRepository,
         });
         parkSettle(wallet, arkProvider);
         const submits = stallSubmits(wallet);
@@ -275,12 +277,9 @@ describe("a hold placed while the SDK is picking", () => {
                 await signing;
                 return { proof: "", message: {} };
             });
-        let deleted!: () => void;
-        arkProvider.deleteIntent.mockImplementation(
-            () => new Promise<undefined>((resolve) => (deleted = () => resolve(undefined))),
-        );
+        arkProvider.deleteIntent.mockImplementation(() => new Promise<undefined>(() => {}));
 
-        const settling = wallet.settle();
+        const settled = wallet.settle().catch((error) => error);
         await vi.waitFor(() => expect(sign).toHaveBeenCalled());
         const hold = wallet.reserveVtxos([coins[0]]);
         const sent = wallet
@@ -290,15 +289,14 @@ describe("a hold placed while the SDK is picking", () => {
             })
             .catch((error) => error);
         open();
-        await vi.waitFor(() => expect(arkProvider.deleteIntent).toHaveBeenCalled());
-        await new Promise((r) => setTimeout(r, 20));
-        deleted();
 
-        await expect(settling).rejects.toMatchObject({ holder: "held" });
         await vi.waitFor(() => expect(submits).toHaveLength(1));
         expect(submits[0].inputs).toEqual([outpoints[0]]);
         submits[0].finish();
         expect(await sent).toBe("1".repeat(64));
+        expect(await settled).toMatchObject({ name: "VtxoReservedError", holder: "held" });
+        expect(arkProvider.deleteIntent).not.toHaveBeenCalled();
+        expect(await intentRepository.getLockedVtxoOutpoints()).toEqual([]);
         hold.release();
         await wallet.dispose();
     });

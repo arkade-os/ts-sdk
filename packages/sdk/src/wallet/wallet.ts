@@ -3585,6 +3585,8 @@ export class Wallet
 
         const abortController = new AbortController();
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
+        // Set just before registering: a failure earlier has no server intent to delete.
+        let registering = false;
         // Set once Batch.join returns: the batch is committed on-chain and no
         // local cleanup failure may cancel it. Authoritative in memory even if
         // the hook's terminal repo write failed, which repo state can't tell us.
@@ -3629,6 +3631,7 @@ export class Wallet
                 yield* stream;
             })();
 
+            registering = true;
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
             await this.persistIntentSnapshot(
@@ -3682,12 +3685,14 @@ export class Wallet
             // Pre-commit failure: release the server intent so the next settle
             // doesn't hit "duplicated input", and record the cancellation.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
-            await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
-                console.warn(
-                    `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
-                    e,
-                );
-            });
+            if (registering) {
+                await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
+                    console.warn(
+                        `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                        e,
+                    );
+                });
+            }
             await this.persistIntentSnapshot(
                 intentTxId,
                 "cancelled",
