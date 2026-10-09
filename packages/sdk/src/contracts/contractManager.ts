@@ -532,6 +532,12 @@ export interface ContractManagerConfig {
      * staleness a send's coin selection already has by this much.
      */
     vtxoSyncMaxAgeMs?: number;
+
+    /**
+     * How far behind the sync cursor a delta sync re-reads, in ms (default 24h). The indexer filters
+     * on arkd's clock, so this must cover how far this host's clock can run ahead of it.
+     */
+    vtxoSyncOverlapMs?: number;
 }
 
 /**
@@ -654,6 +660,7 @@ export class ContractManager implements IContractManager {
 
     private constructor(config: ContractManagerConfig) {
         assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
+        assertNonNegativeMs("vtxoSyncOverlapMs", config.vtxoSyncOverlapMs);
         // A copy, so a caller mutating its object later cannot skip the check.
         this.config = { ...config };
 
@@ -692,6 +699,12 @@ export class ContractManager implements IContractManager {
     setVtxoSyncMaxAge(maxAgeMs: number): void {
         assertNonNegativeMs("vtxoSyncMaxAgeMs", maxAgeMs);
         this.config.vtxoSyncMaxAgeMs = maxAgeMs;
+    }
+
+    /** @see ContractManagerConfig.vtxoSyncOverlapMs — for factory-built managers. */
+    setVtxoSyncOverlap(overlapMs: number): void {
+        assertNonNegativeMs("vtxoSyncOverlapMs", overlapMs);
+        this.config.vtxoSyncOverlapMs = overlapMs;
     }
 
     private markSyncOnline(): void {
@@ -1853,7 +1866,7 @@ export class ContractManager implements IContractManager {
         includeInactive?: boolean;
     }): Promise<Map<string, ExtendedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
-        const window = options.window ?? computeSyncWindow(cursor);
+        const window = options.window ?? computeSyncWindow(cursor, this.config.vtxoSyncOverlapMs);
 
         // Only a cursor-derived sync covering at least the watched set may advance the cursor;
         // subsets and explicit windows may skip data. `<=` lets the bootstrap (cursor=0,

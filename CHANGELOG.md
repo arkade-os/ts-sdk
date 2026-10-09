@@ -154,6 +154,16 @@ style and have not been backfilled.
 
 ### Features
 
+- **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
+  Every delta sync re-read the 24 hours before the sync cursor, so a
+  sync seconds after a full one still paged a day of VTXO history from
+  the indexer. `ContractManagerConfig.vtxoSyncOverlapMs`, or
+  `setVtxoSyncOverlap` on a wallet-built manager, now sets that overlap;
+  the default stays 24 hours. The indexer filters on each VTXO's last
+  update in arkd's clock while the cursor is this host's, so the overlap
+  must cover how far this host's clock can run ahead of arkd's: lower it
+  only on an NTP-synced host.
+
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
   under the platform config directory (XDG /
