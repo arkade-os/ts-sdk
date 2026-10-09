@@ -75,6 +75,7 @@ export async function fundedWallet(
             getCoins: async () => [],
             getTransactions: async () => [],
             getTxOutspends: async () => [],
+            getChainTip: async () => ({ height: 1_000, hash: "00".repeat(32), time: 0 }),
         } as Partial<OnchainProvider> as OnchainProvider,
         storage: {
             walletRepository,

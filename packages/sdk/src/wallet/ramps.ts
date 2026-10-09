@@ -6,7 +6,7 @@ import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
-import { getDustAmount } from "./utils";
+import { getDustAmount, markSdkPicked } from "./utils";
 import { MAX_VTXOS_PER_SETTLEMENT } from "./vtxo-manager";
 import { bySelectionOrder } from "./wallet";
 
@@ -386,7 +386,8 @@ export class Ramps {
                 { address: destinationAddress, amount: handed - BigInt(outputFee.satoshis) },
             ];
             if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
-            return this.wallet.settle({ inputs, outputs }, eventCallback);
+            const params = { inputs, outputs };
+            return this.wallet.settle(vtxos ? params : markSdkPicked(params), eventCallback);
         });
     }
 
@@ -440,7 +441,8 @@ export class Ramps {
 
             const outputs = [{ address: destinationAddress, amount }];
             if (change > 0n) outputs.push({ address: changeAddress!, amount: change });
-            return this.wallet.settle({ inputs, outputs }, eventCallback);
+            const params = { inputs, outputs };
+            return this.wallet.settle(vtxos ? params : markSdkPicked(params), eventCallback);
         });
     }
 

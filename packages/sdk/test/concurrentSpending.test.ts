@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, InMemoryIntentRepository } from "../src";
 import { Wallet } from "../src/wallet/wallet";
+import { markSdkPicked } from "../src/wallet/utils";
 import { BTC_ADDR, fundedWallet, parkSettle, stallSubmits } from "./concurrentSpendingFixture";
 
 afterEach(() => vi.restoreAllMocks());
@@ -171,12 +172,161 @@ describe("concurrentSpending", () => {
         await wallet.dispose();
     });
 
-    it("ignores boarding inputs when checking for in-flight conflicts", () => {
-        const txid = "aa".repeat(32);
-        const thisArg = { _pendingSpendOutpoints: new Set([`${txid}:0`]) };
-        const boarding = { txid, vout: 0, value: 1, status: { confirmed: true } };
-        expect(() =>
-            (Wallet.prototype as any)._assertNotInFlight.call(thisArg, [boarding]),
-        ).not.toThrow();
+    it("refuses a second settle naming a boarding UTXO an in-flight settle is spending", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, arkProvider, coins } = await fundedWallet({ concurrentSpending: true });
+        const batch = parkSettle(wallet, arkProvider);
+        const boarding = boardingUtxo("dd");
+
+        const settling = wallet.settle({
+            inputs: [boarding, coins[0]],
+            outputs: [{ address: BTC_ADDR, amount: 14_000n }],
+        });
+        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+
+        await expect(
+            wallet.settle({ inputs: [boarding], outputs: [{ address: BTC_ADDR, amount: 4_000n }] }),
+        ).rejects.toMatchObject({
+            name: "VtxoReservedError",
+            holder: "in-flight",
+            outpoints: [`${boarding.txid}:0`],
+        });
+        expect(arkProvider.registerIntent).toHaveBeenCalledTimes(1);
+
+        batch.open();
+        await settling.catch(() => undefined);
+        await wallet.dispose();
+    });
+
+    it("keeps a boarding UTXO an in-flight settle is spending out of getBoardingUtxos", async () => {
+        const [spending, free] = [boardingUtxo("dd"), boardingUtxo("ee")];
+        const thisArg = {
+            boardingTapscript: { options: { serverPubKey: new Uint8Array(32).fill(2) } },
+            getBoardingUtxosForSigners: async () => [{ coins: [spending, free] }],
+            _pendingSpendOutpoints: new Set([`${spending.txid}:0`]),
+        };
+        expect(await (Wallet.prototype as any).getBoardingUtxos.call(thisArg)).toEqual([free]);
     });
 });
+
+describe("a hold placed while the SDK is picking", () => {
+    it.each([true, false])(
+        "concurrentSpending=%s: a send refuses a VTXO held after it was picked",
+        async (concurrentSpending) => {
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+            const { wallet, arkProvider, coins } = await fundedWallet({ concurrentSpending });
+            const submits = stallSubmits(wallet);
+            const to = await wallet.getAddress();
+            const gate = gateNextCalls(arkProvider.getInfo, await arkProvider.getInfo());
+            const picked = vi.spyOn(wallet, "getSpendableVtxos");
+
+            const sending = wallet.send({ address: to, amount: 2_000 });
+            await vi.waitFor(() => expect(picked).toHaveBeenCalled());
+            await vi.waitFor(() => expect(gate.waiting()).toBe(true));
+            const hold = wallet.reserveVtxos([coins[0]]);
+            gate.open();
+
+            await expect(sending).rejects.toMatchObject({
+                name: "VtxoReservedError",
+                holder: "held",
+            });
+            expect(submits).toHaveLength(0);
+            hold.release();
+            await wallet.dispose();
+        },
+    );
+
+    it("a bare settle refuses a VTXO held after it was picked, before registering", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, arkProvider, coins } = await fundedWallet({ concurrentSpending: true });
+        parkSettle(wallet, arkProvider);
+        let open!: () => void;
+        const signing = new Promise<void>((resolve) => (open = resolve));
+        const sign = vi
+            .spyOn(wallet as any, "makeRegisterIntentSignature")
+            .mockImplementation(async () => {
+                await signing;
+                return { proof: "", message: {} };
+            });
+
+        const settling = wallet.settle();
+        await vi.waitFor(() => expect(sign).toHaveBeenCalled());
+        const hold = wallet.reserveVtxos([coins[0]]);
+        open();
+
+        await expect(settling).rejects.toMatchObject({ name: "VtxoReservedError", holder: "held" });
+        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        hold.release();
+        await wallet.dispose();
+    });
+
+    it("a settle of SDK-picked inputs refuses one held since, while a named one spends it", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, arkProvider, coins } = await fundedWallet({ concurrentSpending: true });
+        const batch = parkSettle(wallet, arkProvider);
+        const hold = wallet.reserveVtxos([coins[0]]);
+        const exitOf = () => ({
+            inputs: [coins[0]],
+            outputs: [{ address: BTC_ADDR, amount: 9_000n }],
+        });
+
+        await expect(wallet.settle(markSdkPicked(exitOf()))).rejects.toMatchObject({
+            holder: "held",
+        });
+        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        const named = wallet.settle(exitOf());
+        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalledTimes(1));
+
+        batch.open();
+        await named.catch(() => undefined);
+        hold.release();
+        await wallet.dispose();
+    });
+
+    it.each([true, false])(
+        "concurrentSpending=%s: an asset issue refuses a VTXO held after it was picked, and a hold refuses its inputs once claimed",
+        async (concurrentSpending) => {
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+            const { wallet, coins } = await fundedWallet({ concurrentSpending });
+            const submits = stallSubmits(wallet);
+            const address = await wallet.getAddress();
+            const lookup = vi.spyOn(wallet, "getAddress");
+            let open!: () => void;
+            const resolving = new Promise<void>((resolve) => (open = resolve));
+            lookup.mockImplementationOnce(async () => {
+                await resolving;
+                return address;
+            });
+
+            const issuing = wallet.assetManager.issue({ amount: 100n });
+            await vi.waitFor(() => expect(lookup).toHaveBeenCalled());
+            const hold = wallet.reserveVtxos([coins[0]]);
+            open();
+            await expect(issuing).rejects.toMatchObject({ holder: "held" });
+            hold.release();
+
+            const retry = wallet.assetManager.issue({ amount: 100n });
+            await vi.waitFor(() => expect(submits).toHaveLength(1));
+            expect(() => wallet.reserveVtxos([coins[0]])).toThrow(/already being spent/);
+            submits[0].finish();
+            await retry;
+            await wallet.dispose();
+        },
+    );
+});
+
+const boardingUtxo = (fill: string) =>
+    ({ txid: fill.repeat(32), vout: 0, value: 5_000, status: { confirmed: true } }) as any;
+
+/** Hold every call to `fn` until `open()`; `waiting()` reports whether one is held. */
+function gateNextCalls<T>(fn: ReturnType<typeof vi.fn>, value: T) {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let held = false;
+    fn.mockImplementation(async () => {
+        held = true;
+        await gate;
+        return value;
+    });
+    return { open, waiting: () => held };
+}

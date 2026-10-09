@@ -42,7 +42,7 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount } from "./utils";
+import { getDustAmount, markSdkPicked } from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -1381,7 +1381,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
 
             const txid = await this.wallet.settle(
-                {
+                markSdkPicked({
                     inputs: vtxos,
                     outputs: [
                         {
@@ -1389,7 +1389,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             amount: totalAmount,
                         },
                     ],
-                },
+                }),
                 eventCallback,
             );
             return txid;
@@ -2563,10 +2563,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let skipWithoutBackoff = false;
         try {
             try {
-                await this.wallet.settle({
-                    inputs: [...filteredBoarding, ...filteredVtxos],
-                    outputs: [{ address: arkAddress, amount: totalAmount }],
-                });
+                await this.wallet.settle(
+                    markSdkPicked({
+                        inputs: [...filteredBoarding, ...filteredVtxos],
+                        outputs: [{ address: arkAddress, amount: totalAmount }],
+                    }),
+                );
 
                 for (const u of filteredBoarding) {
                     this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);

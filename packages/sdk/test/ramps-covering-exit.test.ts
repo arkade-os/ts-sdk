@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DustChangeError, Ramps } from "../src/wallet/ramps";
+import { isSdkPicked } from "../src/wallet/utils";
 
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ARK_ADDR =
@@ -124,5 +125,17 @@ describe("Ramps exits with concurrentSpending", () => {
         const w = wallet([coin("aa", 50_000, 30), coin("bb", 50_000, 10)]);
         await new Ramps(w).offboard(BTC_ADDR, fees);
         expect(inputsOf(w)).toEqual(["aa", "bb"]);
+    });
+
+    it("tell settle which inputs it picked itself, so a VTXO held since is refused", async () => {
+        const w = wallet([coin("aa", 50_000, 10), coin("bb", 50_000, 20)]);
+        await exact(w, 30_000n);
+        await new Ramps(w).offboard(BTC_ADDR, fees);
+        await exact(w, 30_000n, { vtxos: [coin("cc", 50_000, 10)] });
+        expect(w.settle.mock.calls.map(([params]: [object]) => isSdkPicked(params))).toEqual([
+            true,
+            true,
+            false,
+        ]);
     });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { VtxoManager } from "../src/wallet/vtxo-manager";
 import { VtxoReservedError } from "../src/wallet/wallet";
+import { isSdkPicked } from "../src/wallet/utils";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 
 const ARK_ADDR =
@@ -58,6 +59,7 @@ describe("VtxoManager and a concurrent spend", () => {
         await flush();
 
         expect(wallet.settle).toHaveBeenCalledTimes(1);
+        expect(isSdkPicked(wallet.settle.mock.calls[0][0])).toBe(true);
         expect(error).not.toHaveBeenCalledWith("Error renewing VTXOs:", expect.anything());
         await manager.dispose();
         error.mockRestore();
@@ -118,6 +120,7 @@ describe("VtxoManager and a concurrent spend", () => {
 
         await expect((manager as any).runPeriodicSettle([utxo])).resolves.toBeUndefined();
         expect(wallet.settle).toHaveBeenCalledTimes(1);
+        expect(isSdkPicked(wallet.settle.mock.calls[0][0])).toBe(true);
         expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
     });
 });
