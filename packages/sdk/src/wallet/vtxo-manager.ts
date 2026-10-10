@@ -1233,19 +1233,36 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({
-            withRecoverable: true,
-            genericallySpendableOnly: true,
-        });
+        const tip = now ?? (await fetchTimeHeight(this.wallet));
+        const vtxos = await this.withoutDelegated(
+            await this.wallet.getSpendableVtxos({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            }),
+            tip,
+        );
 
         // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
         const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
 
-        return getExpiringAndRecoverableVtxos(
-            vtxos,
-            threshold,
-            getDustAmount(this.wallet),
-            now ?? (await fetchTimeHeight(this.wallet)),
+        return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
+    }
+
+    /**
+     * Coins at the wallet's delegatee contracts are the service's to renew, in place, even with
+     * delegation turned off: its watch stays registered, so renewing them too would race it.
+     * Once swept or expired the service can no longer renew them, so the wallet recovers them.
+     */
+    private async withoutDelegated(
+        vtxos: NormalizedExtendedVirtualCoin[],
+        now: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        const manager = await this.wallet.getContractManager();
+        const delegated = new Set(
+            (await manager.getContracts({ type: ["delegatee"] })).map((c) => c.script),
+        );
+        return vtxos.filter(
+            (v) => v.script === undefined || !delegated.has(v.script) || canRecoverOnchain(v, now),
         );
     }
 

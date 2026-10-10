@@ -3,7 +3,10 @@ import { SignedIntent } from "./ark";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
-/** Delegate identity and fee information returned by `getDelegateInfo`. */
+/**
+ * Delegate identity and fee information returned by `getDelegateInfo`.
+ * @deprecated The pre-signed delegator protocol is retained for existing integrations.
+ */
 export interface DelegateInfo {
     /** Delegate public key. */
     pubkey: string;
@@ -13,7 +16,10 @@ export interface DelegateInfo {
     delegateAddress: string;
 }
 
-/** Optional delegate behavior flags. */
+/**
+ * Optional delegate behavior flags.
+ * @deprecated Used only by the pre-signed delegator protocol.
+ */
 export interface DelegateOptions {
     /**
      * Tell the delegate not to replace an existing delegation (signed register intent + its
@@ -24,7 +30,10 @@ export interface DelegateOptions {
     rejectReplace?: boolean;
 }
 
-/** Provider interface for a remote delegation service. */
+/**
+ * Provider interface for remote delegation service.
+ * @deprecated Use {@link import("./delegatee").DelegateeProvider} for covenant-based delegation.
+ */
 export interface DelegateProvider {
     /**
      * Request delegation for a signed register intent and its forfeit transactions.
@@ -43,6 +52,7 @@ export interface DelegateProvider {
 
 /**
  * REST-based delegate provider implementation.
+ * @deprecated Use {@link import("./delegatee").RestDelegateeProvider} for covenant-based delegation.
  * @example
  * ```typescript
  * const provider = new RestDelegateProvider('https://delegate.example.com');

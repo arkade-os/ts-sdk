@@ -15,6 +15,8 @@ export const ARKADE_OP = {
     // Merkle Branch Verification (0xb3 — repurposed NOP4 slot)
     MERKLEBRANCHVERIFY: 0xb3,
 
+    PUT: 0xbb,
+
     // Digest (0xc3)
     DIGEST: 0xc3,
 

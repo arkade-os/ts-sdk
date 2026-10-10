@@ -808,6 +808,7 @@ describe("spending sites consume the accessor", () => {
         getAddress: vi.fn().mockResolvedValue("ark1address"),
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),

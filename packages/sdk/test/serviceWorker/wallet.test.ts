@@ -12,6 +12,7 @@ import {
     type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import { DelegateeManagerImpl } from "../../src/wallet/delegatee";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { hex } from "@scure/base";
 import {
@@ -769,6 +770,7 @@ const createSWWallet = (
     serviceWorker: ServiceWorker,
     messageTag: string = DEFAULT_MESSAGE_TAG,
     hasDelegate: boolean = false,
+    delegateeUrl?: string,
 ) =>
     new (ServiceWorkerWallet as any)(
         serviceWorker,
@@ -777,6 +779,7 @@ const createSWWallet = (
         new InMemoryContractRepository(),
         messageTag,
         hasDelegate,
+        delegateeUrl,
     ) as ServiceWorkerWallet;
 
 describe("ServiceWorkerWallet", () => {
@@ -905,6 +908,23 @@ describe("ServiceWorkerWallet", () => {
                 type: "DELEGATE",
             }),
         );
+    });
+
+    it("getDelegateeManager runs on the page, only with a delegatee URL", async () => {
+        const { serviceWorker } = createServiceWorkerHarness(() => null);
+        await expect(
+            createSWWallet(serviceWorker as any, messageTag).getDelegateeManager(),
+        ).resolves.toBeUndefined();
+        const manager = await createSWWallet(
+            serviceWorker as any,
+            messageTag,
+            false,
+            "https://delegatee.test",
+        ).getDelegateeManager();
+        expect(manager).toBeInstanceOf(DelegateeManagerImpl);
+        expect((manager as DelegateeManagerImpl).delegateeProvider).toMatchObject({
+            url: "https://delegatee.test",
+        });
     });
 
     it("restore() forwards gapLimit and resolves on RESTORE_WALLET_SUCCESS", async () => {

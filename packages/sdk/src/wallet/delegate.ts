@@ -40,6 +40,10 @@ import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
 
+/**
+ * @deprecated Legacy pre-signed delegator manager. Existing integrations remain supported;
+ * new integrations should use {@link import("./delegatee").IDelegateeManager}.
+ */
 export interface IDelegateManager {
     /**
      * Delegate virtual outputs to the remote delegation service.
