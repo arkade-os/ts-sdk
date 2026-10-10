@@ -45,7 +45,7 @@ export interface DelegateeVtxo {
     amount: number;
     expiresAt?: number;
     preconfirmed: boolean;
-    assets: { assetId: string; amount: number }[];
+    assets: { assetId: string; amount: bigint }[];
     createdAt?: number;
     renewableAt?: number;
     onchain: boolean;
@@ -191,6 +191,21 @@ function parseInt64(value: unknown, label: string): number {
     throw new Error(`Invalid delegatee response: missing ${label}`);
 }
 
+function parseUint64(value: unknown, label: string): bigint {
+    if ((typeof value === "string" && /^[0-9]+$/.test(value)) || Number.isSafeInteger(value)) {
+        return BigInt(value as string | number);
+    }
+    throw new Error(`Invalid delegatee response: ${label} is not an amount`);
+}
+
+function parseVariables(value: unknown): Record<string, string> {
+    if (value === undefined) return {};
+    if (!isObject(value) || Object.values(value).some((v) => typeof v !== "string")) {
+        throw new Error("Invalid delegatee delegation: variables are not strings");
+    }
+    return value as Record<string, string>;
+}
+
 function parseOptionalInt64(value: unknown, label: string): number | undefined {
     if (value === undefined) return undefined;
     return parseInt64(value, label);
@@ -244,7 +259,7 @@ function parseDelegation(value: unknown): DelegateeDelegation {
         address: typeof value.address === "string" ? value.address : "",
         status: oneOf(value.status, ["active", "cancelled", "expired", "done"], "status"),
         templateId,
-        variables: isObject(value.variables) ? (value.variables as Record<string, string>) : {},
+        variables: parseVariables(value.variables),
         parentId: parseOptionalInt64(value.parentId, "parentId"),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
         slots: optionalArray(value.slots, "slots").map(parseSlot),
@@ -259,14 +274,14 @@ function parseVtxo(value: unknown): DelegateeVtxo {
     }
     return {
         outpoint: value.outpoint,
-        amount: parseOptionalInt64(value.amount, "amount") ?? 0,
+        amount: parseInt64(value.amount, "amount"),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
         preconfirmed: value.preconfirmed === true,
         assets: optionalArray(value.assets, "assets").map((a) => {
             if (!isObject(a) || typeof a.assetId !== "string") {
                 throw new Error("Invalid delegatee vtxo asset");
             }
-            return { assetId: a.assetId, amount: parseOptionalInt64(a.amount, "amount") ?? 0 };
+            return { assetId: a.assetId, amount: parseUint64(a.amount, "asset amount") };
         }),
         createdAt: parseOptionalInt64(value.createdAt, "createdAt"),
         renewableAt: parseOptionalInt64(value.renewableAt, "renewableAt"),

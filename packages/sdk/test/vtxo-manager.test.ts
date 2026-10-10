@@ -1147,7 +1147,7 @@ describe("VtxoManager - Renewal", () => {
             expect(expiring[1].txid).toBe("vtxo2");
         });
 
-        it("leaves coins at delegatee contracts to the delegatee", async () => {
+        it("leaves coins at delegatee contracts to the delegatee until they need recovery", async () => {
             const now = Date.now();
             const soon = (txid: string, script: string) =>
                 ({
@@ -1168,13 +1168,15 @@ describe("VtxoManager - Renewal", () => {
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 getContracts: vi.fn().mockResolvedValue([{ script: "51delegated" }]),
             };
-            const vtxos = [soon("own", "51own"), soon("delegated", "51delegated")];
+            const swept = { ...soon("swept", "51delegated"), isSwept: true } as ExtendedVirtualCoin;
+            const vtxos = [soon("own", "51own"), soon("delegated", "51delegated"), swept];
             const config = { enabled: true, thresholdMs: 100_000 };
 
-            // no delegatee manager: delegation turned off still leaves them to the service
+            // no delegatee manager: delegation turned off still leaves them to the service, but a
+            // swept one is the wallet's to recover
             const wallet = createMockWallet(vtxos, undefined, { contractManager } as never);
             const expiring = await new VtxoManager(wallet, config).getExpiringVtxos();
-            expect(expiring.map((v) => v.txid)).toEqual(["own"]);
+            expect(expiring.map((v) => v.txid)).toEqual(["own", "swept"]);
             expect(contractManager.getContracts).toHaveBeenCalledWith({ type: ["delegatee"] });
         });
 

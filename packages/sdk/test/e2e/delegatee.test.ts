@@ -26,6 +26,7 @@ const RENEWAL_WINDOW = Number(process.env.DELEGATEE_RENEWAL_WINDOW ?? 256);
 const reachable = await fetch(`${DELEGATEE_URL}/v1/info`)
     .then((r) => r.ok)
     .catch(() => false);
+if (!reachable && process.env.CI) throw new Error(`no delegatee at ${DELEGATEE_URL}`);
 if (!reachable) console.warn(`delegatee e2e skipped: no delegatee at ${DELEGATEE_URL}`);
 
 async function delegationParams(): Promise<DelegationParams> {

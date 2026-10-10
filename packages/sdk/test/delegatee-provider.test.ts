@@ -167,7 +167,7 @@ describe("RestDelegateeProvider", () => {
                     outpoint: "aa:0",
                     amount: "100000",
                     expiresAt: "1700000000",
-                    assets: [{ assetId: "bb", amount: "5" }],
+                    assets: [{ assetId: "bb", amount: "18446744073709551615" }],
                     renewableAt: "1699990000",
                 },
             ],
@@ -184,7 +184,7 @@ describe("RestDelegateeProvider", () => {
                 amount: 100000,
                 expiresAt: 1700000000,
                 preconfirmed: false,
-                assets: [{ assetId: "bb", amount: 5 }],
+                assets: [{ assetId: "bb", amount: 18446744073709551615n }],
                 createdAt: undefined,
                 renewableAt: 1699990000,
                 onchain: false,
@@ -199,6 +199,15 @@ describe("RestDelegateeProvider", () => {
                 attemptedAt: 1,
             },
         ]);
+    });
+
+    it("rejects non-string variables and a coin without an amount", async () => {
+        const provider = new RestDelegateeProvider("https://delegatee.test");
+        const delegation = { id: "1", status: "active", templateId: "t" };
+        respond({ delegation: { ...delegation, variables: { exit_delay: 512 } } });
+        await expect(provider.getDelegation("tark1x")).rejects.toThrow("variables are not strings");
+        respond({ delegation, vtxos: [{ outpoint: "aa:0" }] });
+        await expect(provider.getDelegation("tark1x")).rejects.toThrow("missing amount");
     });
 
     it("returns a typed not-found error for an unregistered address", async () => {

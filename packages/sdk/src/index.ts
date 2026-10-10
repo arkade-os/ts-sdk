@@ -1163,16 +1163,4 @@ export type {
     VtxoBranch,
 };
 
-export {
-    boardingWatch,
-    DELEGATEE_DEFAULTS,
-    defaultContract,
-    defaultTemplateIds,
-    defaultVariables,
-    renewalWatch,
-    type DelegateeDefault,
-    type DelegationParams,
-    type DelegateeOwnerWatch,
-    type DelegateeContract,
-    type DelegateeKeys,
-} from "./script/delegateeTemplate";
+export type { DelegateeDefault, DelegationParams } from "./script/delegateeTemplate";

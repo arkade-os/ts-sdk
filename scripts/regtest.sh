@@ -107,6 +107,8 @@ cmd_test() {
     sdk|sdk-delegatee)
       if [ "${#TEST_FILES[@]}" -gt 0 ]; then
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run "${TEST_FILES[@]}"
+      elif [ "$PKG" = "sdk-delegatee" ]; then
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run test/e2e/delegatee.test.ts
       else
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" run test:integration
       fi

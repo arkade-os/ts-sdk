@@ -641,6 +641,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            delegateeUrl: options.delegateeUrl,
             watcherConfig: options.watcherConfig,
         });
     }

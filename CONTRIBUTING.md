@@ -17,6 +17,7 @@ want a quick one.
 ```bash
 pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:sdk          # sdk only
+pnpm run test:integration:sdk-delegatee  # sdk delegatee e2e, on its own stack
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
