@@ -158,6 +158,11 @@ style and have not been backfilled.
   and still fund and reconcile as BTC. `BTC_ASSET_PART` is deprecated (it
   is mainnet's part only); use `btcAssetPart(network)`, or `isBtcAsset`
   (and `isBtcAssetLenient` for stored ids) to recognize BTC.
+- **`Wallet.create` and `ReadonlyWallet.create` need their class as
+  `this`.** Both now build the class they are called on, so a reference
+  taken off the class and called on its own, as in
+  `const { create } = Wallet`, throws `this is not a constructor`. Call
+  `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
 
 ### Features
 
@@ -166,9 +171,8 @@ style and have not been backfilled.
   of itself, typed as itself, where it used to get a plain `Wallet` or
   `ReadonlyWallet`; its constructor receives the base constructor's
   arguments. Calls on `Wallet` and `ReadonlyWallet` themselves, and a
-  subclass's own `create` override, are unchanged. The factories now read
-  `this`, so one taken off the class and called on its own, as in
-  `const { create } = Wallet`, no longer works.
+  subclass's own `create` override, are unchanged; the one calling pattern
+  that stops working is listed under Breaking Changes.
 
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database

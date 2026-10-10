@@ -1060,7 +1060,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @remarks
      * A subclass inherits this factory and gets an instance of itself. The factory calls
      * `new this(...)` with this class's constructor arguments, so a subclass constructor must
-     * accept the same ones.
+     * accept the same ones. Setup always runs `ReadonlyWallet.setupWalletConfig`; a subclass that
+     * needs its own setup overrides `create`.
      */
     static create<T extends ReadonlyWallet>(
         this: { prototype: T },
@@ -3052,7 +3053,8 @@ export class Wallet
      * @remarks
      * A subclass inherits this factory and gets an instance of itself. The factory calls
      * `new this(...)` with this class's constructor arguments, so a subclass constructor must
-     * accept the same ones.
+     * accept the same ones. Setup always runs `ReadonlyWallet.setupWalletConfig`; a subclass that
+     * needs its own setup overrides `create`.
      * @example
      * ```typescript
      * const wallet = await Wallet.create({
@@ -3189,6 +3191,9 @@ export class Wallet
      * Convert this wallet to a readonly wallet.
      *
      * @returns A readonly wallet with the same configuration but readonly identity
+     * @remarks
+     * The result is a plain `ReadonlyWallet`, also when called on a subclass; a subclass that
+     * wants its own readonly view overrides this method.
      * @example
      * ```typescript
      * const wallet = await Wallet.create({ identity: MnemonicIdentity.fromMnemonic('abandon abandon...'), ... });
