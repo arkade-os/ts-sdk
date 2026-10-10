@@ -1058,6 +1058,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @param config - Readonly wallet configuration
      * @returns A readonly wallet instance
      */
+    static create<T extends ReadonlyWallet>(
+        this: { prototype: T },
+        config: ReadonlyWalletConfig,
+    ): Promise<T>;
+    // Without this overload a subclass could not narrow the return type of its own `create`.
+    static create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet>;
     static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -1066,7 +1072,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        const wallet = new ReadonlyWallet(
+        const wallet = new this(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -3047,6 +3053,8 @@ export class Wallet
      * });
      * ```
      */
+    static create<T extends Wallet>(this: { prototype: T }, config: WalletConfig): Promise<T>;
+    static create(config: WalletConfig): Promise<Wallet>;
     static async create(config: WalletConfig): Promise<Wallet> {
         // Programmer error, not an operational one — surface it before any I/O.
         if (
@@ -3086,7 +3094,7 @@ export class Wallet
         // HD boot wiring; `getVtxoManager()` installs the rotator lazily.
         const boot = await WalletReceiveRotator.resolveBoot(config, setup);
 
-        const wallet = new Wallet(
+        const wallet = new this(
             config.identity,
             setup.network,
             setup.onchainProvider,
