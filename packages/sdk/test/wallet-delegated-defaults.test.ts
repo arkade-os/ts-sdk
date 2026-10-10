@@ -148,4 +148,43 @@ describe("delegated default addresses", () => {
         await wallet.contractRepository.saveContract(renewal.contract);
         expect(await wallet.getAddress()).toBe(renewal.contract.address);
     });
+
+    it("reports the funds of its delegatee contracts to incoming-funds subscribers", async () => {
+        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        let emit: (event: unknown) => void = () => {};
+        vi.spyOn(wallet, "getContractManager").mockResolvedValue({
+            onContractEvent: (handler: (event: unknown) => void) => {
+                emit = handler;
+                return () => {};
+            },
+            annotateVtxos: async (vtxos: unknown[]) => vtxos,
+        } as never);
+        vi.spyOn(wallet, "getBoardingAddresses").mockResolvedValue([]);
+        const funds = vi.fn();
+        const stop = await wallet.notifyIncomingFunds(funds);
+
+        const vtxo = {
+            txid: "aa".repeat(32),
+            vout: 0,
+            value: 5000,
+            script: renewal.contract.script,
+        };
+        emit({
+            type: "vtxo_received",
+            contractScript: renewal.contract.script,
+            contract: renewal.contract,
+            vtxos: [vtxo],
+            timestamp: 0,
+        });
+        emit({
+            type: "vtxo_received",
+            contractScript: "51",
+            contract: { ...renewal.contract, type: "vhtlc" },
+            vtxos: [vtxo],
+            timestamp: 0,
+        });
+        await vi.waitFor(() => expect(funds).toHaveBeenCalledTimes(1));
+        expect(funds).toHaveBeenCalledWith({ type: "vtxo", newVtxos: [vtxo], spentVtxos: [] });
+        stop();
+    });
 });

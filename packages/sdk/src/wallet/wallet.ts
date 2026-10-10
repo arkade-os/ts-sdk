@@ -219,6 +219,8 @@ import {
     MissingSigningDescriptorError,
 } from "./signingErrors";
 
+const WALLET_CONTRACT_TYPES: readonly string[] = ["default", "delegate", "delegatee"];
+
 // A delegatee renewal contract as the wallet's receive tapscript: forfeit and exit are the
 // wallet's own leaves, the renewal covenant leaf rides along. Checked against the contract row.
 function delegatedTapscript(contract: Contract): DefaultVtxo.Script {
@@ -1805,7 +1807,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 if (!isContractVtxoEvent(event)) {
                     return;
                 }
-                if (event.contract.type !== "default" && event.contract.type !== "delegate") {
+                if (!WALLET_CONTRACT_TYPES.includes(event.contract.type)) {
                     return;
                 }
 
@@ -1862,12 +1864,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Get all pkScript hex strings for the wallet's own addresses
-     * (both delegate and non-delegate, current and historical).
+     * (default, delegate and delegatee, current and historical).
      */
     async getWalletScripts(): Promise<string[]> {
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
-            type: ["default", "delegate"],
+            type: [...WALLET_CONTRACT_TYPES],
         });
         return contracts.map((c) => c.script);
     }
@@ -1881,10 +1883,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
-            type: ["default", "delegate"],
+            type: [...WALLET_CONTRACT_TYPES],
         });
         for (const contract of contracts) {
             if (map.has(contract.script)) continue;
+            if (contract.type === "delegatee") {
+                if (contract.params.template === "renewal") {
+                    map.set(contract.script, delegatedTapscript(contract));
+                }
+                continue;
+            }
             const handler = contractHandlers.get(contract.type);
             if (handler) {
                 const script = handler.createScript(contract.params) as
