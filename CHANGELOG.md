@@ -170,9 +170,10 @@ style and have not been backfilled.
   called on.** A subclass that inherits either factory now gets an instance
   of itself, typed as itself, where it used to get a plain `Wallet` or
   `ReadonlyWallet`; its constructor receives the base constructor's
-  arguments. Calls on `Wallet` and `ReadonlyWallet` themselves, and a
-  subclass's own `create` override, are unchanged; the one calling pattern
-  that stops working is listed under Breaking Changes.
+  arguments. An override of `create` that delegates to `super.create()` now
+  constructs the subclass too; one that does not call it is unchanged, and
+  so are calls on `Wallet` and `ReadonlyWallet` themselves. The one calling
+  pattern that stops working is listed under Breaking Changes.
 
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
