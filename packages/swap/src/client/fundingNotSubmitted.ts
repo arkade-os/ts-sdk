@@ -1,6 +1,6 @@
 import { ArkAddress, type IWallet } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
-import { retireOfferContract } from "../coverage";
+import { retireOfferContract, type OfferContractRetirer } from "../coverage";
 import { collectRfqSwaps, collectSwapRecords, type AssetSwapRepository } from "../repository";
 import { fundingWasNotSubmitted, type SwapRecord } from "./record";
 
@@ -8,15 +8,17 @@ export const retireUnsubmittedFunding = async (
     wallet: IWallet,
     repository: AssetSwapRepository,
     record: SwapRecord,
+    contracts?: OfferContractRetirer,
 ): Promise<void> => {
     if (!fundingWasNotSubmitted(record)) return;
     const script = record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
     try {
         await retireOfferContract(
-            await wallet.getContractManager(),
+            contracts ?? (await wallet.getContractManager()),
             async () => {
                 const records = await collectSwapRecords(repository);
                 const native = records.map((row) => ({
+                    id: row.id,
                     swapPkScript: row.family === "offer" ? row.swapPkScript : row.lockupPkScript,
                     createdAt: row.createdAt * 1000,
                     status:

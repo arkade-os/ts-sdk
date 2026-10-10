@@ -238,9 +238,9 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     }) as ArtifactWitnessElement[];
 }
 
-/** A literal CSV operand is an encoded BIP68 sequence; a `$param` is bound later as blocks. */
+/** CSV operands are encoded BIP68 sequences; a `$param` is decoded after binding. */
 function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegment["csv"] {
-    if (typeof operand === "string") return { type: "blocks", value: operand };
+    if (typeof operand === "string") return { type: "sequence", value: operand };
     const timelock =
         operand >= 0n && operand < 0x80000000n ? sequenceToTimelock(Number(operand)) : undefined;
     if (!timelock || BigInt(timelockToSequence(timelock)) !== operand) {

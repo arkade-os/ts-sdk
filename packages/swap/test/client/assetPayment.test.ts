@@ -526,3 +526,18 @@ describe("native asset payment quote", () => {
         expect(await repository.getSwapRecord(quote.id)).toBeUndefined();
     });
 });
+
+it("retires a negotiated native offer after an unsent fractional-millisecond registration", async () => {
+    vi.setSystemTime(NOW * 1000 + 537);
+    const h = await setup();
+    const quote = await h.client.quote(buy());
+    vi.spyOn(h.wallet, "send").mockRejectedValue(new SendDeadlineExceededError(NOW + 1));
+    await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
+        SendDeadlineExceededError,
+    );
+    const row = await h.repository.getSwapRecord(quote.id);
+    expect(row?.family).toBe("offer");
+    expect(row?.fundingNotSubmitted).toEqual({ reason: "send_deadline", validUntil: NOW + 1 });
+    expect(h.fixture.watched).toContainEqual([h.fixture.contracts[0]?.script, "retained"]);
+    await h.client[Symbol.asyncDispose]();
+});

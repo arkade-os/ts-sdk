@@ -30,7 +30,12 @@ import {
 
 import wantAssetProgram from "./swap-want-asset.program.json";
 import wantBtcProgram from "./swap-want-btc.program.json";
-import { promoteOfferContract, RETIRABLE, retireOfferContract } from "./coverage";
+import {
+    promoteOfferContract,
+    RETIRABLE,
+    retireOfferContract,
+    type CoverageRegistrationOptions,
+} from "./coverage";
 import { parseHex32 } from "./rfqProfileParts";
 import type { AssetSwapRepository } from "./repository";
 import {
@@ -423,13 +428,14 @@ async function registerOfferContract(
     binding: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
+    options: CoverageRegistrationOptions = {},
 ): Promise<void> {
     const contractManager = await wallet.getContractManager();
     const client = await derivingClient(wallet, info, contractManager);
     await contractManager.createContract(
         offerContractParams(client, binding, operatorPubkey, expectedPkScript),
     );
-    await promoteOfferContract(contractManager, hex.encode(expectedPkScript));
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript), undefined, options);
 }
 
 /** A derive-and-persist client over already-resolved info (no second `/v1/info`). `network` keeps a
@@ -470,7 +476,8 @@ function offerContractParams(
 export type OfferCoverageSwap = Pick<
     AssetSwap,
     "status" | "swapPkScript" | "offerHex" | "createdAt"
->;
+> &
+    CoverageRegistrationOptions;
 
 export async function restoreOfferCoverage(
     wallet: IWallet,
@@ -495,6 +502,7 @@ export async function restoreOfferCoverage(
             covenants.push({
                 script: swap.swapPkScript,
                 issued: swap.createdAt,
+                coverageId: swap.coverageId,
                 params: offerContractParams(
                     client,
                     binding,
@@ -513,7 +521,10 @@ export async function restoreOfferCoverage(
         for (const contract of params) await contractManager.createContract(contract);
     }
     for (const covenant of covenants) {
-        await promoteOfferContract(contractManager, covenant.script, covenant.issued);
+        await promoteOfferContract(contractManager, covenant.script, covenant.issued, {
+            coverageId: covenant.coverageId,
+            restore: true,
+        });
     }
 }
 
@@ -560,6 +571,7 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
 export async function createOffer(
     wallet: IWallet,
     params: OfferParams,
+    options: CoverageRegistrationOptions = {},
 ): Promise<{
     /** The encoded offer, hex. **Persist this** — it is the only input `cancelOffer` needs to
      * rebuild the covenant. */
@@ -574,7 +586,7 @@ export async function createOffer(
     swapPkScript: Uint8Array;
 }> {
     const derived = await deriveOffer(wallet, params);
-    await registerDerivedOffer(wallet, derived);
+    await registerDerivedOffer(wallet, derived, options);
     return {
         offerHex: derived.offerHex,
         extension: derived.extension,
@@ -752,13 +764,18 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
  * Register a derived offer's covenant, so the deposit is watched and marked as
  * escrow before anything funds it. See {@link registerOfferContract}.
  */
-export async function registerDerivedOffer(wallet: IWallet, derived: DerivedOffer): Promise<void> {
+export async function registerDerivedOffer(
+    wallet: IWallet,
+    derived: DerivedOffer,
+    options: CoverageRegistrationOptions = {},
+): Promise<void> {
     await registerOfferContract(
         wallet,
         derived.info,
         derived.binding,
         derived.operatorPubkey,
         derived.swapPkScript,
+        options,
     );
 }
 

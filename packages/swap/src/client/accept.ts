@@ -423,14 +423,18 @@ const registeredOfferRecord = async (
     const { plan } = preparation;
     const arkade = corridors.get("arkade").deps;
     const receiveIsBtc = plan.receive.asset.id === BTC_ASSET_ID;
-    const offer = await createOffer(wallet, {
-        // Keyed on the receive side: the covenant binds what the fill delivers.
-        wantAmount: plan.receive.atomic,
-        ...(receiveIsBtc
-            ? { offerAsset: asset.AssetId.fromString(plan.deposit.asset.id) }
-            : { wantAsset: asset.AssetId.fromString(plan.receive.asset.id) }),
-        emulatorPubkey: arkade.emulatorPubkey,
-    });
+    const offer = await createOffer(
+        wallet,
+        {
+            // Keyed on the receive side: the covenant binds what the fill delivers.
+            wantAmount: plan.receive.atomic,
+            ...(receiveIsBtc
+                ? { offerAsset: asset.AssetId.fromString(plan.deposit.asset.id) }
+                : { wantAsset: asset.AssetId.fromString(plan.receive.asset.id) }),
+            emulatorPubkey: arkade.emulatorPubkey,
+        },
+        { coverageId: quote.id },
+    );
     return {
         ...commonOf(quote, now),
         family: "offer",
@@ -478,7 +482,7 @@ const registeredAssetRecord = async (
             JSON.stringify(preparation.assetPaymentRecipient)
     )
         throw new Error("asset payment recipient differs from verified quote preparation");
-    await registerDerivedOffer(input.wallet, preparation.offer);
+    await registerDerivedOffer(input.wallet, preparation.offer, { coverageId: input.quote.id });
     return {
         ...commonOf(input.quote, input.now),
         ...(preparation.assetPayment === undefined
@@ -501,8 +505,17 @@ const registeredCorridorRecord = async (
     preparation: CorridorRfqPreparation,
 ): Promise<CorridorSwapRecord> => {
     const contracts = await input.wallet.getContractManager();
-    await registerLockupContract(contracts, preparation.lockup.script, preparation.lockup.address);
-    await promoteOfferContract(contracts, hex.encode(preparation.lockup.script.pkScript));
+    await registerLockupContract(contracts, preparation.lockup.script, preparation.lockup.address, {
+        coverageId: input.quote.id,
+    });
+    await promoteOfferContract(
+        contracts,
+        hex.encode(preparation.lockup.script.pkScript),
+        undefined,
+        {
+            coverageId: input.quote.id,
+        },
+    );
     return corridorRecord(input.quote, preparation, input.now);
 };
 

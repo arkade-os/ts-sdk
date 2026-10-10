@@ -34,8 +34,10 @@ import {
     ConditionCSVMultisigTapscript,
     type ArkTapscript,
     type TapscriptType,
+    type RelativeTimelock,
 } from "../script/tapscript";
 import { VtxoScript, type TapLeafScript } from "../script/base";
+import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 import { ArkadeScript } from "./script";
 import { ARKADE_OP } from "./opcodes";
 import { computeArkadeScriptPublicKey } from "./tweak";
@@ -119,9 +121,10 @@ export interface TapscriptSegment {
     /**
      * Relative timelock (CSV). The value is a literal or a `"$param"` reference
      * resolved against the constructor args (same convention as {@link SignerRef}).
+     * `sequence` accepts a canonical encoded BIP68 operand emitted by the compiler.
      * Combinable with `asm` (condition + CSV); mutually exclusive with `cltv`.
      */
-    csv?: { type: "blocks" | "seconds"; value: bigint | string };
+    csv?: { type: "blocks" | "seconds" | "sequence"; value: bigint | string };
     /**
      * Absolute timelock (CLTV): a literal or a `"$param"` reference.
      * Mutually exclusive with `csv`/`asm`.
@@ -411,13 +414,28 @@ function resolveSigner(
     return v;
 }
 
+/** @internal Decode compiler sequences while retaining hand-written timelock units. */
+export function resolveCsvTimelock(
+    csv: NonNullable<TapscriptSegment["csv"]>,
+    args: Record<string, ArkadeParamValue>,
+): RelativeTimelock {
+    const value = resolveTimelockValue(csv.value, args);
+    if (csv.type !== "sequence") return { type: csv.type, value };
+    const timelock =
+        value >= 0n && value < 0x80000000n ? sequenceToTimelock(Number(value)) : undefined;
+    if (!timelock || BigInt(timelockToSequence(timelock)) !== value) {
+        throw new Error(`CSV value '${csv.value}' (${value}) is not a canonical BIP68 sequence`);
+    }
+    return timelock;
+}
+
 function encodeTapscriptSegment(
     seg: TapscriptSegment,
     pubkeys: Uint8Array[],
     args: Record<string, ArkadeParamValue>,
 ): ArkTapscript<TapscriptType, any> {
     if (seg.csv) {
-        const timelock = { type: seg.csv.type, value: resolveTimelockValue(seg.csv.value, args) };
+        const timelock = resolveCsvTimelock(seg.csv, args);
         if (seg.asm) {
             // The fifth arkd closure: condition + CSV.
             return ConditionCSVMultisigTapscript.encode({

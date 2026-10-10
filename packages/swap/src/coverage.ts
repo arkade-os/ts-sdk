@@ -9,12 +9,12 @@ import type { IContractManager } from "@arkade-os/sdk";
 import type { RfqSwapState } from "./rfqSwapState";
 import type { AssetSwapStatus } from "./store";
 
-/** Structural so v1 and v2 offer records both fit. `createdAt` is unix **milliseconds**, the unit
- * issuance is marked in; seconds would leave every issued script outstanding forever. */
+/** Native issuance matches `id`; legacy issuance compares unix milliseconds in `createdAt`. */
 export interface CoveredSwap {
     readonly swapPkScript: string;
     readonly status: AssetSwapStatus;
     readonly createdAt: number;
+    readonly id?: string;
 }
 
 /**
@@ -32,9 +32,12 @@ export type OfferContractRetirer = Pick<IContractManager, "setContractWatchState
  *  missed its window says nothing about a covenant that can still be funded. */
 export const LOCKUP_RETIRABLE: readonly RfqSwapState[] = ["settled", "refunded"];
 
-/** Scripts whose address has been handed out, by issuance time. Cleared by the first record showing
- * the deposit landed; a stale mark would pin the script watched for the life of the process. */
-const issuedAt = new Map<string, number>();
+export interface CoverageRegistrationOptions {
+    readonly coverageId?: string;
+}
+
+/** Outstanding addresses: a native durable record ID, or the legacy issuance timestamp. */
+const issuedAt = new Map<string, { issuedAt: number; id?: string }>();
 
 /** Per-script tail of in-flight coverage changes; holds only what is running. */
 const inFlight = new Map<string, Promise<void>>();
@@ -64,7 +67,13 @@ async function serialize<T>(script: string, task: () => Promise<T>): Promise<T> 
 function addressOutstanding(swaps: readonly CoveredSwap[], script: string): boolean {
     const issued = issuedAt.get(script);
     if (issued === undefined) return false;
-    if (swaps.some((s) => s.swapPkScript === script && s.createdAt >= issued)) {
+    if (
+        swaps.some(
+            (s) =>
+                s.swapPkScript === script &&
+                (issued.id === undefined ? s.createdAt >= issued.issuedAt : s.id === issued.id),
+        )
+    ) {
         issuedAt.delete(script);
         return false;
     }
@@ -82,11 +91,13 @@ export async function promoteOfferContract(
     /** When the address went out. A restore passes the record's funding time, since a mark dated
      * after every record at the script would pin it watched forever. */
     issued: number = Date.now(),
+    options: CoverageRegistrationOptions & { restore?: boolean } = {},
 ): Promise<void> {
     await serialize(script, async () => {
         await manager.setContractWatchState(script, "watched");
         // after the write: a failed promotion hands out no address
-        issuedAt.set(script, issued);
+        if (options.restore && options.coverageId !== undefined && issuedAt.has(script)) return;
+        issuedAt.set(script, { issuedAt: issued, id: options.coverageId });
     });
 }
 
@@ -135,9 +146,10 @@ export async function retireSettledOfferContracts(
 export const registerContractCoverage = async <T>(
     script: string,
     register: () => Promise<T>,
+    options: CoverageRegistrationOptions = {},
 ): Promise<T> =>
     serialize(script, async () => {
         const row = await register();
-        issuedAt.set(script, Date.now());
+        issuedAt.set(script, { issuedAt: Date.now(), id: options.coverageId });
         return row;
     });

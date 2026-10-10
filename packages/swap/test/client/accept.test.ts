@@ -23,8 +23,10 @@ import {
     MissingCorridorDep,
     QuoteExpired,
 } from "../../src/client/errors";
-import { OFFER_PACKET_TYPE, decodeOffer } from "../../src/offer";
+import { OFFER_PACKET_TYPE, decodeOffer, restoreOfferCoverage } from "../../src/offer";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../../src/lockupContract";
+import { offerFactsOf } from "../../src/client/driveRecords";
+import { promoteOfferContract, retireOfferContract } from "../../src/coverage";
 import { retireUnsubmittedFunding } from "../../src/client/fundingNotSubmitted";
 import { conflictingFields } from "../../src/client/accept";
 import type { Quote, QuoteInput } from "../../src/client/quote";
@@ -65,6 +67,7 @@ const setup = async (
     over: Parameters<typeof acceptWallet>[0] & {
         repository?: AssetSwapRepository | undefined;
         omitRepository?: boolean;
+        solverClock?: ReturnType<typeof clockAt>;
     } = {},
 ): Promise<Harness> => {
     const wallet = await acceptWallet(over);
@@ -74,7 +77,7 @@ const setup = async (
         ...(over.omitRepository ? {} : { repository }),
         discovery: { snapshot: [lightningCard, onchainCard, spotCard] },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
-        transportFor: () => solverTransport(solverFor(CLOCK)),
+        transportFor: () => solverTransport(solverFor(over.solverClock ?? CLOCK)),
         fetchImpl: feedServing().fetch,
     });
     return { client, repository, wallet };
@@ -878,6 +881,7 @@ describe("accept funding deadline", () => {
     it.each(FUNDING_ROUTES)(
         "persists proven unsent funding and survives restart on %s",
         async (route) => {
+            vi.setSystemTime(NOW * 1000 + 537);
             const h = await setup();
             const quote = await quoteFor(h, route);
             const validUntil = NOW + 1;
@@ -1084,5 +1088,87 @@ it("publishes a freshly persisted unsent outcome to the current drive", async ()
     expect(outcomes).toContain("cancelled");
     expect((await h.client.swaps())[0]?.outcome).toBe("cancelled");
     unsubscribe();
+    await h.client[Symbol.asyncDispose]();
+});
+
+it.each(["spot", "lightningSend"] as const)(
+    "keeps a newer identical-script issuance after unsent %s funding",
+    async (route) => {
+        vi.setSystemTime(NOW * 1000 + 537);
+        const h = await setup();
+        const quote = await quoteFor(h, route);
+        vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(new SendDeadlineExceededError(NOW + 1));
+        await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
+            SendDeadlineExceededError,
+        );
+        const stopped = (await h.repository.getSwapRecord(quote.id))!;
+        const script = stopped.family === "offer" ? stopped.swapPkScript : stopped.lockupPkScript;
+        await promoteOfferContract(await h.wallet.wallet.getContractManager(), script, Date.now(), {
+            coverageId: "newer-quote",
+        });
+        if (stopped.family === "offer") {
+            await restoreOfferCoverage(h.wallet.wallet, [
+                { ...offerFactsOf(stopped), status: "pending" },
+            ]);
+        }
+        h.wallet.watched.length = 0;
+        await retireUnsubmittedFunding(h.wallet.wallet, h.repository, stopped);
+        expect(h.wallet.watched).toEqual([]);
+        await h.client[Symbol.asyncDispose]();
+    },
+);
+
+it("keeps unsent coverage when its fresh repository scan fails", async () => {
+    const h = await setup();
+    const quote = await quoteFor(h, "spot");
+    vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(new SendDeadlineExceededError(NOW + 1));
+    await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
+        SendDeadlineExceededError,
+    );
+    const stopped = (await h.repository.getSwapRecord(quote.id))!;
+    h.wallet.watched.length = 0;
+    vi.spyOn(h.repository, "getSwapRecordsPage").mockRejectedValue(
+        new Error("record store offline"),
+    );
+    await retireUnsubmittedFunding(h.wallet.wallet, h.repository, stopped);
+    expect(h.wallet.watched).toEqual([]);
+    await h.client[Symbol.asyncDispose]();
+});
+
+it("retires a successfully fulfilled native offer through its watcher facts", async () => {
+    vi.setSystemTime(NOW * 1000 + 537);
+    const h = await setup();
+    const quote = await quoteFor(h, "spot");
+    await h.client.accept(quote);
+    const funded = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+    const settled = { ...funded, status: "fulfilled" as const };
+    await h.repository.saveSwapRecord(settled);
+    h.wallet.watched.length = 0;
+    await retireOfferContract(
+        await h.wallet.wallet.getContractManager(),
+        [offerFactsOf(settled)],
+        settled.swapPkScript,
+    );
+    expect(h.wallet.watched).toEqual([[settled.swapPkScript, "retained"]]);
+    await h.client[Symbol.asyncDispose]();
+});
+
+it("retires first-attempt unsent funding under the real millisecond clock", async () => {
+    vi.useRealTimers();
+    const now = Math.floor(Date.now() / 1000);
+    const h = await setup({ solverClock: clockAt(now) });
+    const quote = await h.client.quote({ to: invoiceFor(PAYMENT_HASH, clockAt(now)) });
+    const validUntil = now + 1;
+    let issued = 0;
+    vi.spyOn(h.wallet.wallet, "send").mockImplementation(async () => {
+        issued = Date.now();
+        throw new SendDeadlineExceededError(validUntil);
+    });
+    await expect(h.client.accept(quote, { validUntil })).rejects.toBeInstanceOf(
+        SendDeadlineExceededError,
+    );
+    const row = await h.repository.getSwapRecord(quote.id);
+    expect(issued).toBeGreaterThanOrEqual(row!.createdAt * 1000);
+    expect(h.wallet.watched).toContainEqual([h.wallet.contracts[0]?.script, "retained"]);
     await h.client[Symbol.asyncDispose]();
 });

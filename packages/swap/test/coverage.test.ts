@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { LOCKUP_RETIRABLE, promoteOfferContract, retireOfferContract } from "../src/coverage";
+import {
+    LOCKUP_RETIRABLE,
+    promoteOfferContract,
+    retireOfferContract,
+    registerContractCoverage,
+} from "../src/coverage";
 import type { AssetSwap } from "../src/store";
 
 const SCRIPT = "51" + "aa".repeat(32);
@@ -90,4 +95,115 @@ describe("corridor lockup coverage", () => {
             expect(LOCKUP_RETIRABLE).not.toContain(state);
         },
     );
+});
+
+describe("native issuance identity", () => {
+    it("retires a matching record despite second precision", async () => {
+        const m = manager();
+        const script = "native-fractional";
+        await promoteOfferContract(m, script, 1_700_000_000_537, { coverageId: "quote-a" });
+        await retireOfferContract(m, [swap({ id: "quote-a", swapPkScript: script })], script);
+        expect(m.setContractWatchState.mock.calls).toEqual([
+            [script, "watched"],
+            [script, "retained"],
+        ]);
+    });
+
+    it.each([0, 1])("preserves a newer issuance %s milliseconds later", async (offset) => {
+        const m = manager();
+        const script = `native-identical-${offset}`;
+        const issued = 1_700_000_000_537;
+        await promoteOfferContract(m, script, issued, { coverageId: "old" });
+        await promoteOfferContract(m, script, issued + offset, { coverageId: "new" });
+        await retireOfferContract(
+            m,
+            [swap({ id: "old", swapPkScript: script, createdAt: issued + 1000 })],
+            script,
+        );
+        expect(m.setContractWatchState.mock.calls).toEqual([
+            [script, "watched"],
+            [script, "watched"],
+        ]);
+        await retireOfferContract(m, [swap({ id: "new", swapPkScript: script })], script);
+        expect(m.setContractWatchState).toHaveBeenLastCalledWith(script, "retained");
+    });
+
+    it("retains a tokened lockup until its own record is durable", async () => {
+        const m = manager();
+        const script = "native-lockup";
+        await registerContractCoverage(script, async () => {}, { coverageId: "lockup-new" });
+        await retireOfferContract(
+            m,
+            [swap({ id: "lockup-old", swapPkScript: script, createdAt: Date.now() + 1000 })],
+            script,
+        );
+        expect(m.setContractWatchState).not.toHaveBeenCalled();
+        await retireOfferContract(m, [swap({ id: "lockup-new", swapPkScript: script })], script);
+        expect(m.setContractWatchState).toHaveBeenCalledWith(script, "retained");
+    });
+
+    it("does not replace a newer issuance while restoring an older native record", async () => {
+        const m = manager();
+        const script = "native-restore";
+        await promoteOfferContract(m, script, 1000, { coverageId: "new" });
+        await promoteOfferContract(m, script, 1000, { coverageId: "old", restore: true });
+        await retireOfferContract(
+            m,
+            [swap({ id: "old", swapPkScript: script, createdAt: 2000 })],
+            script,
+        );
+        expect(m.setContractWatchState.mock.calls).toEqual([
+            [script, "watched"],
+            [script, "watched"],
+        ]);
+    });
+
+    it("reads records within the script queue and preserves coverage on read failure", async () => {
+        const m = manager();
+        const script = "native-fresh-read";
+        await promoteOfferContract(m, script, 1000, { coverageId: "new" });
+        const read = vi.fn(async () => {
+            throw new Error("store offline");
+        });
+        await expect(retireOfferContract(m, read, script)).rejects.toThrow("store offline");
+        await retireOfferContract(
+            m,
+            [swap({ id: "old", swapPkScript: script, createdAt: 2000 })],
+            script,
+        );
+        expect(m.setContractWatchState.mock.calls).toEqual([[script, "watched"]]);
+    });
+});
+
+it("keeps legacy millisecond precision without a registration token", async () => {
+    const m = manager();
+    const script = "legacy-fractional";
+    await promoteOfferContract(m, script, 1_700_000_000_537);
+    await retireOfferContract(m, [swap({ swapPkScript: script })], script);
+    expect(m.setContractWatchState.mock.calls).toEqual([[script, "watched"]]);
+});
+
+it("waits for the coverage queue before reading current durable liabilities", async () => {
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    const script = "native-queued-read";
+    const m = {
+        setContractWatchState: vi.fn(async () => {
+            await blocked;
+        }),
+    };
+    const promoting = promoteOfferContract(m, script, 1000, { coverageId: "new" });
+    await Promise.resolve();
+    let records = [swap({ id: "new", swapPkScript: script })];
+    const read = vi.fn(async () => records);
+    const retiring = retireOfferContract(m, read, script);
+    await Promise.resolve();
+    expect(read).not.toHaveBeenCalled();
+    records = [swap({ id: "new", swapPkScript: script, status: "pending" })];
+    release();
+    await Promise.all([promoting, retiring]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(m.setContractWatchState.mock.calls).toEqual([[script, "watched"]]);
 });

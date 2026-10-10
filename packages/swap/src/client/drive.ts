@@ -867,10 +867,23 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
+        const retiredScripts = new Set<string>();
         for (const record of [...corridor, ...offer]) {
             records.set(record.id, record);
-            if (mode !== "readonly" && fundingWasNotSubmitted(record))
-                await retireUnsubmittedFunding(wallet, repository, record);
+            if (mode !== "readonly" && fundingWasNotSubmitted(record)) {
+                const script =
+                    record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
+                if (retiredScripts.has(script)) continue;
+                retiredScripts.add(script);
+                try {
+                    await retireUnsubmittedFunding(wallet, repository, record, await contractsOf());
+                } catch (error) {
+                    console.warn(
+                        `[swap] could not restore unsent coverage for ${record.id}`,
+                        error,
+                    );
+                }
+            }
         }
 
         // Terminal records stay in `records` (readable, replayed) but are never driven.

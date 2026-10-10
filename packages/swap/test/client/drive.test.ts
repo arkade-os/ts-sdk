@@ -36,6 +36,7 @@ import { RFQ_CONFIGURATION_REFUSAL, RFQ_CONFIGURATION_REFUSALS } from "../../src
 import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
 import type { AssetSwapRepository } from "../../src/repository";
+import { promoteOfferContract } from "../../src/coverage";
 import { rfqRecordOf } from "../../src/client/driveRecords";
 import { legacyOfferDepositsToAdopt } from "../../src/client/legacyRecords";
 import type { RfqSwapRecord } from "../../src/rfqRecord";
@@ -147,6 +148,7 @@ interface Harness {
 const build = async (
     over: {
         records?: SwapRecord[];
+        repository?: AssetSwapRepository;
         /** v1 `rfqSwaps` rows, as a 0.0.x client left them. */
         legacy?: RfqSwapRecord[];
         /** The v1 `rfqSwaps` store throws on read. */
@@ -171,7 +173,7 @@ const build = async (
         gate?: Promise<void>;
     } = {},
 ): Promise<Harness> => {
-    const repository = memoryRepository();
+    const repository = over.repository ?? memoryRepository();
     for (const record of over.records ?? []) await repository.saveSwapRecord(record);
     for (const record of over.legacy ?? []) await repository.saveRfqSwap(record);
     if (over.legacyUnreadable) {
@@ -1766,5 +1768,28 @@ it("reads proven unsent funding under readonly without changing coverage", async
     expect(h.drive.swap("q1")?.outcome).toBe("cancelled");
     expect(contracts.watchStates).toEqual([]);
     expect(await h.repository.getSwapRecord("q1")).toEqual(record);
+    await h.drive.dispose();
+});
+
+it("deduplicates restored unsent scripts while reading fresh records inside retirement", async () => {
+    const first = signable({
+        state: "failed",
+        fundingNotSubmitted: { reason: "send_deadline", validUntil: REFUND_LOCKTIME },
+    });
+    const second = { ...first, id: "q2", rfqId: "rfq2" };
+    const contracts = fakeContracts([SEND_LOCKUP]);
+    const repository = memoryRepository();
+    await repository.saveSwapRecord(first);
+    await repository.saveSwapRecord(second);
+    await promoteOfferContract(contracts, first.lockupPkScript, Date.now(), {
+        coverageId: first.id,
+    });
+    contracts.watchStates.length = 0;
+    const scan = vi.spyOn(repository, "getSwapRecordsPage");
+    const h = await build({ repository, contracts });
+    expect(h.drive.swap("q1")?.outcome).toBe("cancelled");
+    expect(h.drive.swap("q2")?.outcome).toBe("cancelled");
+    expect(contracts.watchStates.filter(([, state]) => state === "retained")).toHaveLength(1);
+    expect(scan).toHaveBeenCalledTimes(3);
     await h.drive.dispose();
 });
