@@ -161,6 +161,15 @@ style and have not been backfilled.
 
 ### Features
 
+- **`Wallet.create` and `ReadonlyWallet.create` build the class they are
+  called on.** A subclass that inherits either factory now gets an instance
+  of itself, typed as itself, where it used to get a plain `Wallet` or
+  `ReadonlyWallet`; its constructor receives the base constructor's
+  arguments. Calls on `Wallet` and `ReadonlyWallet` themselves, and a
+  subclass's own `create` override, are unchanged. The factories now read
+  `this`, so one taken off the class and called on its own, as in
+  `const { create } = Wallet`, no longer works.
+
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
   under the platform config directory (XDG /
