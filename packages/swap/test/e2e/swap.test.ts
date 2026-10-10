@@ -430,6 +430,16 @@ describe("asset swaps against solverd (regtest)", () => {
         await expectNoFill(swap);
         await cancelAndAwaitRefund(swaps, swap);
     }, 60_000);
+
+    it("refuses to cancel a filled swap", async () => {
+        const swaps = new InMemoryAssetSwapRepository();
+        const quote = await quoteBtcForAsset(2_000);
+        const swap = await offerBtcForAsset(swaps, 2_000, quote);
+        await waitForFill(swap);
+        await expect(cancelAndAwaitRefund(swaps, swap)).rejects.toThrow("no spendable VTXO");
+        // untouched: the watcher records the fill
+        expect(await statusOf(swaps, swap)).toBe("pending");
+    }, 180_000);
 });
 
 const execCommand = (command: string): string => {
@@ -696,6 +706,10 @@ const expectNoFill = async (swap: AssetSwap) => {
     expect((await depositOf(swap))?.isSpent).toBe(false);
 };
 
+/** Wait until the solver fills the swap: the indexer shows its deposit spent. */
+const waitForFill = (swap: AssetSwap): Promise<void> =>
+    waitFor(async () => (await depositOf(swap))?.isSpent === true, 120_000);
+
 /** Cancel the swap, record the outcome in `swaps`, and wait for the refund to land. */
 const cancelAndAwaitRefund = async (swaps: AssetSwapRepository, swap: AssetSwap) => {
     const cancelTxid = await cancelOffer(wallet, swap.offerHex, {
@@ -706,3 +720,7 @@ const cancelAndAwaitRefund = async (swaps: AssetSwapRepository, swap: AssetSwap)
     expect(cancelTxid).toBeTruthy();
     await waitFor(async () => (await wallet.getVtxos()).some((v) => v.txid === cancelTxid));
 };
+
+/** The status `swaps` records for the swap. */
+const statusOf = async (swaps: AssetSwapRepository, swap: AssetSwap) =>
+    (await getAssetSwaps(swaps)).find((s) => s.fundingTxid === swap.fundingTxid)?.status;
