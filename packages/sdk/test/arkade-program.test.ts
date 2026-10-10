@@ -163,6 +163,25 @@ describe("Program timelocks — literal and $param values", () => {
         expect(rt.functions.exit.tapscript.csv?.value).toBe("$exit");
         expect(rt.functions.refund.tapscript.cltv).toBe(900_000n);
     });
+
+    it('round-trips a "sequence" csv and still decodes it to the seconds leaf', () => {
+        const program: arkade.Program = {
+            version: 0,
+            functions: {
+                exit: {
+                    tapscript: { signers: ["$user"], csv: { type: "sequence", value: "$exit" } },
+                },
+            },
+        };
+        const rt = arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program)));
+        expect(rt).toEqual(program);
+        const script = new arkade.ArkadeProgramScript(rt, { user, exit: 4_194_472n }, keys);
+        const expected = CSVMultisigTapscript.encode({
+            timelock: { type: "seconds", value: 86_016n },
+            pubkeys: [user],
+        });
+        expect(hex.encode(script.compiled[0].leafScript)).toBe(hex.encode(expected.script));
+    });
 });
 
 describe("Typed program params — authoritative when present", () => {

@@ -314,8 +314,24 @@ style and have not been backfilled.
   `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
   reads as 5,120 seconds and builds the artifact's own script bytes. A
   literal that does not round-trip through BIP68, such as `70000`, is
-  refused when the artifact is read. `$param` operands are still bound
-  as block counts. (#1012)
+  refused when the artifact is read. (#1012)
+
+- **`programFromArtifact` binds a `$param` CSV operand as a BIP68
+  sequence, not a block count.** The compiler emits a bare `<param>`
+  placeholder for a CSV operand and both it and the delegatee push the
+  parameter's raw value, which is the sequence. The reader tagged such
+  an operand `blocks`, so a seconds-domain exit delay could not be
+  built at all (`exitDelay = 4194472` threw `Expected Number blocks <=
+  65535`), and any delay a third party derived from the same artifact
+  pushed different bytes — a different address. An artifact CSV operand
+  now carries a new `sequence` kind in the Program format, decoded when
+  the parameter is bound with the same canonical check the literal path
+  uses; a value with the disable flag set or bits outside the value and
+  type fields is refused and names the parameter. A blocks-domain
+  sequence equals its block count, so every value that built before
+  builds the same bytes. Hand-written `blocks`/`seconds` programs are
+  unchanged. `ArtifactWitnessElement` also accepts the `encoding` field
+  `arkadec` tags signature witness items with.
 
 - **The missing-`EventSource` warning no longer promises polling.**
   `ContractWatcher` warned it was "falling back to polling", but for the
