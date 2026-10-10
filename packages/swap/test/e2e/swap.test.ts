@@ -501,6 +501,69 @@ describe("asset swaps against solverd (regtest)", () => {
             await expectPayout(swap);
         }, 180_000);
     });
+
+    describe("after a restore into new storage", () => {
+        it("detects a filled BTC to asset swap and its payout", async () => {
+            const oldSwaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteBtcForAsset(2_000);
+            const swap = await offerBtcForAsset(oldSwaps, 2_000, quote);
+            await waitForFill(swap);
+            await using client = await restoreWallet();
+            expect(await outcomeOf(client, swap)).toBe("filled");
+            await expectPayout(swap);
+        }, 180_000);
+
+        it("detects a filled asset to BTC swap and its payout", async () => {
+            await topUpAssetTo(1_000n);
+            const oldSwaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteAssetForBtc(1_000n);
+            const swap = await offerAssetForBtc(oldSwaps, 1_000n, quote);
+            await waitForFill(swap);
+            await using client = await restoreWallet();
+            expect(await outcomeOf(client, swap)).toBe("filled");
+            await expectPayout(swap);
+        }, 180_000);
+
+        it("detects and cancels an underbid BTC to asset offer", async () => {
+            const oldSwaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteBtcForAsset(2_000);
+            const swap = await offerBtcForAsset(oldSwaps, 2_000, quote * 10n);
+            await using client = await restoreWallet();
+            expect(await outcomeOf(client, swap)).toBe("open");
+            await cancelWithClient(client, swap);
+        }, 180_000);
+
+        it("detects and cancels an underbid asset to BTC offer", async () => {
+            await topUpAssetTo(1_000n);
+            const oldSwaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteAssetForBtc(1_000n);
+            const swap = await offerAssetForBtc(oldSwaps, 1_000n, quote * 10n);
+            await using client = await restoreWallet();
+            expect(await outcomeOf(client, swap)).toBe("open");
+            await cancelWithClient(client, swap);
+        }, 180_000);
+
+        it("detects a cancelled BTC to asset offer and its refund", async () => {
+            const oldSwaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteBtcForAsset(2_000);
+            const swap = await offerBtcForAsset(oldSwaps, 2_000, quote * 10n);
+            await cancelAndAwaitRefund(oldSwaps, swap);
+            await using client = await restoreWallet();
+            expect(await outcomeOf(client, swap)).toBe("cancelled");
+            await expectPayout(swap);
+        }, 180_000);
+
+        it("detects a cancelled asset to BTC offer and its refund", async () => {
+            await topUpAssetTo(1_000n);
+            const oldSwaps = new InMemoryAssetSwapRepository();
+            const quote = await quoteAssetForBtc(1_000n);
+            const swap = await offerAssetForBtc(oldSwaps, 1_000n, quote * 10n);
+            await cancelAndAwaitRefund(oldSwaps, swap);
+            await using client = await restoreWallet();
+            expect(await outcomeOf(client, swap)).toBe("cancelled");
+            await expectPayout(swap);
+        }, 180_000);
+    });
 });
 
 const execCommand = (command: string): string => {
@@ -833,6 +896,18 @@ const reloadWallet = async (swaps: AssetSwapRepository): Promise<SwapClient> => 
     await wallet.dispose();
     wallet = await openWallet({ walletRepository, contractRepository });
     const client = createSwapClient({ wallet, repository: swaps });
+    await client.ready;
+    return client;
+};
+
+/** Close the wallet and open its key on new, empty storage, as a restore on a
+ * new device does: restore the wallet first, then start a swap client on a new
+ * swap store, which `client.ready` fills from history. */
+const restoreWallet = async (): Promise<SwapClient> => {
+    await wallet.dispose();
+    wallet = await openWallet();
+    await wallet.restore();
+    const client = createSwapClient({ wallet, repository: new InMemoryAssetSwapRepository() });
     await client.ready;
     return client;
 };
