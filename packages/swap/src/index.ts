@@ -1,4 +1,20 @@
 export {
+    OFFER_FILL_TEMPLATE,
+    OFFER_FILL_OWNERS,
+    buildOfferFillPlan,
+    verifyOfferFillPlan,
+    type FillSponsorFare,
+    type FillSponsor,
+    type BuildOfferFillPlanOpts,
+} from "./offerFillPlan";
+export {
+    deepFreeze,
+    digestJointGraph,
+    verifyJointGraph,
+    unsignedPsbtBytes,
+    type JointGraph,
+} from "./jointGraph";
+export {
     createOffer,
     cancelOffer,
     fillOffer,
