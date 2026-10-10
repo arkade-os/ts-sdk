@@ -1055,11 +1055,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Create a readonly wallet for querying balances, addresses, and history.
      *
-     * A subclass inherits this factory and gets an instance of itself, built with this class's
-     * constructor arguments.
-     *
      * @param config - Readonly wallet configuration
      * @returns A readonly wallet instance
+     * @remarks
+     * A subclass inherits this factory and gets an instance of itself. The factory calls
+     * `new this(...)` with this class's constructor arguments, so a subclass constructor must
+     * accept the same ones.
      */
     static create<T extends ReadonlyWallet>(
         this: { prototype: T },
@@ -3046,11 +3047,12 @@ export class Wallet
     /**
      * Create a full wallet and initialize its background managers.
      *
-     * A subclass inherits this factory and gets an instance of itself, built with this class's
-     * constructor arguments.
-     *
      * @param config - Wallet configuration
      * @returns A wallet ready to query balances and send transactions
+     * @remarks
+     * A subclass inherits this factory and gets an instance of itself. The factory calls
+     * `new this(...)` with this class's constructor arguments, so a subclass constructor must
+     * accept the same ones.
      * @example
      * ```typescript
      * const wallet = await Wallet.create({
