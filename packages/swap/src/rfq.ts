@@ -64,6 +64,8 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
+// Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
+import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
@@ -539,9 +541,10 @@ const matchQuotedLockup = (
  *
  * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
  * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
- * where the headroom check is over-strict but never unsafe. */
+ * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: their
+ * contract, finality and deadline checks are not implemented yet. */
 export const assertFundable = (input: {
-    quote: RfqQuote;
+    quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
     now: number;
     onchain?: {
@@ -568,6 +571,12 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    if (input.quote.pair.split("->").some((leg) => leg.startsWith("ethereum:"))) {
+        fail(
+            "evm_funding_unavailable",
+            "EVM funding is unavailable until local contract, finality, and deadline verification is implemented",
+        );
+    }
     // `valid_until` feeds the expiry gate AND the v2 TTL floor; absent or NaN it deletes both.
     if (input.quote.valid_until === undefined) {
         fail("quote_malformed", "quote carries no valid_until");

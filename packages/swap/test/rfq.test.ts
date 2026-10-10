@@ -944,7 +944,7 @@ describe("assertFundable — the max-fee gate", () => {
     it("refuses to pretend it can gate a cross-asset pair", () => {
         expect(() =>
             fundable(
-                { pair: "arkade:BTC->ethereum:0xa0b86991", from_amount: 100_000, to_amount: 42 },
+                { pair: "arkade:BTC->custom:USD", from_amount: 100_000, to_amount: 42 },
                 { bps: 100 },
             ),
         ).toThrow(/cross-asset|different assets/i);
@@ -963,7 +963,7 @@ describe("assertFundable — the max-fee gate", () => {
  */
 describe("assertFundable — the max-fee gate, cross-asset", () => {
     const now = 1_800_000_000;
-    const CROSS = "arkade:BTC->ethereum:0xa0b86991";
+    const CROSS = "arkade:BTC->custom:USD";
     const gate = (
         over: Partial<RfqQuote>,
         maxFee?: { bps?: number; sats?: number; referenceRate?: number },
