@@ -15,7 +15,7 @@ import type { OnchainHtlcPhase } from "../onchainHtlc";
 import type { RfqStatus } from "../rfq";
 import type { RfqSwapState } from "../rfqSwapState";
 import type { PersistableRfqSwap } from "../rfqRecord";
-import type { LockupOwner } from "./corridors/contract";
+import type { CorridorDrive, LockupOwner } from "./corridors/contract";
 import { LIGHTNING_DRIVE } from "./corridors/lightning";
 import { ONCHAIN_DRIVE } from "./corridors/onchain";
 import type { Swap } from "./record";
@@ -77,6 +77,18 @@ export interface SwapUpdate {
 /** What every listener registration hands back. */
 export type Unsubscribe = () => void;
 
+/** `arkade -> eip155:*` has no corridor module yet; its drive facts live here until it does. */
+const EVM_DRIVE = {
+    take: {
+        lockups: [
+            { covenant: "arkade_lockup", owner: "trader", deadline: "refund_locktime" },
+            { covenant: "evm_lock", owner: "solver", deadline: "evm_timeout_block" },
+        ],
+        actions: ["claimEvm", "refundArkade"],
+        seams: ["indexer", "evm"],
+    },
+} as const satisfies CorridorDrive;
+
 /** The manager's route-pair vocabulary — a route pair, not a corridor. */
 export type CorridorKind = PersistableRfqSwap["kind"];
 
@@ -86,6 +98,7 @@ export const CORRIDOR_PASS = {
     lightning_send: LIGHTNING_DRIVE.take,
     lightning_receive: LIGHTNING_DRIVE.give,
     onchain_send: ONCHAIN_DRIVE.take,
+    evm_send: EVM_DRIVE.take,
 } as const satisfies Record<CorridorKind, unknown>;
 
 /** Whose the arkade lockup is, per corridor kind (`lockups[0]` on every pass). */
@@ -93,11 +106,16 @@ export const LOCKUP_OWNER = {
     lightning_send: CORRIDOR_PASS.lightning_send.lockups[0].owner,
     lightning_receive: CORRIDOR_PASS.lightning_receive.lockups[0].owner,
     onchain_send: CORRIDOR_PASS.onchain_send.lockups[0].owner,
+    evm_send: CORRIDOR_PASS.evm_send.lockups[0].owner,
 } as const satisfies Record<CorridorKind, LockupOwner>;
 
 /** Whether this kind's drive pass reads L1, i.e. needs the onchain corridor's deps. */
 export const readsChain = (kind: CorridorKind): boolean =>
     (CORRIDOR_PASS[kind].seams as readonly string[]).includes("chain");
+
+/** Whether this kind's pass reads an EVM chain, which this client does not wire yet. */
+export const readsEvm = (kind: CorridorKind): boolean =>
+    (CORRIDOR_PASS[kind].seams as readonly string[]).includes("evm");
 
 /** One cell of the corridor table; a function of the kind only for trader `settled`. */
 type CorridorCell = (kind: CorridorKind) => Outcome;

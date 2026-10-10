@@ -33,6 +33,10 @@ import {
     type EvmSendQuote,
 } from "./evmRfq";
 import { registerLockupContract } from "./lockupContract";
+import { rfqClaimSecretOf } from "./rfqProfileParts";
+import "./rfqCorridors";
+import { preimageForSwapRecord } from "./store";
+import type { RfqSwapManagerCallbacks, RfqSwapRecordStore } from "./swapManager";
 import { gateError } from "./onchainHtlc";
 
 /** The six fields ERC20Swap keys a lock by, hex addresses and a 32-byte hash. */
@@ -57,6 +61,21 @@ export interface EvmChain {
 
 /** Any account may send it: the claim names `claimAddress`, and the tokens go there. */
 export type EvmSendClaim = (tx: { to: string; data: string }) => Promise<string>;
+
+/** What the claim gate reads off the quote; stored with the swap, so a restart needs no quote. */
+export interface EvmSendTerms {
+    chainId: number;
+    contractAddress: string;
+    minConfirmations: number;
+    minAgeSeconds: number;
+}
+
+export const evmSendTerms = (quote: EvmSendQuote): EvmSendTerms => ({
+    chainId: quote.profile.evm_chain_id,
+    contractAddress: quote.profile.evm_contract_address,
+    minConfirmations: quote.profile.min_confirmations,
+    minAgeSeconds: quote.profile.min_age_seconds,
+});
 
 export interface EvmClaimPolicy {
     /** Blocks the claim needs to land; the solver can refund at `evm_timeout_block`. */
@@ -186,6 +205,8 @@ export const assertEvmSendFundable = (input: {
     /** The ERC20Swap deployment the caller trusts on this chain. */
     contractAddress: string;
     now: number;
+    /** The chain tip and the fewest blocks the solver's lock and our claim need before its refund. */
+    evmWindow?: { tip: number; minBlocks: number };
 }): void => {
     const { quote, now } = input;
     // A contract the solver names could report any lock and pay nothing for the revealed `P`.
@@ -198,6 +219,10 @@ export const assertEvmSendFundable = (input: {
     if (now >= quote.valid_until) throw gateError("quote_expired", "quote expired");
     if (quote.refund_locktime - now < MIN_HEADROOM_SECONDS) {
         throw gateError("insufficient_headroom", "refund deadline headroom below 90 minutes");
+    }
+    const window = input.evmWindow;
+    if (window && quote.profile.evm_timeout_block - window.tip < window.minBlocks) {
+        throw gateError("insufficient_evm_window", "the solver's EVM refund opens too soon");
     }
 };
 
@@ -218,6 +243,8 @@ export async function requestEvmSend(
         evmClaimAddress: string;
         rfqId?: string;
         emulatorPubkey?: string;
+        /** Checks the quote's EVM timeout against this chain's tip; see {@link assertEvmSendFundable}. */
+        evmWindow?: { chain: EvmChain; minBlocks: number };
     },
 ): Promise<{
     rfqId: string;
@@ -228,6 +255,7 @@ export async function requestEvmSend(
     contractParams: LightningSendContractParams;
     refundAddress: string;
     lock: EvmLock;
+    terms: EvmSendTerms;
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
@@ -256,10 +284,17 @@ export async function requestEvmSend(
         refundPkScript: ArkAddress.decode(refundAddress).pkScript,
         ...serverTerms(info, params.emulatorPubkey),
     });
+    const window = params.evmWindow;
+    if (window && (await window.chain.chainId()) !== quote.profile.evm_chain_id) {
+        throw gateError("evm_chain_mismatch", "EVM reader is not on the quote's chain");
+    }
     assertEvmSendFundable({
         quote,
         contractAddress: params.contractAddress,
         now: Math.floor(Date.now() / 1000),
+        ...(window && {
+            evmWindow: { tip: await window.chain.blockNumber(), minBlocks: window.minBlocks },
+        }),
     });
     await registerLockupContract(await wallet.getContractManager(), script, address);
     return {
@@ -271,6 +306,7 @@ export async function requestEvmSend(
         contractParams,
         refundAddress,
         lock: evmSendLock(quote, params.evmClaimAddress),
+        terms: evmSendTerms(quote),
         secrets,
     };
 }
@@ -284,10 +320,10 @@ export type EvmClaimWait = "lock_absent" | "lock_shallow" | "lock_young";
  */
 export async function evmClaimReadiness(
     chain: EvmChain,
-    input: { quote: EvmSendQuote; lock: EvmLock; policy: EvmClaimPolicy },
+    input: { terms: EvmSendTerms; lock: EvmLock; policy: EvmClaimPolicy },
 ): Promise<{ ready: true } | { ready: false; wait: EvmClaimWait }> {
-    const { quote, lock, policy } = input;
-    if ((await chain.chainId()) !== quote.profile.evm_chain_id) {
+    const { terms, lock, policy } = input;
+    if ((await chain.chainId()) !== terms.chainId) {
         throw gateError("evm_chain_mismatch", "EVM reader is not on the quote's chain");
     }
     const tip = await chain.blockNumber();
@@ -297,17 +333,17 @@ export async function evmClaimReadiness(
             "the solver's EVM refund opens before a claim lands",
         );
     }
-    const contract = quote.profile.evm_contract_address;
+    const contract = terms.contractAddress;
     const locked = async (block: number): Promise<boolean> =>
         BigInt(
             await chain.call({ to: contract, data: calldata(SWAPS, evmSwapKey(lock)) }, block),
         ) === 1n;
     if (!(await locked(tip))) return { ready: false, wait: "lock_absent" };
-    const depth = Math.max(quote.profile.min_confirmations, policy.minConfirmations ?? 1);
+    const depth = Math.max(terms.minConfirmations, policy.minConfirmations ?? 1);
     const probe = tip - depth + 1;
     if (probe < 1 || !(await locked(probe))) return { ready: false, wait: "lock_shallow" };
     const age = (await chain.blockTimestamp(tip)) - (await chain.blockTimestamp(probe));
-    if (age < Math.max(quote.profile.min_age_seconds, policy.minAgeSeconds ?? 0)) {
+    if (age < Math.max(terms.minAgeSeconds, policy.minAgeSeconds ?? 0)) {
         return { ready: false, wait: "lock_young" };
     }
     return { ready: true };
@@ -317,13 +353,30 @@ export async function evmClaimReadiness(
 export async function claimEvmSend(
     chain: EvmChain,
     sendClaim: EvmSendClaim,
-    input: { quote: EvmSendQuote; lock: EvmLock; preimage: Uint8Array; policy: EvmClaimPolicy },
+    input: { terms: EvmSendTerms; lock: EvmLock; preimage: Uint8Array; policy: EvmClaimPolicy },
 ): Promise<{ claimed: true; txHash: string } | { claimed: false; wait: EvmClaimWait }> {
     const data = evmClaimCalldata(input.lock, input.preimage);
     const readiness = await evmClaimReadiness(chain, input);
     if (!readiness.ready) return { claimed: false, wait: readiness.wait };
     return {
         claimed: true,
-        txHash: await sendClaim({ to: input.quote.profile.evm_contract_address, data }),
+        txHash: await sendClaim({ to: input.terms.contractAddress, data }),
     };
 }
+
+/** The manager's `claimEvm`: `P` re-derived off the stored record, the claim sent as is. The manager
+ * has already applied {@link evmClaimReadiness}. */
+export const evmSendClaimer =
+    (
+        wallet: IWallet,
+        store: Pick<RfqSwapRecordStore, "getRfqSwap">,
+        sendClaim: EvmSendClaim,
+    ): RfqSwapManagerCallbacks["claimEvm"] =>
+    async (swap) => {
+        const record = await store.getRfqSwap(swap.rfqId);
+        const secret = record && rfqClaimSecretOf(record);
+        if (!secret) throw new Error(`rfq swap ${swap.rfqId} carries no claim secret`);
+        const preimage = await preimageForSwapRecord(wallet, secret);
+        const data = evmClaimCalldata(swap.lock, preimage);
+        return { txid: await sendClaim({ to: swap.terms.contractAddress, data }) };
+    };

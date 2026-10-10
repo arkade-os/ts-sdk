@@ -58,7 +58,9 @@ import {
     isRfqSwapTerminal,
     RFQ_SWAP_ACTIVE_STATES,
     nextOnchainAction,
+    RFQ_CONFIGURATION_REFUSAL,
     type ArkadeRefundResult,
+    type EvmSendSwap,
     type LightningReceiveSwap,
     type LightningSendSwap,
     type OnchainSendSwap,
@@ -66,10 +68,12 @@ import {
     type RfqSwapActionName,
     type AvailableRfqSwapManagerCallbacks,
     type RfqSwapManagerCallbacks,
+    type RfqSwapManagerDeps,
     type RfqSwapRecordStore,
     type RfqSwapState,
     type SwapContractRegistry,
 } from "../src/swapManager";
+import { evmSwapKey, type EvmChain } from "../src/evmSend";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -367,6 +371,7 @@ interface Spies {
     claims: { rfqId: string; utxo: ChainUtxo }[];
     lockupClaims: { vtxos: readonly LockupVtxo[]; partiallyClaimed: boolean }[];
     refunds: string[];
+    evmClaims: string[];
     saved: RfqSwapState[];
     actions: RfqSwapActionName[];
 }
@@ -382,11 +387,13 @@ const spies = (
     const claims: { rfqId: string; utxo: ChainUtxo }[] = [];
     const lockupClaims: { vtxos: readonly LockupVtxo[]; partiallyClaimed: boolean }[] = [];
     const refunds: string[] = [];
+    const evmClaims: string[] = [];
     const saved: RfqSwapState[] = [];
     return {
         claims,
         lockupClaims,
         refunds,
+        evmClaims,
         saved,
         actions: [],
         callbacks: {
@@ -399,6 +406,10 @@ const spies = (
                 return over.claimLockup
                     ? over.claimLockup()
                     : { txid: CLAIM_TXID, amount: LOCKUP_VALUE };
+            },
+            async claimEvm(swap) {
+                evmClaims.push(swap.rfqId);
+                return { txid: `0x${"ab".repeat(32)}` };
             },
             async refundArkade(swap) {
                 refunds.push(swap.rfqId);
@@ -578,6 +589,7 @@ const REGISTERED_LOCKUP_ROWS = (): CreateContractParams[] => [
 const manager = (input: {
     indexer?: LockupSpendIndexer;
     chain?: ChainSource;
+    evm?: RfqSwapManagerDeps["evm"];
     contracts?: SwapContractRegistry;
     repository?: RfqSwapRecordStore;
     now: number | (() => number);
@@ -591,6 +603,7 @@ const manager = (input: {
         {
             indexer: input.indexer ?? fakeIndexer({ vtxos: unspent() }),
             chain: input.chain,
+            evm: input.evm,
             contracts: input.contracts ?? fakeContracts({ preexisting: REGISTERED_LOCKUP_ROWS() }),
             repository: input.repository,
         },
@@ -607,7 +620,7 @@ const manager = (input: {
 /** The spy set minus one claim. */
 const without = (
     s: Spies,
-    key: "claimOnchain" | "claimLockup",
+    key: "claimOnchain" | "claimLockup" | "claimEvm",
 ): AvailableRfqSwapManagerCallbacks => {
     const relaxed: AvailableRfqSwapManagerCallbacks = { ...s.callbacks };
     delete relaxed[key];
@@ -1096,6 +1109,112 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
 
         expect(swap.state).toBe("refunded");
         expect(s.refunds).toEqual([RFQ_ID]);
+    });
+});
+
+describe("RfqSwapManager — the EVM-send leg", () => {
+    const TIMEOUT_BLOCK = 2_000n;
+    const evmSwap = (over: Partial<EvmSendSwap> = {}): EvmSendSwap => ({
+        kind: "evm_send",
+        rfqId: RFQ_ID,
+        state: "pending",
+        lockupPkScript: LOCKUP.pkScript,
+        paymentHash: PAYMENT_HASH,
+        refundLocktime: REFUND_LOCKTIME,
+        createdAt: 1,
+        updatedAt: 1,
+        lock: {
+            preimageHash: PAYMENT_HASH,
+            amount: 5_000_000n,
+            tokenAddress: `0x${"11".repeat(20)}`,
+            claimAddress: `0x${"22".repeat(20)}`,
+            refundAddress: `0x${"33".repeat(20)}`,
+            timelock: TIMEOUT_BLOCK,
+        },
+        terms: {
+            chainId: 42161,
+            contractAddress: `0x${"44".repeat(20)}`,
+            minConfirmations: 3,
+            minAgeSeconds: 0,
+        },
+        ...over,
+    });
+    /** `lockedFrom`: the first block the lock reads present; `null` never. */
+    const evmAt = (lockedFrom: number | null, tip = 1_000): RfqSwapManagerDeps["evm"] => {
+        const chain: EvmChain = {
+            chainId: async () => 42161,
+            blockNumber: async () => tip,
+            blockTimestamp: async (block) => block * 2,
+            call: async (tx, block) => {
+                expect(tx.data).toBe(`0xeb84e7f2${hex.encode(evmSwapKey(evmSwap().lock))}`);
+                return lockedFrom !== null && block >= lockedFrom ? `0x${"0".repeat(63)}1` : "0x0";
+            },
+        };
+        return {
+            chain: (id) => (id === 42161 ? chain : undefined),
+            policy: { claimMarginBlocks: 100 },
+        };
+    };
+    const run = async (
+        swap: EvmSendSwap,
+        evm: RfqSwapManagerDeps["evm"],
+        s = spies(),
+        now = SAFE_NOW,
+    ) => {
+        const m = manager({ evm, now, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        return s;
+    };
+
+    it("claims a buried lock once and records the transaction", async () => {
+        const swap = evmSwap();
+        const s = await run(swap, evmAt(990));
+        expect(s.evmClaims).toEqual([RFQ_ID]);
+        expect(swap.claimTxid).toBe(`0x${"ab".repeat(32)}`);
+        expect(swap.state).toBe("claimed");
+        expect(s.actions).toEqual(["claimEvm"]);
+    });
+
+    it("waits on a lock shallower than the quote's depth", async () => {
+        const swap = evmSwap();
+        const s = await run(swap, evmAt(999));
+        expect(s.evmClaims).toEqual([]);
+        expect(swap.state).toBe("pending");
+    });
+
+    it("does not send a claim it already sent", async () => {
+        const s = await run(evmSwap({ claimTxid: "0x01" }), evmAt(990));
+        expect(s.evmClaims).toEqual([]);
+    });
+
+    it("falls back to the Arkade refund once the claim cannot land before the solver's refund", async () => {
+        const s = await run(
+            evmSwap(),
+            evmAt(0, Number(TIMEOUT_BLOCK) - 100),
+            spies(),
+            REFUND_LOCKTIME + 1,
+        );
+        expect(s.evmClaims).toEqual([]);
+        expect(s.refunds).toEqual([RFQ_ID]);
+    });
+
+    it("blocks when no claim callback is wired, and fails without a reader for the chain", async () => {
+        const s = spies();
+        const blocked = evmSwap();
+        const m = manager({
+            evm: evmAt(990),
+            now: SAFE_NOW,
+            spies: s,
+            install: without(s, "claimEvm"),
+        });
+        await m.addSwap(blocked);
+        await m.poll();
+        expect(blocked.blockedReason).toBe(RFQ_CONFIGURATION_REFUSAL.noClaimEvmCallback);
+
+        const blind = evmSwap();
+        await run(blind, undefined);
+        expect(blind.state).toBe("failed");
     });
 });
 

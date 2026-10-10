@@ -20,14 +20,18 @@ export type ObservationSeam =
     /** Arkade access — `RfqSwapManagerDeps.indexer`. */
     | "indexer"
     /** L1 access — `RfqSwapManagerDeps.chain`. */
-    | "chain";
+    | "chain"
+    /** EVM access — `RfqSwapManagerDeps.evm`. */
+    | "evm";
 
 /** A covenant a pass reads. */
 export type CorridorCovenant =
     /** The Arkade-side VHTLC every corridor route has exactly one of. */
     | "arkade_lockup"
     /** The L1 HTLC, which only `arkade -> onchain` adds. */
-    | "onchain_htlc";
+    | "onchain_htlc"
+    /** The solver's ERC20Swap lock, which only `arkade -> eip155:*` adds. */
+    | "evm_lock";
 
 /** Whose covenant it is. Ownership inverts the deadline: a TRADER lockup's deadline is a moment to
  * act after, a SOLVER lockup's a moment to have acted before. */
@@ -38,7 +42,9 @@ export type CorridorDeadline =
     /** `RfqSwapCommon.refundLocktime`, on every kind. */
     | "refund_locktime"
     /** `OnchainSendSwap.htlc.refundLocktime`, on `arkade -> onchain` alone. */
-    | "htlc_refund_locktime";
+    | "htlc_refund_locktime"
+    /** `EvmSendSwap.lock.timelock`, a block height, on `arkade -> eip155:*` alone. */
+    | "evm_timeout_block";
 
 /** One covenant a pass reads, with its owner and the deadline it runs against. */
 export interface CorridorLockup {

@@ -9,13 +9,17 @@ import {
     claimEvmSend,
     deriveEvmSend,
     evmClaimCalldata,
+    evmSendClaimer,
     evmSendLock,
+    evmSendTerms,
     evmSwapKey,
     requestEvmSend,
     type EvmChain,
     type EvmLock,
 } from "../src/evmSend";
 import { evmSendPair, type EvmSendQuote } from "../src/evmRfq";
+import { rfqCorridorHandlers } from "../src/rfqCorridor";
+import { evmSendProfile } from "../src/rfqCorridors";
 import { AddressMismatch, lightningSendContract, type RfqTransport } from "../src/rfq";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
@@ -80,6 +84,7 @@ const quoteFor = (
 
 const QUOTE = quoteFor(PAYMENT_HASH, key(13));
 const LOCK: EvmLock = evmSendLock(QUOTE, CLAIM_ADDRESS);
+const TERMS = evmSendTerms(QUOTE);
 
 describe("ERC20Swap encodings", () => {
     // Vectors from the solver's `erc20Swap.ts` and `claimEvidence.ts` over the same lock.
@@ -141,6 +146,7 @@ describe("assertEvmSendFundable", () => {
                 quote: QUOTE,
                 contractAddress: ERC20_SWAP.toUpperCase().replace("0X", "0x"),
                 now: NOW,
+                evmWindow: { tip: TIMEOUT_BLOCK - 500, minBlocks: 500 },
             }),
         ).not.toThrow();
     });
@@ -149,6 +155,7 @@ describe("assertEvmSendFundable", () => {
         ["evm_contract_untrusted", { contractAddress: CLAIM_ADDRESS }],
         ["quote_expired", { now: NOW + 60 }],
         ["insufficient_headroom", { quote: { ...QUOTE, refund_locktime: NOW + 90 * 60 - 1 } }],
+        ["insufficient_evm_window", { evmWindow: { tip: TIMEOUT_BLOCK - 499, minBlocks: 500 } }],
     ])("refuses with %s", (reason, over) => {
         expect(() =>
             assertEvmSendFundable({ quote: QUOTE, contractAddress: ERC20_SWAP, now: NOW, ...over }),
@@ -207,6 +214,27 @@ describe("requestEvmSend", () => {
             refundAddress: SOLVER_EVM_ADDRESS,
             timelock: BigInt(TIMEOUT_BLOCK),
         });
+        expect(result.terms).toEqual({
+            chainId: 42161,
+            contractAddress: ERC20_SWAP,
+            minConfirmations: 3,
+            minAgeSeconds: 60,
+        });
+    });
+
+    it("refuses an EVM reader on another chain before registering anything", async () => {
+        const chain = { chainId: async () => 1, blockNumber: async () => 0 } as unknown as EvmChain;
+        await expect(
+            requestEvmSend(wallet(), transport, {
+                tokenAddress: USDC,
+                amountSats: 250_000,
+                chainId: 42161,
+                contractAddress: ERC20_SWAP,
+                evmClaimAddress: CLAIM_ADDRESS,
+                emulatorPubkey: "02" + hex.encode(EMULATOR),
+                evmWindow: { chain, minBlocks: 500 },
+            }),
+        ).rejects.toMatchObject({ reason: "evm_chain_mismatch" });
     });
 
     it("refuses a quote on a contract the caller does not trust", async () => {
@@ -239,7 +267,7 @@ describe("claimEvmSend", () => {
         return {
             send,
             result: claimEvmSend(evm, send, {
-                quote: QUOTE,
+                terms: TERMS,
                 lock: LOCK,
                 preimage: PREIMAGE,
                 policy,
@@ -284,5 +312,57 @@ describe("claimEvmSend", () => {
         await expect(claim(chain(0, { chainId: async () => 1 })).result).rejects.toMatchObject({
             reason: "evm_chain_mismatch",
         });
+    });
+});
+
+describe("evmSendClaimer", () => {
+    it("sends the claim for the stored record's preimage", async () => {
+        const wallet = { identity: SingleKey.fromHex("11".repeat(32)) } as unknown as IWallet;
+        const store = {
+            getRfqSwap: async () =>
+                ({
+                    kind: "evm_send",
+                    profile: {
+                        hashlock: { paymentHash: PAYMENT_HASH, preimageHex: hex.encode(PREIMAGE) },
+                        signer: { signingDescriptor: `tr(${"a7".repeat(32)})` },
+                    },
+                }) as never,
+        };
+        const send = vi.fn(async () => "0xtx");
+        const claim = evmSendClaimer(wallet, store, send);
+        expect(await claim({ rfqId: "r", lock: LOCK, terms: TERMS } as never)).toEqual({
+            txid: "0xtx",
+        });
+        expect(send).toHaveBeenCalledWith({
+            to: ERC20_SWAP,
+            data: evmClaimCalldata(LOCK, PREIMAGE),
+        });
+    });
+});
+
+describe("the evm_send record", () => {
+    const handler = () => rfqCorridorHandlers.getOrThrow("evm_send");
+    const profile = {
+        hashlock: { paymentHash: PAYMENT_HASH },
+        ...evmSendProfile({ lock: LOCK, terms: TERMS }),
+    };
+    const hydrate = (over: Record<string, unknown>) =>
+        handler().hydrate(JSON.parse(JSON.stringify({ ...profile, ...over })), {} as never);
+
+    it("survives JSON and rebuilds the lock it claims", () => {
+        expect(hydrate({ claimTxid: "0x01" })).toEqual({
+            paymentHash: PAYMENT_HASH,
+            lock: LOCK,
+            terms: TERMS,
+            claimTxid: "0x01",
+        });
+    });
+
+    it.each([
+        ["a lock under another hash", { lock: { ...profile.lock, preimageHash: "00".repeat(32) } }],
+        ["no confirmation depth", { terms: { ...TERMS, minConfirmations: 0 } }],
+        ["no terms", { terms: undefined }],
+    ])("refuses %s", (_, over) => {
+        expect(() => hydrate(over)).toThrow();
     });
 });

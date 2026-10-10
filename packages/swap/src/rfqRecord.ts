@@ -14,7 +14,12 @@
  */
 import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
-import type { LightningReceiveSwap, LightningSendSwap, OnchainSendSwap } from "./swapManager";
+import type {
+    EvmSendSwap,
+    LightningReceiveSwap,
+    LightningSendSwap,
+    OnchainSendSwap,
+} from "./swapManager";
 // Not from `swapManager`: the manager persists through this file, so that edge would be a cycle.
 import { isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 import { rfqCorridorHandlers } from "./rfqCorridor";
@@ -24,7 +29,11 @@ import "./rfqCorridors";
  * The swap kinds this projection covers — all three the manager monitors. `onchain_send`'s L1 keys
  * ride in its profile, since no contract row or `OnchainHtlc` field can give them back.
  */
-export type PersistableRfqSwap = LightningSendSwap | LightningReceiveSwap | OnchainSendSwap;
+export type PersistableRfqSwap =
+    | LightningSendSwap
+    | LightningReceiveSwap
+    | OnchainSendSwap
+    | EvmSendSwap;
 
 /**
  * The serialized covenant parameters a rebuild is given: `VHTLCV2ContractHandler`'s own wire shape,

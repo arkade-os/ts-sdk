@@ -27,7 +27,9 @@ export {
     deriveEvmSend,
     evmClaimCalldata,
     evmClaimReadiness,
+    evmSendClaimer,
     evmSendLock,
+    evmSendTerms,
     evmSwapKey,
     requestEvmSend,
     type EvmChain,
@@ -35,7 +37,10 @@ export {
     type EvmClaimWait,
     type EvmLock,
     type EvmSendClaim,
+    type EvmSendTerms,
 } from "./evmSend";
+export { evmSendProfile, type EvmSendProfile } from "./rfqCorridors";
+export type { EvmSendSwap } from "./swapManager";
 // The EVM corridors' RFQ wire.
 export {
     EVM_CHAIN,

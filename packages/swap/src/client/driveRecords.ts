@@ -377,7 +377,10 @@ const RESTORED_CORRIDORS = {
     lightning_send: ["arkade", "lightning"],
     lightning_receive: ["lightning", "arkade"],
     onchain_send: ["arkade", "onchain"],
-} as const satisfies Record<CorridorSwapRecord["kind"], readonly [Corridor, Corridor]>;
+} as const satisfies Record<
+    Exclude<CorridorSwapRecord["kind"], "evm_send">,
+    readonly [Corridor, Corridor]
+>;
 
 /**
  * A corridor record for a v1 `rfqSwaps` row. v1 kept one display `amount` and no quote, invoice or
@@ -391,6 +394,8 @@ export const restoredCorridorRecord = (
     refundLocktime: number,
 ): CorridorSwapRecord => {
     const v1 = normalizeRfqSwapRecord(stored);
+    if (v1.kind === "evm_send")
+        throw new Error(`rfq swap ${v1.rfqId} is an EVM send; restore it with the manager`);
     const hashlock = v1.profile.hashlock as { paymentHash?: unknown } | undefined;
     const hash =
         typeof hashlock?.paymentHash === "string"

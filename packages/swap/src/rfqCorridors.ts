@@ -17,7 +17,8 @@ import {
     type OnchainHtlcParams,
     type OnchainNetwork,
 } from "./onchainHtlc";
-import type { LightningReceiveSwap, OnchainSendSwap, RfqSwap } from "./swapManager";
+import type { EvmLock, EvmSendTerms } from "./evmSend";
+import type { EvmSendSwap, LightningReceiveSwap, OnchainSendSwap, RfqSwap } from "./swapManager";
 
 /**
  * `arkade:BTC->lightning:BTC`. The solver claims the lockup; the trader's only move is the refund.
@@ -237,6 +238,69 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
     activityTxids: (profile) => (profile.claimTxid ? [profile.claimTxid] : []),
 };
 
+/** `arkade:BTC->ethereum:<token>`. The lock's amounts are decimal strings: JSON has no bigint. */
+export interface EvmSendProfile extends Record<string, unknown> {
+    signer: RfqSignerProjection;
+    hashlock: RfqHashlockProjection;
+    lock: Omit<EvmLock, "amount" | "timelock"> & { amount: string; timelock: string };
+    terms: EvmSendTerms;
+    /** Our EVM claim's transaction hash, so a restart does not send it again. */
+    claimTxid?: string;
+}
+
+/** The profile's EVM half from what `requestEvmSend` returned; `signer` and `hashlock` come from
+ * `rfqSecretsProfile`. */
+export const evmSendProfile = (result: {
+    lock: EvmLock;
+    terms: EvmSendTerms;
+}): Omit<EvmSendProfile, "signer" | "hashlock"> => ({
+    lock: {
+        ...result.lock,
+        amount: String(result.lock.amount),
+        timelock: String(result.lock.timelock),
+    },
+    terms: result.terms,
+});
+
+const EvmSendCorridor: RfqCorridorHandler<EvmSendProfile> = {
+    kind: "evm_send",
+
+    project: (swap: RfqSwap) => {
+        const send = swap as EvmSendSwap;
+        return send.claimTxid ? { claimTxid: send.claimTxid } : {};
+    },
+
+    hydrate(profile) {
+        const { paymentHash } = hydrateHashlock(profile);
+        const { lock, terms } = profile;
+        // A lock keyed by another hash would be watched forever and claimed never.
+        if (!lock || lock.preimageHash !== paymentHash) {
+            throw new Error("evm_send record's lock does not carry this swap's payment hash");
+        }
+        if (
+            !terms ||
+            !Number.isSafeInteger(terms.chainId) ||
+            !Number.isInteger(terms.minConfirmations) ||
+            terms.minConfirmations < 1 ||
+            !Number.isInteger(terms.minAgeSeconds) ||
+            terms.minAgeSeconds < 0
+        ) {
+            throw new Error(
+                "evm_send record carries no usable claim terms; the lock gate cannot be checked",
+            );
+        }
+        return {
+            paymentHash,
+            lock: { ...lock, amount: BigInt(lock.amount), timelock: BigInt(lock.timelock) },
+            terms,
+            ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
+        };
+    },
+
+    claimSecret: (profile) => ({ ...profile.signer, ...profile.hashlock }),
+};
+
 rfqCorridorHandlers.register(LightningSendCorridor as RfqCorridorHandler);
 rfqCorridorHandlers.register(LightningReceiveCorridor as RfqCorridorHandler);
 rfqCorridorHandlers.register(OnchainSendCorridor as RfqCorridorHandler);
+rfqCorridorHandlers.register(EvmSendCorridor as RfqCorridorHandler);
