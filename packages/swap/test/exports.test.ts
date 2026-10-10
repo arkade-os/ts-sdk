@@ -55,6 +55,19 @@ const advanced = namesOf(ADVANCED_ENTRY);
  * moving between groups reads as the curation changing, not as noise.
  */
 const CURATED_ROOT: readonly string[] = [
+    "buildOfferFillPlan",
+    "verifyOfferFillPlan",
+    "OFFER_FILL_TEMPLATE",
+    "OFFER_FILL_OWNERS",
+    "BuildOfferFillPlanOpts",
+    "FillSponsor",
+    "FillSponsorFare",
+    "deepFreeze",
+    "digestJointGraph",
+    "unsignedPsbtBytes",
+    "verifyJointGraph",
+    "JointGraph",
+
     // Solver-side claim packet stamping and classification.
     "appendArkadeScript",
     "CLAIM_PACKET_TYPE",
@@ -64,6 +77,7 @@ const CURATED_ROOT: readonly string[] = [
     // The client: factory, object, config, and the config's field types.
     "createSwapClient",
     "SwapClient",
+    "AcceptOptions",
     "SwapClientConfig",
     "SwapFilter",
     "DiscoveryConfig",
@@ -100,6 +114,13 @@ const CURATED_ROOT: readonly string[] = [
     "QuoteInput",
     "QuoteId",
     "QuoteLeg",
+    "AssetPaymentInput",
+    "AssetPaymentTerms",
+    "ArkadeCarrierChoice",
+    "ReceiverPaidCarrierQuote",
+    "TaxiIdentity",
+    "VerifiedCarrierTerms",
+    "RecordedAssetPayment",
     "AssetRef",
     "PinnedAmount",
     "MarketRef",

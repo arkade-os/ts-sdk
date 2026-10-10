@@ -64,7 +64,7 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { ASSET_CARRIER_SATS, createOffer } from "./offer";
+import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -1364,6 +1364,8 @@ export async function requestArkadeSwap(
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
+        /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
+        receiveAddress?: string;
         now?: number;
     },
 ): Promise<{
@@ -1390,11 +1392,25 @@ export async function requestArkadeSwap(
     }
     const rfqId = params.rfqId ?? newRfqId();
     const amountSide = params.amountSide ?? "from";
+    const receiveAddress = params.receiveAddress;
     const [makerAddress, makerPublicKey] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const ownPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const info =
+        receiveAddress === undefined
+            ? undefined
+            : await wallet.getArkadeInfo({ requireLive: true });
+    const makerPkScript =
+        info === undefined
+            ? ownPkScript
+            : resolveReceivePkScript(
+                  receiveAddress,
+                  ownPkScript,
+                  networkFromArkadeInfo(info).hrp,
+                  toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+              );
     const pair = rfqPair(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
@@ -1443,6 +1459,9 @@ export async function requestArkadeSwap(
         }
     }
     const offer = await createOffer(wallet, {
+        maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
+        ...(info === undefined ? {} : { info }),
+        ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),

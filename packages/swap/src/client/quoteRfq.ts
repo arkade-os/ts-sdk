@@ -22,9 +22,10 @@ import {
     type VHTLC,
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import { deepFreeze } from "../jointGraph";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
-import { deriveOffer, type DerivedOffer } from "../offer";
+import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -50,6 +51,14 @@ import {
     type LightningReceiveContractParams,
     type LightningSendContractParams,
 } from "../rfq";
+import {
+    encodeCarrierRequest,
+    parseCarrierEcho,
+    parseTopLevelCarrierSats,
+    assertReceiverPaidEchoMatchesExpected,
+    type AssetPaymentInput,
+    type AssetPaymentTerms,
+} from "./assetPayment";
 import type { DiscoveryLeg } from "./aliases";
 import type { LightningCorridorDeps } from "./corridors/deps";
 import type { CorridorSet } from "./corridors/registry";
@@ -115,6 +124,8 @@ export type RfqPreparation = CorridorRfqPreparation | AssetRfqPreparation;
  * terms, which is the failure the hand-off exists to delete.
  */
 export interface AssetRfqPreparation extends NegotiatedPreparation {
+    readonly assetPayment?: AssetPaymentTerms;
+    readonly assetPaymentRecipient?: import("./route").Instrument;
     readonly route: "arkade->arkade";
     /** The trader's OWN derivation of the offer covenant, registered by nobody. */
     readonly offer: DerivedOffer;
@@ -161,6 +172,7 @@ export type CorridorRfqPreparation =
       });
 
 export interface RfqQuoteInput {
+    readonly assetPayment?: AssetPaymentInput;
     readonly quoteId: QuoteId;
     readonly route:
         | "arkade->arkade"
@@ -263,6 +275,8 @@ export const quoteViaRfq = async (
         pinnable: input.market.snapshot.live,
     });
 
+    if (input.assetPayment !== undefined && input.route !== "arkade->arkade")
+        throw new Error("assetPayment supports BTC-to-asset only");
     switch (input.route) {
         case "arkade->arkade":
             return quoteArkadeAsset(input);
@@ -286,24 +300,17 @@ export const quoteViaRfq = async (
  * is what takes `from_amount >= to_amount` off the table as a check: 10_000 sats
  * for 1_000 cents and its reverse are both correct quotes.
  *
- * Exact-in only, checked before a byte is disclosed. A take-side pin would ask
- * the solver to price backwards through its own spread across a change of
- * asset, which is exactly what it answers `exact_out_unsupported` to.
  */
 const quoteArkadeAsset = async (
     input: RfqQuoteInput,
 ): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
     const pinned = pinnedFor(input);
-    if (pinned.on !== "give") {
-        // Caller input rather than a swap-boundary refusal: the route is served,
-        // the request as spelled is not one this market answers.
-        throw new Error(
-            "an asset swap is exact-in: pin the amount on the give leg. The legs carry " +
-                "different assets, so there is no spread to price a take-side pin back " +
-                "through — the solver answers `exact_out_unsupported`",
-        );
-    }
     const sides = assetSidesOf(input.legs);
+    if (pinned.on !== "give" && sides.wantAsset === undefined)
+        throw new Error("asset-to-BTC is exact-in only");
+    const payment = input.assetPayment;
+    if (payment !== undefined && sides.wantAsset === undefined)
+        throw new Error("assetPayment supports BTC-to-asset only");
     // The fee is measured against the card's own feed, so a card without one is refused before the
     // request discloses anything, not after the solver has already answered.
     if (input.candidate.card.price_feed === undefined) {
@@ -318,16 +325,50 @@ const quoteArkadeAsset = async (
     // commits to this script and this key, and a second read across a rotation
     // would derive a covenant the solver never quoted.
     const maker = await makerPosition(input.wallet);
-
-    const wire = await input.transport.requestQuote(
-        arkadeSwapRequest({
-            rfqId,
-            ...sides,
-            amount: pinned.value,
-            makerPkScript: maker.pkScript,
-            makerPublicKey: maker.publicKey,
-        }),
+    const receiveAddress = payment?.receiveAddress;
+    const receivePkScript = resolveReceivePkScript(
+        receiveAddress,
+        maker.pkScript,
+        networkFromArkadeInfo(input.info).hrp,
+        toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
     );
+    const choice = payment?.carrier;
+    const carrierRequest =
+        choice === undefined
+            ? undefined
+            : choice.mode === "purchase"
+              ? { mode: "purchase" as const }
+              : {
+                    mode: "recycle_receiver" as const,
+                    quoteId: choice.quote.quoteId,
+                    taxiUrl: choice.taxi.url,
+                    taxiKey: choice.taxi.operatorKey,
+                };
+    if (choice?.mode === "recycleReceiver") {
+        if (choice.quote.assetId !== sides.wantAsset?.toString())
+            throw new Error("carrier quote assetId differs from requested asset");
+        if (choice.quote.senderKey !== hex.encode(maker.publicKey))
+            throw new Error("carrier quote senderKey differs from wallet identity");
+        if (input.now >= choice.quote.expiresAt - 30)
+            throw new Error("carrier quote expired before RFQ");
+    }
+    const request = arkadeSwapRequest({
+        rfqId,
+        ...sides,
+        amount: pinned.value,
+        amountSide: toRfqAmountSide(pinned.on),
+        makerPkScript: receivePkScript,
+        makerPublicKey: maker.publicKey,
+    });
+    const wire = await input.transport.requestQuote({
+        ...request,
+        profile: {
+            ...(request.profile as Record<string, unknown>),
+            ...(carrierRequest === undefined
+                ? {}
+                : { carrier: encodeCarrierRequest(carrierRequest) }),
+        },
+    });
     verifyPair(wire.pair, pair);
     const parsed = parseRfqQuote(wire);
     verifyCrossAssetAmount({ pair, pinned, give: parsed.give, take: parsed.take });
@@ -337,6 +378,45 @@ const quoteArkadeAsset = async (
         now: input.now,
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
     });
+    let assetPayment: AssetPaymentTerms | undefined;
+    if (payment !== undefined) {
+        let carrier;
+        if (carrierRequest !== undefined) {
+            carrier = parseCarrierEcho(wire.profile?.carrier, carrierRequest);
+            if (carrier.physicalSats !== input.info.dust)
+                throw new Error("carrier physical differs from server dust");
+            if (carrier.expiresAt > parsed.validUntil)
+                throw new Error("carrier echo extends solver expiry");
+            if (choice?.mode === "recycleReceiver") {
+                if (wire.carrier_sats !== undefined)
+                    throw new Error("receiver-paid quote must publish no carrier_sats");
+                assertReceiverPaidEchoMatchesExpected(carrier, choice.quote);
+            } else if (parseTopLevelCarrierSats(wire.carrier_sats) !== carrier.physicalSats)
+                throw new Error("carrier echo differs from carrier_sats");
+        }
+        const validUntil =
+            Math.min(
+                parsed.validUntil,
+                carrier?.expiresAt ?? parsed.validUntil,
+                choice?.mode === "recycleReceiver" ? choice.quote.expiresAt : parsed.validUntil,
+            ) - 30;
+        if (input.now >= validUntil) throw new Error("asset payment terms lapsed before funding");
+        assetPayment = {
+            receiveAddress:
+                receiveAddress ??
+                new ArkAddress(
+                    toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
+                    maker.pkScript.slice(2),
+                    networkFromArkadeInfo(input.info).hrp,
+                ).encode(),
+            validUntil,
+            ...(carrier === undefined ? {} : { carrier }),
+            ...(choice?.mode !== "recycleReceiver" || choice.inputExpiryFloor === undefined
+                ? {}
+                : { inputExpiryFloor: choice.inputExpiryFloor }),
+        };
+    }
+    if (assetPayment !== undefined) deepFreeze(assetPayment);
     // The solver's own carrier, parsed before anything is derived; a card that charges for it
     // prices the reference below with it.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
@@ -359,6 +439,7 @@ const quoteArkadeAsset = async (
         ...(terms.offerAsset === undefined ? {} : { offerAsset: terms.offerAsset }),
         emulatorPubkey: input.corridors.get("arkade").deps.emulatorPubkey,
         maker,
+        ...(receiveAddress === undefined ? {} : { receiveAddress }),
         info: input.info,
     });
     // Compare-only, and never the other way round: the address the trader funds
@@ -369,9 +450,16 @@ const quoteArkadeAsset = async (
     return {
         quote: {
             id: input.quoteId,
+            ...(assetPayment === undefined ? {} : { assetPayment }),
             route: assembleRoute(
                 { ...input.endpoints.give, instrument: { kind: "wallet" } },
-                { ...input.endpoints.take, instrument: { kind: "wallet" } },
+                {
+                    ...input.endpoints.take,
+                    instrument:
+                        receiveAddress === undefined
+                            ? { kind: "wallet" }
+                            : { kind: "address", address: receiveAddress },
+                },
             ),
             give: { asset: input.endpoints.give.asset, amount: parsed.give },
             take: { asset: input.endpoints.take.asset, amount: parsed.take },
@@ -391,6 +479,15 @@ const quoteArkadeAsset = async (
             rfqId,
             wire: parsed,
             offer,
+            ...(assetPayment === undefined
+                ? {}
+                : {
+                      assetPayment,
+                      assetPaymentRecipient:
+                          receiveAddress === undefined
+                              ? { kind: "wallet" as const }
+                              : { kind: "address" as const, address: receiveAddress },
+                  }),
             ...(carrierSats === undefined ? {} : { carrierSats }),
         },
     };

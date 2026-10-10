@@ -122,6 +122,7 @@ import {
     Asset,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -403,6 +404,11 @@ import {
 } from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
+import {
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
+} from "./wallet/sendDeadline";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
@@ -810,6 +816,9 @@ export {
     maybeArkError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
@@ -1020,6 +1029,7 @@ export type {
     Asset,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,

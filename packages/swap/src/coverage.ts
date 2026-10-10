@@ -98,16 +98,17 @@ export async function promoteOfferContract(
  */
 export async function retireOfferContract(
     manager: OfferContractRetirer,
-    swaps: readonly CoveredSwap[],
+    swaps: readonly CoveredSwap[] | (() => Promise<readonly CoveredSwap[]>),
     script: string,
 ): Promise<void> {
     // both reads inside the queue, so a concurrent promotion is seen rather than overwritten
     await serialize(script, async () => {
+        const records = typeof swaps === "function" ? await swaps() : swaps;
         // NOT `!TERMINAL.includes(...)`: `recoverable` is terminal for a spend
         // and not retirable, so reading liveness off TERMINAL unwatches swept
         // funds.
-        if (swaps.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
-        if (addressOutstanding(swaps, script)) return;
+        if (records.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
+        if (addressOutstanding(records, script)) return;
         try {
             await manager.setContractWatchState(script, "retained");
         } catch (err) {
@@ -130,3 +131,13 @@ export async function retireSettledOfferContracts(
     );
     for (const script of settled) await retireOfferContract(manager, swaps, script);
 }
+
+export const registerContractCoverage = async <T>(
+    script: string,
+    register: () => Promise<T>,
+): Promise<T> =>
+    serialize(script, async () => {
+        const row = await register();
+        issuedAt.set(script, Date.now());
+        return row;
+    });

@@ -1755,3 +1755,16 @@ describe("the settlement receipt", () => {
         await drive.dispose();
     });
 });
+
+it("reads proven unsent funding under readonly without changing coverage", async () => {
+    const record = signable({
+        state: "failed",
+        fundingNotSubmitted: { reason: "send_deadline", validUntil: REFUND_LOCKTIME },
+    });
+    const contracts = fakeContracts([SEND_LOCKUP]);
+    const h = await build({ records: [record], mode: "readonly", contracts });
+    expect(h.drive.swap("q1")?.outcome).toBe("cancelled");
+    expect(contracts.watchStates).toEqual([]);
+    expect(await h.repository.getSwapRecord("q1")).toEqual(record);
+    await h.drive.dispose();
+});

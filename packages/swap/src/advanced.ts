@@ -20,3 +20,20 @@ export {
     type CovclaimdInfo,
     type RevealParams,
 } from "./reveal";
+
+export {
+    buildOfferFillPlan,
+    verifyOfferFillPlan,
+    OFFER_FILL_TEMPLATE,
+    OFFER_FILL_OWNERS,
+    type BuildOfferFillPlanOpts,
+    type FillSponsor,
+    type FillSponsorFare,
+} from "./offerFillPlan";
+export {
+    deepFreeze,
+    digestJointGraph,
+    unsignedPsbtBytes,
+    verifyJointGraph,
+    type JointGraph,
+} from "./jointGraph";

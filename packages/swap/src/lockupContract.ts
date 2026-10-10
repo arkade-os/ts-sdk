@@ -3,6 +3,7 @@
  * `RfqSwapManager.ensureRegistered`). `createContract` is first-writer-wins, so the second write
  * is a no-op only while both write the SAME row, hence this module.
  */
+import { registerContractCoverage } from "./coverage";
 import { hex } from "@scure/base";
 import {
     ArkAddress,
@@ -98,14 +99,16 @@ export async function registerLockupContract(
     address: string,
 ): Promise<void> {
     try {
-        await contracts.createContract({
-            type: SWAP_LOCKUP_CONTRACT_TYPE,
-            params: VHTLCV2ContractHandler.serializeParams(script.options),
-            script: hex.encode(script.pkScript),
-            address,
-            label: SWAP_LOCKUP_CONTRACT_LABEL,
-            metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
-        });
+        await registerContractCoverage(hex.encode(script.pkScript), () =>
+            contracts.createContract({
+                type: SWAP_LOCKUP_CONTRACT_TYPE,
+                params: VHTLCV2ContractHandler.serializeParams(script.options),
+                script: hex.encode(script.pkScript),
+                address,
+                label: SWAP_LOCKUP_CONTRACT_LABEL,
+                metadata: { genericallySpendable: false, kind: SWAP_LOCKUP_CONTRACT_KIND },
+            }),
+        );
     } catch (error) {
         throw new LockupRegistrationFailed(script, address, error);
     }

@@ -24,6 +24,8 @@ import {
     type Network,
     type SettlementEvent,
 } from "@arkade-os/sdk";
+import { fundingWasNotSubmitted } from "./record";
+import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
 import { claimOnchainFill } from "../onchainHtlc";
@@ -344,6 +346,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const outcomeOfEntry = (record: SwapRecord, current?: RfqSwap): Outcome => {
+        if (fundingWasNotSubmitted(record)) return "cancelled";
         // Offers have no live object (the watcher works over the store): the record IS the state.
         if (record.family === "offer") return recordOutcome(record);
         if (current === undefined) {
@@ -758,6 +761,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const registerCorridorSwap = async (record: CorridorSwapRecord): Promise<void> => {
+        if (fundingWasNotSubmitted(record)) return;
         // `readonly` only reports what the restore-read found; admitting a swap starts a pass.
         if (mode === "readonly") return;
         if (!(await drivable(record))) {
@@ -863,7 +867,11 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
-        for (const record of [...corridor, ...offer]) records.set(record.id, record);
+        for (const record of [...corridor, ...offer]) {
+            records.set(record.id, record);
+            if (mode !== "readonly" && fundingWasNotSubmitted(record))
+                await retireUnsubmittedFunding(wallet, repository, record);
+        }
 
         // Terminal records stay in `records` (readable, replayed) but are never driven.
         const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
@@ -1112,6 +1120,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         adopt: (record) => {
             if (disposed) throw new ClientDisposed("accept");
             records.set(record.id, record);
+            if (fundingWasNotSubmitted(record)) {
+                emit(record.id);
+                return swapView(record.id);
+            }
             if (record.family === "rfq") {
                 corridorStore().index(record);
                 managerDeps.repository = corridorStore();

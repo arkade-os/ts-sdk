@@ -5,7 +5,12 @@
         "src/**/*.ts",
         "src/**/*.json",
         "test/client/**/*.ts",
-        "test/node/**/*.ts"
+        "test/node/**/*.ts",
+        "test/offerFillPlan.test.ts",
+        "test/jointGraph.test.ts",
+        "test/receivePayout.test.ts",
+        "test/cancel.test.ts",
+        "test/fill.test.ts"
     ],
     "exclude": ["node_modules", "dist"]
 }

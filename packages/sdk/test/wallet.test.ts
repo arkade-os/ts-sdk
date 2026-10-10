@@ -1761,6 +1761,32 @@ describe("Wallet._settleImpl", () => {
         status: { confirmed: true, block_time: 1_700_000_000 },
     } as ExtendedCoin;
 
+    it("marks preparation only after acquiring the lock and never registration for an invalid note", async () => {
+        const phases: string[] = [];
+        let release!: () => void;
+        const thisArg: any = {
+            _txLock: new Promise<void>((resolve) => (release = resolve)),
+            _withTxLock: (Wallet.prototype as any)._withTxLock,
+            _settleImpl: (Wallet.prototype as any)._settleImpl,
+            safeRegisterIntent: vi.fn(),
+        };
+
+        const settled = Wallet.prototype.settle.call(
+            thisArg,
+            { inputs: ["invalid-note"], outputs: [] },
+            undefined,
+            { onPhase: (phase) => phases.push(phase) },
+        );
+        await Promise.resolve();
+        expect(phases).toEqual([]);
+        const rejected = expect(settled).rejects.toThrow('Invalid arknote "invalid-note"');
+        release();
+        await rejected;
+
+        expect(phases).toEqual(["preparing"]);
+        expect(thisArg.safeRegisterIntent).not.toHaveBeenCalled();
+    });
+
     it("primes the stream before registering the intent and replays the primed event to Batch.join", async () => {
         const callOrder: string[] = [];
         const primedEvent = { type: "batch_started", id: "batch-1" };
@@ -1807,6 +1833,9 @@ describe("Wallet._settleImpl", () => {
 
         const thisArg: any = {
             network: "mutinynet",
+            _txLock: Promise.resolve(),
+            _withTxLock: (Wallet.prototype as any)._withTxLock,
+            _settleImpl: (Wallet.prototype as any)._settleImpl,
             arkProvider: {
                 getEventStream: vi.fn().mockReturnValue(stream),
                 deleteIntent: vi.fn().mockResolvedValue(undefined),
@@ -1833,14 +1862,18 @@ describe("Wallet._settleImpl", () => {
             maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
         };
 
-        const result = await (Wallet.prototype as any)._settleImpl.call(thisArg, {
-            inputs: [input],
-            outputs: [],
-        });
+        const result = await Wallet.prototype.settle.call(
+            thisArg,
+            { inputs: [input], outputs: [] },
+            undefined,
+            { onPhase: (phase) => callOrder.push(phase) },
+        );
 
         expect(result).toBe("commitment-txid");
         expect(callOrder).toEqual([
+            "preparing",
             "stream.next#1",
+            "registration_attempt",
             "safeRegisterIntent",
             "Batch.join",
             "stream.next#2",
@@ -1856,7 +1889,7 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 
-    it("closes the primed stream when safeRegisterIntent fails before Batch.join starts", async () => {
+    it("marks registration before a provider failure and closes the primed stream", async () => {
         const callOrder: string[] = [];
         let resolveFirstNext: ((value: IteratorResult<any>) => void) | undefined = undefined;
         const firstNext = new Promise<IteratorResult<any>>((resolve) => {
@@ -1882,9 +1915,16 @@ describe("Wallet._settleImpl", () => {
         const batchJoinSpy = vi.spyOn(Batch, "join");
         const thisArg: any = {
             network: "mutinynet",
+            _txLock: Promise.resolve(),
+            _withTxLock: (Wallet.prototype as any)._withTxLock,
+            _settleImpl: (Wallet.prototype as any)._settleImpl,
             arkProvider: {
                 getEventStream: vi.fn().mockReturnValue(stream),
                 deleteIntent,
+                registerIntent: vi.fn(async () => {
+                    callOrder.push("registerIntent");
+                    throw registerError;
+                }),
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
@@ -1901,23 +1941,25 @@ describe("Wallet._settleImpl", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: vi.fn(async () => {
-                callOrder.push("safeRegisterIntent");
-                throw registerError;
-            }),
+            safeRegisterIntent: Wallet.prototype.safeRegisterIntent,
             createBatchHandler: vi.fn(),
             updateDbAfterSettle: vi.fn(),
             persistIntentSnapshot: vi.fn(),
         };
 
         await expect(
-            (Wallet.prototype as any)._settleImpl.call(thisArg, {
-                inputs: [input],
-                outputs: [],
+            Wallet.prototype.settle.call(thisArg, { inputs: [input], outputs: [] }, undefined, {
+                onPhase: (phase) => callOrder.push(phase),
             }),
         ).rejects.toThrow("register failed");
 
-        expect(callOrder).toEqual(["stream.next", "safeRegisterIntent", "stream.return"]);
+        expect(callOrder).toEqual([
+            "preparing",
+            "stream.next",
+            "registration_attempt",
+            "registerIntent",
+            "stream.return",
+        ]);
         expect(stream.return).toHaveBeenCalledTimes(1);
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(batchJoinSpy).not.toHaveBeenCalled();
