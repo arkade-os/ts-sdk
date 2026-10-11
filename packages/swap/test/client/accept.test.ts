@@ -1091,6 +1091,70 @@ it("publishes a freshly persisted unsent outcome to the current drive", async ()
     await h.client[Symbol.asyncDispose]();
 });
 
+it("keeps a delayed first accept watched when a second identical offer is cancelled", async () => {
+    const h = await setup();
+    const older = await quoteFor(h, "spot");
+    const newer = await quoteFor(h, "spot");
+    let release = () => {};
+    let entered = () => {};
+    const saving = new Promise<void>((resolve) => (entered = resolve));
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const save = h.repository.saveSwapRecord.bind(h.repository);
+    vi.spyOn(h.repository, "saveSwapRecord").mockImplementation(async (record) => {
+        if (record.id === older.id && record.fundingTxid === undefined) {
+            entered();
+            await blocked;
+        }
+        await save(record);
+    });
+    const send = vi
+        .spyOn(h.wallet.wallet, "send")
+        .mockRejectedValueOnce(new SendDeadlineExceededError(NOW + 1))
+        .mockResolvedValue(FUNDING_TXID);
+    const accepting = h.client.accept(older);
+    await saving;
+    try {
+        await expect(h.client.accept(newer, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
+            SendDeadlineExceededError,
+        );
+        const cancelled = (await h.repository.getSwapRecord(newer.id)) as OfferSwapRecord;
+        expect(cancelled.status).toBe("cancelled");
+        expect(h.wallet.contracts).toHaveLength(1);
+        expect(h.wallet.watched).not.toContainEqual([cancelled.swapPkScript, "retained"]);
+        release();
+        const funded = await accepting;
+        expect(funded.fundingTxid).toBe(FUNDING_TXID);
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(h.wallet.watched.at(-1)).toEqual([cancelled.swapPkScript, "watched"]);
+    } finally {
+        release();
+        await accepting;
+        await h.client[Symbol.asyncDispose]();
+    }
+});
+
+it("keeps a failed record save watched without pinning another wallet's identical offer", async () => {
+    const first = await setup();
+    const second = await setup();
+    const unsaved = await quoteFor(first, "spot");
+    const cancelled = await quoteFor(second, "spot");
+    vi.spyOn(first.repository, "saveSwapRecord").mockRejectedValue(new Error("store offline"));
+    await expect(first.client.accept(unsaved)).rejects.toThrow("store offline");
+    vi.spyOn(second.wallet.wallet, "send").mockRejectedValue(
+        new SendDeadlineExceededError(NOW + 1),
+    );
+    await expect(second.client.accept(cancelled, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
+        SendDeadlineExceededError,
+    );
+    const script = first.wallet.contracts[0]?.script;
+    expect(second.wallet.contracts[0]?.script).toBe(script);
+    expect(first.wallet.watched).toEqual([[script, "watched"]]);
+    expect(first.wallet.sent).toHaveLength(0);
+    expect(second.wallet.watched.at(-1)).toEqual([script, "retained"]);
+    await first.client[Symbol.asyncDispose]();
+    await second.client[Symbol.asyncDispose]();
+});
+
 it.each(["spot", "lightningSend"] as const)(
     "keeps a newer identical-script issuance after unsent %s funding",
     async (route) => {
@@ -1105,6 +1169,7 @@ it.each(["spot", "lightningSend"] as const)(
         const script = stopped.family === "offer" ? stopped.swapPkScript : stopped.lockupPkScript;
         await promoteOfferContract(await h.wallet.wallet.getContractManager(), script, Date.now(), {
             coverageId: "newer-quote",
+            scope: h.wallet.wallet,
         });
         if (stopped.family === "offer") {
             await restoreOfferCoverage(h.wallet.wallet, [

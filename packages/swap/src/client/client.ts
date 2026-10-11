@@ -6,7 +6,7 @@
  * built in a component body, and a missing dep for an unused corridor is not a construction error.
  */
 import { hex } from "@scure/base";
-import type { IWallet } from "@arkade-os/sdk";
+import { captureSendDeadline, type IWallet } from "@arkade-os/sdk";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
@@ -415,15 +415,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         },
 
         accept: async (quote, options) => {
-            const validUntil = options?.validUntil;
-            if (
-                validUntil !== undefined &&
-                (!Number.isSafeInteger(validUntil) || validUntil <= 0)
-            ) {
-                throw new TypeError(
-                    "validUntil must be a positive safe integer UNIX timestamp in seconds",
-                );
-            }
+            const validUntil = captureSendDeadline(options?.validUntil);
             ensureLive("accept");
             const { corridors } = await resolved();
             const drive = driving();

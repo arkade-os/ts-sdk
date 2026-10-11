@@ -435,7 +435,10 @@ async function registerOfferContract(
     await contractManager.createContract(
         offerContractParams(client, binding, operatorPubkey, expectedPkScript),
     );
-    await promoteOfferContract(contractManager, hex.encode(expectedPkScript), undefined, options);
+    await promoteOfferContract(contractManager, hex.encode(expectedPkScript), undefined, {
+        ...options,
+        scope: wallet,
+    });
 }
 
 /** A derive-and-persist client over already-resolved info (no second `/v1/info`). `network` keeps a
@@ -524,6 +527,7 @@ export async function restoreOfferCoverage(
         await promoteOfferContract(contractManager, covenant.script, covenant.issued, {
             coverageId: covenant.coverageId,
             restore: true,
+            scope: wallet,
         });
     }
 }
@@ -839,6 +843,7 @@ export async function cancelOffer(
                 contractManager,
                 swaps,
                 hex.encode(prepared.offer.swapPkScript),
+                { scope: wallet },
             );
         }
     }

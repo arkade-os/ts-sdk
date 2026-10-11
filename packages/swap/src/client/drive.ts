@@ -745,7 +745,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
         const registry = managerDeps.contracts;
         if (registry) {
-            await retireSettledOfferContracts(registry, [...current.values()].map(offerFactsOf));
+            await retireSettledOfferContracts(registry, [...current.values()].map(offerFactsOf), {
+                scope: wallet,
+            });
         }
         return [...current.values()];
     };

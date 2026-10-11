@@ -507,6 +507,7 @@ const registeredCorridorRecord = async (
     const contracts = await input.wallet.getContractManager();
     await registerLockupContract(contracts, preparation.lockup.script, preparation.lockup.address, {
         coverageId: input.quote.id,
+        scope: input.wallet,
     });
     await promoteOfferContract(
         contracts,
@@ -514,6 +515,7 @@ const registeredCorridorRecord = async (
         undefined,
         {
             coverageId: input.quote.id,
+            scope: input.wallet,
         },
     );
     return corridorRecord(input.quote, preparation, input.now);

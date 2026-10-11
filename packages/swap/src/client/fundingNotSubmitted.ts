@@ -41,6 +41,7 @@ export const retireUnsubmittedFunding = async (
                 return [...native, ...legacy];
             },
             script,
+            { scope: wallet },
         );
     } catch (error) {
         console.warn(`[swap] could not retire unsent funding for ${record.id}`, error);

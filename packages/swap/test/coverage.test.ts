@@ -98,6 +98,72 @@ describe("corridor lockup coverage", () => {
 });
 
 describe("native issuance identity", () => {
+    it("shares a wallet's holds across fresh manager proxies without pinning another wallet", async () => {
+        const first = {};
+        const second = {};
+        const script = "native-wallet-scopes";
+        const firstWatch = vi.fn(async (_script: string, _watch: string) => {});
+        const secondWatch = vi.fn(async (_script: string, _watch: string) => {});
+        const proxy = (setContractWatchState: typeof firstWatch) => ({ setContractWatchState });
+        await promoteOfferContract(proxy(firstWatch), script, 1000, {
+            coverageId: "first",
+            scope: first,
+        });
+        await promoteOfferContract(proxy(secondWatch), script, 1000, {
+            coverageId: "second",
+            scope: second,
+        });
+        await retireOfferContract(
+            proxy(secondWatch),
+            [swap({ id: "second", swapPkScript: script })],
+            script,
+            { scope: second },
+        );
+        expect(secondWatch).toHaveBeenLastCalledWith(script, "retained");
+        await promoteOfferContract(proxy(firstWatch), script, 1000, {
+            coverageId: "restored",
+            scope: first,
+            restore: true,
+        });
+        firstWatch.mockClear();
+        const restored = swap({ id: "restored", swapPkScript: script });
+        await retireOfferContract(proxy(firstWatch), [restored], script, { scope: first });
+        expect(firstWatch).not.toHaveBeenCalled();
+        await retireOfferContract(
+            proxy(firstWatch),
+            [restored, swap({ id: "first", swapPkScript: script })],
+            script,
+            { scope: first },
+        );
+        expect(firstWatch).toHaveBeenCalledExactlyOnceWith(script, "retained");
+    });
+
+    it.each(["offer", "lockup"])(
+        "keeps an older outstanding %s when a newer record is cancelled first",
+        async (kind) => {
+            const m = manager();
+            const script = `native-reversed-${kind}`;
+            const register = async (id: string) => {
+                if (kind === "offer") {
+                    await promoteOfferContract(m, script, 1000, { coverageId: id });
+                } else {
+                    await registerContractCoverage(script, async () => {}, { coverageId: id });
+                }
+            };
+            await register("older");
+            await register("newer");
+            m.setContractWatchState.mockClear();
+            const cancelled = swap({ id: "newer", swapPkScript: script, status: "cancelled" });
+            await retireOfferContract(m, [cancelled], script);
+            expect(m.setContractWatchState).not.toHaveBeenCalled();
+            const funded = swap({ id: "older", swapPkScript: script, status: "pending" });
+            await retireOfferContract(m, [cancelled, funded], script);
+            expect(m.setContractWatchState).not.toHaveBeenCalled();
+            await retireOfferContract(m, [cancelled, { ...funded, status: "fulfilled" }], script);
+            expect(m.setContractWatchState).toHaveBeenCalledExactlyOnceWith(script, "retained");
+        },
+    );
+
     it("retires a matching record despite second precision", async () => {
         const m = manager();
         const script = "native-fractional";
@@ -140,6 +206,23 @@ describe("native issuance identity", () => {
         expect(m.setContractWatchState).not.toHaveBeenCalled();
         await retireOfferContract(m, [swap({ id: "lockup-new", swapPkScript: script })], script);
         expect(m.setContractWatchState).toHaveBeenCalledWith(script, "retained");
+    });
+
+    it("keeps native and legacy issuances independently outstanding", async () => {
+        const m = manager();
+        const script = "native-and-legacy";
+        await promoteOfferContract(m, script, 1000, { coverageId: "native" });
+        await promoteOfferContract(m, script, 2000);
+        m.setContractWatchState.mockClear();
+        const legacy = swap({ id: "legacy", swapPkScript: script, createdAt: 2000 });
+        await retireOfferContract(m, [legacy], script);
+        expect(m.setContractWatchState).not.toHaveBeenCalled();
+        await retireOfferContract(
+            m,
+            [legacy, swap({ id: "native", swapPkScript: script, createdAt: 1000 })],
+            script,
+        );
+        expect(m.setContractWatchState).toHaveBeenCalledExactlyOnceWith(script, "retained");
     });
 
     it("does not replace a newer issuance while restoring an older native record", async () => {

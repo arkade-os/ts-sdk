@@ -37,7 +37,7 @@ import {
     type RelativeTimelock,
 } from "../script/tapscript";
 import { VtxoScript, type TapLeafScript } from "../script/base";
-import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
+import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ArkadeScript } from "./script";
 import { ARKADE_OP } from "./opcodes";
 import { computeArkadeScriptPublicKey } from "./tweak";
@@ -421,9 +421,8 @@ export function resolveCsvTimelock(
 ): RelativeTimelock {
     const value = resolveTimelockValue(csv.value, args);
     if (csv.type !== "sequence") return { type: csv.type, value };
-    const timelock =
-        value >= 0n && value < 0x80000000n ? sequenceToTimelock(Number(value)) : undefined;
-    if (!timelock || BigInt(timelockToSequence(timelock)) !== value) {
+    const timelock = sequenceToCanonicalTimelock(value);
+    if (!timelock) {
         throw new Error(`CSV value '${csv.value}' (${value}) is not a canonical BIP68 sequence`);
     }
     return timelock;
