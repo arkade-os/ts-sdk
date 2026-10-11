@@ -1,0 +1,397 @@
+import {
+    collectScriptVtxos,
+    type ScriptVtxoPageOptions,
+} from "../../src/repositories/walletRepository";
+import { collectTransactionHistory } from "../../src/repositories/walletRepository";
+import { collectVtxos } from "../../src/repositories/walletRepository";
+import { collectUtxos } from "../../src/repositories/walletRepository";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import {
+    type ArkTransaction,
+    type ExtendedCoin,
+    type ExtendedVirtualCoin,
+    IndexedDBWalletRepository,
+    InMemoryWalletRepository,
+    type TapLeafScript,
+    TxType,
+} from "../../src";
+import { TaprootControlBlock } from "@scure/btc-signer";
+import { hex } from "@scure/base";
+import {
+    createMockTransaction,
+    createMockUtxo,
+    createMockVtxo,
+    RepositoryTestItem,
+} from "./helpers";
+import { WalletRepository, WalletState } from "../../src/repositories";
+import { RealmWalletRepository } from "../../src/repositories/realm/walletRepository";
+import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
+
+const walletRepositoryImplementations: Array<RepositoryTestItem<WalletRepository>> = [
+    {
+        name: "InMemoryWalletRepository",
+        factory: async () => new InMemoryWalletRepository(),
+    },
+    {
+        name: "IndexedDBWalletRepository",
+        factory: async () => new IndexedDBWalletRepository(),
+    },
+    {
+        name: "RealmWalletRepository",
+        factory: async () =>
+            new RealmWalletRepository(
+                createMockRealm({
+                    ArkVtxo: "pk",
+                    ArkUtxo: "pk",
+                    ArkTransaction: "pk",
+                    ArkWalletState: "key",
+                }),
+            ),
+    },
+];
+
+// WalletRepository tests
+describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ factory, name }) => {
+    let repository: WalletRepository;
+    const testAddress = "test-address-123";
+
+    beforeEach(async () => {
+        repository = await factory();
+    });
+
+    afterEach(async () => {
+        await repository?.clear();
+        await repository?.[Symbol.asyncDispose]();
+    });
+
+    describe("VTXO management", () => {
+        it("should return empty array when no VTXOs exist", async () => {
+            const vtxos = await collectVtxos(repository, testAddress);
+            expect(vtxos).toEqual([]);
+        });
+
+        it("should save and retrieve VTXOs", async () => {
+            const vtxo1 = createMockVtxo("tx1", 0, 10000);
+            const vtxo2 = createMockVtxo("tx2", 1, 20000);
+
+            await repository.saveVtxos(testAddress, [vtxo1, vtxo2]);
+            const retrieved = await collectVtxos(repository, testAddress);
+
+            expect(retrieved).toHaveLength(2);
+            expect(retrieved[0].txid).toBe("tx1");
+            expect(retrieved[0].vout).toBe(0);
+            expect(retrieved[0].value).toBe(10000);
+            expect(retrieved[1].txid).toBe("tx2");
+            expect(retrieved[1].vout).toBe(1);
+            expect(retrieved[1].value).toBe(20000);
+        });
+
+        it("should update existing VTXO when saving with same txid/vout", async () => {
+            const vtxo1 = createMockVtxo("tx1", 0, 10000);
+            await repository.saveVtxos(testAddress, [vtxo1]);
+
+            const vtxo1Updated = createMockVtxo("tx1", 0, 15000);
+            await repository.saveVtxos(testAddress, [vtxo1Updated]);
+
+            const retrieved = await collectVtxos(repository, testAddress);
+            expect(retrieved).toHaveLength(1);
+            expect(retrieved[0].value).toBe(15000);
+        });
+
+        it("should clear all VTXOs for an address", async () => {
+            const vtxo1 = createMockVtxo("tx1", 0, 10000);
+            await repository.saveVtxos(testAddress, [vtxo1]);
+
+            await repository.deleteVtxos(testAddress);
+            const retrieved = await collectVtxos(repository, testAddress);
+
+            expect(retrieved).toEqual([]);
+        });
+
+        it("should handle multiple addresses independently", async () => {
+            const address1 = "address-1";
+            const address2 = "address-2";
+            const vtxo1 = createMockVtxo("tx1", 0, 10000);
+            const vtxo2 = createMockVtxo("tx2", 0, 20000);
+
+            await repository.saveVtxos(address1, [vtxo1]);
+            await repository.saveVtxos(address2, [vtxo2]);
+
+            const retrieved1 = await collectVtxos(repository, address1);
+            const retrieved2 = await collectVtxos(repository, address2);
+
+            expect(retrieved1).toHaveLength(1);
+            expect(retrieved1[0].txid).toBe("tx1");
+            expect(retrieved2).toHaveLength(1);
+            expect(retrieved2[0].txid).toBe("tx2");
+        });
+    });
+
+    describe("Script-scoped VTXO management", () => {
+        it("omits spent outputs from unspent-only script reads", async () => {
+            const liveA = { ...createMockVtxo("live-a", 0, 1000), script: "script-a" };
+            const liveB = { ...createMockVtxo("live-b", 0, 2000), script: "script-b" };
+            const spent = {
+                ...createMockVtxo("spent", 0, 3000),
+                script: "script-a",
+                isSpent: true,
+            };
+            const foreign = { ...createMockVtxo("foreign", 0, 4000), script: "foreign" };
+            await repository.saveVtxos("address-a", [liveA, spent]);
+            await repository.saveVtxos("address-b", [liveB, foreign]);
+
+            const read = async (options?: ScriptVtxoPageOptions) =>
+                (
+                    await Promise.all(
+                        ["script-a", "script-b"].map((script) =>
+                            collectScriptVtxos(repository, script, options),
+                        ),
+                    )
+                )
+                    .flat()
+                    .map((row) => row.txid)
+                    .sort();
+            expect(await read()).toEqual(["live-a", "live-b", "spent"]);
+            expect(await read({ unspentOnly: true })).toEqual(["live-a", "live-b"]);
+        });
+
+        it("does not resurrect a live duplicate after its canonical row is spent", async () => {
+            const live = { ...createMockVtxo("duplicate", 0, 1000), script: "script-a" };
+            const spent = { ...live, isSpent: true, spentBy: "spent-tx" };
+            await repository.saveVtxos("old-address", [live]);
+            await repository.saveVtxos("new-address", [spent]);
+            expect(
+                (await collectScriptVtxos(repository, "script-a")).map((row) => row.spentBy),
+            ).toEqual(["spent-tx"]);
+            expect(await collectScriptVtxos(repository, "script-a", { unspentOnly: true })).toEqual(
+                [],
+            );
+        });
+
+        it("should return empty array when no VTXOs exist for script", async () => {
+            const vtxos = await collectScriptVtxos(repository, "script1");
+            expect(vtxos).toEqual([]);
+        });
+
+        it("should save and retrieve VTXOs by script", async () => {
+            const script1 = "script1";
+            const address1 = "address1";
+            const vtxo1 = {
+                ...createMockVtxo("tx1", 0, 10000),
+                script: script1,
+            };
+
+            await repository.saveVtxosForScript!({ script: script1, address: address1 }, [vtxo1]);
+            const retrieved = await collectScriptVtxos(repository, script1);
+
+            expect(retrieved).toHaveLength(1);
+            expect(retrieved[0].txid).toBe("tx1");
+            expect(retrieved[0].script).toBe(script1);
+        });
+
+        it("should throw when saving VTXO with mismatched script", async () => {
+            const script1 = "script1";
+            const address1 = "address1";
+            const vtxo1 = {
+                ...createMockVtxo("tx1", 0, 10000),
+                script: "wrong-script",
+            };
+
+            await expect(
+                repository.saveVtxosForScript!({ script: script1, address: address1 }, [vtxo1]),
+            ).rejects.toThrow();
+        });
+
+        it("should delete VTXOs by script across address buckets", async () => {
+            const script1 = "script1";
+            const address1 = "address1";
+            const address2 = "address2";
+            const vtxo1 = {
+                ...createMockVtxo("tx1", 0, 10000),
+                script: script1,
+            };
+            const vtxo2 = {
+                ...createMockVtxo("tx2", 0, 20000),
+                script: script1,
+            };
+
+            await repository.saveVtxos(address1, [vtxo1]);
+            await repository.saveVtxos(address2, [vtxo2]);
+
+            await repository.deleteVtxosForScript!(script1);
+
+            expect(await collectScriptVtxos(repository, script1)).toEqual([]);
+            expect(await collectVtxos(repository, address1)).toEqual([]);
+            expect(await collectVtxos(repository, address2)).toEqual([]);
+        });
+
+        if (name.includes("IndexedDB")) {
+            it("should dedup same outpoint across address buckets in script VTXO pages", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const address2 = "address2";
+                const txid = "tx1";
+                const vout = 0;
+
+                // vtxo1 is canonical for address1
+                const vtxo1 = {
+                    ...createMockVtxo(txid, vout, 10000),
+                    script: script1,
+                    address: address1,
+                };
+                // vtxo2 is a duplicate in address2 bucket
+                const vtxo2 = {
+                    ...createMockVtxo(txid, vout, 10000),
+                    script: script1,
+                    address: address2,
+                };
+
+                await repository.saveVtxos(address1, [vtxo1]);
+                await repository.saveVtxos(address2, [vtxo2]);
+
+                const retrieved = await collectScriptVtxos(repository, script1);
+                expect(retrieved).toHaveLength(1);
+                expect(
+                    await collectScriptVtxos(repository, script1, {
+                        unspentOnly: true,
+                    }),
+                ).toHaveLength(1);
+            });
+        }
+    });
+
+    describe("UTXO management", () => {
+        it("should return empty array when no UTXOs exist", async () => {
+            const utxos = await collectUtxos(repository, testAddress);
+            expect(utxos).toEqual([]);
+        });
+
+        it("should save and retrieve UTXOs", async () => {
+            const utxo1 = createMockUtxo("tx1", 0, 10000);
+            const utxo2 = createMockUtxo("tx2", 1, 20000);
+
+            await repository.saveUtxos(testAddress, [utxo1, utxo2]);
+            const retrieved = await collectUtxos(repository, testAddress);
+
+            expect(retrieved).toHaveLength(2);
+            expect(retrieved[0].txid).toBe("tx1");
+            expect(retrieved[0].vout).toBe(0);
+            expect(retrieved[0].value).toBe(10000);
+        });
+
+        it("should update existing UTXO when saving with same txid/vout", async () => {
+            const utxo1 = createMockUtxo("tx1", 0, 10000);
+            await repository.saveUtxos(testAddress, [utxo1]);
+
+            const utxo1Updated = createMockUtxo("tx1", 0, 15000);
+            await repository.saveUtxos(testAddress, [utxo1Updated]);
+
+            const retrieved = await collectUtxos(repository, testAddress);
+            expect(retrieved).toHaveLength(1);
+            expect(retrieved[0].value).toBe(15000);
+        });
+
+        it("should clear all UTXOs for an address", async () => {
+            const utxo1 = createMockUtxo("tx1", 0, 10000);
+            await repository.saveUtxos(testAddress, [utxo1]);
+
+            await repository.deleteUtxos(testAddress);
+            const retrieved = await collectUtxos(repository, testAddress);
+
+            expect(retrieved).toEqual([]);
+        });
+    });
+
+    describe("Transaction history", () => {
+        it("should return empty array when no transactions exist", async () => {
+            const txs = await collectTransactionHistory(repository, testAddress);
+            expect(txs).toEqual([]);
+        });
+
+        it("should save and retrieve transactions", async () => {
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000);
+            const tx2 = createMockTransaction(
+                { boardingTxid: "btx2" },
+                "RECEIVED" as TxType,
+                20000,
+            );
+
+            const tx3 = createMockTransaction(
+                { commitmentTxid: "ctx3" },
+                "RECEIVED" as TxType,
+                30000,
+            );
+
+            await repository.saveTransactions(testAddress, [tx1, tx2, tx3]);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
+
+            expect(retrieved).toHaveLength(3);
+            expect(retrieved[0].key.arkTxid).toBe("atx1");
+            expect(retrieved[0].type).toBe("SENT");
+            expect(retrieved[1].key.boardingTxid).toBe("btx2");
+            expect(retrieved[1].type).toBe("RECEIVED");
+            expect(retrieved[2].key.commitmentTxid).toBe("ctx3");
+            expect(retrieved[2].type).toBe("RECEIVED");
+        });
+
+        it("should update existing transaction when saving with same key", async () => {
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000);
+            await repository.saveTransactions(testAddress, [tx1]);
+
+            const tx1Updated = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 15000);
+            await repository.saveTransactions(testAddress, [tx1Updated]);
+
+            const retrieved = await collectTransactionHistory(repository, testAddress);
+            expect(retrieved).toHaveLength(1);
+            expect(retrieved[0].amount).toBe(15000);
+        });
+
+        it("should clear all transactions for an address", async () => {
+            const tx1 = createMockTransaction({ arkTxid: "atx1" }, "SENT" as TxType, 10000);
+            await repository.saveTransactions(testAddress, [tx1]);
+
+            await repository.deleteTransactions(testAddress);
+            const retrieved = await collectTransactionHistory(repository, testAddress);
+
+            expect(retrieved).toEqual([]);
+        });
+    });
+
+    describe("Wallet state", () => {
+        it("should return null when no wallet state exists", async () => {
+            const state = await repository.getWalletState();
+            expect(state).toBeNull();
+        });
+
+        it("should save and retrieve wallet state", async () => {
+            const state: WalletState = {
+                lastSyncTime: Date.now(),
+                settings: { theme: "dark" },
+            };
+
+            await repository.saveWalletState(state);
+            const retrieved = await repository.getWalletState();
+
+            expect(retrieved).toEqual(state);
+            expect(retrieved?.lastSyncTime).toBe(state.lastSyncTime);
+            expect(retrieved?.settings).toEqual(state.settings);
+        });
+
+        it("should update existing wallet state", async () => {
+            const state1: WalletState = {
+                lastSyncTime: Date.now(),
+                settings: { theme: "dark" },
+            };
+            await repository.saveWalletState(state1);
+
+            const state2: WalletState = {
+                lastSyncTime: Date.now() + 1000,
+                settings: { theme: "light" },
+            };
+            await repository.saveWalletState(state2);
+
+            const retrieved = await repository.getWalletState();
+            expect(retrieved?.settings?.theme).toBe("light");
+        });
+    });
+});

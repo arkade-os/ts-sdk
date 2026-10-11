@@ -18,14 +18,9 @@ import {
     Transaction,
     Wallet,
 } from "@arkade-os/sdk";
-import {
-    CLAIM_PACKET_TYPE,
-    claimPacketShape,
-    covclaimdClient,
-    httpTransport,
-    requestLightningReceive,
-    type InvoiceFacts,
-} from "../../src";
+import { CLAIM_PACKET_TYPE, claimPacketShape, type InvoiceFacts } from "../../src";
+import { covclaimdClient } from "../../src/advanced";
+import { httpTransport, requestLightningReceive } from "../../src/protocol";
 
 const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
@@ -114,17 +109,12 @@ describe("claim packet, end to end (regtest)", () => {
         // Nothing spendable to start: the closing assertion has one possible cause.
         expect((await wallet.getBalance()).available).toBe(0);
 
-        const receive = await requestLightningReceive(
-            wallet,
-            OPERATOR_URL,
-            httpTransport(SOLVER_URL),
-            {
-                amount: RECEIVE_SATS,
-                amountSide: "to",
-                covclaimdPubkey,
-                decodeInvoice,
-            },
-        );
+        const receive = await requestLightningReceive(wallet, httpTransport(SOLVER_URL), {
+            amount: RECEIVE_SATS,
+            amountSide: "to",
+            covclaimdPubkey,
+            decodeInvoice,
+        });
         expect(receive.expectedAmount).toBe(RECEIVE_SATS);
 
         // A HOLD invoice: it stays in flight until the solver learns P, which is
@@ -142,7 +132,9 @@ describe("claim packet, end to end (regtest)", () => {
             ],
             { stdio: "ignore" },
         );
-        onTestFinished(() => payment.kill());
+        onTestFinished(() => {
+            payment.kill();
+        });
 
         const lockupScript = hex.encode(receive.swapPkScript);
         await waitFor(

@@ -21,12 +21,13 @@ import {
     VHTLCV2ContractHandler,
     buildOffchainTx,
     setArkPsbtField,
+    pageResult,
     type Contract,
     type ContractEvent,
     type CreateContractParams,
 } from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript, receiveVtxoScript } from "../src/rfq";
+import { lightningSendContract, lightningReceiveContract } from "../src/rfq";
 import {
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
@@ -55,6 +56,7 @@ import {
     RfqSwapManager,
     RfqSwapOriginRequired,
     isRfqSwapTerminal,
+    RFQ_SWAP_ACTIVE_STATES,
     nextOnchainAction,
     type ArkadeRefundResult,
     type LightningReceiveSwap,
@@ -97,9 +99,9 @@ const htlcOf = () =>
 
 /** The Arkade lockup, derived exactly the way both legs derive it — ONE `P`
  * unlocks the covenant's claim leaf and (for an onchain send) the L1 leaf. */
-const LOCKUP = lightningSendVtxoScript({
+const LOCKUP = lightningSendContract({
     solverPubkey: key(1),
-    serverPubkey: key(3),
+    operatorPubkey: key(3),
     paymentHash: PAYMENT_HASH,
     refundLocktime: REFUND_LOCKTIME,
     claimDelay: 4096,
@@ -117,10 +119,10 @@ const LOCKUP = lightningSendVtxoScript({
  * particular `refundWithoutReceiver` on THIS script is the solver's leaf, which
  * is what makes a spend through it a loss rather than a return.
  */
-const RECEIVE_LOCKUP = receiveVtxoScript({
+const RECEIVE_LOCKUP = lightningReceiveContract({
     solverPubkey: key(1),
     refundLocktime: REFUND_LOCKTIME,
-    serverPubkey: key(3),
+    operatorPubkey: key(3),
     paymentHash: PAYMENT_HASH,
     claimDelay: 4096,
     emulatorPubkey: key(9),
@@ -133,7 +135,7 @@ const RECEIVE_LOCKUP = receiveVtxoScript({
 const LOCKUP_OUTPOINT = { txid: "99".repeat(32), vout: 0 };
 const LOCKUP_VALUE = 100_000;
 /** The txid our own receive claim comes back with. */
-const CLAIM_ARK_TXID = "ac".repeat(32);
+const CLAIM_TXID = "ac".repeat(32);
 /** The ark transaction a lockup spend is carried by — the counterparty's, on
  * every leg but a settled receive. */
 const ARK_TXID = "ab".repeat(32);
@@ -372,7 +374,7 @@ interface Spies {
 const spies = (
     over: {
         claim?: () => Promise<{ txid: string }>;
-        claimLockup?: () => Promise<{ arkTxid: string; amount: number }>;
+        claimLockup?: () => Promise<{ txid: string; amount: number }>;
         refund?: () => Promise<ArkadeRefundResult>;
         probe?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
     } = {},
@@ -396,11 +398,11 @@ const spies = (
                 lockupClaims.push({ vtxos, partiallyClaimed: options.partiallyClaimed });
                 return over.claimLockup
                     ? over.claimLockup()
-                    : { arkTxid: CLAIM_ARK_TXID, amount: LOCKUP_VALUE };
+                    : { txid: CLAIM_TXID, amount: LOCKUP_VALUE };
             },
             async refundArkade(swap) {
                 refunds.push(swap.rfqId);
-                return over.refund ? over.refund() : { arkTxid: "ee".repeat(32), amount: 100_000 };
+                return over.refund ? over.refund() : { txid: "ee".repeat(32), amount: 100_000 };
             },
             async saveSwap(swap) {
                 saved.push(swap.state);
@@ -893,7 +895,7 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         expect(s.claims).toHaveLength(0);
         expect(s.refunds).toEqual([RFQ_ID]);
         expect(swap.state).toBe("refunded");
-        expect(swap.refundArkTxid).toBe("ee".repeat(32));
+        expect(swap.refundTxid).toBe("ee".repeat(32));
     });
 
     it("remembers the fill's outpoint, so a spent HTLC is not read back as unfunded", async () => {
@@ -1059,7 +1061,7 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         expect(failures[0]).toMatch(/ChainSource/);
         expect(await m.hasSwap(RFQ_ID)).toBe(false);
         // and NOT through onSwapCompleted: a listener by that name firing on a
-        // failure is the trap this manager does not inherit from Boltz's
+        // failure is a trap this manager avoids
         expect(completed).toHaveLength(0);
     });
 
@@ -1138,7 +1140,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         const s = spies({
             refund: async () => {
                 if (++attempts <= 2) throw new Error("FORFEIT_CLOSURE_LOCKED");
-                return { arkTxid: "ee".repeat(32), amount: 100_000 };
+                return { txid: "ee".repeat(32), amount: 100_000 };
             },
         });
         const swap = lightningSwap();
@@ -1188,7 +1190,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("pending");
-        expect(swap.refundArkTxid).toBeUndefined();
+        expect(swap.refundTxid).toBeUndefined();
     });
 
     it("holds the wait open through the lag window and ends it at the deadline", async () => {
@@ -1214,7 +1216,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("refunded");
-        expect(swap.refundArkTxid).toBeUndefined();
+        expect(swap.refundTxid).toBeUndefined();
     });
 
     it("let the settlement show late instead of recording it as a refund", async () => {
@@ -1241,7 +1243,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("settled");
-        expect(swap.refundArkTxid).toBeUndefined();
+        expect(swap.refundTxid).toBeUndefined();
     });
 });
 
@@ -1297,7 +1299,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE, recoverable: false },
         ]);
         expect(swap.state).toBe("claimed");
-        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+        expect(swap.claimTxid).toBe(CLAIM_TXID);
         expect(s.actions).toEqual(["claimLockup"]);
         // and it is not over: `claimed` is what we did, not what the chain says
         expect(await m.hasSwap(RFQ_ID)).toBe(true);
@@ -1492,7 +1494,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // `claimed` is still the truest thing the record knows; replacing it
         // with a refusal would un-say it.
         const s = spies();
-        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
         const m = manager({ indexer: fundedIndexer(), now: REFUND_LOCKTIME + 1, spies: s });
         await pass(m, swap);
 
@@ -1506,10 +1508,10 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // submitted would turn that success into an anomaly the day covclaimd
         // starts working.
         const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
-        expect(spend.txid).not.toBe(CLAIM_ARK_TXID);
+        expect(spend.txid).not.toBe(CLAIM_TXID);
 
         const s = spies();
-        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
         const m = manager({
             indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
             now: BEFORE_DEADLINE,
@@ -1527,7 +1529,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // The transition the state doc has to make legal: `claimed` is not
         // terminal, so it must not retire the swap.
         const s = spies();
-        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
         const solverRefund = spendOfLockup({
             script: RECEIVE_LOCKUP,
             leaf: "refundWithoutReceiver",
@@ -1547,9 +1549,9 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // The one combination where a `txid` on the outcome would name an
         // action that did not happen: the claim was submitted, the chain never
         // took it, and the solver reclaimed the lockup. The record keeps
-        // `claimArkTxid` for diagnosis; the outcome does not carry it.
+        // `claimTxid` for diagnosis; the outcome does not carry it.
         const s = spies();
-        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
         const solverRefund = spendOfLockup({
             script: RECEIVE_LOCKUP,
             leaf: "refundWithoutReceiver",
@@ -1563,7 +1565,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const waiting = m.waitForSwapCompletion(RFQ_ID);
         await m.poll();
 
-        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+        expect(swap.claimTxid).toBe(CLAIM_TXID);
         await expect(waiting).resolves.toEqual({ state: "refunded", txid: undefined });
     });
 
@@ -1583,15 +1585,15 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     });
 
     it("ends refunded, not failed, when only a re-claim was the thing that threw", async () => {
-        // Both `claimArkTxid` and a claim error are set when the window shuts.
+        // Both `claimTxid` and a claim error are set when the window shuts.
         // A claim went out, so this is an ordinary loss rather than a wallet
         // that could not act — `failed` is reserved for the latter.
         let now = BEFORE_DEADLINE;
         let fail = false;
         const s = spies({
             claimLockup: async () => {
-                if (fail) throw new Error("ark server unreachable");
-                return { arkTxid: CLAIM_ARK_TXID, amount: LOCKUP_VALUE };
+                if (fail) throw new Error("Arkade operator unreachable");
+                return { txid: CLAIM_TXID, amount: LOCKUP_VALUE };
             },
         });
         const swap = receiveSwap();
@@ -1608,7 +1610,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             spies: s,
         });
         await pass(m, swap);
-        expect(swap.claimArkTxid).toBe(CLAIM_ARK_TXID);
+        expect(swap.claimTxid).toBe(CLAIM_TXID);
 
         fail = true;
         funded.push({ ...LOCKUP_OUTPOINT, vout: 1, value: 500 });
@@ -1627,7 +1629,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         // remainder back over it would strand the trader's own money — note the
         // funding here is far below `expectedAmount` and is claimed anyway.
         const s = spies();
-        const swap = receiveSwap({ state: "claimed", claimArkTxid: CLAIM_ARK_TXID });
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
         const m = manager({
             indexer: fundedIndexer(),
             contracts: fundedContracts(1),
@@ -1704,7 +1706,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         let now = BEFORE_DEADLINE;
         const s = spies({
             claimLockup: async () => {
-                throw new Error("ark server unreachable");
+                throw new Error("Arkade operator unreachable");
             },
         });
         const swap = receiveSwap();
@@ -1725,8 +1727,36 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
 
         expect(swap.state).toBe("failed");
-        expect(swap.failure).toMatch(/ark server unreachable/);
-        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(/ark server unreachable/);
+        expect(swap.failure).toMatch(/Arkade operator unreachable/);
+        await expect(m.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(
+            /Arkade operator unreachable/,
+        );
+    });
+
+    it("keeps watching a lockup whose swap FAILED — terminal is not spent", async () => {
+        // Still funded here, so retiring drops a live lockup off the watcher.
+        const receiveScript = hex.encode(RECEIVE_LOCKUP.pkScript);
+        const contracts = fakeContracts({
+            preexisting: [{ script: receiveScript } as CreateContractParams],
+            vtxos: () => [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+        });
+        let now = BEFORE_DEADLINE;
+        const s = spies({
+            claimLockup: async () => {
+                throw new Error("Arkade operator unreachable");
+            },
+        });
+        const swap = receiveSwap();
+        const m = manager({ indexer: fundedIndexer(), contracts, now: () => now, spies: s });
+        await pass(m, swap);
+
+        now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+        await m.poll();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(swap.state).toBe("failed");
+        expect(contracts.watched()).toEqual([receiveScript]);
+        expect(contracts.retired).toEqual([]);
     });
 
     it("does not report a claim that lost the race to another claimer as a failure", async () => {
@@ -1756,7 +1786,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const failures: string[] = [];
         const s = spies({
             claimLockup: async () => {
-                if (attempts++ === 0) throw new Error("ark server unreachable");
+                if (attempts++ === 0) throw new Error("Arkade operator unreachable");
                 throw new Error(
                     JSON.stringify({
                         code: 6,
@@ -1785,8 +1815,9 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
 
         expect(attempts).toBe(2);
-        expect(failures).toEqual(["ark server unreachable"]);
+        expect(failures).toEqual(["Arkade operator unreachable"]);
         expect(swap.state).toBe("claimable");
+        expect(swap.claimFailure).toBeUndefined();
 
         now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
         await m.poll();
@@ -1866,7 +1897,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         await m.poll();
         await waiting;
 
-        expect(settled).toEqual({ state: "settled", txid: CLAIM_ARK_TXID });
+        expect(settled).toEqual({ state: "settled", txid: CLAIM_TXID });
     });
 });
 
@@ -2172,7 +2203,7 @@ describe("RfqSwapManager — a refund this wallet cannot make", () => {
             probe: async () => (ok ? { ok: true } : { ok: false, reason: "not this wallet" }),
             refund: async () => {
                 if (!ok) throw cannotSign();
-                return { arkTxid: "ee".repeat(32), amount: 100_000 };
+                return { txid: "ee".repeat(32), amount: 100_000 };
             },
         });
         const swap = lightningSwap();
@@ -2414,7 +2445,7 @@ describe("RfqSwapManager — bookkeeping", () => {
                 overlapped ||= inFlight > 1;
                 await Promise.resolve();
                 inFlight -= 1;
-                return { arkTxid: "ee".repeat(32), amount: 1 };
+                return { txid: "ee".repeat(32), amount: 1 };
             },
         });
         const swap = lightningSwap();
@@ -3082,7 +3113,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             hashlock: { paymentHash: PAYMENT_HASH },
         },
         amount: LOCKUP_VALUE,
-        fundingArkTxid: "fa".repeat(32),
+        fundingTxid: "fa".repeat(32),
         ...over,
     });
 
@@ -3124,9 +3155,24 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 if (store.failRead) throw new Error("record store unavailable");
                 return store.records.get(rfqId);
             },
-            async getAllRfqSwaps() {
+            async getRfqSwapsPage(filter, page) {
                 if (store.failRead) throw new Error("record store unavailable");
-                return [...store.records.values()];
+                const rows = [...store.records.values()]
+                    .filter(
+                        (row) =>
+                            (filter.state === undefined || row.state === filter.state) &&
+                            (filter.since === undefined || row.updatedAt >= filter.since) &&
+                            (!page.after ||
+                                row.updatedAt > page.after.updatedAt ||
+                                (row.updatedAt === page.after.updatedAt &&
+                                    row.rfqId > page.after.rfqId)),
+                    )
+                    .sort((a, b) => a.updatedAt - b.updatedAt || a.rfqId.localeCompare(b.rfqId))
+                    .slice(0, page.limit + 1);
+                return pageResult(rows, page.limit, (row) => ({
+                    updatedAt: row.updatedAt,
+                    rfqId: row.rfqId,
+                }));
             },
             async removeRfqSwap(rfqId) {
                 store.removed.push(rfqId);
@@ -3178,7 +3224,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             // The origin half is what no live swap carries and no later pass
             // can reconstruct — the whole reason the parameter exists.
             expect(record?.lockupAddress).toBe(LOCKUP_ADDRESS);
-            expect(record?.fundingArkTxid).toBe("fa".repeat(32));
+            expect(record?.fundingTxid).toBe("fa".repeat(32));
             expect(record?.amount).toBe(LOCKUP_VALUE);
         });
 
@@ -3199,7 +3245,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             expect(store.writes.at(-1)?.state).toBe("settled");
             expect(store.writes.at(-1)?.lockupAddress).toBe(LOCKUP_ADDRESS);
-            expect(store.writes.at(-1)?.fundingArkTxid).toBe("fa".repeat(32));
+            expect(store.writes.at(-1)?.fundingTxid).toBe("fa".repeat(32));
         });
 
         it("refuses a swap the store has never seen and that carries no origin", async () => {
@@ -3394,21 +3440,69 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
         });
 
+        it("restores the last receive-claim failure before closing the window", async () => {
+            let now = REFUND_LOCKTIME - 3600;
+            const store = fakeStore();
+            const failures: string[] = [];
+            const firstSpies = spies({
+                claimLockup: async () => {
+                    throw new Error("Arkade operator unreachable");
+                },
+            });
+            const first = manager({
+                indexer: fakeIndexer({ vtxos: unspent() }),
+                contracts: fakeContracts({
+                    preexisting: REGISTERED_LOCKUP_ROWS(),
+                    vtxos: () => [{ ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE }],
+                }),
+                repository: store,
+                now: () => now,
+                spies: firstSpies,
+            });
+            first.onSwapFailed((_swap, error) => failures.push(error.message));
+
+            await first.addSwap(receiveSwap(), receiveOrigin());
+            await first.poll();
+
+            expect(store.records.get(RFQ_ID)?.state).toBe("claimable");
+            expect(store.records.get(RFQ_ID)?.claimFailure).toBe("Arkade operator unreachable");
+            expect(store.records.get(RFQ_ID)?.failure).toBeUndefined();
+            expect(failures).toEqual(["Arkade operator unreachable"]);
+
+            now = REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS;
+            const resumedSpies = spies();
+            const resumed = manager({
+                indexer: fakeIndexer({ vtxos: [] }),
+                contracts: contractsFor(rowFor(RECEIVE_LOCKUP, RECEIVE_ADDRESS)),
+                repository: store,
+                now: () => now,
+                spies: resumedSpies,
+            });
+
+            const result = await resumed.restoreFromRepository();
+            expect(result.failed).toHaveLength(0);
+            expect(result.restored).toHaveLength(1);
+            const [swap] = result.restored;
+            expect(swap?.claimFailure).toBe("Arkade operator unreachable");
+
+            await resumed.poll();
+
+            expect(swap?.state).toBe("failed");
+            expect(swap?.failure).toBe("Arkade operator unreachable");
+            expect(store.records.get(RFQ_ID)?.failure).toBe("Arkade operator unreachable");
+            expect(store.records.get(RFQ_ID)?.claimFailure).toBeUndefined();
+            await expect(resumed.waitForSwapCompletion(RFQ_ID)).rejects.toThrow(
+                /Arkade operator unreachable/,
+            );
+        });
+
         it("pages only active swaps and resolves terminal history on demand", async () => {
             const terminalId = "b2".repeat(32);
             const store = fakeStore([
                 storedSend(),
                 storedSend({ rfqId: terminalId, state: "settled", updatedAt: SAFE_NOW - 1 }),
             ]);
-            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
-                [...store.records.values()]
-                    .filter(
-                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
-                    )
-                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
-                    .slice(0, limit),
-            );
-            const readAll = vi.spyOn(store, "getAllRfqSwaps");
+            const pages = vi.spyOn(store, "getRfqSwapsPage");
             const m = manager({
                 contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
                 repository: store,
@@ -3420,7 +3514,9 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             expect(result.restored.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
             expect(result.failed).toEqual([]);
-            expect(readAll).not.toHaveBeenCalled();
+            expect(pages.mock.calls.map(([filter]) => filter.state)).toEqual([
+                ...RFQ_SWAP_ACTIVE_STATES,
+            ]);
             expect((await m.getStats()).finishedSwaps).toBe(0);
             await expect(m.waitForSwapCompletion(terminalId)).resolves.toEqual({
                 state: "settled",
@@ -3432,14 +3528,6 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
         it("never replaces a live swap when paging returns it again", async () => {
             const store = fakeStore([storedSend()]);
-            store.getRfqSwapsPage = vi.fn(async (state, afterId, limit) =>
-                [...store.records.values()]
-                    .filter(
-                        (record) => record.state === state && (!afterId || record.rfqId > afterId),
-                    )
-                    .sort((a, b) => (a.rfqId < b.rfqId ? -1 : 1))
-                    .slice(0, limit),
-            );
             const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
             const params = async () => VHTLCV2ContractHandler.serializeParams(LOCKUP.options);
 
@@ -3525,21 +3613,21 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 storedSend({
                     state: "refunded",
                     updatedAt: SAFE_NOW,
-                    refundArkTxid: "aa".repeat(32),
+                    refundTxid: "aa".repeat(32),
                 }),
                 storedSend({
                     rfqId: receiveId,
                     kind: "lightning_receive",
                     state: "refunded",
                     updatedAt: SAFE_NOW,
-                    profile: { claimArkTxid: "bb".repeat(32) },
+                    profile: { claimTxid: "bb".repeat(32) },
                 }),
                 storedSend({
                     rfqId: settledReceiveId,
                     kind: "lightning_receive",
                     state: "settled",
                     updatedAt: SAFE_NOW,
-                    profile: { claimArkTxid: "ee".repeat(32) },
+                    profile: { claimTxid: "ee".repeat(32) },
                 }),
                 storedSend({
                     rfqId: onchainId,
@@ -3789,12 +3877,12 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(swap.state).toBe("settled");
             // The counterparty's transaction — nothing local produced it, so no
             // other field on the record can name it.
-            expect(swap.lockupSpendArkTxids).toEqual([ARK_TXID]);
-            expect(store.records.get(RFQ_ID)?.lockupSpendArkTxids).toEqual([ARK_TXID]);
+            expect(swap.lockupSpendTxids).toEqual([ARK_TXID]);
+            expect(store.records.get(RFQ_ID)?.lockupSpendTxids).toEqual([ARK_TXID]);
         });
 
         it("stamps nothing when the indexer named the checkpoint but not the ark tx", async () => {
-            // `LockupSpend.arkTxid` is optional, and a checkpoint txid is not
+            // `LockupSpend.txid` is optional, and a checkpoint txid is not
             // what history correlates on. Fewer txids beats a wrong one.
             const store = fakeStore();
             const s = spies();
@@ -3810,7 +3898,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await m.poll();
 
             expect(swap.state).toBe("settled");
-            expect(swap.lockupSpendArkTxids).toBeUndefined();
+            expect(swap.lockupSpendTxids).toBeUndefined();
         });
 
         it("survives the record round trip", async () => {
@@ -3818,7 +3906,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 storedSend({
                     state: "settled",
                     updatedAt: SAFE_NOW - 10,
-                    lockupSpendArkTxids: [ARK_TXID],
+                    lockupSpendTxids: [ARK_TXID],
                 }),
             ]);
             const s = spies();
@@ -3831,7 +3919,97 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             const result = await m.restoreFromRepository({ includeTerminal: true });
 
-            expect(result.restored[0].lockupSpendArkTxids).toEqual([ARK_TXID]);
+            expect(result.restored[0].lockupSpendTxids).toEqual([ARK_TXID]);
+        });
+    });
+
+    describe("stamping the preimage that settled the swap", () => {
+        it("keeps the preimage the solver revealed to claim a lightning send", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = lightningSwap();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            // The one leg whose `P` the wallet never had: the payee minted it,
+            // so the quote carries only the hash and nothing else on the record
+            // can give it back.
+            expect(swap.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+        });
+
+        it("stamps nothing on a receive whose own claim is what the chain read", async () => {
+            // `P` here is the wallet's claim secret, already recoverable from
+            // `profile` — stamping it would be a second home for it.
+            const store = fakeStore();
+            const s = spies();
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+            const m = manager({
+                indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, receiveOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(swap.settlementPreimageHex).toBeUndefined();
+            // the stored record reached the end too, so the absence below is
+            // the stamp declining rather than a row that was never written
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBeUndefined();
+        });
+
+        it("stamps nothing on an onchain send, whose P the wallet minted", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = onchainSwap();
+            const m = manager({
+                indexer: settlingIndexer(),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin({ kind: "onchain_send" }));
+            await m.poll();
+
+            expect(swap.state).toBe("settled");
+            expect(swap.settlementPreimageHex).toBeUndefined();
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBeUndefined();
+        });
+
+        it("stamps nothing on a send that came back instead of settling", async () => {
+            const store = fakeStore();
+            const s = spies();
+            const swap = lightningSwap();
+            const refund = spendOfLockup({ leaf: "refundWithoutReceiver" });
+            const m = manager({
+                indexer: fakeIndexer({ vtxos: spentBy(refund.txid), txs: [refund] }),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await m.addSwap(swap, sendOrigin());
+            await m.poll();
+
+            expect(swap.state).toBe("refunded");
+            expect(swap.settlementPreimageHex).toBeUndefined();
+            expect(store.records.get(RFQ_ID)?.state).toBe("refunded");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBeUndefined();
         });
     });
 });
