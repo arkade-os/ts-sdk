@@ -1231,7 +1231,9 @@ export async function requestLightningSend(
     });
 
     // Last, so a refused quote leaves no row, but before the caller holds an address to fund.
-    await registerLockupContract(await wallet.getContractManager(), script, address);
+    await registerLockupContract(await wallet.getContractManager(), script, address, {
+        scope: wallet,
+    });
 
     return {
         rfqId,
@@ -1820,6 +1822,7 @@ export async function requestOnchainSend(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {
@@ -2238,6 +2241,7 @@ export async function requestLightningReceive(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {
@@ -2419,6 +2423,7 @@ export async function requestOnchainReceive(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {

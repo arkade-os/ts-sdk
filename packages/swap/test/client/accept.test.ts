@@ -28,6 +28,9 @@ import { SWAP_LOCKUP_CONTRACT_TYPE } from "../../src/lockupContract";
 import { offerFactsOf } from "../../src/client/driveRecords";
 import { promoteOfferContract, retireOfferContract } from "../../src/coverage";
 import { retireUnsubmittedFunding } from "../../src/client/fundingNotSubmitted";
+import { requestLightningSend } from "../../src/rfq";
+import { createRfqSwapRecord } from "../../src/rfqRecord";
+import { rfqSecretsProfile } from "../../src/rfqProfileParts";
 import { conflictingFields } from "../../src/client/accept";
 import type { Quote, QuoteInput } from "../../src/client/quote";
 import {
@@ -1182,6 +1185,72 @@ it.each(["spot", "lightningSend"] as const)(
         await h.client[Symbol.asyncDispose]();
     },
 );
+
+it("keeps an outstanding legacy Lightning address when its native twin was not sent", async () => {
+    const h = await setup();
+    const quote = await quoteFor(h, "lightningSend");
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const save = vi.spyOn(h.repository, "saveRfqSwap").mockImplementation(async (record) => {
+        await blocked;
+        await InMemoryAssetSwapRepository.prototype.saveRfqSwap.call(h.repository, record);
+    });
+    let legacy: Awaited<ReturnType<typeof requestLightningSend>> | undefined;
+    let writing: Promise<void> | undefined;
+    vi.spyOn(h.wallet.wallet, "send").mockImplementation(async () => {
+        vi.setSystemTime(NOW * 1000 + 537);
+        legacy = await requestLightningSend(h.wallet.wallet, solverTransport(solverFor(CLOCK)), {
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            invoice: {
+                raw: invoiceFor(PAYMENT_HASH, CLOCK),
+                paymentHash: PAYMENT_HASH,
+                amountSats: 5_000,
+                expiresAt: NOW + 3_540,
+            },
+        });
+        writing = h.repository.saveRfqSwap(
+            createRfqSwapRecord(
+                {
+                    kind: "lightning_send",
+                    lockupAddress: legacy.address,
+                    profile: rfqSecretsProfile(legacy.secrets, PAYMENT_HASH),
+                },
+                {
+                    kind: "lightning_send",
+                    rfqId: legacy.rfqId,
+                    state: "pending",
+                    lockupPkScript: legacy.swapPkScript,
+                    paymentHash: PAYMENT_HASH,
+                    refundLocktime: legacy.contractParams.refundLocktime,
+                    createdAt: NOW,
+                    updatedAt: NOW,
+                },
+            ),
+        );
+        vi.setSystemTime((NOW + 2) * 1000);
+        throw new SendDeadlineExceededError(NOW + 1);
+    });
+    try {
+        await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBeInstanceOf(
+            SendDeadlineExceededError,
+        );
+        const stopped = (await h.repository.getSwapRecord(quote.id)) as CorridorSwapRecord;
+        expect(legacy).toBeDefined();
+        expect(hex.encode(legacy!.swapPkScript)).toBe(stopped.lockupPkScript);
+        expect(stopped.createdAt * 1000).toBeLessThan(NOW * 1000 + 537);
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(await h.repository.getRfqSwap(legacy!.rfqId)).toBeUndefined();
+        expect(h.wallet.watched).not.toContainEqual([stopped.lockupPkScript, "retained"]);
+        release();
+        await writing;
+        await retireUnsubmittedFunding(h.wallet.wallet, h.repository, stopped);
+        expect(h.wallet.watched).not.toContainEqual([stopped.lockupPkScript, "retained"]);
+    } finally {
+        release();
+        await writing;
+        await h.client[Symbol.asyncDispose]();
+    }
+});
 
 it("keeps unsent coverage when its fresh repository scan fails", async () => {
     const h = await setup();
