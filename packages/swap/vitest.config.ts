@@ -1,20 +1,20 @@
-import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
+import { defineConfig, mergeConfig } from "vitest/config";
 import base from "../../config/vitest.base";
 
 export default mergeConfig(
     base,
     defineConfig({
         test: {
-            // the regtest dir is a symlinked submodule with its own node:test
-            // suite, which vitest cannot run — it is not this package's to run
-            exclude: [...configDefaults.exclude, "regtest/**"],
             // `ContractWatcher` subscribes over SSE, and Node exposes
             // `EventSource` only behind this flag (24.x). Without it every
             // subscription fails with "EventSource is not defined", the manager
             // emits no `vtxo_received`/`vtxo_spent`, and anything event-driven
             // — `watchOfferSwaps`, `RfqSwapManager`'s contract subscription —
             // silently degrades to whatever polling the test does itself.
-            poolOptions: { forks: { execArgv: ["--experimental-eventsource"] } },
+            // UNDICI-ES is the flag's own "this is experimental" warning.
+            poolOptions: {
+                forks: { execArgv: ["--experimental-eventsource", "--disable-warning=UNDICI-ES"] },
+            },
         },
     }),
 );

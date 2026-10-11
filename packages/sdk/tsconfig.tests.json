@@ -1,0 +1,17 @@
+// Typechecks the tests that talk to a real server, which `tsconfig.json` excludes
+// along with every other test.
+//
+// The exclusion is how 89 `Wallet.create({ arkServerUrl })` call sites survived the
+// removal of that field: the key was silently ignored, every e2e wallet booted
+// against the public mainnet default, and all six CI integration groups went red
+// with no compile error anywhere. Excess-property checking catches exactly that,
+// and costs nothing here.
+//
+// Scope is `test/e2e` plus the helpers it shares. The rest of `test/` still carries
+// pre-existing errors (mostly leftover `virtualStatus` fixtures); widen this include
+// as they are cleared.
+{
+    "extends": "./tsconfig.json",
+    "include": ["src", "test/e2e", "test/helpers", "../../config/types/**/*.d.ts"],
+    "exclude": ["node_modules", "dist"]
+}

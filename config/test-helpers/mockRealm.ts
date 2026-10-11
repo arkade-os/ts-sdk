@@ -25,71 +25,82 @@ function makeRow(data: Row): Row {
     return proxy;
 }
 
+function compareValues(left: unknown, right: unknown): number {
+    if (typeof left === "number" && typeof right === "number") return left - right;
+    const a = Array.from(String(left), (char) => char.codePointAt(0)!);
+    const b = Array.from(String(right), (char) => char.codePointAt(0)!);
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+        if (a[i] !== b[i]) return a[i] - b[i];
+    }
+    return a.length - b.length;
+}
+
+function splitAtTopLevel(expression: string, operator: "AND" | "OR"): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < expression.length; i++) {
+        if (expression[i] === "(") depth++;
+        else if (expression[i] === ")") depth--;
+        else if (depth === 0 && expression.slice(i).toUpperCase().startsWith(` ${operator} `)) {
+            parts.push(expression.slice(start, i).trim());
+            i += operator.length + 1;
+            start = i + 1;
+        }
+    }
+    parts.push(expression.slice(start).trim());
+    return parts;
+}
+
+function matches(row: Row, expression: string, args: unknown[]): boolean {
+    let clause = expression.trim();
+    while (clause.startsWith("(") && clause.endsWith(")")) {
+        let depth = 0;
+        let wrapped = true;
+        for (let i = 0; i < clause.length - 1; i++) {
+            if (clause[i] === "(") depth++;
+            else if (clause[i] === ")") depth--;
+            if (depth === 0) {
+                wrapped = false;
+                break;
+            }
+        }
+        if (!wrapped) break;
+        clause = clause.slice(1, -1).trim();
+    }
+    const ors = splitAtTopLevel(clause, "OR");
+    if (ors.length > 1) return ors.some((part) => matches(row, part, args));
+    const ands = splitAtTopLevel(clause, "AND");
+    if (ands.length > 1) return ands.every((part) => matches(row, part, args));
+    const m = clause.match(/^(\w+)\s*(==|>=|>)\s*(?:\$(\d+)|(null))$/);
+    if (!m) throw new Error(`mockRealm: unsupported filtered() clause: "${clause}"`);
+    if (m[4]) return row[m[1]] === null || row[m[1]] === undefined;
+    const value = args[Number(m[3])];
+    if (m[2] === "==") return row[m[1]] === value;
+    const order = compareValues(row[m[1]], value);
+    return m[2] === ">" ? order > 0 : order >= 0;
+}
+
 function withFiltered(rows: Row[]): Row[] {
     const arr = rows as Row[] & {
         filtered: (q: string, ...a: unknown[]) => Row[];
-        sorted: (keypaths: string | [string, boolean][], reverse?: boolean) => Row[];
+        sorted: (key: string | readonly (readonly [string, boolean])[], reverse?: boolean) => Row[];
     };
-    arr.sorted = (keypaths: string | [string, boolean][], reverse = false) =>
+    arr.sorted = (key, reverse = false) =>
         withFiltered(
             [...arr].sort((a, b) => {
-                const descriptors: [string, boolean][] =
-                    typeof keypaths === "string" ? [[keypaths, reverse]] : keypaths;
-                for (const [keypath, descending] of descriptors) {
-                    const left = a[keypath] as number | string;
-                    const right = b[keypath] as number | string;
-                    const order = left < right ? -1 : left > right ? 1 : 0;
-                    if (order) return order * (descending ? -1 : 1);
+                const fields = typeof key === "string" ? [[key, reverse] as const] : key;
+                for (const [field, descending] of fields) {
+                    const left = a[field];
+                    const right = b[field];
+                    const order = compareValues(left, right);
+                    if (order !== 0) return descending ? -order : order;
                 }
                 return 0;
             }),
         );
-    arr.filtered = (q: string, ...a: unknown[]) => {
-        // Matches swap's realm/repository.ts cursor query verbatim; edit both together.
-        if (
-            q ===
-            "state == $0 AND updatedAt >= $1 AND (updatedAt > $2 OR (updatedAt == $2 AND rfqId > $3))"
-        ) {
-            return withFiltered(
-                arr.filter(
-                    (row) =>
-                        row.state === a[0] &&
-                        Number(row.updatedAt) >= Number(a[1]) &&
-                        (Number(row.updatedAt) > Number(a[2]) ||
-                            (Number(row.updatedAt) === Number(a[2]) &&
-                                String(row.rfqId) > String(a[3]))),
-                ),
-            );
-        }
-        const matched = arr.filter((row) =>
-            q.split(/\s+AND\s+/i).every((clause) =>
-                clause
-                    .replace(/[()]/g, "")
-                    .split(/\s+OR\s+/i)
-                    .some((c) => {
-                        const m = c.trim().match(/^(\w+)\s*(==|<=|>=|>)\s*(?:\$(\d+)|(null))$/);
-                        // Fail loudly on an unsupported shape: silently matching
-                        // it would hide real query mismatches from the tests.
-                        if (!m) {
-                            throw new Error(
-                                `mockRealm: unsupported filtered() clause: "${c.trim()}"`,
-                            );
-                        }
-                        // `== null` also matches an absent property: that is
-                        // what the query means for rows written before the
-                        // property existed, which is the only reason a
-                        // repository emits the clause.
-                        if (m[4]) return row[m[1]] === null || row[m[1]] === undefined;
-                        const value = a[Number(m[3])];
-                        if (m[2] === "<=") return Number(row[m[1]]) <= Number(value);
-                        if (m[2] === ">=") return Number(row[m[1]]) >= Number(value);
-                        if (m[2] === ">") return String(row[m[1]]) > String(value);
-                        return row[m[1]] === value;
-                    }),
-            ),
-        );
-        return withFiltered(matched);
-    };
+    arr.filtered = (q: string, ...a: unknown[]) =>
+        withFiltered(arr.filter((row) => matches(row, q, a)));
     return arr;
 }
 

@@ -1,0 +1,284 @@
+import { collectContracts } from "../../src/repositories/contractRepository";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+
+import {
+    ContractRepository,
+    IndexedDBContractRepository,
+    InMemoryContractRepository,
+} from "../../src/repositories";
+import { Contract } from "../../src";
+import { RepositoryTestItem } from "./helpers";
+import { STORE_CONTRACTS } from "../../src/repositories/indexedDB/schema";
+
+const contractRepositoryImplementations: Array<RepositoryTestItem<ContractRepository>> = [
+    {
+        name: "InMemoryContractRepository",
+        factory: async () => new InMemoryContractRepository(),
+    },
+    {
+        name: "IndexedDBContractRepository",
+        factory: async () => {
+            return new IndexedDBContractRepository(STORE_CONTRACTS);
+        },
+    },
+];
+
+describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({ factory }) => {
+    let repository: ContractRepository;
+
+    beforeEach(async () => {
+        repository = await factory();
+    });
+
+    afterEach(async () => {
+        await repository?.clear();
+        await repository?.[Symbol.asyncDispose]();
+    });
+
+    it("should save and retrieve contract", async () => {
+        const contract: Contract = {
+            type: "default",
+            params: {},
+            script: "script-hex",
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        await repository.saveContract(contract);
+        const contracts = await collectContracts(repository, {
+            script: "script-hex",
+        });
+
+        expect(contracts).toHaveLength(1);
+        expect(contracts[0]).toEqual(contract);
+    });
+
+    it("round-trips scope and filters it, resolving rows without one via the handler default", async () => {
+        const row = (type: string, script: string, scope?: Contract["scope"]): Contract => ({
+            type,
+            params: {},
+            script,
+            address: script,
+            state: "active",
+            createdAt: 0,
+            ...(scope && { scope }),
+        });
+        await repository.saveContract(row("default", "both-row", "both"));
+        await repository.saveContract(row("boarding", "boarding-row"));
+        await repository.saveContract(row("default", "default-row"));
+
+        const [both] = await collectContracts(repository, { script: "both-row" });
+        expect(both.scope).toBe("both");
+
+        const onchain = await collectContracts(repository, { scope: "onchain" });
+        expect(onchain.map((c) => c.script)).toEqual(["boarding-row"]);
+
+        const anyOnchain = await collectContracts(repository, { scope: ["onchain", "both"] });
+        expect(anyOnchain.map((c) => c.script).sort()).toEqual(["boarding-row", "both-row"]);
+        expect(await collectContracts(repository, { scope: [] })).toEqual([]);
+        const first = await repository.getContractsPage(
+            { scope: ["onchain", "both"] },
+            { limit: 1 },
+        );
+        const second = await repository.getContractsPage(
+            { scope: ["onchain", "both"] },
+            { limit: 1, after: first.nextCursor },
+        );
+        expect([...first.items, ...second.items].map((c) => c.script)).toEqual([
+            "boarding-row",
+            "both-row",
+        ]);
+    });
+
+    it("should get contracts by state", async () => {
+        const activeContract: Contract = {
+            type: "default",
+            params: {},
+            script: "script-1",
+            address: "address-1",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const inactiveContract: Contract = {
+            type: "default",
+            params: {},
+            script: "script-2",
+            address: "address-2",
+            state: "inactive",
+            createdAt: Date.now(),
+        };
+
+        await repository.saveContract(activeContract);
+        await repository.saveContract(inactiveContract);
+
+        const activeContracts = await collectContracts(repository, {
+            state: "active",
+        });
+        const inactiveContracts = await collectContracts(repository, {
+            state: "inactive",
+        });
+
+        expect(activeContracts).toHaveLength(1);
+        expect(activeContracts[0].script).toBe("script-1");
+        expect(inactiveContracts).toHaveLength(1);
+        expect(inactiveContracts[0].script).toBe("script-2");
+    });
+
+    it("should support array filters for script, state, and type", async () => {
+        const contracts: Contract[] = [
+            {
+                type: "default",
+                params: {},
+                script: "script-1",
+                address: "address-1",
+                state: "active",
+                createdAt: Date.now(),
+            },
+            {
+                type: "vhtlc",
+                params: {},
+                script: "script-2",
+                address: "address-2",
+                state: "inactive",
+                createdAt: Date.now(),
+            },
+            {
+                type: "default",
+                params: {},
+                script: "script-3",
+                address: "address-3",
+                state: "inactive",
+                createdAt: Date.now(),
+            },
+        ];
+
+        for (const contract of contracts) {
+            await repository.saveContract(contract);
+        }
+
+        const byScripts = await collectContracts(repository, {
+            script: ["script-1", "script-3"],
+        });
+        const byStates = await collectContracts(repository, {
+            state: ["inactive"],
+        });
+        const byTypes = await collectContracts(repository, {
+            type: ["vhtlc"],
+        });
+
+        expect(byScripts.map((contract) => contract.script)).toEqual(["script-1", "script-3"]);
+        expect(byStates).toHaveLength(2);
+        expect(byTypes).toHaveLength(1);
+        expect(byTypes[0].script).toBe("script-2");
+    });
+
+    it("should update contract state via save", async () => {
+        const contract: Contract = {
+            type: "default",
+            params: {},
+            script: "script-hex",
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        await repository.saveContract(contract);
+
+        // Update state by saving modified contract
+        await repository.saveContract({ ...contract, state: "inactive" });
+
+        const contracts = await collectContracts(repository, {
+            script: "script-hex",
+        });
+        expect(contracts[0]?.state).toBe("inactive");
+    });
+
+    it("should update contract data via save", async () => {
+        const contract: Contract = {
+            type: "vhtlc",
+            params: { hash: "abc", hashlock: "abc" },
+            script: "script-hex",
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+            metadata: { provider: "boltz" },
+        };
+
+        await repository.saveContract(contract);
+
+        // Update data by saving with merged data
+        await repository.saveContract({
+            ...contract,
+            params: { ...contract.params, preimage: "secret" },
+        });
+
+        const contracts = await collectContracts(repository, {
+            script: "script-hex",
+        });
+        expect(contracts[0]?.params).toEqual({
+            ...contract.params,
+            preimage: "secret",
+        });
+    });
+
+    it("should delete contract", async () => {
+        const contract: Contract = {
+            type: "default",
+            params: {},
+            script: "script-hex",
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        await repository.saveContract(contract);
+        await repository.deleteContract("script-hex");
+
+        const contracts = await collectContracts(repository, {
+            script: "script-hex",
+        });
+        expect(contracts).toHaveLength(0);
+    });
+
+    it("should get contract by script", async () => {
+        const contract: Contract = {
+            type: "default",
+            params: {},
+            script: "unique-script-hex",
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        await repository.saveContract(contract);
+        const contracts = await collectContracts(repository, {
+            script: "unique-script-hex",
+        });
+
+        expect(contracts).toHaveLength(1);
+        expect(contracts[0].script).toBe("unique-script-hex");
+    });
+
+    it("filters by watch state, counting rows without one as watched", async () => {
+        const row = (script: string, watch?: Contract["watch"]): Contract => ({
+            type: "default",
+            params: {},
+            script,
+            address: `address-${script}`,
+            state: "active",
+            createdAt: Date.now(),
+            ...(watch && { watch }),
+        });
+        await repository.saveContract(row("legacy"));
+        await repository.saveContract(row("s1", "watched"));
+        await repository.saveContract(row("s2", "awaiting-funds"));
+        await repository.saveContract(row("s3", "retained"));
+
+        const live = await collectContracts(repository, { watch: ["watched", "awaiting-funds"] });
+        expect(live.map((c) => c.script).sort()).toEqual(["legacy", "s1", "s2"]);
+        const retained = await collectContracts(repository, { watch: "retained" });
+        expect(retained.map((c) => c.script)).toEqual(["s3"]);
+    });
+});

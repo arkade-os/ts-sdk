@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
+import { ArkAddress, RestArkProvider, asset, type IWallet } from "@arkade-os/sdk";
 import {
     encodeOffer,
-    offerVtxoScript,
+    offerContract,
     restoreOfferCoverage,
     OFFER_CONTRACT_KIND,
     OFFER_CONTRACT_LABEL,
@@ -86,6 +86,7 @@ const wallet = {
         state.managerCalls++;
         return contractManager;
     },
+    getArkadeInfo: async () => new RestArkProvider("http://ark").getInfo(),
 } as unknown as IWallet;
 
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
@@ -99,7 +100,7 @@ const makeOffer = (wantAmount = BigInt(50_000)): Offer => {
         emulatorPubkey: EMULATOR_KEY,
         exitDelay: { type: "seconds", value: BigInt(4096) },
     };
-    return { ...binding, swapPkScript: offerVtxoScript(binding, SERVER_KEY).pkScript };
+    return { ...binding, swapPkScript: offerContract(binding, SERVER_KEY).pkScript };
 };
 
 /** A record exactly as `restoreAssetSwaps` writes one: `swapAddress: ""`. */
@@ -131,7 +132,7 @@ describe("restoreOfferCoverage", () => {
         const offer = makeOffer();
         const record = restored(offer);
 
-        await restoreOfferCoverage(wallet, "http://ark", [record]);
+        await restoreOfferCoverage(wallet, [record]);
 
         expect(state.created).toHaveLength(1);
         const row = state.created[0];
@@ -143,7 +144,7 @@ describe("restoreOfferCoverage", () => {
 
     it("puts the restored script back in the watched set", async () => {
         const offer = makeOffer();
-        await restoreOfferCoverage(wallet, "http://ark", [restored(offer)]);
+        await restoreOfferCoverage(wallet, [restored(offer)]);
         expect(state.watched).toEqual([[hex.encode(offer.swapPkScript), "watched"]]);
     });
 
@@ -155,12 +156,12 @@ describe("restoreOfferCoverage", () => {
             }),
         );
 
-        await restoreOfferCoverage(wallet, "http://ark", [many[0]]);
+        await restoreOfferCoverage(wallet, [many[0]]);
         const forOne = state.getInfoCalls;
         state.getInfoCalls = 0;
         state.managerCalls = 0;
         state.batchCalls = 0;
-        await restoreOfferCoverage(wallet, "http://ark", many);
+        await restoreOfferCoverage(wallet, many);
 
         // 5 = 1 from the single-script call above, 4 from the batch
         expect(state.created).toHaveLength(5);
@@ -174,7 +175,7 @@ describe("restoreOfferCoverage", () => {
         for (const status of ["fulfilled", "cancelled"] as AssetSwapStatus[]) {
             state.created = [];
             state.watched = [];
-            await restoreOfferCoverage(wallet, "http://ark", [restored(makeOffer(), { status })]);
+            await restoreOfferCoverage(wallet, [restored(makeOffer(), { status })]);
             expect(state.created).toEqual([]);
             expect(state.watched).toEqual([]);
         }
@@ -182,7 +183,7 @@ describe("restoreOfferCoverage", () => {
 
     it("promotes a script a live record holds once, settled sibling or not", async () => {
         const offer = makeOffer();
-        await restoreOfferCoverage(wallet, "http://ark", [
+        await restoreOfferCoverage(wallet, [
             restored(offer, { status: "fulfilled" }),
             restored(offer, { id: "ee".repeat(32), fundingTxid: "ee".repeat(32) }),
             restored(offer, { id: "ff".repeat(32), fundingTxid: "ff".repeat(32) }),
@@ -197,7 +198,7 @@ describe("restoreOfferCoverage", () => {
         const script = hex.encode(offer.swapPkScript);
         const record = restored(offer);
 
-        await restoreOfferCoverage(wallet, "http://ark", [record]);
+        await restoreOfferCoverage(wallet, [record]);
         await retireSettledOfferContracts(contractManager, [{ ...record, status: "fulfilled" }]);
 
         expect(state.watched).toEqual([
@@ -212,7 +213,7 @@ describe("restoreOfferCoverage", () => {
         const good = makeOffer();
         const stale = restored(makeOffer(BigInt(77)), { swapPkScript: "51" + "00".repeat(32) });
 
-        await restoreOfferCoverage(wallet, "http://ark", [stale, restored(good)]);
+        await restoreOfferCoverage(wallet, [stale, restored(good)]);
 
         expect(state.watched).toEqual([[hex.encode(good.swapPkScript), "watched"]]);
         expect(warn).toHaveBeenCalled();

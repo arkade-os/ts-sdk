@@ -3,17 +3,18 @@ import {
     sanitizeTablePrefix,
     type SQLExecutor,
 } from "@arkade-os/sdk/repositories/sqlite";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "@arkade-os/sdk";
 import {
     marketsCacheKey,
-    assertRfqSwapPageLimit,
-    assertRfqSwapSince,
+    assertRfqSwapPageFilter,
     type AssetSwapRepository,
     type MarketsCacheEntry,
-    type RfqHistoryCursor,
+    type RfqSwapPageFilter,
+    type RfqSwapPageCursor,
 } from "../../repository";
 import type { AssetSwap } from "../../store";
 import type { RfqSwapRecord } from "../../rfqRecord";
-import type { RfqSwapState } from "../../rfqSwapState";
+import type { SwapRecord } from "../../client/record";
 
 const DEFAULT_PREFIX = "arkade_";
 // SQLite's default parameter ceiling is 999; stay well under it per statement.
@@ -42,11 +43,12 @@ const INSERT_CHUNK = 500;
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
 export class SQLiteAssetSwapRepository implements AssetSwapRepository {
-    readonly version = 4 as const;
+    readonly version = 5 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly swaps: string;
     private readonly rfqSwaps: string;
+    private readonly swapRecords: string;
     private readonly scanned: string;
     private readonly markets: string;
 
@@ -57,6 +59,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         this.prefix = sanitizeTablePrefix(options?.prefix ?? DEFAULT_PREFIX);
         this.swaps = `${this.prefix}asset_swaps`;
         this.rfqSwaps = `${this.prefix}rfq_swaps`;
+        this.swapRecords = `${this.prefix}swap_records`;
         this.scanned = `${this.prefix}asset_swap_scanned_txids`;
         this.markets = `${this.prefix}asset_swap_markets`;
     }
@@ -102,13 +105,30 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 data TEXT NOT NULL
             )`);
             await this.db.run(
-                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_updated ON ${this.rfqSwaps} (updated_at, rfq_id)`,
             );
             await this.db.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_history ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
             );
+            // Restore now pages by state and update time.
+            await this.db.run(`DROP INDEX IF EXISTS idx_${this.prefix}rfq_swaps_page`);
             await this.db.run(
-                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_page ON ${this.rfqSwaps} (state, rfq_id)`,
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
+            );
+            // The v2 client's accept records. Its own table for the reason
+            // the one above has one, plus the v1 read predicate: a row with
+            // neither `offerHex` nor `paymentHash` is dropped as corrupt by
+            // `getAssetSwapsOrThrow`, so sharing `asset_swaps` would pin the v2
+            // shape to a v1 filter. `family` and `updated_at` are mapped out
+            // for querying; the record goes in whole.
+            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.swapRecords} (
+                id TEXT PRIMARY KEY,
+                family TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                data TEXT NOT NULL
+            )`);
+            await this.db.run(
+                `CREATE INDEX IF NOT EXISTS idx_${this.prefix}swap_records_family ON ${this.swapRecords} (family)`,
             );
             await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
             await this.db.run(
@@ -138,10 +158,8 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         });
     }
 
-    async getAllSwaps(): Promise<AssetSwap[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.swaps}`);
-        return rows.map((r) => JSON.parse(r.data) as AssetSwap);
+    async getAssetSwapsPage(page: PageRequest): Promise<PageResult<AssetSwap>> {
+        return this.pageTable<AssetSwap>(this.swaps, "id", page);
     }
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
@@ -164,49 +182,98 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         return row ? (JSON.parse(row.data) as RfqSwapRecord) : undefined;
     }
 
-    async getAllRfqSwaps(): Promise<RfqSwapRecord[]> {
-        await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(`SELECT data FROM ${this.rfqSwaps}`);
-        return rows.map((r) => JSON.parse(r.data) as RfqSwapRecord);
-    }
-
     async getRfqSwapsPage(
-        state: RfqSwapState,
-        afterId: string | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]> {
-        assertRfqSwapPageLimit(limit);
+        filter: RfqSwapPageFilter,
+        page: PageRequest<RfqSwapPageCursor>,
+    ): Promise<PageResult<RfqSwapRecord, RfqSwapPageCursor>> {
+        assertPageRequest(page);
+        assertRfqSwapPageFilter(filter);
         await this.ensureInit();
-        const rows = await this.db.all<{ data: string }>(
-            `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND rfq_id > ? ORDER BY rfq_id LIMIT ?`,
-            [state, afterId ?? "", limit],
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+        if (filter.state !== undefined) {
+            conditions.push("state = ?");
+            params.push(filter.state);
+        }
+        if (filter.since !== undefined) {
+            conditions.push("updated_at >= ?");
+            params.push(filter.since);
+        }
+        if (page.after !== undefined) {
+            conditions.push("(updated_at, rfq_id) > (?, ?)");
+            params.push(page.after.updatedAt, page.after.rfqId);
+        }
+        const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+        const rows = await this.db.all<{ data: string; updated_at: number; rfq_id: string }>(
+            `SELECT data, updated_at, rfq_id FROM ${this.rfqSwaps}${where}
+             ORDER BY updated_at, rfq_id LIMIT ?`,
+            [...params, page.limit + 1],
         );
-        return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
-    }
-
-    async getRfqSwapsUpdatedPage(
-        state: RfqSwapState,
-        since: number,
-        after: RfqHistoryCursor | undefined,
-        limit: number,
-    ): Promise<RfqSwapRecord[]> {
-        assertRfqSwapPageLimit(limit);
-        assertRfqSwapSince(since);
-        await this.ensureInit();
-        const cursor = after ? "AND (updated_at > ? OR (updated_at = ? AND rfq_id > ?))" : "";
-        const rows = await this.db.all<{ data: string }>(
-            `SELECT data FROM ${this.rfqSwaps} WHERE state = ? AND updated_at >= ? ${cursor} ORDER BY updated_at, rfq_id LIMIT ?`,
-            after
-                ? [state, since, after.updatedAt, after.updatedAt, after.rfqId, limit]
-                : [state, since, limit],
-        );
-        return rows.map((row) => JSON.parse(row.data) as RfqSwapRecord);
+        const result = pageResult(rows, page.limit, (row) => ({
+            updatedAt: row.updated_at,
+            rfqId: row.rfq_id,
+        }));
+        return {
+            items: result.items.map((row) => JSON.parse(row.data) as RfqSwapRecord),
+            ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
     }
 
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.ensureInit();
         await this.withTx(async () => {
             await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE rfq_id = ?`, [rfqId]);
+        });
+    }
+
+    async saveSwapRecord(record: SwapRecord): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.db.run(
+                `INSERT OR REPLACE INTO ${this.swapRecords} (id, family, updated_at, data)
+                 VALUES (?, ?, ?, ?)`,
+                [record.id, record.family, record.updatedAt, JSON.stringify(record)],
+            );
+        });
+    }
+
+    async getSwapRecord(id: string): Promise<SwapRecord | undefined> {
+        await this.ensureInit();
+        const row = await this.db.get<{ data: string }>(
+            `SELECT data FROM ${this.swapRecords} WHERE id = ?`,
+            [id],
+        );
+        return row ? (JSON.parse(row.data) as SwapRecord) : undefined;
+    }
+
+    async getSwapRecordsPage(page: PageRequest): Promise<PageResult<SwapRecord>> {
+        return this.pageTable<SwapRecord>(this.swapRecords, "id", page);
+    }
+
+    private async pageTable<Item extends { id?: string; rfqId?: string }>(
+        table: string,
+        key: "id" | "rfq_id",
+        page: PageRequest,
+    ): Promise<PageResult<Item>> {
+        assertPageRequest(page);
+        await this.ensureInit();
+        const rows = await this.db.all<{ key: string; data: string }>(
+            page.after === undefined
+                ? `SELECT ${key} AS key, data FROM ${table} ORDER BY ${key} LIMIT ?`
+                : `SELECT ${key} AS key, data FROM ${table} WHERE ${key} > ? ORDER BY ${key} LIMIT ?`,
+            page.after === undefined ? [page.limit + 1] : [page.after, page.limit + 1],
+        );
+        const result = pageResult(rows, page.limit, (row) => row.key);
+        return {
+            items: result.items.map((row) => JSON.parse(row.data) as Item),
+            ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
+    }
+
+    async removeSwapRecord(id: string): Promise<void> {
+        await this.ensureInit();
+        await this.withTx(async () => {
+            await this.db.run(`DELETE FROM ${this.swapRecords} WHERE id = ?`, [id]);
         });
     }
 
@@ -267,6 +334,7 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.withTx(async () => {
             await this.db.run(`DELETE FROM ${this.swaps}`);
             await this.db.run(`DELETE FROM ${this.rfqSwaps}`);
+            await this.db.run(`DELETE FROM ${this.swapRecords}`);
             await this.db.run(`DELETE FROM ${this.scanned}`);
             await this.db.run(`DELETE FROM ${this.markets}`);
         });
