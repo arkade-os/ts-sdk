@@ -9,6 +9,13 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
+  `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
+  no longer hide subdust outputs. Explicit filter flags, spent-output
+  exclusions, and the separate spendability-gated accessor are unchanged.
+
 ### Breaking Changes
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
@@ -151,18 +158,33 @@ style and have not been backfilled.
   and still fund and reconcile as BTC. `BTC_ASSET_PART` is deprecated (it
   is mainnet's part only); use `btcAssetPart(network)`, or `isBtcAsset`
   (and `isBtcAssetLenient` for stored ids) to recognize BTC.
+- **`Wallet.create` and `ReadonlyWallet.create` need their class as
+  `this`.** Both now build the class they are called on, so a reference
+  taken off the class and called on its own, as in
+  `const { create } = Wallet`, throws `this is not a constructor`. Call
+  `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
 
 ### Features
 
 - **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
   Every delta sync re-read the 24 hours before the sync cursor, so a
   sync seconds after a full one still paged a day of VTXO history from
-  the indexer. `ContractManagerConfig.vtxoSyncOverlapMs`, or
-  `setVtxoSyncOverlap` on a wallet-built manager, now sets that overlap;
-  the default stays 24 hours. The indexer filters on each VTXO's last
+  the indexer. `ContractManagerConfig.vtxoSyncOverlapMs` or the wallet's
+  `vtxoSyncOverlapMs` config now sets that overlap, including at boot;
+  `setVtxoSyncOverlap` changes it later. The default stays 24 hours.
+  The indexer filters on each VTXO's last
   update in arkd's clock while the cursor is this host's, so the overlap
   must cover how far this host's clock can run ahead of arkd's: lower it
   only on an NTP-synced host.
+
+- **`Wallet.create` and `ReadonlyWallet.create` build the class they are
+  called on.** A subclass that inherits either factory now gets an instance
+  of itself, typed as itself, where it used to get a plain `Wallet` or
+  `ReadonlyWallet`; its constructor receives the base constructor's
+  arguments. An override of `create` that delegates to `super.create()` now
+  constructs the subclass too; one that does not call it is unchanged, and
+  so are calls on `Wallet` and `ReadonlyWallet` themselves. The one calling
+  pattern that stops working is listed under Breaking Changes.
 
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
@@ -274,6 +296,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A partial VTXO filter no longer drops recoverable coins.**
+  `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
+  so any filter object, even one carrying only `maxSyncAgeMs`,
+  `watchedOnly`, `genericallySpendableOnly` or `requireSynced`, turned
+  `withRecoverable` off and silently left swept-but-unspent VTXOs out.
+  Each flag now defaults on its own, `withRecoverable` to `true` and
+  `withUnrolled` to `false`, and an explicit `false` still applies.
+  `getVtxos({ withUnrolled: true })` now returns recoverable coins too.
+
 - **`BIP21.parse` no longer lowercases the address in a URI, and
   `BIP21.create` no longer lowercases the one it writes.** Base58 is
   case-sensitive, so `bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn` parsed
@@ -288,6 +319,7 @@ style and have not been backfilled.
   address that `arkTarget` claims happily when it arrives bare. Same fix
   in `BIP21.create`. One destination classifying differently bare than
   as a parameter was the defect; both forms now agree.
+
 - **Settlement forfeits a VTXO past expiry that the operator has not
   swept.** The forfeit-skip decision read `canRecoverOnchain`, which is
   true for any VTXO past its wall-clock expiry, so renewing one whose

@@ -30,6 +30,7 @@ import { MockEventSource } from "./mocks/eventSource";
 import { timelockToSequence } from "../src/utils/timelock";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/networks";
 import { jsonResponse, textResponse } from "./helpers/response";
+import { OVERLAP_MS } from "../src/utils/syncCursors";
 
 // Mock fetch
 const { mockFetch } = vi.hoisted(() => ({
@@ -1334,6 +1335,7 @@ describe("Wallet", () => {
             exitTimelock?: { value: bigint; type: "blocks" | "seconds" };
             delegateProvider?: DelegateProvider;
             delegatorProvider?: DelegateProvider;
+            vtxoSyncOverlapMs?: number;
         }) {
             const network = config?.network ?? "bitcoin";
             const compressedPubKey = await mockIdentity.compressedPublicKey();
@@ -1362,6 +1364,7 @@ describe("Wallet", () => {
                 },
                 exitTimelock: config?.exitTimelock,
                 delegateProvider: config?.delegateProvider || config?.delegatorProvider,
+                vtxoSyncOverlapMs: config?.vtxoSyncOverlapMs,
             });
 
             return { wallet };
@@ -1370,6 +1373,7 @@ describe("Wallet", () => {
         async function createFullMainnetWallet(config?: {
             delegateProvider?: DelegateProvider;
             delegatorProvider?: DelegateProvider;
+            vtxoSyncOverlapMs?: number;
         }) {
             const walletRepository = new InMemoryWalletRepository();
             const contractRepository = new InMemoryContractRepository();
@@ -1387,10 +1391,55 @@ describe("Wallet", () => {
                 },
                 delegateProvider: config?.delegateProvider || config?.delegatorProvider,
                 settlementConfig: false,
+                vtxoSyncOverlapMs: config?.vtxoSyncOverlapMs,
             });
 
             return { wallet };
         }
+
+        it.each([
+            ["readonly", 600_000],
+            ["full", 600_000],
+            ["converted", 600_000],
+            ["readonly", undefined],
+        ] as const)(
+            "uses the %s wallet overlap %s on the boot delta sync",
+            async (mode, overlap) => {
+                const { wallet: original } =
+                    mode === "readonly"
+                        ? await createReadonlyTestWallet({ vtxoSyncOverlapMs: overlap })
+                        : await createFullMainnetWallet({ vtxoSyncOverlapMs: overlap });
+                const wallet =
+                    mode === "converted" ? await (original as Wallet).toReadonly() : original;
+                const cursor = Date.now() - 60_000;
+                const script = wallet.offchainTapscript;
+                await wallet.contractRepository.saveContract({
+                    type: "default",
+                    params: {
+                        pubKey: hex.encode(script.options.pubKey),
+                        serverPubKey: hex.encode(script.options.serverPubKey),
+                        csvTimelock: timelockToSequence(script.options.csvTimelock).toString(),
+                    },
+                    script: hex.encode(script.pkScript),
+                    address: "persisted-default",
+                    state: "active",
+                    createdAt: 1,
+                });
+                await wallet.walletRepository.saveWalletState({
+                    lastSyncTime: cursor,
+                    settings: { vtxoCursorMigrated: true },
+                });
+                try {
+                    await wallet.getContractManager();
+                    const calls = vi.mocked(wallet.indexerProvider.getVtxos).mock.calls;
+                    expect(calls.length).toBeGreaterThan(0);
+                    expect(calls[0][0]?.after).toBe(cursor - (overlap ?? OVERLAP_MS));
+                } finally {
+                    await wallet.dispose();
+                    if (wallet !== original) await original.dispose();
+                }
+            },
+        );
 
         it("uses the arkd exit timelock as the mainnet offchain address delay", async () => {
             const { wallet } = await createReadonlyTestWallet();

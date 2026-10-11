@@ -156,6 +156,8 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
      * @see ContractWatcherConfig
      */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /** Delta-sync overlap in milliseconds, including boot; defaults to 24 hours. */
+    vtxoSyncOverlapMs?: number;
 }
 
 /**
@@ -789,13 +791,16 @@ export function isSubdust(vtxo: { value: number } | bigint, dust: bigint): boole
  * @see IWallet.getVtxos
  */
 export type GetVtxosFilter = {
-    /** Include swept but still unspent virtual outputs. */
+    /**
+     * Include swept or expired but still unspent virtual outputs. Defaults to `true`; set to
+     * `false` to exclude outputs that require onchain recovery.
+     */
     withRecoverable?: boolean;
 
     /**
      * Include virtual outputs that have been unrolled onchain — whatever else is true of them,
      * spent ones included. Unlike {@link withRecoverable} it doesn't narrow to a capability:
-     * test {@link canSweepOnchain} before acting on the result.
+     * test {@link canSweepOnchain} before acting on the result. Defaults to `false`.
      */
     withUnrolled?: boolean;
 };

@@ -1760,63 +1760,125 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
     });
 
-    it("GET_VTXOS filters out recoverable/expired/dust by default", async () => {
+    it("GET_VTXOS collects every repository page with the unspent-only read option", async () => {
         setupHandler();
-        const settled = createMockExtendedVtxo({
-            txid: "aa".repeat(32),
+        const first = createMockExtendedVtxo({
+            txid: "08".repeat(32),
             value: 50000,
             virtualStatus: { state: "settled" },
         });
-        const recoverable = createMockExtendedVtxo({
-            txid: "bb".repeat(32),
+        const second = createMockExtendedVtxo({
+            txid: "09".repeat(32),
             value: 50000,
-            isSwept: true,
+            virtualStatus: { state: "settled" },
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, recoverable]);
+        const readPage = vi
+            .spyOn(walletRepo, "getVtxosForScriptPage")
+            .mockResolvedValueOnce({
+                items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: first }],
+                nextCursor: {
+                    address: TEST_DEFAULT_ARK_ADDRESS,
+                    txid: first.txid,
+                    vout: first.vout,
+                },
+            })
+            .mockResolvedValueOnce({
+                items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: second }],
+            });
 
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_VTXOS",
-            payload: { filter: { withRecoverable: false } },
+            payload: {},
         } as any);
 
-        const vtxos = (response as any).payload.vtxos;
-        expect(vtxos).toHaveLength(1);
-        expect(vtxos[0].txid).toBe("aa".repeat(32));
+        expect((response as any).payload.vtxos.map((v: any) => v.txid).sort()).toEqual([
+            first.txid,
+            second.txid,
+        ]);
+        expect(readPage).toHaveBeenCalledTimes(2);
+        expect(readPage.mock.calls.map(([, , options]) => options)).toEqual([
+            { unspentOnly: true },
+            { unspentOnly: true },
+        ]);
     });
 
-    it("GET_VTXOS returns unrolled VTXOs only when asked", async () => {
+    it("GET_VTXOS applies the same per-field filter defaults as Wallet.getVtxos", async () => {
         setupHandler();
-        const settled = createMockExtendedVtxo({
-            txid: "aa".repeat(32),
+        const live = createMockExtendedVtxo({
+            txid: "01".repeat(32),
             value: 50000,
             virtualStatus: { state: "settled" },
         });
-        // `isUnrolled` says where the output lives, not that it was consumed: this coin is
-        // unspent, and only the filter decides whether an exited output is in scope.
+        const swept = createMockExtendedVtxo({
+            txid: "02".repeat(32),
+            value: 50000,
+            isSwept: true,
+        });
+        const expired = createMockExtendedVtxo({
+            txid: "03".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+            expiresAt: new Date(Date.now() - 60_000),
+        });
+        const subdust = createMockExtendedVtxo({
+            txid: "04".repeat(32),
+            value: 100,
+            virtualStatus: { state: "settled" },
+        });
+        const spent = createMockExtendedVtxo({
+            txid: "05".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "spent" },
+            isSpent: true,
+        });
         const unrolled = createMockExtendedVtxo({
-            txid: "bb".repeat(32),
+            txid: "06".repeat(32),
             value: 50000,
             virtualStatus: { state: "settled" },
             isSpent: false,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
+        const spentUnrolled = createMockExtendedVtxo({
+            txid: "07".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "spent" },
+            isSpent: true,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+            live,
+            swept,
+            expired,
+            subdust,
+            spent,
+            unrolled,
+            spentUnrolled,
+        ]);
 
-        const get = async (filter: Record<string, boolean>) =>
+        const txids = (...vtxos: (typeof live)[]) => vtxos.map((v) => v.txid).sort();
+        const get = async (filter?: Record<string, boolean>) =>
             (
                 (await updater.handleMessage({
                     ...baseMessage(),
                     type: "GET_VTXOS",
-                    payload: { filter },
+                    payload: filter === undefined ? {} : { filter },
                 } as any)) as any
-            ).payload.vtxos.map((v: any) => v.txid);
+            ).payload.vtxos
+                .map((v: any) => v.txid)
+                .sort();
 
-        expect(await get({ withRecoverable: true })).toEqual(["aa".repeat(32)]);
-        expect(await get({ withRecoverable: true, withUnrolled: true })).toEqual([
-            "aa".repeat(32),
-            "bb".repeat(32),
-        ]);
+        const defaultIds = txids(live, swept, expired, subdust);
+        expect(await get()).toEqual(defaultIds);
+        expect(await get({})).toEqual(defaultIds);
+        expect(await get({ withRecoverable: true })).toEqual(defaultIds);
+        expect(await get({ withRecoverable: false })).toEqual(txids(live, subdust));
+        expect(await get({ withUnrolled: true })).toEqual(
+            txids(live, swept, expired, subdust, unrolled, spentUnrolled),
+        );
+        expect(await get({ withRecoverable: false, withUnrolled: true })).toEqual(
+            txids(live, subdust, unrolled, spentUnrolled),
+        );
     });
 
     it("GET_BALANCE and GET_VTXOS read no spent rows unless unrolled coins are asked for", async () => {

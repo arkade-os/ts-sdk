@@ -215,7 +215,7 @@ export function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
  * Empty by default (no boarding funds), so existing restore tests are
  * unaffected.
  */
-function makeMockOnchain(fundedOnchain: Set<string> = new Set()): OnchainProvider {
+export function makeMockOnchain(fundedOnchain: Set<string> = new Set()): OnchainProvider {
     return {
         async getCoins(address: string) {
             if (!fundedOnchain.has(address)) return [];

@@ -356,36 +356,52 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
 /**
- * Apply {@link GetVtxosFilter} to a contract snapshot; the single definition shared by `getVtxos`
- * and {@link IReadonlyWallet.getSpendableVtxos}. No chain tip (offline-first), so height-encoded
- * expiry reads as not expired.
+ * Flatten a contract snapshot and apply the shared VTXO filtering rules used by `getVtxos` and
+ * {@link IReadonlyWallet.getSpendableVtxos}.
  */
 export function filterSnapshotVtxos(
     snapshot: readonly ContractWithVtxos[],
     filter: GetVtxosFilter | undefined,
     pendingSpendOutpoints: ReadonlySet<string>,
 ): NormalizedExtendedVirtualCoin[] {
-    const f = filter ?? { withRecoverable: true, withUnrolled: false };
+    return filterFlatVtxos(
+        snapshot.flatMap((contract) => contract.vtxos),
+        filter,
+        pendingSpendOutpoints,
+    );
+}
+
+/**
+ * Apply {@link GetVtxosFilter} to a flat VTXO list, including the wallet's in-flight spend
+ * exclusions. No chain tip (offline-first), so height-encoded expiry reads as not expired.
+ */
+export function filterFlatVtxos(
+    vtxos: readonly NormalizedExtendedVirtualCoin[],
+    filter: GetVtxosFilter | undefined,
+    pendingSpendOutpoints: ReadonlySet<string>,
+): NormalizedExtendedVirtualCoin[] {
+    const f = {
+        withRecoverable: filter?.withRecoverable ?? true,
+        withUnrolled: filter?.withUnrolled ?? false,
+    };
     const now = { timestamp: new Date() };
-    return snapshot
-        .flatMap((_) => _.vtxos)
-        .filter((vtxo) => {
-            if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                return false;
-            }
-            // Location before spend: `withUnrolled` is authoritative for an exited coin, even
-            // an unrolled-and-spent one.
-            if (vtxo.isUnrolled) {
-                return !!f.withUnrolled;
-            }
-            if (isVtxoSpent(vtxo)) {
-                return false;
-            }
-            if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
-                return false;
-            }
-            return true;
-        });
+    return vtxos.filter((vtxo) => {
+        if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+            return false;
+        }
+        // Location before spend: `withUnrolled` is authoritative for an exited coin, even
+        // an unrolled-and-spent one.
+        if (vtxo.isUnrolled) {
+            return !!f.withUnrolled;
+        }
+        if (isVtxoSpent(vtxo)) {
+            return false;
+        }
+        if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+            return false;
+        }
+        return true;
+    });
 }
 
 /**
@@ -614,6 +630,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+    protected vtxoSyncOverlapMs?: number;
+
+    protected copySyncOverlapTo(wallet: ReadonlyWallet): void {
+        wallet.vtxoSyncOverlapMs = this.vtxoSyncOverlapMs;
+    }
 
     /** Opt-in intent-lifecycle repository; `undefined` ⇒ intent persistence is a no-op. */
     public intentRepository?: IntentRepository;
@@ -1042,6 +1063,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @param config - Readonly wallet configuration
      * @returns A readonly wallet instance
      */
+    static create<T extends ReadonlyWallet>(
+        this: { prototype: T },
+        config: ReadonlyWalletConfig,
+    ): Promise<T>;
+    // Without this overload a subclass could not narrow the return type of its own `create`.
+    static create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet>;
     static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -1050,7 +1077,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        const wallet = new ReadonlyWallet(
+        const wallet = new this(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -1066,6 +1093,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
+        wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
@@ -1905,6 +1933,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
+            vtxoSyncOverlapMs: this.vtxoSyncOverlapMs,
             lookAhead: this.lookAheadConfig(),
             // Without it every height-typed CLTV reads as unsatisfied, and seconds-typed timelocks
             // would be judged against the host clock. @see ContractManagerConfig.chainTip
@@ -3031,6 +3060,8 @@ export class Wallet
      * });
      * ```
      */
+    static create<T extends Wallet>(this: { prototype: T }, config: WalletConfig): Promise<T>;
+    static create(config: WalletConfig): Promise<Wallet>;
     static async create(config: WalletConfig): Promise<Wallet> {
         // Programmer error, not an operational one — surface it before any I/O.
         if (
@@ -3070,7 +3101,7 @@ export class Wallet
         // HD boot wiring; `getVtxoManager()` installs the rotator lazily.
         const boot = await WalletReceiveRotator.resolveBoot(config, setup);
 
-        const wallet = new Wallet(
+        const wallet = new this(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -3145,6 +3176,7 @@ export class Wallet
             }
         }
 
+        wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
@@ -3191,6 +3223,7 @@ export class Wallet
             this.watcherConfig,
             this.walletContractTimelocks,
         );
+        this.copySyncOverlapTo(readonly);
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
         // boarding watch path and spendability split match the source wallet's.
         (readonly as unknown as { _deprecatedSigners: Map<string, bigint> })._deprecatedSigners =
