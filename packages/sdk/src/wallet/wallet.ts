@@ -1595,8 +1595,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Fetch and cache boarding UTXOs for the given signer set, grouped per address (see
-     * {@link BoardingUtxoGroup} for why). No `getInfo()`: the only network calls are the
-     * per-address `getCoins`.
+     * {@link BoardingUtxoGroup} for why), saving every group in one `saveUtxos`. No
+     * `getInfo()`: the only network calls are the per-address `getCoins`.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
@@ -1621,10 +1621,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Saved only once every fetch has succeeded, so a failure leaves no write in flight.
-        for (const [i, group] of groups.entries()) {
-            await this.walletRepository.saveUtxos(addresses[i], group.coins);
-        }
+        // One write, made only once every fetch has succeeded, so a failure writes nothing.
+        await this.walletRepository.saveUtxos(
+            new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
+        );
         return groups;
     }
 
