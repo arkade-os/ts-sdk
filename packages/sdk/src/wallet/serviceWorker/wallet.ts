@@ -1325,8 +1325,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // a prior degradation) — refresh the cached view.
                     await refreshSyncState();
                     return (response as ResponseCreateContract).payload.contract;
-                } catch (e) {
-                    throw new Error("Failed to create contract");
+                } catch (error) {
+                    throw new Error(`Failed to create contract: ${error}`, { cause: error });
                 }
             },
 
@@ -1340,8 +1340,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetContracts).payload.contracts;
-                } catch (e) {
-                    throw new Error("Failed to get contracts");
+                } catch (error) {
+                    throw new Error(`Failed to get contracts: ${error}`, { cause: error });
                 }
             },
 
@@ -1370,8 +1370,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // to repository data or recovered — refresh the cached view.
                     await refreshSyncState();
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
-                } catch (e) {
-                    throw new Error("Failed to get contracts with vtxos");
+                } catch (error) {
+                    throw new Error(`Failed to get contracts with vtxos: ${error}`, {
+                        cause: error,
+                    });
                 }
             },
 
@@ -1387,8 +1389,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     await sendContractMessage(message);
-                } catch (e) {
-                    throw new Error("Failed to watch script");
+                } catch (error) {
+                    throw new Error(`Failed to watch script: ${error}`, { cause: error });
                 }
             },
 
@@ -1401,8 +1403,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     await sendContractMessage(message);
-                } catch (e) {
-                    throw new Error("Failed to unwatch script");
+                } catch (error) {
+                    throw new Error(`Failed to unwatch script: ${error}`, { cause: error });
                 }
             },
 
@@ -1416,8 +1418,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetWatchedScripts).payload.scripts;
-                } catch (e) {
-                    throw new Error("Failed to get watched scripts");
+                } catch (error) {
+                    throw new Error(`Failed to get watched scripts: ${error}`, { cause: error });
                 }
             },
 
@@ -1457,8 +1459,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseAnnotateVtxos).payload.vtxos.map(normalizeVtxo);
-                } catch (e) {
-                    throw new Error("Failed to annotate vtxos");
+                } catch (error) {
+                    throw new Error(`Failed to annotate vtxos: ${error}`, { cause: error });
                 }
             },
 
@@ -1475,8 +1477,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseUpdateContract).payload.contract;
-                } catch (e) {
-                    throw new Error("Failed to update contract");
+                } catch (error) {
+                    throw new Error(`Failed to update contract: ${error}`, { cause: error });
                 }
             },
 
@@ -1490,8 +1492,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     await sendContractMessage(message);
                     return;
-                } catch (e) {
-                    throw new Error("Failed to update contract state");
+                } catch (error) {
+                    throw new Error(`Failed to update contract state: ${error}`, { cause: error });
                 }
             },
 
@@ -1505,8 +1507,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     await sendContractMessage(message);
                     return;
-                } catch (e) {
-                    throw new Error("Failed to update contract watch state");
+                } catch (error) {
+                    throw new Error(`Failed to update contract watch state: ${error}`, {
+                        cause: error,
+                    });
                 }
             },
 
@@ -1520,8 +1524,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     await sendContractMessage(message);
                     return;
-                } catch (e) {
-                    throw new Error("Failed to delete contract");
+                } catch (error) {
+                    throw new Error(`Failed to delete contract: ${error}`, { cause: error });
                 }
             },
 
@@ -1535,8 +1539,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetSpendablePaths).payload.paths;
-                } catch (e) {
-                    throw new Error("Failed to get spendable paths");
+                } catch (error) {
+                    throw new Error(`Failed to get spendable paths: ${error}`, { cause: error });
                 }
             },
 
@@ -1552,8 +1556,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetAllSpendingPaths).payload.paths;
-                } catch (e) {
-                    throw new Error("Failed to get all spending paths");
+                } catch (error) {
+                    throw new Error(`Failed to get all spending paths: ${error}`, { cause: error });
                 }
             },
 
@@ -1670,8 +1674,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseIsContractManagerWatching).payload.isWatching;
-                } catch (e) {
-                    throw new Error("Failed to check if contract manager is watching");
+                } catch (error) {
+                    throw new Error(`Failed to check if contract manager is watching: ${error}`, {
+                        cause: error,
+                    });
                 }
             },
 
