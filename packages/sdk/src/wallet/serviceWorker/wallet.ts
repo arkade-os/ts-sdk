@@ -75,6 +75,7 @@ import {
     RequestSettle,
     ResponseSettle,
     ResponseSettleEvent,
+    RequestSetContractWatchState,
     RequestUpdateContract,
     ResponseAnnotateVtxos,
     ResponseGetAddress,
@@ -298,6 +299,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SIGN_TRANSACTION: 30_000,
     CREATE_CONTRACT: 30_000,
     UPDATE_CONTRACT: 30_000,
+    SET_CONTRACT_WATCH_STATE: 30_000,
     // Registering a watch is an in-memory map write plus one subscription
     // update — no indexer round trip on the request path.
     WATCH_SCRIPT: 10_000,
@@ -1496,17 +1498,29 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
-                const message: RequestUpdateContract = {
-                    type: "UPDATE_CONTRACT",
+                const message: RequestSetContractWatchState = {
+                    type: "SET_CONTRACT_WATCH_STATE",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { script, updates: { watch } },
+                    payload: { script, watch },
                 };
                 try {
-                    await sendContractMessage(message);
-                    return;
+                    try {
+                        await sendContractMessage(message);
+                    } catch (e) {
+                        // A worker predating this message did not execute it. The generic update
+                        // is the pre-idempotency path: correct, just not a no-op when unchanged.
+                        if (!(e instanceof Error) || e.message !== "Unknown message") throw e;
+                        const fallback: RequestUpdateContract = {
+                            type: "UPDATE_CONTRACT",
+                            id: getRandomId(),
+                            tag: messageTag,
+                            payload: { script, updates: { watch } },
+                        };
+                        await sendContractMessage(fallback);
+                    }
                 } catch (e) {
-                    throw new Error("Failed to update contract watch state");
+                    throw new Error(`Failed to update contract watch state: ${e}`, { cause: e });
                 }
             },
 

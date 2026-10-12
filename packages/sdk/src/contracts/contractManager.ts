@@ -353,7 +353,8 @@ export interface IContractManager extends Disposable {
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Update only the contract's watch state.
+     * Update only the contract's watch state. An unchanged state is a no-op (no write, no
+     * resubscribe); a missing `watch` field counts as `watched`.
      *
      * `retained` drops the script from the subscription and sweep while keeping the row (history,
      * annotation, restore). `awaiting-funds` watches only until funded, then the manager demotes
@@ -1575,6 +1576,8 @@ export class ContractManager implements IContractManager {
 
     /** @see IContractManager.setContractWatchState */
     async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
+        const [existing] = await collectContracts(this.config.contractRepository, { script });
+        if (existing && watchStateOf(existing) === watch) return;
         await this.updateContract(script, { watch });
     }
 

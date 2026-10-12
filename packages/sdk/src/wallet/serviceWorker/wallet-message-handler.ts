@@ -10,6 +10,7 @@ import { WalletRepository } from "../../repositories";
 import type {
     Contract,
     ContractEvent,
+    ContractWatchState,
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
@@ -401,6 +402,15 @@ export type RequestUpdateContract = RequestEnvelope & {
 export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
+};
+
+/** Routed to `ContractManager.setContractWatchState`, which skips unchanged states. */
+export type RequestSetContractWatchState = RequestEnvelope & {
+    type: "SET_CONTRACT_WATCH_STATE";
+    payload: { script: string; watch: ContractWatchState };
+};
+export type ResponseSetContractWatchState = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
 };
 
 export type RequestDeleteContract = RequestEnvelope & {
@@ -876,6 +886,7 @@ export type WalletUpdaterRequest =
     | RequestGetWatchedScripts
     | RequestAnnotateVtxos
     | RequestUpdateContract
+    | RequestSetContractWatchState
     | RequestDeleteContract
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
@@ -936,6 +947,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
+        | ResponseSetContractWatchState
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1438,6 +1450,14 @@ export class WalletMessageHandler
                         type: "CONTRACT_UPDATED",
                         payload: { contract },
                     });
+                }
+                case "SET_CONTRACT_WATCH_STATE": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    await manager.setContractWatchState(
+                        message.payload.script,
+                        message.payload.watch,
+                    );
+                    return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
                 }
                 case "DELETE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
