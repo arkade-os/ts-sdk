@@ -2118,6 +2118,29 @@ const provisionReceive = async (
 };
 
 /**
+ * {@link provisionReceive}, then the quote. A receive's hash is ours, so `quote_conflict` means the
+ * solver already holds it: another wallet on this seed, with its own HD watermark, used this index.
+ * One retry on the next index gets past a lagging watermark; more would only burn indices.
+ */
+const quoteReceive = async (
+    wallet: IWallet,
+    transport: RfqTransport,
+    covclaimdPubkey: Uint8Array | undefined,
+    persistBefore: "paying" | "funding",
+    request: (provisioned: Awaited<ReturnType<typeof provisionReceive>>) => Record<string, unknown>,
+) => {
+    for (let attempt = 0; ; attempt++) {
+        const provisioned = await provisionReceive(wallet, covclaimdPubkey, persistBefore);
+        try {
+            return { ...provisioned, quote: await transport.requestQuote(request(provisioned)) };
+        } catch (error) {
+            const conflict = error instanceof SwapRefusal && error.reason === "quote_conflict";
+            if (!conflict || attempt >= 1) throw error;
+        }
+    }
+};
+
+/**
  * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant locally → verify → gate.
  * Returns the solver's hold invoice (already checked by {@link verifyReceiveInvoice}) for the
  * trader's own Lightning wallet to PAY before `invoiceExpiresAt`. Once the HTLC is held the solver
@@ -2182,19 +2205,21 @@ export async function requestLightningReceive(
     contractParams: LightningReceiveContractParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket } =
-        await provisionReceive(wallet, params.covclaimdPubkey, "paying");
-
-    const quote = await transport.requestQuote(
-        lightningReceiveRequest({
-            rfqId,
-            paymentHash,
-            payoutAddress,
-            payoutPubkey,
-            claimPacket: claimPacket?.packet,
-            amount: params.amount,
-            amountSide: params.amountSide,
-        }),
+    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
+        wallet,
+        transport,
+        params.covclaimdPubkey,
+        "paying",
+        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
+            lightningReceiveRequest({
+                rfqId,
+                paymentHash,
+                payoutAddress,
+                payoutPubkey,
+                claimPacket: claimPacket?.packet,
+                amount: params.amount,
+                amountSide: params.amountSide,
+            }),
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
@@ -2359,20 +2384,22 @@ export async function requestOnchainReceive(
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket } =
-        await provisionReceive(wallet, params.covclaimdPubkey, "funding");
-
-    const quote = await transport.requestQuote(
-        onchainReceiveRequest({
-            rfqId,
-            paymentHash,
-            payoutAddress,
-            payoutPubkey,
-            refundPubkey: params.refundPubkey,
-            claimPacket: claimPacket?.packet,
-            amount: params.amount,
-            amountSide: params.amountSide,
-        }),
+    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
+        wallet,
+        transport,
+        params.covclaimdPubkey,
+        "funding",
+        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
+            onchainReceiveRequest({
+                rfqId,
+                paymentHash,
+                payoutAddress,
+                payoutPubkey,
+                refundPubkey: params.refundPubkey,
+                claimPacket: claimPacket?.packet,
+                amount: params.amount,
+                amountSide: params.amountSide,
+            }),
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
