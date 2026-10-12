@@ -449,15 +449,12 @@ func TestCompilerTapscriptComparison(t *testing.T) {
 			t.Run(c.Name+"/"+mutation, func(t *testing.T) {
 				manual := executeLeaf(t, c, c.Manual, mutation)
 				generated := executeLeaf(t, c, c.Generated, mutation)
-				counterexample := mutation == "valid" && c.Context.Version == "v2" && strings.Contains(strings.ToLower(c.Context.Path), "claim") && len(decode(t, c.Context.PreimageHex)) != 32
-				r := caseResult(c, mutation, "bitcoin-tapscript", manual, generated, !counterexample)
+				wrongLength := mutation == "valid" && c.Context.Version == "v2" && strings.Contains(strings.ToLower(c.Context.Path), "claim") && len(decode(t, c.Context.PreimageHex)) != 32
+				r := caseResult(c, mutation, "bitcoin-tapscript", manual, generated, true)
 				results = append(results, r)
-				manualWant, generatedWant := mutation == "valid", mutation == "valid"
-				if counterexample {
-					manualWant = false
-				}
-				if r.ManualAccepted != manualWant || r.GeneratedAccepted != generatedWant {
-					t.Errorf("want manual=%v generated=%v, actual manual=%v (%v) generated=%v (%v)", manualWant, generatedWant, r.ManualAccepted, manual, r.GeneratedAccepted, generated)
+				want := mutation == "valid" && !wrongLength
+				if r.ManualAccepted != want || r.GeneratedAccepted != want {
+					t.Errorf("want accepted=%v, manual=%v (%v), generated=%v (%v)", want, r.ManualAccepted, manual, r.GeneratedAccepted, generated)
 				}
 			})
 		}

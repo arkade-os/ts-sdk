@@ -91,7 +91,11 @@ describe("compiler covenant comparison snapshots", () => {
                 covenantDeltaBytes: deltas.length
                     ? { min: Math.min(...deltas), max: Math.max(...deltas) }
                     : undefined,
-                hasV2LengthGuardGap: source.includes("v2-candidate"),
+                hasV2LengthGuardGap: selected.some(
+                    (row) =>
+                        (row.manual.leaf.opcodes.SIZE ?? 0) >
+                        (row.generated.leaf.opcodes.SIZE ?? 0),
+                ),
             };
         });
         record("vectors.json", {

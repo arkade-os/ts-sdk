@@ -1,7 +1,7 @@
 {
     "compiler": {
         "repository": "https://github.com/arkade-os/compiler",
-        "revision": "89a1ff73b24441699095c9135d6429f7dc6cb6ab",
+        "revision": "7dbd2ac2da2cd78589b497a6b68a425d84180e8b",
         "locked": true
     },
     "manualBaseline": "a3ddefb00ba0a5411acc4d8c5c4b60b89058e739",
@@ -83,9 +83,9 @@
         {
             "source": "packages/sdk/contracts/vhtlc/signatures-v2-candidate.ark",
             "comparisons": 208,
-            "equalLeaves": 128,
+            "equalLeaves": 208,
             "equalCovenants": 0,
-            "hasV2LengthGuardGap": true
+            "hasV2LengthGuardGap": false
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.ark",
@@ -96,7 +96,7 @@
                 "min": 5,
                 "max": 10
             },
-            "hasV2LengthGuardGap": true
+            "hasV2LengthGuardGap": false
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.ark",
@@ -107,7 +107,7 @@
                 "min": -24,
                 "max": -15
             },
-            "hasV2LengthGuardGap": true
+            "hasV2LengthGuardGap": false
         }
     ],
     "rows": [
@@ -5918,21 +5918,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -6027,9 +6029,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -6037,12 +6041,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -6152,16 +6156,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "cbde558627766efb90c124c104aaa25c68b7cef444283b1038ebbced97bf567b",
+                    "bytes": 96,
+                    "sha256": "b386a8986bf170b26f30a7270ce922385135623e55353c5dc95cdc7fc469ed37",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -6182,7 +6188,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -6336,21 +6342,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -6445,9 +6453,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -6455,12 +6465,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -6570,16 +6580,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "cbde558627766efb90c124c104aaa25c68b7cef444283b1038ebbced97bf567b",
+                    "bytes": 96,
+                    "sha256": "b386a8986bf170b26f30a7270ce922385135623e55353c5dc95cdc7fc469ed37",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -6600,7 +6612,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -6688,21 +6700,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -6797,9 +6811,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -6807,12 +6823,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -6926,16 +6942,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "4b5a16968663c9d641780341ee21c4ee1cca8d7dbfa9f03521cf1263d1373cb8",
+                    "bytes": 96,
+                    "sha256": "7aac9da63c63520d6d647358370524aa60681883377a102dbf63f6754ba56a01",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 102,
@@ -6962,7 +6980,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -21
         },
         {
@@ -7136,21 +7154,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -7245,9 +7265,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -7255,12 +7277,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -7374,16 +7396,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "4b5a16968663c9d641780341ee21c4ee1cca8d7dbfa9f03521cf1263d1373cb8",
+                    "bytes": 96,
+                    "sha256": "7aac9da63c63520d6d647358370524aa60681883377a102dbf63f6754ba56a01",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 102,
@@ -7410,7 +7434,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -21
         },
         {
@@ -9074,21 +9098,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -9183,9 +9209,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -9193,12 +9221,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -9308,16 +9336,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "b8686f14e6c884ff0e5b5d25dd56f470e9e152d7116dd394b143f90ff2ee2966",
+                    "bytes": 96,
+                    "sha256": "f059f0ae4c617e109d20ec30dc9ebf2849c09f4c5a4442c58421c9f872009ddf",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -9338,7 +9368,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -9492,21 +9522,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -9601,9 +9633,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -9611,12 +9645,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -9726,16 +9760,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "b8686f14e6c884ff0e5b5d25dd56f470e9e152d7116dd394b143f90ff2ee2966",
+                    "bytes": 96,
+                    "sha256": "f059f0ae4c617e109d20ec30dc9ebf2849c09f4c5a4442c58421c9f872009ddf",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -9756,7 +9792,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -9844,21 +9880,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -9953,9 +9991,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -9963,12 +10003,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -10082,16 +10122,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "ead5100db7cc01cddbdc614e0722e1f1eb0d2311b64397ee19d69e390c781ed9",
+                    "bytes": 96,
+                    "sha256": "bf2bcfc300aaf7e0b52b7b48af53c240e7bcdd23df83f46133c8ae7ab8e49454",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 105,
@@ -10118,7 +10160,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -24
         },
         {
@@ -10292,21 +10334,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -10401,9 +10445,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -10411,12 +10457,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -10530,16 +10576,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "ead5100db7cc01cddbdc614e0722e1f1eb0d2311b64397ee19d69e390c781ed9",
+                    "bytes": 96,
+                    "sha256": "bf2bcfc300aaf7e0b52b7b48af53c240e7bcdd23df83f46133c8ae7ab8e49454",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 105,
@@ -10566,7 +10614,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -24
         },
         {
@@ -12230,21 +12278,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -12339,9 +12389,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -12349,12 +12401,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -12464,16 +12516,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "df590d637a543588276e95753770252dae214578177b59e3790b0fbbeb65afdd",
+                    "bytes": 96,
+                    "sha256": "dc177ffa8a7bb7a2484cf9478643eefed136ad4fa6757b646681d2155a4450bc",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -12494,7 +12548,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -12648,21 +12702,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -12757,9 +12813,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -12767,12 +12825,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -12882,16 +12940,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "df590d637a543588276e95753770252dae214578177b59e3790b0fbbeb65afdd",
+                    "bytes": 96,
+                    "sha256": "dc177ffa8a7bb7a2484cf9478643eefed136ad4fa6757b646681d2155a4450bc",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -12912,7 +12972,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -13000,21 +13060,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -13109,9 +13171,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -13119,12 +13183,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -13238,16 +13302,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "6463f868778e77b0f76a7db7cc10eaff3ed9549db3017f7ad74c48c556295f6f",
+                    "bytes": 96,
+                    "sha256": "0d2528ba295ace063f647b7fff2f7b7d2237199600b2322c062e86d8f1144aff",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 102,
@@ -13274,7 +13340,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -21
         },
         {
@@ -13448,21 +13514,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -13557,9 +13625,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -13567,12 +13637,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -13686,16 +13756,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "6463f868778e77b0f76a7db7cc10eaff3ed9549db3017f7ad74c48c556295f6f",
+                    "bytes": 96,
+                    "sha256": "0d2528ba295ace063f647b7fff2f7b7d2237199600b2322c062e86d8f1144aff",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 102,
@@ -13722,7 +13794,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -21
         },
         {
@@ -15386,21 +15458,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -15495,9 +15569,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -15505,12 +15581,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -15620,16 +15696,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "58980106fc9428ffd31dd4881b24155d77176c2bcde3e404481880fa292cad6d",
+                    "bytes": 96,
+                    "sha256": "57c4e2e9929af229781a86c5ef56f8ae64fcb04340f31a8eed0c9ab691632206",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -15650,7 +15728,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -15804,21 +15882,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -15913,9 +15993,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -15923,12 +16005,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -16038,16 +16120,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "58980106fc9428ffd31dd4881b24155d77176c2bcde3e404481880fa292cad6d",
+                    "bytes": 96,
+                    "sha256": "57c4e2e9929af229781a86c5ef56f8ae64fcb04340f31a8eed0c9ab691632206",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -16068,7 +16152,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -16156,21 +16240,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -16265,9 +16351,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -16275,12 +16363,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -16394,16 +16482,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "92e9e8994136cf3135161b842aa4075a156264d26743ac3354968ca8bb120279",
+                    "bytes": 96,
+                    "sha256": "207c565d2c4c0d94afeba825631bc48036ec39408ed832a9025d15e595adc7d3",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 104,
@@ -16430,7 +16520,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -23
         },
         {
@@ -16604,21 +16694,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -16713,9 +16805,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -16723,12 +16817,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -16842,16 +16936,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "92e9e8994136cf3135161b842aa4075a156264d26743ac3354968ca8bb120279",
+                    "bytes": 96,
+                    "sha256": "207c565d2c4c0d94afeba825631bc48036ec39408ed832a9025d15e595adc7d3",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 104,
@@ -16878,7 +16974,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -23
         },
         {
@@ -17278,21 +17374,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "3a116e60dca3946eaaf64529a9aabc8d6699d08c1af062c520e7b6ac82b69492",
+                    "bytes": 96,
+                    "sha256": "cd4bdd4bb3fab9b13ead142510438db158c767d9be7649f8628a3866a64c880b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -17319,9 +17417,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "2f151ffef38f3efb7fc5693cf48ec8dc6b886f151b1dcc129bff8d7dbd221575",
+                    "bytes": 65,
+                    "sha256": "a4553601e63c330b225272192c26f4632265fc5e3218504964d1c8597c87b4a9",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -17329,12 +17429,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -17374,16 +17474,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d3eb577ba5a19f021281563eeac911d017152fbdc761f8753f75291951a07baf",
+                    "bytes": 96,
+                    "sha256": "02f2f40aaec7e44c722222c225a0af4440dfbdd0ba8e3dbc5e9bc01b5f6bea6c",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -17404,7 +17506,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -17430,21 +17532,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "3a116e60dca3946eaaf64529a9aabc8d6699d08c1af062c520e7b6ac82b69492",
+                    "bytes": 96,
+                    "sha256": "cd4bdd4bb3fab9b13ead142510438db158c767d9be7649f8628a3866a64c880b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -17471,9 +17575,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "2f151ffef38f3efb7fc5693cf48ec8dc6b886f151b1dcc129bff8d7dbd221575",
+                    "bytes": 65,
+                    "sha256": "a4553601e63c330b225272192c26f4632265fc5e3218504964d1c8597c87b4a9",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -17481,12 +17587,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -17530,16 +17636,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "df962da6437e43a270a1f3c8c5e531d47bb23680e1cab58e6d98fe69ab0c0440",
+                    "bytes": 96,
+                    "sha256": "4974be876e76b585d338823ea17ea7b85434b82677876d667d7c5b28698eaa80",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 102,
@@ -17566,7 +17674,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -21
         },
         {
@@ -17894,21 +18002,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "8b70399e3481cdbea8e748b14a12c4b98fc98c8fd20a8a1c7a435dbe4a1f0db0",
+                    "bytes": 96,
+                    "sha256": "41520be09ec4fc896f104e5b1d870cea260f4f2b63e1a721077f2bfad69c1e1d",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -17935,9 +18045,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "52a3a061e4896501789f695c4791db1f162055216e66dd8332290df7bace1e4b",
+                    "bytes": 65,
+                    "sha256": "5b0808b4008a5e5bef3d2dbc99bf703316f5047f1a318c6f7ac58c937f624e0f",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -17945,12 +18057,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -17990,16 +18102,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "98a95f0e9561a2bc0b26c6a8d66f6f1f87482b8b27dfa37ca2c13d490fef9111",
+                    "bytes": 96,
+                    "sha256": "17314f39ab9ead8b7c1923bca6affd147bb565eb14d429b8064c761fb3479aa4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 48,
@@ -18020,7 +18134,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 5
         },
         {
@@ -18046,21 +18160,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "8b70399e3481cdbea8e748b14a12c4b98fc98c8fd20a8a1c7a435dbe4a1f0db0",
+                    "bytes": 96,
+                    "sha256": "41520be09ec4fc896f104e5b1d870cea260f4f2b63e1a721077f2bfad69c1e1d",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -18087,9 +18203,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "52a3a061e4896501789f695c4791db1f162055216e66dd8332290df7bace1e4b",
+                    "bytes": 65,
+                    "sha256": "5b0808b4008a5e5bef3d2dbc99bf703316f5047f1a318c6f7ac58c937f624e0f",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -18097,12 +18215,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -18146,16 +18264,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "8a6b2742b6e001a38e82d928d5d4dbbb3cc4e4fa048547bfbabf078ff3a0d429",
+                    "bytes": 96,
+                    "sha256": "5b1d666b668da2cdb45f9759268b3c6e64cfaadc41f74156242ae616d013a0a3",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 102,
@@ -18182,7 +18302,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -21
         },
         {
@@ -23902,21 +24022,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -24011,9 +24133,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -24021,12 +24145,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -24136,16 +24260,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "9573526ad6265b541509e97173ae2f09831e9e50ea872a8eb9e21acc39101753",
+                    "bytes": 96,
+                    "sha256": "03a498651835d648fabd61df5349c9586e81a27a5c57a716420d669a449f0d25",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -24167,7 +24293,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -24323,21 +24449,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -24432,9 +24560,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -24442,12 +24572,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -24557,16 +24687,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "9573526ad6265b541509e97173ae2f09831e9e50ea872a8eb9e21acc39101753",
+                    "bytes": 96,
+                    "sha256": "03a498651835d648fabd61df5349c9586e81a27a5c57a716420d669a449f0d25",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -24588,7 +24720,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -24677,21 +24809,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -24786,9 +24920,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -24796,12 +24932,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -24915,16 +25051,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "06827c63640dac4f38eb0df08d33c94d6a7087cbd8cc82c58707cb743160c0cb",
+                    "bytes": 96,
+                    "sha256": "d3d5bf1032e21ff9e86fab310c84e6bcd89f01d1a6e89bc64620ea302f97b946",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 108,
@@ -24950,7 +25088,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -15
         },
         {
@@ -25122,21 +25260,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "0aaad90371cf9b54e66aa994f892e31fdeb91a7422ab5538fe6239564ce7090e",
+                    "bytes": 96,
+                    "sha256": "f6d03a36f7139cc32aae4cde2ab1d6da9c2a456d85d611c20934a582919f95a4",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -25231,9 +25371,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "61525904cf5dc89b88f3e9e988962d1e268a5f18d476855263b347d54e042964",
+                    "bytes": 65,
+                    "sha256": "3fd6fb0cfbb5d42de6b8de40cd20cfb047a1a9c30c6d784c668707f75bc3d5ac",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -25241,12 +25383,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -25360,16 +25502,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "06827c63640dac4f38eb0df08d33c94d6a7087cbd8cc82c58707cb743160c0cb",
+                    "bytes": 96,
+                    "sha256": "d3d5bf1032e21ff9e86fab310c84e6bcd89f01d1a6e89bc64620ea302f97b946",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 108,
@@ -25395,7 +25539,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -15
         },
         {
@@ -27058,21 +27202,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -27167,9 +27313,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -27177,12 +27325,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -27292,16 +27440,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "89c4bb52685f6cb0166e7f2e12b5cf1bedfe6e2b131619e4d7b853038608212a",
+                    "bytes": 96,
+                    "sha256": "0da7ba25de3f976c9017c6e790a088e0b725f5edbf04b63f96d8caba2d1f8c1a",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -27323,7 +27473,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -27479,21 +27629,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -27588,9 +27740,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -27598,12 +27752,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -27713,16 +27867,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "89c4bb52685f6cb0166e7f2e12b5cf1bedfe6e2b131619e4d7b853038608212a",
+                    "bytes": 96,
+                    "sha256": "0da7ba25de3f976c9017c6e790a088e0b725f5edbf04b63f96d8caba2d1f8c1a",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -27744,7 +27900,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -27833,21 +27989,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -27942,9 +28100,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -27952,12 +28112,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -28071,16 +28231,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "254c243797d33cc3c289b0aa82442e123381593ed2f677cb14b9294a07db735d",
+                    "bytes": 96,
+                    "sha256": "a77a0ca11596b69801e4f2e8a4d6ab8eeaf3da7d64acfc838403c9de03aacf6b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 111,
@@ -28106,7 +28268,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -18
         },
         {
@@ -28278,21 +28440,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "d321e4774858adcfeafa5e3512522874c8e8f1eaed8a211f5c4bedfe33e772ab",
+                    "bytes": 96,
+                    "sha256": "5863ad85ed247f4d059069b61a7831908957f708050a60d6ef1cd5e87a86c7ab",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -28387,9 +28551,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "e259eaddb68ba0b0e7e923a44acf88f7ef43ad0e44ac131bfec00c24b8985a10",
+                    "bytes": 68,
+                    "sha256": "840ccc42c64deb98da86d41c0c7d2f8906343008976abc9069b86c0ef6a71080",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -28397,12 +28563,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -28516,16 +28682,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "254c243797d33cc3c289b0aa82442e123381593ed2f677cb14b9294a07db735d",
+                    "bytes": 96,
+                    "sha256": "a77a0ca11596b69801e4f2e8a4d6ab8eeaf3da7d64acfc838403c9de03aacf6b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 111,
@@ -28551,7 +28719,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -18
         },
         {
@@ -30214,21 +30382,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -30323,9 +30493,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -30333,12 +30505,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -30448,16 +30620,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "4cc7542baa57fe34d57c47d1dc81cd923f9ec11122bee127e071ae6bcc08c1d9",
+                    "bytes": 96,
+                    "sha256": "1a9a74500d960b29dd9055eff30683601ea88b63f4dcdc576e0de050086630b2",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -30479,7 +30653,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -30635,21 +30809,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -30744,9 +30920,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -30754,12 +30932,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -30869,16 +31047,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "4cc7542baa57fe34d57c47d1dc81cd923f9ec11122bee127e071ae6bcc08c1d9",
+                    "bytes": 96,
+                    "sha256": "1a9a74500d960b29dd9055eff30683601ea88b63f4dcdc576e0de050086630b2",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -30900,7 +31080,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -30989,21 +31169,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -31098,9 +31280,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -31108,12 +31292,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -31227,16 +31411,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "9f4b04f2a244416ef4bc4d80a1ebe17ebc39962f95d608fac4a73450d34e2291",
+                    "bytes": 96,
+                    "sha256": "030880404fedbd111f63c7c67ab2c26b8d5945578d093ae2a87bf28fe175b41e",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 108,
@@ -31262,7 +31448,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -15
         },
         {
@@ -31434,21 +31620,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "bfb5730e43d5f04ad0c7193ec3b05687413e4c2db130132400b735f8a353763d",
+                    "bytes": 96,
+                    "sha256": "d46494688c42f8abb006091f35ee6e77f842091bf1691cb11e0d504be87cb90b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -31543,9 +31731,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "4590cb66b45004c6a12efa478d4b196a1653881aa2ed15ffd8013c1d27a1e002",
+                    "bytes": 68,
+                    "sha256": "5d44874967b4b0923ba1b66b827ab5fa5c87c9160af54297fe85745477360c42",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -31553,12 +31743,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -31672,16 +31862,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "9f4b04f2a244416ef4bc4d80a1ebe17ebc39962f95d608fac4a73450d34e2291",
+                    "bytes": 96,
+                    "sha256": "030880404fedbd111f63c7c67ab2c26b8d5945578d093ae2a87bf28fe175b41e",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 108,
@@ -31707,7 +31899,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -15
         },
         {
@@ -33370,21 +33562,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -33479,9 +33673,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -33489,12 +33685,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -33604,16 +33800,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "27b29e20c3ecb6e31b89342fe45d470608f6eff73c4e49ecd8ef75023fa54bc0",
+                    "bytes": 96,
+                    "sha256": "9c3bcc8f2aa0a085ca36ac4f4cab8bbaf64e21b81f07efad3342dd590638bbe6",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -33635,7 +33833,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -33791,21 +33989,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -33900,9 +34100,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -33910,12 +34112,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -34025,16 +34227,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "27b29e20c3ecb6e31b89342fe45d470608f6eff73c4e49ecd8ef75023fa54bc0",
+                    "bytes": 96,
+                    "sha256": "9c3bcc8f2aa0a085ca36ac4f4cab8bbaf64e21b81f07efad3342dd590638bbe6",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -34056,7 +34260,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -34145,21 +34349,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -34254,9 +34460,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -34264,12 +34472,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -34383,16 +34591,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "4687929c0f04bfd67dfe6910da3d020458f97743f84e54ea558a65c2e6a728df",
+                    "bytes": 96,
+                    "sha256": "eb721d0432be5fbcf02650fcdb817cabb339273a62e8db8638f39ae3d9b0e124",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 110,
@@ -34418,7 +34628,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -17
         },
         {
@@ -34590,21 +34800,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "5354b285fbe7cce8e68e06a99bfa134985b01a8ea45ce3de12be8612a5a701ff",
+                    "bytes": 96,
+                    "sha256": "19eea84b76480b7f6b95eaeb495cc7d4fea6d01181b21fbdc2edefc13c878e12",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -34699,9 +34911,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 64,
-                    "sha256": "ea6abfc9959391d6f652bffa686b9e72e9451de6cacc2205b20f06f71c27c692",
+                    "bytes": 68,
+                    "sha256": "52a225192b9b7df44a7edc122f2818ff753e48204162072bcfd13aacde69e3e1",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -34709,12 +34923,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 55
+                    "dataPushBytes": 56
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -34828,16 +35042,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "4687929c0f04bfd67dfe6910da3d020458f97743f84e54ea558a65c2e6a728df",
+                    "bytes": 96,
+                    "sha256": "eb721d0432be5fbcf02650fcdb817cabb339273a62e8db8638f39ae3d9b0e124",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 110,
@@ -34863,7 +35079,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -17
         },
         {
@@ -35262,21 +35478,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "3a116e60dca3946eaaf64529a9aabc8d6699d08c1af062c520e7b6ac82b69492",
+                    "bytes": 96,
+                    "sha256": "cd4bdd4bb3fab9b13ead142510438db158c767d9be7649f8628a3866a64c880b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -35303,9 +35521,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "2f151ffef38f3efb7fc5693cf48ec8dc6b886f151b1dcc129bff8d7dbd221575",
+                    "bytes": 65,
+                    "sha256": "a4553601e63c330b225272192c26f4632265fc5e3218504964d1c8597c87b4a9",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -35313,12 +35533,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -35358,16 +35578,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "362b9073198b04312ee17f14a217430fbe9ded37f3a42a868cd439fb2875eb7f",
+                    "bytes": 96,
+                    "sha256": "2fe7ee8da00dbe83146911f847511f606e10303337a6f0c8c3a9ed6874bc9625",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -35389,7 +35611,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -35415,21 +35637,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "3a116e60dca3946eaaf64529a9aabc8d6699d08c1af062c520e7b6ac82b69492",
+                    "bytes": 96,
+                    "sha256": "cd4bdd4bb3fab9b13ead142510438db158c767d9be7649f8628a3866a64c880b",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -35456,9 +35680,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "2f151ffef38f3efb7fc5693cf48ec8dc6b886f151b1dcc129bff8d7dbd221575",
+                    "bytes": 65,
+                    "sha256": "a4553601e63c330b225272192c26f4632265fc5e3218504964d1c8597c87b4a9",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -35466,12 +35692,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -35515,16 +35741,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "b91cf44d6b158fdd2b65c3126ec85bd817d2889f97a80226dd736b4f9082bb0e",
+                    "bytes": 96,
+                    "sha256": "fa0d4b08b20fe64afceab169afe89c5ab4109cae46620e1c02bd4dbdf3a818ea",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 108,
@@ -35550,7 +35778,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -15
         },
         {
@@ -35878,21 +36106,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "8b70399e3481cdbea8e748b14a12c4b98fc98c8fd20a8a1c7a435dbe4a1f0db0",
+                    "bytes": 96,
+                    "sha256": "41520be09ec4fc896f104e5b1d870cea260f4f2b63e1a721077f2bfad69c1e1d",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -35919,9 +36149,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "52a3a061e4896501789f695c4791db1f162055216e66dd8332290df7bace1e4b",
+                    "bytes": 65,
+                    "sha256": "5b0808b4008a5e5bef3d2dbc99bf703316f5047f1a318c6f7ac58c937f624e0f",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -35929,12 +36161,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -35974,16 +36206,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "3e86014d75649da1cd1fc2ffcd1d8f8ed5faa9673acf2f6f42f354e81c9cedfe",
+                    "bytes": 96,
+                    "sha256": "c749d90c56906cfb08803c1508686484740f5a04a70ff0cee594cbcff3b5c4ca",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 53,
@@ -36005,7 +36239,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 10
         },
         {
@@ -36031,21 +36265,23 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "8b70399e3481cdbea8e748b14a12c4b98fc98c8fd20a8a1c7a435dbe4a1f0db0",
+                    "bytes": 96,
+                    "sha256": "41520be09ec4fc896f104e5b1d870cea260f4f2b63e1a721077f2bfad69c1e1d",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -36072,9 +36308,11 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 61,
-                    "sha256": "52a3a061e4896501789f695c4791db1f162055216e66dd8332290df7bace1e4b",
+                    "bytes": 65,
+                    "sha256": "5b0808b4008a5e5bef3d2dbc99bf703316f5047f1a318c6f7ac58c937f624e0f",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
@@ -36082,12 +36320,12 @@
                         "DROP": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 52
+                    "dataPushBytes": 53
                 }
             },
-            "equalLeaf": false,
+            "equalLeaf": true,
             "equalCovenant": true,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": 0
         },
         {
@@ -36131,16 +36369,18 @@
             },
             "generated": {
                 "leaf": {
-                    "bytes": 92,
-                    "sha256": "738965f405c3f0b9080f80c384f79e392657c37ec849e242ffca89eef6a88aec",
+                    "bytes": 96,
+                    "sha256": "fa0a375cf33ec275b56745b4361c84a5c048ecc2e7c0b322093fde4475280f0d",
                     "opcodes": {
+                        "SIZE": 1,
+                        "EQUALVERIFY": 1,
                         "HASH160": 1,
                         "EQUAL": 1,
                         "VERIFY": 1,
                         "CHECKSIGVERIFY": 1,
                         "CHECKSIG": 1
                     },
-                    "dataPushBytes": 84
+                    "dataPushBytes": 85
                 },
                 "covenant": {
                     "bytes": 108,
@@ -36166,7 +36406,7 @@
             },
             "equalLeaf": false,
             "equalCovenant": false,
-            "deltaLeafBytes": -4,
+            "deltaLeafBytes": 0,
             "deltaCovenantBytes": -15
         }
     ]

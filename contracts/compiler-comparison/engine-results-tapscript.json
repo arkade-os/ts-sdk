@@ -30225,9 +30225,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/claim/preimage-31/optimized",
@@ -30239,7 +30240,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30252,7 +30253,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30265,7 +30266,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30278,7 +30279,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30291,7 +30292,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30302,9 +30303,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/unilateralClaim/preimage-31/optimized",
@@ -30316,7 +30318,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30329,7 +30331,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30342,7 +30344,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30355,7 +30357,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30368,7 +30370,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30381,7 +30383,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30392,9 +30394,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/nonInteractiveClaim/preimage-31/optimized",
@@ -30406,7 +30409,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30419,7 +30422,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30432,7 +30435,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30445,7 +30448,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30458,7 +30461,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30469,9 +30472,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/claim/preimage-31/optimized",
@@ -30483,7 +30487,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30496,7 +30500,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30509,7 +30513,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30522,7 +30526,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30535,7 +30539,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30546,9 +30550,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/unilateralClaim/preimage-31/optimized",
@@ -30560,7 +30565,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30573,7 +30578,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30586,7 +30591,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30599,7 +30604,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30612,7 +30617,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30625,7 +30630,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30636,9 +30641,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/nonInteractiveClaim/preimage-31/optimized",
@@ -30650,7 +30656,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30663,7 +30669,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30676,7 +30682,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30689,7 +30695,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -30702,7 +30708,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31195,9 +31201,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/claim/preimage-33/optimized",
@@ -31209,7 +31216,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31222,7 +31229,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31235,7 +31242,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31248,7 +31255,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31261,7 +31268,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31272,9 +31279,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/unilateralClaim/preimage-33/optimized",
@@ -31286,7 +31294,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31299,7 +31307,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31312,7 +31320,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31325,7 +31333,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31338,7 +31346,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31351,7 +31359,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31362,9 +31370,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/nonInteractiveClaim/preimage-33/optimized",
@@ -31376,7 +31385,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31389,7 +31398,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31402,7 +31411,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31415,7 +31424,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31428,7 +31437,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31439,9 +31448,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/claim/preimage-33/optimized",
@@ -31453,7 +31463,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31466,7 +31476,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31479,7 +31489,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31492,7 +31502,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31505,7 +31515,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31516,9 +31526,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/unilateralClaim/preimage-33/optimized",
@@ -31530,7 +31541,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31543,7 +31554,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31556,7 +31567,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31569,7 +31580,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31582,7 +31593,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31595,7 +31606,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31606,9 +31617,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/nonInteractiveClaim/preimage-33/optimized",
@@ -31620,7 +31632,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31633,7 +31645,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31646,7 +31658,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31659,7 +31671,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -31672,7 +31684,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -61901,9 +61913,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/claim/preimage-31/unoptimized",
@@ -61915,7 +61928,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -61928,7 +61941,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -61941,7 +61954,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -61954,7 +61967,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -61967,7 +61980,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -61978,9 +61991,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/unilateralClaim/preimage-31/unoptimized",
@@ -61992,7 +62006,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62005,7 +62019,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62018,7 +62032,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62031,7 +62045,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62044,7 +62058,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62057,7 +62071,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62068,9 +62082,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/nonInteractiveClaim/preimage-31/unoptimized",
@@ -62082,7 +62097,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62095,7 +62110,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62108,7 +62123,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62121,7 +62136,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62134,7 +62149,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62145,9 +62160,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/claim/preimage-31/unoptimized",
@@ -62159,7 +62175,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62172,7 +62188,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62185,7 +62201,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62198,7 +62214,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62211,7 +62227,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62222,9 +62238,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/unilateralClaim/preimage-31/unoptimized",
@@ -62236,7 +62253,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62249,7 +62266,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62262,7 +62279,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62275,7 +62292,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62288,7 +62305,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62301,7 +62318,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62312,9 +62329,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/nonInteractiveClaim/preimage-31/unoptimized",
@@ -62326,7 +62344,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62339,7 +62357,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62352,7 +62370,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62365,7 +62383,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62378,7 +62396,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62871,9 +62889,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/claim/preimage-33/unoptimized",
@@ -62885,7 +62904,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62898,7 +62917,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62911,7 +62930,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62924,7 +62943,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62937,7 +62956,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62948,9 +62967,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/unilateralClaim/preimage-33/unoptimized",
@@ -62962,7 +62982,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62975,7 +62995,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -62988,7 +63008,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63001,7 +63021,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63014,7 +63034,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63027,7 +63047,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63038,9 +63058,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/btc/block-minimum/full/nonInteractiveClaim/preimage-33/unoptimized",
@@ -63052,7 +63073,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63065,7 +63086,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63078,7 +63099,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63091,7 +63112,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63104,7 +63125,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63115,9 +63136,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/claim/preimage-33/unoptimized",
@@ -63129,7 +63151,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63142,7 +63164,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63155,7 +63177,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63168,7 +63190,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63181,7 +63203,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63192,9 +63214,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/unilateralClaim/preimage-33/unoptimized",
@@ -63206,7 +63229,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63219,7 +63242,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63232,7 +63255,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63245,7 +63268,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "locktime requirement not satisfied -- locktime is greater than the transaction locktime: 1 \u003e 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63258,7 +63281,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "transaction sequence has sequence locktime disabled bit set: 0x80000001",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63271,7 +63294,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "invalid transaction version: 1",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63282,9 +63305,10 @@
     "moneyDomain": "valid-satoshi-amount",
     "mutation": "valid",
     "manualAccepted": false,
-    "generatedAccepted": true,
+    "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "expectedEquivalent": false
+    "generatedError": "OP_EQUALVERIFY failed",
+    "expectedEquivalent": true
   },
   {
     "name": "vhtlc/v2/asset/block-minimum/full/nonInteractiveClaim/preimage-33/unoptimized",
@@ -63296,7 +63320,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63309,7 +63333,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63322,7 +63346,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "signature not empty on failed checksig",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63335,7 +63359,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "index 0 is invalid for stack size 0",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   },
   {
@@ -63348,7 +63372,7 @@
     "manualAccepted": false,
     "generatedAccepted": false,
     "manualError": "OP_EQUALVERIFY failed",
-    "generatedError": "OP_VERIFY failed",
+    "generatedError": "OP_EQUALVERIFY failed",
     "expectedEquivalent": true
   }
 ]

@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: arkade-os/compiler
-          ref: 89a1ff73b24441699095c9135d6429f7dc6cb6ab
+          ref: 7dbd2ac2da2cd78589b497a6b68a425d84180e8b
           path: .tmp/compiler-comparison/compiler
           persist-credentials: false
 

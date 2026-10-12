@@ -104,7 +104,12 @@
                             "injected": true
                         }
                     ],
-                    "asm": ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"]
+                    "asm": [
+                        "<user>",
+                        "OP_CHECKSIGVERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIG"
+                    ]
                 }
             ]
         }

@@ -260,12 +260,27 @@ function parseLeaf(
     let index = 0;
 
     let condition: AsmToken[] | undefined;
-    if (asm.length >= 4 && HASH_OPCODES.has(asm[0]) && asm[2] === "OP_EQUAL") {
-        if (asm[3] !== "OP_VERIFY")
+    if (asm[0] === "OP_SIZE") {
+        const width = asm[1];
+        if (
+            (width !== "20" && width !== "32") ||
+            asm[2] !== "OP_EQUALVERIFY" ||
+            !HASH_OPCODES.has(asm[3]) ||
+            extras.length !== 1 ||
+            extras[0].type !== `bytes${width}`
+        ) {
+            fail(`leaf '${leaf.name}': invalid fixed-width hash condition`);
+        }
+        index = 3;
+    }
+    if (asm.length >= index + 4 && HASH_OPCODES.has(asm[index]) && asm[index + 2] === "OP_EQUAL") {
+        if (asm[index + 3] !== "OP_VERIFY")
             fail(`leaf '${leaf.name}': hash condition must end in OP_VERIFY`);
         // The SDK appends VERIFY when it builds the closure.
-        condition = asm.slice(0, 3).map((token) => asmToken(token, instantiations));
-        index = 4;
+        condition = asm.slice(0, index + 3).map((token) => asmToken(token, instantiations));
+        index += 4;
+    } else if (index !== 0) {
+        fail(`leaf '${leaf.name}': fixed-width guard must precede a hash condition`);
     }
 
     let csv: TapscriptSegment["csv"];

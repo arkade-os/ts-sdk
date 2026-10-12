@@ -100,6 +100,9 @@
                         }
                     ],
                     "asm": [
+                        "OP_SIZE",
+                        "32",
+                        "OP_EQUALVERIFY",
                         "OP_HASH160",
                         "<preimageHash>",
                         "OP_EQUAL",
@@ -230,5 +233,5 @@
             "optimize": true
         }
     },
-    "fingerprint": "sha256:e561fd45bb401ad19b2d8ec097b51c6cced35d7f66a0119a77cf939b5f2bd45d"
+    "fingerprint": "sha256:5a7c15f7f66015a7326666a61e0fb0b83757f6456b26e1a852fb18f955b669a1"
 }

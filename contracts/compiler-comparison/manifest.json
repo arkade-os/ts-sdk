@@ -1,7 +1,7 @@
 {
     "compiler": {
         "repository": "https://github.com/arkade-os/compiler",
-        "revision": "89a1ff73b24441699095c9135d6429f7dc6cb6ab",
+        "revision": "7dbd2ac2da2cd78589b497a6b68a425d84180e8b",
         "locked": true
     },
     "engineRevision": "ce7fc1eafe3f406cd1eb2670f23912922fd0db97",
@@ -77,14 +77,14 @@
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.ark",
             "sourceSha256": "802a7d0842aa1b9ec0d567098271238a0c56d52acdf0d27fdb8fb9344e1dcf16",
             "artifact": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.artifact.json",
-            "artifactSha256": "ca7c1cb9ae265efec4d39547b3f1540e2c77bca0d68b8145fbb94e2f40f13338",
+            "artifactSha256": "bb6f24eb2bf7cc0f31420eea2b9b638a1dd731ec9dcaf963705497d847c5cb39",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.ark",
             "sourceSha256": "802a7d0842aa1b9ec0d567098271238a0c56d52acdf0d27fdb8fb9344e1dcf16",
             "artifact": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.unoptimized.artifact.json",
-            "artifactSha256": "05b1662aa85072390909208a48c73404e36b8cd1e429b125711a10217485f91a",
+            "artifactSha256": "df2b8528053cc9f8f7a2516afe5b5c14f83b48f92003b6b9d4ccd9aa6ff240a2",
             "optimize": false
         },
         {
@@ -105,14 +105,14 @@
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.ark",
             "sourceSha256": "6cd579e90aaf8584ae9fd2713cb97355fc36ca5d95c238ab60bc0302df7c156a",
             "artifact": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.artifact.json",
-            "artifactSha256": "0f17a1925dbd6b38cb50ee64dc14d12d22dd8fea023392acd0c504661179efe7",
+            "artifactSha256": "1f9e0ad0a8d009407c77b8dce1db1c77ca2dcc90ab8f4899b8d0c4141219fb07",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.ark",
             "sourceSha256": "6cd579e90aaf8584ae9fd2713cb97355fc36ca5d95c238ab60bc0302df7c156a",
             "artifact": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.unoptimized.artifact.json",
-            "artifactSha256": "ea7450c2f76896aa0d7c49700527faa97034118ba03e7a002eb592d6cb30dcc4",
+            "artifactSha256": "1f1e343d96dd5047f9c22cb509cfed4c94a94bc33aad36da3fef375481935f20",
             "optimize": false
         },
         {
@@ -133,14 +133,14 @@
             "source": "packages/sdk/contracts/vhtlc/signatures-v2-candidate.ark",
             "sourceSha256": "6876356de703d7bcbaf36a456ec9c8c572109fc75034231af23034b6d7b8e689",
             "artifact": "packages/sdk/contracts/vhtlc/signatures-v2-candidate.artifact.json",
-            "artifactSha256": "36af163f74e04eba06cb811a8a74a530f9b639209f272c417f5bcee32381174f",
+            "artifactSha256": "fea1897544b2bdce2a514d8407e64eeb5e203ae7ac1b73d819edd2980db8d632",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/signatures-v2-candidate.ark",
             "sourceSha256": "6876356de703d7bcbaf36a456ec9c8c572109fc75034231af23034b6d7b8e689",
             "artifact": "packages/sdk/contracts/vhtlc/signatures-v2-candidate.unoptimized.artifact.json",
-            "artifactSha256": "04dc33596c0276cbf6723fd925ed89440c29a606f36081c5b7cdcd44c035630d",
+            "artifactSha256": "6e2c64a7d238d28e201ac1d80f606e2411b5e5afe6f47bc8219dcac3af56254a",
             "optimize": false
         },
         {

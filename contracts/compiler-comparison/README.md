@@ -1,6 +1,6 @@
 # Compiler covenant comparison
 
-This is an additive comparison against the SDK 0.5 handwritten builders at `a3ddefb00ba0a5411acc4d8c5c4b60b89058e739`. Production imports, exports and contract builders stay unchanged. The compiler is built from clean source at `89a1ff73b24441699095c9135d6429f7dc6cb6ab` with Cargo's locked dependency graph; the VM is pinned to emulator `ce7fc1eafe3f406cd1eb2670f23912922fd0db97`.
+This is an additive comparison against the SDK 0.5 handwritten builders at `a3ddefb00ba0a5411acc4d8c5c4b60b89058e739`. Production imports, exports and contract builders stay unchanged. The compiler is built from clean source at `7dbd2ac2da2cd78589b497a6b68a425d84180e8b` with Cargo's locked dependency graph; the VM is pinned to emulator `ce7fc1eafe3f406cd1eb2670f23912922fd0db97`. The compiler pin includes the preimage guard in [compiler draft #172](https://github.com/arkade-os/compiler/pull/172).
 
 There are 10 `.ark` sources and 20 generated artifacts, covering optimized and unoptimized compilation:
 
@@ -23,23 +23,23 @@ The [size report](sizes.json) contains 784 manual/generated leaf pairs, raw scri
 | VHTLC BTC payout | +5 bytes | +10 bytes |
 | VHTLC asset payout | −24 to −21 bytes | −18 to −15 bytes |
 
-Swap cancel/exit and all six standard V1 VHTLC signature leaves are byte-identical. Payout covenants differ, which changes the emulator's tweaked signing key, the associated leaf and the complete Taproot address even where the leaf length stays equal. A compiled candidate cannot replace a funded contract in place.
+Swap cancel/exit and all six standard V1/V2 VHTLC signature leaves are byte-identical. Payout covenants differ, which changes the emulator's tweaked signing key, the associated leaf and the complete Taproot address even where the leaf length stays equal. A compiled candidate cannot replace a funded contract in place.
 
 The handwritten payout code checks witness version and destination from one `INSPECTOUTPUTSCRIPTPUBKEY` result. The compiler inspects twice and adds stack operations. Both source checks are necessary: dropping the version check would weaken the covenant. The compiler's VHTLC asset code saves bytes by reusing bound asset parameters instead of pushing the asset ID twice. The opcode report exposes the remaining stack and inspection overhead; source-level readability alone does not establish an optimization win.
 
-## V2 compiler gap
+## V2 preimage guard
 
-The pinned compiler accepts `bytes32 preimage` in source and records it in the artifact's witness ABI. It does not generate the production V2 `OP_SIZE 32 OP_EQUALVERIFY` guard. Real Bitcoin VM executions with valid signatures confirm that generated candidates accept hash-matching 31- and 33-byte preimages which production V2 rejects.
+The original compiler pin `89a1ff73b24441699095c9135d6429f7dc6cb6ab` recorded `bytes32 preimage` in the witness ABI without generating a runtime length check. Validly signed, hash-matching 31- and 33-byte preimages exposed 24 disagreements with production V2. The original comparison commit `945c1250` preserves that evidence.
 
-**V2 candidates are not adoptable.** V1 intentionally has the older variable-length hashlock. V2 needs compiler support, a new pin, fresh artifacts and renewed comparisons; do not patch generated assembly to conceal the gap.
+The current compiler pin emits `OP_SIZE 32 OP_EQUALVERIFY` before hashing. Regenerated artifacts and real Bitcoin VM executions require both V2 implementations to reject those preimages and accept 32-byte witnesses. V1 intentionally preserves the variable-length hashlock. The V2 files retain their candidate names because this is a comparison branch; production still uses the handwritten builders. The compiler fix remains a linked draft dependency, and changed payout bytecode still changes contract addresses. The SDK artifact reader preserves this fixed-width hash condition and validates its width against the witness ABI. Generated assembly is never patched by hand.
 
 ## Execution evidence and limits
 
 [Vectors](vectors.json) preserve both bytecode forms, constructor bindings, transaction context and deterministic test-only signing keys. [Covenant results](engine-results.json) execute the actual emulator `arkade.NewEngine`; [Bitcoin results](engine-results-tapscript.json) execute actual `txscript.NewEngine` Taproot witnesses with signatures for each variant's own leaf.
 
-The current matrix has 3,350 covenant pairs (6,700 executions) and 4,992 signed Bitcoin pairs (9,984 executions), covering both optimizer modes. Every one of the 784 leaf fixtures executes with real signatures. There are zero unexpected disagreements and 24 expected V2 length-guard disagreements. This is fixture coverage, not a count of distinct contract policies.
+The current matrix has 3,350 covenant pairs (6,700 executions) and 4,992 signed Bitcoin pairs (9,984 executions), covering both optimizer modes. Every one of the 784 leaf fixtures executes with real signatures. All pairs must agree, including the V2 invalid-length cases; no accepted difference is allowlisted. This is fixture coverage, not a count of distinct contract policies.
 
-The economic mutation matrix checks destinations, witness versions, sats, asset amounts, lookup presence, asset IDs/group indices, output asset count, input/output index pairing and numeric boundaries. The signature matrix checks valid witnesses, wrong preimages, each required signature independently wrong or missing, CLTV/CSV boundaries, transaction version, the CSV disable flag and final CLTV sequence. Expected ordered signer lists come from independent path policies, so the candidate cannot pass by silently dropping a signer. Known V2 counterexamples are recorded as expected differences; any other divergent result fails the tests. BTC amounts above the engine's money range are labeled separately and must be rejected by both economic variants, rather than counted as valid spends. Bitcoin signature checks on those amounts are cryptographic fixtures, not valid financial transactions. Asset quantities exercise unsigned 64-bit boundaries.
+The economic mutation matrix checks destinations, witness versions, sats, asset amounts, lookup presence, asset IDs/group indices, output asset count, input/output index pairing and numeric boundaries. The signature matrix checks valid witnesses, wrong preimages, each required signature independently wrong or missing, CLTV/CSV boundaries, transaction version, the CSV disable flag and final CLTV sequence. Expected ordered signer lists come from independent path policies, so the candidate cannot pass by silently dropping a signer. Any divergent acceptance result fails the tests. BTC amounts above the engine's money range are labeled separately and must be rejected by both economic variants, rather than counted as valid spends. Bitcoin signature checks on those amounts are cryptographic fixtures, not valid financial transactions. Asset quantities exercise unsigned 64-bit boundaries.
 
 These tests establish agreement for the executed fixtures. They do not prove universal equivalence, provider admission, PSBT commitments, funded settlement, recovery or full transaction weight. In particular, a Bitcoin-valid block-height CLTV operand may still fail an Ark provider's forfeit policy. Existing consumer and integration gates remain separate.
 

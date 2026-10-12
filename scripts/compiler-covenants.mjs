@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const COMPILER_REVISION = "89a1ff73b24441699095c9135d6429f7dc6cb6ab";
+export const COMPILER_REVISION = "7dbd2ac2da2cd78589b497a6b68a425d84180e8b";
 export const ENGINE_REVISION = "ce7fc1eafe3f406cd1eb2670f23912922fd0db97";
 const manualBaseline = "a3ddefb00ba0a5411acc4d8c5c4b60b89058e739";
 const root = fileURLToPath(new URL("..", import.meta.url));

@@ -100,7 +100,7 @@ describe("VHTLC compiler comparison candidates", () => {
         }
     });
 
-    it("proves typed V2 candidates lack the mandatory 32-byte hashlock guard", () => {
+    it("enforces the mandatory 32-byte hashlock guard in typed V2 candidates", () => {
         const data = fixture("v2", "btc", profiles[0]);
         const declaredClaim = data.signatureArtifact.value.functions.find(
             (group) => group.name === "claim",
@@ -113,14 +113,18 @@ describe("VHTLC compiler comparison candidates", () => {
                 new Uint8Array([32]),
                 "EQUALVERIFY",
             ]);
-            expect(Script.decode(hex.decode(row.generated.leafHex))[0]).toBe("HASH160");
+            expect(Script.decode(hex.decode(row.generated.leafHex)).slice(0, 3)).toEqual([
+                "SIZE",
+                new Uint8Array([32]),
+                "EQUALVERIFY",
+            ]);
             expect(hashlockAccepts(row.manual.leafHex, data.preimage)).toBe(true);
             expect(hashlockAccepts(row.generated.leafHex, data.preimage)).toBe(true);
         }
     });
 
     for (const length of [31, 33]) {
-        it(`retains a real hash-matching ${length}-byte V2 rejection counterexample`, () => {
+        it(`rejects a real hash-matching ${length}-byte preimage in both V2 implementations`, () => {
             for (const denomination of ["btc", "asset"] as const) {
                 const v1 = fixture("v1", denomination, profiles[0], false, length);
                 const v2 = fixture("v2", denomination, profiles[0], false, length);
@@ -129,8 +133,9 @@ describe("VHTLC compiler comparison candidates", () => {
                     const old = v1.rows.find((entry) => entry.context.path === path)!;
                     const current = v2.rows.find((entry) => entry.context.path === path)!;
                     expect(hashlockAccepts(old.manual.leafHex, v1.preimage)).toBe(true);
+                    expect(hashlockAccepts(old.generated.leafHex, v1.preimage)).toBe(true);
                     expect(hashlockAccepts(current.manual.leafHex, v2.preimage)).toBe(false);
-                    expect(hashlockAccepts(current.generated.leafHex, v2.preimage)).toBe(true);
+                    expect(hashlockAccepts(current.generated.leafHex, v2.preimage)).toBe(false);
                 }
             }
         });
