@@ -396,11 +396,20 @@ export type RequestUpdateContract = RequestEnvelope & {
     payload: {
         script: string;
         updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        /**
+         * Set only by the proxy's `setContractWatchState`, so the worker keeps its
+         * unchanged-state no-op. A worker predating the flag ignores it and writes.
+         */
+        watchStateOnly?: boolean;
     };
 };
 export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
+};
+/** Answers a `watchStateOnly` update; carries no row, so nothing is re-read. */
+export type ResponseContractWatchStateSet = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
 };
 
 export type RequestDeleteContract = RequestEnvelope & {
@@ -936,6 +945,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
+        | ResponseContractWatchStateSet
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1429,10 +1439,12 @@ export class WalletMessageHandler
                 }
                 case "UPDATE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contract = await manager.updateContract(
-                        message.payload.script,
-                        message.payload.updates,
-                    );
+                    const { script, updates, watchStateOnly } = message.payload;
+                    if (watchStateOnly && updates.watch) {
+                        await manager.setContractWatchState(script, updates.watch);
+                        return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
+                    }
+                    const contract = await manager.updateContract(script, updates);
                     return this.tagged({
                         id,
                         type: "CONTRACT_UPDATED",

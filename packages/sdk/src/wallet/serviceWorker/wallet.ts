@@ -1500,7 +1500,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { script, updates: { watch } },
+                    payload: { script, updates: { watch }, watchStateOnly: true },
                 };
                 try {
                     await sendContractMessage(message);
