@@ -35,11 +35,9 @@
         "regtest:down:sdk": "bash scripts/regtest.sh sdk down",
         "regtest:down:swap": "bash scripts/regtest.sh swap down",
         "regtest:down:swap-rfq": "bash scripts/regtest.sh swap-rfq down",
-        "regtest:down:sdk-delegatee": "bash scripts/regtest.sh sdk-delegatee down",
         "regtest:reset:sdk": "bash scripts/regtest.sh sdk reset",
         "regtest:reset:swap": "bash scripts/regtest.sh swap reset",
         "regtest:reset:swap-rfq": "bash scripts/regtest.sh swap-rfq reset",
-        "regtest:reset:sdk-delegatee": "bash scripts/regtest.sh sdk-delegatee reset",
         "prepare": "husky"
     },
     "devDependencies": {
