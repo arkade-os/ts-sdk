@@ -396,6 +396,11 @@ export type RequestUpdateContract = RequestEnvelope & {
     payload: {
         script: string;
         updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        /**
+         * Set only by the proxy's `setContractWatchState`, so the worker keeps its
+         * unchanged-state no-op. A worker predating the flag ignores it and writes.
+         */
+        watchStateOnly?: boolean;
     };
 };
 export type ResponseUpdateContract = ResponseEnvelope & {
@@ -1429,10 +1434,8 @@ export class WalletMessageHandler
                 }
                 case "UPDATE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const { script, updates } = message.payload;
-                    const keys = Object.keys(updates);
-                    // The proxy's setContractWatchState: keep the manager's unchanged-state no-op.
-                    if (keys.length === 1 && keys[0] === "watch" && updates.watch) {
+                    const { script, updates, watchStateOnly } = message.payload;
+                    if (watchStateOnly && updates.watch) {
                         await manager.setContractWatchState(script, updates.watch);
                         const [contract] = await manager.getContracts({ script });
                         return this.tagged({

@@ -153,15 +153,13 @@ describe("ServiceWorkerWallet contract watch state", () => {
         expect(save).not.toHaveBeenCalled();
     });
 
-    it("returns the stored contract when a watch-only update is a no-op", async () => {
+    it("keeps a generic watch-only update on the generic path", async () => {
         const proxy = await createBridgedWallet(manager).getContractManager();
-        const [stored] = await manager.getContracts({ script: TEST_DEFAULT_SCRIPT });
-        const save = vi.spyOn(repository, "saveContract");
+        const update = vi.spyOn(manager, "updateContract");
 
-        const updated = await proxy.updateContract(TEST_DEFAULT_SCRIPT, { watch: "watched" });
+        await proxy.updateContract(TEST_DEFAULT_SCRIPT, { watch: "watched" });
 
-        expect(updated).toEqual(stored);
-        expect(save).not.toHaveBeenCalled();
+        expect(update).toHaveBeenCalledWith(TEST_DEFAULT_SCRIPT, { watch: "watched" });
     });
 
     it("keeps other updates on the generic path", async () => {
