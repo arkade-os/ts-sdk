@@ -1,4 +1,5 @@
 import { Transaction } from "./utils/transaction";
+export { assertNonNegativeMs } from "./utils/time";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,

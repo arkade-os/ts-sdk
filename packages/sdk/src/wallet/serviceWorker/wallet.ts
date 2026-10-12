@@ -1,3 +1,4 @@
+import { assertNonNegativeMs } from "../../utils/time";
 import {
     IWallet,
     WalletBalance,
@@ -655,6 +656,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         // Precompute the merged timeout map so page-side waiting and
         // worker-side enforcement are derived from the same source.
+        for (const [key, value] of Object.entries(options.messageTimeouts ?? {})) {
+            assertNonNegativeMs(`messageTimeouts.${key}`, value);
+        }
         const messageTimeouts = options.messageTimeouts
             ? ({
                   ...DEFAULT_MESSAGE_TIMEOUTS,

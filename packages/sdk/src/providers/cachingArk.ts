@@ -1,5 +1,6 @@
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { Intent } from "../intent";
+import { assertNonNegativeMs } from "../utils/time";
 import {
     ArkadeInfo,
     ArkProvider,
@@ -33,6 +34,7 @@ export class CachingArkProvider implements ArkProvider {
         private readonly inner: ArkProvider,
         private readonly ttlMs: number = DEFAULT_TTL_MS,
     ) {
+        assertNonNegativeMs("ttlMs", ttlMs);
         this.unsubscribe =
             (inner as ServerInfoEventSource).onServerInfoChanged?.((info) => {
                 this.cached = info;

@@ -17,6 +17,10 @@ style and have not been backfilled.
 
 ### Changed
 
+- **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
+  cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
+  fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
   no longer hide subdust outputs. Explicit filter flags, spent-output

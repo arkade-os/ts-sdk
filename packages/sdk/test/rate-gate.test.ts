@@ -88,6 +88,18 @@ describe("requestOrigin", () => {
 });
 
 describe("OriginRateGate", () => {
+    it.each(["defaultCooldownMs", "maxCooldownMs", "jitterMs"] as const)(
+        "validates %s while accepting zero",
+        (key) => {
+            expect(() => new OriginRateGate({ [key]: 0 })).not.toThrow();
+            for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+                expect(() => new OriginRateGate({ [key]: value })).toThrow(
+                    `${key} must be a non-negative safe integer`,
+                );
+            }
+        },
+    );
+
     it("caps concurrency per origin", async () => {
         const gate = new OriginRateGate({ maxConcurrent: 2 });
         let inFlight = 0;

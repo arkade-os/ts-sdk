@@ -121,6 +121,55 @@ async function sendInit(id = "init-1") {
 }
 
 describe("MessageBus PING/PONG", () => {
+    it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+        "rejects invalid timeout configuration %s",
+        (value) => {
+            for (const options of [
+                { messageTimeoutMs: value },
+                { messageTimeoutOverrides: { TEST: value } },
+            ]) {
+                expect(
+                    () =>
+                        new MessageBus(
+                            new InMemoryWalletRepository(),
+                            new InMemoryContractRepository(),
+                            { messageHandlers: [], ...options },
+                        ),
+                ).toThrow("must be a non-negative safe integer");
+            }
+        },
+    );
+
+    it("preserves zero as an unlimited bus timeout", async () => {
+        vi.useFakeTimers();
+        const handler = new TestHandler();
+        let resolve!: (response: ResponseEnvelope) => void;
+        handler.handleMessage.mockImplementation(
+            () =>
+                new Promise((done) => {
+                    resolve = done;
+                }),
+        );
+        const bus = await createAndInitBus({
+            handlers: [handler],
+            messageTimeoutMs: 0,
+            messageTimeoutOverrides: { TEST: 0 },
+        });
+        const postMessage = vi.fn();
+        const pending = messageHandler({
+            data: { id: "zero-timeout", tag: handler.messageTag },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(postMessage).not.toHaveBeenCalled();
+        resolve({ id: "zero-timeout", tag: handler.messageTag });
+        await pending;
+        expect(postMessage).toHaveBeenCalledTimes(1);
+        await bus.stop();
+        vi.useRealTimers();
+    });
+
     beforeEach(() => {
         installSelfStub();
     });
