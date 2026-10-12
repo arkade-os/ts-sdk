@@ -184,7 +184,34 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     }
 }
 
-function isInFlight(intent: ArkIntent, deps: IntentReconciliationDeps): boolean {
+type ReleaseDeps = Pick<
+    IntentReconciliationDeps,
+    "intentRepository" | "deleteIntent" | "isOutpointInFlight"
+>;
+
+/**
+ * Delete every non-terminal intent from arkd before its store is wiped, so no proof the server
+ * still needs is lost. True only when each is confirmed gone; without `deleteIntent`, only when
+ * there is nothing to release.
+ */
+export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
+    let intents: ArkIntent[];
+    try {
+        intents = await collectIntents(deps.intentRepository, {
+            states: [...NON_TERMINAL_INTENT_STATES],
+        });
+    } catch (e) {
+        console.error("releaseIntents: failed to read non-terminal intents", e);
+        return false;
+    }
+    let released = true;
+    for (const intent of intents) {
+        if (!(await releaseFromServer(intent, deps, Date.now()))) released = false;
+    }
+    return released;
+}
+
+function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
     const inFlight = deps.isOutpointInFlight;
     return inFlight !== undefined && intent.intentVtxos.some((o) => inFlight(o));
 }
@@ -195,7 +222,7 @@ function isInFlight(intent: ArkIntent, deps: IntentReconciliationDeps): boolean 
  */
 async function releaseFromServer(
     intent: ArkIntent,
-    deps: IntentReconciliationDeps,
+    deps: ReleaseDeps,
     now: number,
 ): Promise<ArkIntent | undefined> {
     // Re-checked: a settle may have claimed these inputs since the loop's check.
@@ -205,7 +232,7 @@ async function releaseFromServer(
         await deps.deleteIntent({ proof: intent.deleteProof, message });
     } catch (e) {
         if (!isNoMatchingIntentsError(e)) {
-            console.warn(`reconcileIntents: failed to delete intent ${intent.intentTxId}`, e);
+            console.warn(`failed to delete intent ${intent.intentTxId} from the server`, e);
             return undefined;
         }
     }

@@ -124,6 +124,7 @@ import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
+import { releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
@@ -1417,7 +1418,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
-     * cursor, contracts). Create a fresh wallet instance afterward.
+     * cursor, contracts, intents). Create a fresh wallet instance afterward.
+     * Intents are kept while any may still be held by arkd, so a later
+     * reconciliation can release them with their stored proofs.
      */
     async clear(): Promise<void> {
         try {
@@ -1426,8 +1429,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
             await Promise.all([
                 this.walletRepository.clear(),
                 this.contractRepository.clear(),
-                this.intentRepository?.clear(),
+                this.clearIntents(),
             ]);
+        }
+    }
+
+    private async clearIntents(): Promise<void> {
+        const intentRepository = this.intentRepository;
+        if (!intentRepository) return;
+        const released = await releaseIntents({
+            ...this.intentReconciliationConfig(),
+            intentRepository,
+        });
+        if (released) {
+            await intentRepository.clear();
+        } else {
+            console.warn("clear: kept intents that could not be released from the server");
         }
     }
     /**

@@ -1,7 +1,8 @@
 import { collectVtxos } from "../src/repositories/walletRepository";
 import { collectContracts } from "../src/repositories/contractRepository";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { IntentRepository } from "../src/repositories/intentRepository";
+import { collectIntents } from "../src/repositories/intentRepository";
+import type { ArkIntent, IntentRepository } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -1099,25 +1100,78 @@ describe("Wallet", () => {
             expect(await collectContracts(contractRepository)).toEqual([]);
         });
 
-        it("wipes stored intents", async () => {
+        const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
+            intentTxId: "i1",
+            state: "waiting_for_batch",
+            createdAt: 1,
+            updatedAt: 1,
+            registerProof: "rp",
+            registerProofMessage: "rpm",
+            deleteProof: "dp",
+            deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }),
+            partialForfeits: [],
+            intentVtxos: [{ txid: "v", vout: 0 }],
+            ...over,
+        });
+        const intentIds = async (repo: IntentRepository) =>
+            (await collectIntents(repo)).map((i) => i.intentTxId);
+
+        it("wipes intents once none is pending", async () => {
             const intentRepository = new InMemoryIntentRepository();
             const { wallet } = await createReadonlyTestWallet({ intentRepository });
-            await intentRepository.saveIntent({
-                intentTxId: "i1",
-                state: "waiting_for_batch",
-                createdAt: 1,
-                updatedAt: 1,
-                registerProof: "rp",
-                registerProofMessage: "rpm",
-                deleteProof: "dp",
-                deleteProofMessage: "dpm",
-                partialForfeits: [],
-                intentVtxos: [{ txid: "v", vout: 0 }],
-            });
+            await intentRepository.saveIntent(storedIntent({ state: "batch_succeeded" }));
 
             await wallet.clear();
 
-            expect(await intentRepository.getLockedVtxoOutpoints()).toEqual([]);
+            expect(await intentIds(intentRepository)).toEqual([]);
+        });
+
+        it("keeps pending intents a readonly wallet cannot release", async () => {
+            const intentRepository = new InMemoryIntentRepository();
+            const { wallet } = await createReadonlyTestWallet({ intentRepository });
+            await intentRepository.saveIntent(storedIntent());
+
+            await wallet.clear();
+
+            expect(await intentIds(intentRepository)).toEqual(["i1"]);
+        });
+
+        describe("clearIntents with a release-capable wallet", () => {
+            const clearIntents = (intentRepository: IntentRepository, deleteIntent: any) =>
+                (ReadonlyWallet.prototype as any).clearIntents.call({
+                    intentRepository,
+                    intentReconciliationConfig: () => ({ deleteIntent }),
+                });
+
+            it("releases pending intents from the server, then wipes them", async () => {
+                const intentRepository = new InMemoryIntentRepository();
+                await intentRepository.saveIntent(storedIntent());
+                const deleteIntent = vi.fn().mockResolvedValue(undefined);
+
+                await clearIntents(intentRepository, deleteIntent);
+
+                expect(deleteIntent).toHaveBeenCalledWith({
+                    proof: "dp",
+                    message: { type: "delete", expire_at: 0 },
+                });
+                expect(await intentIds(intentRepository)).toEqual([]);
+            });
+
+            it("keeps every intent when one release fails", async () => {
+                const intentRepository = new InMemoryIntentRepository();
+                await intentRepository.saveIntent(storedIntent());
+                await intentRepository.saveIntent(
+                    storedIntent({ intentTxId: "i2", intentVtxos: [{ txid: "w", vout: 0 }] }),
+                );
+                const deleteIntent = vi
+                    .fn()
+                    .mockResolvedValueOnce(undefined)
+                    .mockRejectedValueOnce(new Error("network down"));
+
+                await clearIntents(intentRepository, deleteIntent);
+
+                expect((await intentIds(intentRepository)).sort()).toEqual(["i1", "i2"]);
+            });
         });
     });
 
