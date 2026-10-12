@@ -5,11 +5,28 @@ import type { RelativeTimelock } from "../script/tapscript";
  * Convert RelativeTimelock to BIP68 sequence number.
  */
 export function timelockToSequence(timelock: RelativeTimelock): number {
-    return bip68.encode(
-        timelock.type === "blocks"
-            ? { blocks: Number(timelock.value) }
-            : { seconds: Number(timelock.value) },
-    );
+    const { type } = timelock;
+    // `value` is typed bigint, but JS callers (and older examples) pass numbers.
+    const raw: unknown = timelock.value;
+    const value = typeof raw === "number" && Number.isSafeInteger(raw) ? BigInt(raw) : raw;
+    // bip68 encodes a negative value as -1, an operand that fails CSV at spend time.
+    if (typeof value !== "bigint" || value < 0n) {
+        throw new Error(
+            `Invalid relative timelock value ${String(raw)} — expected a non-negative integer`,
+        );
+    }
+    switch (type) {
+        case "blocks":
+            return bip68.encode({ blocks: Number(value) });
+        case "seconds":
+            return bip68.encode({ seconds: Number(value) });
+        default: {
+            const unknownType: never = type;
+            throw new Error(
+                `Invalid relative timelock type '${String(unknownType)}' — expected blocks or seconds`,
+            );
+        }
+    }
 }
 
 /**
