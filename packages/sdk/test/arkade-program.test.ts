@@ -8,6 +8,7 @@ import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
 } from "../src";
+import { resolveCsvTimelock } from "../src/arkade/program";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
@@ -453,5 +454,45 @@ describe("Program name & full-feature artifact round-trip", () => {
         const a = new arkade.ArkadeProgramScript(program, args, fullKeys);
         const b = new arkade.ArkadeProgramScript(rt, args, fullKeys);
         expect(hex.encode(b.pkScript)).toBe(hex.encode(a.pkScript));
+    });
+});
+
+describe("Program csv type validation", () => {
+    const exitProgram = (type: string): arkade.Program => ({
+        version: 0,
+        functions: {
+            exit: {
+                tapscript: { signers: ["$user"], csv: { type: type as any, value: "$exit" } },
+            },
+        },
+    });
+
+    it("refuses an unknown csv type when the program is built", () => {
+        expect(
+            () => new arkade.ArkadeProgramScript(exitProgram("block"), { user, exit: 1024n }, keys),
+        ).toThrow("tapscript: unknown csv type 'block'");
+    });
+
+    it("resolveCsvTimelock refuses an unknown type on its own", () => {
+        expect(() => resolveCsvTimelock({ type: "Sequence" as any, value: 1n }, {})).toThrow(
+            "unknown csv type 'Sequence'",
+        );
+    });
+
+    it("refuses a persisted program with an unknown csv type instead of building a seconds leaf", () => {
+        const stored = arkade.serializeArkadeContractParams({
+            program: exitProgram("blocks"),
+            args: { user, exit: 1024n },
+            serverKey: server,
+        });
+        const tampered = {
+            ...stored,
+            program: stored.program.replace('"type":"blocks"', '"type":"bogus"'),
+        };
+        expect(tampered.program).toContain('"type":"bogus"');
+        const params = arkade.deserializeArkadeContractParams(tampered);
+        expect(() => new arkade.ArkadeProgramScript(params.program, params.args, keys)).toThrow(
+            "tapscript: unknown csv type 'bogus'",
+        );
     });
 });

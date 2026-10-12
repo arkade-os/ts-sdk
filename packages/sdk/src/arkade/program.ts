@@ -220,14 +220,26 @@ export function resolveCsvTimelock(
     args: Record<string, ArkadeParamValue>,
 ): RelativeTimelock {
     const value = resolveTimelockValue(csv.value, args);
-    if (csv.type !== "sequence") return { type: csv.type, value };
-    const timelock = sequenceToCanonicalTimelock(value);
-    if (!timelock) {
-        throw new Error(
-            `csv '${csv.value}' resolved to ${value}, which is not a canonical BIP68 sequence`,
-        );
+    switch (csv.type) {
+        case "blocks":
+        case "seconds":
+            return { type: csv.type, value };
+        case "sequence": {
+            const timelock = sequenceToCanonicalTimelock(value);
+            if (!timelock) {
+                throw new Error(
+                    `csv '${csv.value}' resolved to ${value}, which is not a canonical BIP68 sequence`,
+                );
+            }
+            return timelock;
+        }
+        default: {
+            const unknownType: never = csv.type;
+            throw new Error(
+                `unknown csv type '${String(unknownType)}' — expected blocks, seconds or sequence`,
+            );
+        }
     }
-    return timelock;
 }
 
 /**
@@ -279,6 +291,8 @@ export function witnessRefToBytes(
     return MinimalScriptNum.encode(BigInt(v));
 }
 
+const CSV_TYPES: ReadonlySet<string> = new Set(["blocks", "seconds", "sequence"]);
+
 /**
  * Validate a tapscript segment: it must have signers; `asm` may combine with
  * `csv` (the condition + CSV closure) but `cltv` conflicts with both (arkd
@@ -297,6 +311,11 @@ export function validateTapscript(seg: TapscriptSegment): void {
     }
     if (seg.csv !== undefined && seg.cltv !== undefined) {
         throw new Error("tapscript: `csv` and `cltv` conflict — use at most one timelock");
+    }
+    if (seg.csv !== undefined && !CSV_TYPES.has(seg.csv.type)) {
+        throw new Error(
+            `tapscript: unknown csv type '${seg.csv.type}' — expected blocks, seconds or sequence`,
+        );
     }
     for (const t of seg.asm ?? []) {
         if (typeof t === "string" && t in ARKADE_OP) {
