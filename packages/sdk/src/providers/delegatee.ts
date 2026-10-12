@@ -180,8 +180,7 @@ function requiredString(object: Record<string, unknown>, key: string): string {
  * omitted entirely.
  */
 function parseInt64(value: unknown, label: string): number {
-    if (typeof value === "number") return value;
-    if (typeof value === "string" && value.length > 0) {
+    if (typeof value === "number" || (typeof value === "string" && value.length > 0)) {
         const parsed = Number(value);
         if (!Number.isSafeInteger(parsed)) {
             throw new Error(`Invalid delegatee response: ${label} is not an integer`);
@@ -192,10 +191,19 @@ function parseInt64(value: unknown, label: string): number {
 }
 
 function parseUint64(value: unknown, label: string): bigint {
-    if ((typeof value === "string" && /^[0-9]+$/.test(value)) || Number.isSafeInteger(value)) {
+    if (
+        (typeof value === "string" && /^[0-9]+$/.test(value)) ||
+        (Number.isSafeInteger(value) && (value as number) >= 0)
+    ) {
         return BigInt(value as string | number);
     }
     throw new Error(`Invalid delegatee response: ${label} is not an amount`);
+}
+
+function parseAmount(value: unknown, label: string): number {
+    const amount = parseInt64(value, label);
+    if (amount < 0) throw new Error(`Invalid delegatee response: ${label} is negative`);
+    return amount;
 }
 
 function parseVariables(value: unknown): Record<string, string> {
@@ -274,7 +282,7 @@ function parseVtxo(value: unknown): DelegateeVtxo {
     }
     return {
         outpoint: value.outpoint,
-        amount: parseInt64(value.amount, "amount"),
+        amount: parseAmount(value.amount, "amount"),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
         preconfirmed: value.preconfirmed === true,
         assets: optionalArray(value.assets, "assets").map((a) => {

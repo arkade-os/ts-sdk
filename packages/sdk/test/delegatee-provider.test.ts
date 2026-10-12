@@ -210,6 +210,22 @@ describe("RestDelegateeProvider", () => {
         await expect(provider.getDelegation("tark1x")).rejects.toThrow("missing amount");
     });
 
+    it("rejects negative and fractional amounts", async () => {
+        const provider = new RestDelegateeProvider("https://delegatee.test");
+        const delegation = { id: "1", status: "active", templateId: "t" };
+        respond({ delegation, vtxos: [{ outpoint: "aa:0", amount: -5 }] });
+        await expect(provider.getDelegation("tark1x")).rejects.toThrow("amount is negative");
+        respond({ delegation, vtxos: [{ outpoint: "aa:0", amount: 1.5 }] });
+        await expect(provider.getDelegation("tark1x")).rejects.toThrow("amount is not an integer");
+        respond({
+            delegation,
+            vtxos: [{ outpoint: "aa:0", amount: 1, assets: [{ assetId: "x", amount: -1 }] }],
+        });
+        await expect(provider.getDelegation("tark1x")).rejects.toThrow(
+            "asset amount is not an amount",
+        );
+    });
+
     it("returns a typed not-found error for an unregistered address", async () => {
         respond("not found", 404);
         await expect(
