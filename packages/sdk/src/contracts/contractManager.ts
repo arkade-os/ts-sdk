@@ -50,6 +50,7 @@ import {
     computeSyncWindow,
     cursorCutoff,
     getSyncCursor,
+    updateWalletState,
 } from "../utils/syncCursors";
 import {
     applyRecordedSpends,
@@ -57,9 +58,15 @@ import {
     hasVtxosForContract,
     inVtxoWriteOrder,
     saveVtxosForContract,
+    vtxoOutpoint,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 import { DEFAULT_PAGE_SIZE } from "./constants";
+import type { OnchainProvider } from "../providers/onchain";
+import type { Network } from "../networks";
+import { OnchainContractWatcher } from "./onchainWatcher";
+import { onchainAddressOf, toOnchainCoinRow } from "./onchainCoins";
+import { isOnchainScoped } from "./scope";
 
 /**
  * Whether two *different* contract types may share one repository row when their derived
@@ -397,9 +404,31 @@ export interface IContractManager extends Disposable {
     refreshOutpoints(outpoints: Outpoint[]): Promise<void>;
 
     /**
-     * Rebuild the HD look-ahead watch window around the current allocation watermark. No-op
-     * without `lookAhead`. Call after anything that moves the watermark (restore, boarding
-     * allocation, receive rotation, server-signer rotation); concurrent calls coalesce.
+     * Fetch onchain coins for onchain-scoped contracts (and contracts holding
+     * unspent unrolled outputs), upsert them, and mark vanished ones spent.
+     * No-op without `onchainProvider` and `network`. Narrowed by `scripts`.
+     * Optional (like {@link watchScript}): the service-worker proxy does not forward it yet.
+     */
+    syncOnchain?(scripts?: string[]): Promise<void>;
+
+    /**
+     * Record `txid` as the pending spender of stored onchain coins. A sync confirms it once the
+     * coin is spent, or releases it if still unspent `ONCHAIN_PENDING_RELEASE_BLOCKS` later.
+     * `skipUnknown` marks the stored coins and logs the rest instead of rejecting them all.
+     */
+    markOnchainSpendPending?(
+        outpoints: Outpoint[],
+        txid: string,
+        options?: { skipUnknown?: boolean },
+    ): Promise<void>;
+
+    /**
+     * Rebuild the HD look-ahead watch window around the current allocation
+     * watermark. No-op when the manager was configured without `lookAhead`.
+     *
+     * Call after anything that moves the watermark (restore, boarding
+     * allocation, receive rotation, server-signer rotation). Concurrent calls
+     * coalesce into a single drain.
      */
     refillLookAhead(): Promise<void>;
 
@@ -483,7 +512,17 @@ export type GetAllSpendingPathsOptions = {
     walletDescriptor?: string;
 };
 
-/** Configuration for the ContractManager. */
+/** A broadcast spend still unconfirmed after this many blocks is released. */
+export const ONCHAIN_PENDING_RELEASE_BLOCKS = 6;
+const ONCHAIN_PENDING_SPENDS_KEY = "onchainPendingSpends";
+
+/** `settings.onchainPendingSpends["txid:vout"]`; `script` locates the owner without a full scan. */
+interface OnchainPendingSpend {
+    spender: string;
+    height: number;
+    script: string;
+}
+
 export interface ContractManagerConfig {
     indexerProvider: IndexerProvider;
 
@@ -532,6 +571,10 @@ export interface ContractManagerConfig {
      * staleness a send's coin selection already has by this much.
      */
     vtxoSyncMaxAgeMs?: number;
+
+    /** Enables onchain coin discovery and watching; needs `network` too. */
+    onchainProvider?: OnchainProvider;
+    network?: Network;
 }
 
 /**
@@ -645,9 +688,22 @@ export class ContractManager implements IContractManager {
     /** Set by {@link dispose}, cleared by a re-`initialize`. A drain outlives the synchronous
      * `dispose()`, so it re-checks this at every await rather than run on a torn-down watcher. */
     private disposed = false;
+    private onchainWatcher?: OnchainContractWatcher;
+    /** Serializes onchain read-modify-writes so a pending spender is never overwritten. */
+    private onchainChain: Promise<void> = Promise.resolve();
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
+        if (config.onchainProvider && config.network) {
+            this.onchainWatcher = new OnchainContractWatcher({
+                onchainProvider: config.onchainProvider,
+                network: config.network,
+                onChange: (scripts) =>
+                    void this.syncOnchain(scripts).catch((e) =>
+                        console.error("[contracts] watcher-triggered onchain sync failed", e),
+                    ),
+            });
+        }
 
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,
@@ -1765,6 +1821,193 @@ export class ContractManager implements IContractManager {
         return this.watcher.getWatchedScripts();
     }
 
+    /** @see IContractManager.syncOnchain */
+    syncOnchain(scripts?: string[]): Promise<void> {
+        return this.inOnchainOrder(() => this.runOnchainSync(scripts));
+    }
+
+    /**
+     * @see IContractManager.markOnchainSpendPending
+     * @throws naming every outpoint that is not a stored, unconfirmed onchain coin; nothing is written then.
+     */
+    markOnchainSpendPending(
+        outpoints: Outpoint[],
+        txid: string,
+        options?: { skipUnknown?: boolean },
+    ): Promise<void> {
+        return this.inOnchainOrder(async () => {
+            const { onchainProvider } = this.config;
+            if (!onchainProvider)
+                throw new Error("markOnchainSpendPending needs an onchainProvider");
+            const keys = new Set(outpoints.map(vtxoOutpoint));
+            const contracts = await collectContracts(this.config.contractRepository);
+            const rows = (await this.getVtxosForContracts(contracts)).filter(
+                (v) => v.isUnrolled && !v.isSpent && keys.has(vtxoOutpoint(v)),
+            );
+            const unknown = [...keys].filter((k) => !rows.some((v) => vtxoOutpoint(v) === k));
+            if (unknown.length > 0) {
+                const message = `Unknown onchain coins: ${unknown.join(", ")}`;
+                if (!options?.skipUnknown) throw new Error(message);
+                console.warn(`[contracts] ${message}; marking the rest pending`);
+            }
+
+            const { height } = await onchainProvider.getChainTip();
+            // State first: an entry without a marked row releases harmlessly.
+            await this.updatePendingSpends((pending) => {
+                for (const v of rows) {
+                    pending[vtxoOutpoint(v)] = { spender: txid, height, script: v.contractScript };
+                }
+            });
+            for (const contract of contracts) {
+                const marked = rows
+                    .filter((v) => v.contractScript === contract.script)
+                    .map(({ contractScript: _, ...v }) => ({ ...v, spentBy: txid }));
+                if (marked.length === 0) continue;
+                await saveVtxosForContract(this.config.walletRepository, contract, marked);
+            }
+        });
+    }
+
+    private async readPendingSpends(): Promise<Record<string, OnchainPendingSpend>> {
+        const state = await this.config.walletRepository.getWalletState();
+        return { ...state?.settings?.[ONCHAIN_PENDING_SPENDS_KEY] };
+    }
+
+    private updatePendingSpends(
+        mutate: (pending: Record<string, OnchainPendingSpend>) => void,
+    ): Promise<void> {
+        return updateWalletState(this.config.walletRepository, (state) => {
+            const pending = { ...state.settings?.[ONCHAIN_PENDING_SPENDS_KEY] };
+            mutate(pending);
+            return {
+                ...state,
+                settings: { ...state.settings, [ONCHAIN_PENDING_SPENDS_KEY]: pending },
+            };
+        });
+    }
+
+    private inOnchainOrder(fn: () => Promise<void>): Promise<void> {
+        const run = this.onchainChain.then(fn, fn);
+        this.onchainChain = run.catch(() => {});
+        return run;
+    }
+
+    private async runOnchainSync(scripts?: string[]): Promise<void> {
+        const { onchainProvider, network } = this.config;
+        if (!onchainProvider || !network || this.disposed) return;
+        const contracts = await collectContracts(this.config.contractRepository);
+        const pending = await this.readPendingSpends();
+        const owners = new Set([
+            ...(await this.getVtxosForContracts(contracts, { unspentOnly: true }))
+                .filter((v) => v.isUnrolled)
+                .map((v) => v.contractScript),
+            ...Object.values(pending).map((p) => p.script),
+        ]);
+        const targets = contracts.filter(
+            (c) =>
+                contractHandlers.has(c.type) &&
+                ((c.state === "active" && isOnchainScoped(c)) || owners.has(c.script)),
+        );
+        const wanted = scripts && new Set(scripts);
+        const before = Object.keys(pending);
+        let tip: Promise<{ height: number }> | undefined;
+        const tipHeight = async () => (await (tip ??= onchainProvider.getChainTip())).height;
+        for (const contract of targets) {
+            if (wanted && !wanted.has(contract.script)) continue;
+            try {
+                await this.syncOnchainContract(
+                    contract,
+                    onchainProvider,
+                    network,
+                    pending,
+                    tipHeight,
+                );
+            } catch (e) {
+                console.warn(`[contracts] onchain sync failed for ${contract.script}`, e);
+            }
+        }
+        const settled = before.filter((key) => !(key in pending));
+        if (settled.length > 0) {
+            await this.updatePendingSpends((latest) => {
+                for (const key of settled) delete latest[key];
+            });
+        }
+        if (this.disposed) return;
+        await this.onchainWatcher?.setTargets(
+            targets.map((c) => ({ script: c.script, address: onchainAddressOf(c, network) })),
+        );
+    }
+
+    private async syncOnchainContract(
+        contract: Contract,
+        onchainProvider: OnchainProvider,
+        network: Network,
+        pending: Record<string, OnchainPendingSpend>,
+        tipHeight: () => Promise<number>,
+    ): Promise<void> {
+        const tapscript = contractHandlers.get(contract.type)!.createScript(contract.params);
+        const coins = await onchainProvider.getCoins(onchainAddressOf(contract, network));
+        const stored = new Map(
+            (await getVtxosForContract(this.config.walletRepository, contract)).map((v) => [
+                vtxoOutpoint(v),
+                v,
+            ]),
+        );
+        const rows: ExtendedVirtualCoin[] = [];
+        for (const coin of coins) {
+            const row = toOnchainCoinRow(coin, contract, tapscript);
+            const key = vtxoOutpoint(row);
+            const entry = pending[key];
+            if (entry && (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS) {
+                rows.push({ ...row, spentBy: entry.spender });
+                continue;
+            }
+            delete pending[key];
+            rows.push(row);
+        }
+        const live = new Set(rows.map(vtxoOutpoint));
+
+        const spent: ExtendedVirtualCoin[] = [];
+        for (const row of stored.values()) {
+            const key = vtxoOutpoint(row);
+            if (!row.isUnrolled || row.isSpent || live.has(key)) continue;
+            let outspend: { spent: boolean; txid?: string } | undefined;
+            try {
+                outspend = (await onchainProvider.getTxOutspends(row.txid))[row.vout];
+            } catch (e) {
+                // e.g. an evicted or reorged funding tx; must not block saving new coins.
+                console.warn(`[contracts] outspends lookup failed for ${key}`, e);
+                continue;
+            }
+            if (!outspend?.spent) continue;
+            const spentBy = outspend.txid ?? pending[key]?.spender ?? row.spentBy ?? "";
+            spent.push({ ...row, isSpent: true, spentBy });
+            delete pending[key];
+        }
+
+        const writes = [...rows, ...spent];
+        if (writes.length === 0) return;
+        await saveVtxosForContract(this.config.walletRepository, contract, writes);
+        const emit = (type: "vtxo_received" | "vtxo_spent", vtxos: ExtendedVirtualCoin[]) => {
+            if (vtxos.length === 0) return;
+            this.emitEvent({
+                type,
+                contractScript: contract.script,
+                vtxos: vtxos.map((v) => ({ ...v, contractScript: contract.script })),
+                contract,
+                timestamp: Date.now(),
+            });
+        };
+        emit(
+            "vtxo_received",
+            rows.filter((r) => !stored.has(vtxoOutpoint(r))),
+        );
+        emit("vtxo_spent", spent);
+    }
+
+    /**
+     * Emit an event to all registered callbacks.
+     */
     private emitEvent(event: ContractEvent): void {
         for (const callback of this.eventCallbacks) {
             try {
@@ -2087,6 +2330,7 @@ export class ContractManager implements IContractManager {
 
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
+        this.onchainWatcher?.stop();
 
         this.eventCallbacks.clear();
 

@@ -182,6 +182,42 @@ describe("RealmContractRepository", () => {
         });
     });
 
+    describe("scope", () => {
+        it("round-trips scope and filters it, resolving rows without one via the handler default", async () => {
+            await repository.saveContract(
+                createMockContract({ script: "both-row", type: "default", scope: "both" }),
+            );
+            await repository.saveContract(
+                createMockContract({ script: "boarding-row", type: "boarding" }),
+            );
+            await repository.saveContract(
+                createMockContract({ script: "default-row", type: "default" }),
+            );
+
+            const [both] = await collectContracts(repository, { script: "both-row" });
+            expect(both.scope).toBe("both");
+
+            const onchain = await collectContracts(repository, { scope: "onchain" });
+            expect(onchain.map((c) => c.script)).toEqual(["boarding-row"]);
+
+            const anyOnchain = await collectContracts(repository, { scope: ["onchain", "both"] });
+            expect(anyOnchain.map((c) => c.script).sort()).toEqual(["boarding-row", "both-row"]);
+            expect(await collectContracts(repository, { scope: [] })).toEqual([]);
+            const first = await repository.getContractsPage(
+                { scope: ["onchain", "both"] },
+                { limit: 1 },
+            );
+            const second = await repository.getContractsPage(
+                { scope: ["onchain", "both"] },
+                { limit: 1, after: first.nextCursor },
+            );
+            expect([...first.items, ...second.items].map((c) => c.script)).toEqual([
+                "boarding-row",
+                "both-row",
+            ]);
+        });
+    });
+
     // ── Watch state ────────────────────────────────────────────────────
 
     describe("watch state", () => {

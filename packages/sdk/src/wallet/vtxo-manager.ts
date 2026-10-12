@@ -5,6 +5,7 @@ import {
     IReadonlyWallet,
     isSubdust,
     Outpoint,
+    SendOnchainParams,
     VirtualCoin,
 } from ".";
 import {
@@ -18,7 +19,13 @@ import {
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
+import {
+    ArkadeInfo,
+    ArkProvider,
+    OnchainCosignRejectedError,
+    SettlementEvent,
+} from "../providers/ark";
+import { isCosignFallback } from "../contracts/onchainSpend";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
@@ -89,6 +96,10 @@ interface SweepCapableWallet extends IReadonlyWallet {
      * (rotated boarding), so a sweep batching several boarding addresses signs each correctly.
      */
     signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
+    /** Optional so older wallet objects keep working; absent disables the cosign-first sweep. */
+    sendOnchain?(params: SendOnchainParams): Promise<string>;
+    /** Outpoints the cosign sweep should renew now; absent disables it. */
+    getOnchainSweepInputs?(): Promise<Outpoint[]>;
 }
 
 function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet {
@@ -1434,10 +1445,37 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Sweep expired boarding inputs back to a fresh boarding address via the unilateral exit path:
-     * one pure onchain tx (no Arkade server) spending every expired input via the CSV exit script
-     * into a single boarding-address output, which restarts the timelock. Skipped if the output
-     * after fees would be below dust.
+     * Renew the boarding coins nearing cosign cut-off through an arkd
+     * cosignature; unrolled outputs are never swept here. Returns the txid, or
+     * undefined when nothing qualified or the cosign path is unavailable.
+     */
+    async sweepOnchainCoins(): Promise<string | undefined> {
+        if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
+        const inputs = await this.wallet.getOnchainSweepInputs?.();
+        if (!inputs?.length) return undefined;
+        const boarding = await this.wallet.getBoardingAddress();
+        try {
+            return await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
+        } catch (e) {
+            if (!isCosignFallback(e)) throw e;
+            if (e instanceof OnchainCosignRejectedError) {
+                console.warn("Onchain cosign sweep rejected, falling back to CSV exit:", e.message);
+            }
+            return undefined;
+        }
+    }
+
+    /**
+     * Sweep expired boarding inputs back to a fresh boarding address via
+     * the unilateral exit path (onchain self-spend).
+     *
+     * This builds a raw onchain transaction that:
+     * - Uses all expired boarding inputs as inputs (spent via the CSV exit script path)
+     * - Has a single output to the wallet's boarding address (restarts the timelock)
+     * - Batches multiple expired boarding inputs into one transaction
+     * - Skips the sweep if the output after fees would be below dust
+     *
+     * No Arkade server involvement is needed — this is a pure onchain transaction.
      *
      * @returns The broadcast transaction ID
      * @throws Error if no expired boarding inputs are found
@@ -1575,8 +1613,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Status of every deprecated server signer the wallet holds funds under (VTXO and boarding,
      * merged per signer), without migrating.
      *
-     * @remarks Not a pure repository/info read: boarding holdings fan out per boarding address
-     * (`getCoins` round trips) and refresh the UTXO cache via `saveUtxos`.
+     * @remarks This is no longer a pure repository/info read: surfacing boarding
+     * holdings fans out per boarding address (`getCoins` round trips) and
+     * syncs those coins into the contract manager's store.
      */
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();
@@ -2392,8 +2431,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     (this.settlementConfig?.boardingUtxoSweep ??
                         DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
                 if (sweepEnabled) {
+                    let utxos = boardingUtxos;
                     try {
-                        await this.sweepExpiredBoardingUtxos(boardingUtxos);
+                        if (await this.sweepOnchainCoins()) {
+                            utxos = await this.wallet.getBoardingUtxos();
+                        }
+                    } catch (e) {
+                        console.error("Error cosign-sweeping onchain coins:", e);
+                    }
+                    try {
+                        await this.sweepExpiredBoardingUtxos(utxos);
                     } catch (e) {
                         if (
                             !(e instanceof Error) ||

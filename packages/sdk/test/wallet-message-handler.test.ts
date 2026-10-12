@@ -957,7 +957,7 @@ describe("WalletMessageHandler handleMessage", () => {
     it("DELEGATE fails when delegateManager is not configured", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
-            getVtxos: vi.fn().mockResolvedValue([]),
+            getVtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             getDelegateManager: vi.fn().mockResolvedValue(undefined),
         };
@@ -1317,6 +1317,48 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles COSIGN_ONCHAIN_TX and SEND_ONCHAIN as long-running wallet calls", async () => {
+        const wallet = {
+            cosignOnchainTx: vi.fn().mockResolvedValue("cosign-txid"),
+            sendOnchain: vi.fn().mockResolvedValue("send-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = wallet;
+        const params = { outputs: [{ address: "bc1-dest", amount: 1_000 }] };
+        const cosign = {
+            ...baseMessage(),
+            type: "COSIGN_ONCHAIN_TX",
+            payload: { psbt: "cHNidP8=" },
+        };
+        const send = { ...baseMessage(), type: "SEND_ONCHAIN", payload: params };
+
+        expect(await updater.handleMessage(cosign as any)).toMatchObject({
+            type: "COSIGN_ONCHAIN_TX_SUCCESS",
+            payload: { txid: "cosign-txid" },
+        });
+        expect(await updater.handleMessage(send as any)).toMatchObject({
+            type: "SEND_ONCHAIN_SUCCESS",
+            payload: { txid: "send-txid" },
+        });
+        expect(wallet.cosignOnchainTx).toHaveBeenCalledWith("cHNidP8=");
+        expect(wallet.sendOnchain).toHaveBeenCalledWith(params);
+        expect(updater.isLongRunning(cosign as any)).toBe(true);
+        expect(updater.isLongRunning(send as any)).toBe(true);
+    });
+
+    it("returns a SEND_ONCHAIN failure as the response error", async () => {
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            sendOnchain: vi.fn().mockRejectedValue(new Error("insufficient onchain funds")),
+        };
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SEND_ONCHAIN",
+            payload: { outputs: [] },
+        } as any);
+        expect(response.error?.message).toBe("insufficient onchain funds");
+    });
+
     // A per-leg migration report (send VTXO leg + settle boarding leg) carrying
     // bigint cutoff dates at every nesting level the wire envelope must reach.
     const perLegReport = {
@@ -1557,6 +1599,45 @@ describe("WalletMessageHandler handleMessage", () => {
         ).toBe(true);
     });
 
+    it("eagerly starts VtxoManager on wallet initialization", async () => {
+        const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
+        (updater as any).readonlyWallet = {
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+            getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+            getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
+            getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            getBoardingTxs: vi.fn().mockResolvedValue({
+                boardingTxs: [],
+                commitmentsToIgnore: new Set(),
+            }),
+            onchainProvider: {
+                getCoins: vi.fn().mockResolvedValue([]),
+            },
+            notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
+            getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
+                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                syncOnchain: vi.fn().mockResolvedValue(undefined),
+            }),
+        };
+        (updater as any).wallet = {
+            getVtxoManager: getVtxoManagerSpy,
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        };
+        (updater as any).arkProvider = {};
+        (updater as any).indexerProvider = {};
+        (updater as any).walletRepository = {
+            getVtxosPage: vi.fn().mockResolvedValue({ items: [] }),
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
+            saveVtxos: vi.fn().mockResolvedValue(undefined),
+            saveTransactions: vi.fn().mockResolvedValue(undefined),
+        };
+
+        await (updater as any).onWalletInitialized();
+
+        expect(getVtxoManagerSpy).toHaveBeenCalled();
+    });
+
     it("does not start VtxoManager for readonly wallets", async () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
@@ -1574,6 +1655,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                syncOnchain: vi.fn().mockResolvedValue(undefined),
             }),
         };
         // wallet is NOT set — readonly only
@@ -1583,9 +1665,6 @@ describe("WalletMessageHandler handleMessage", () => {
             getVtxosPage: vi.fn().mockResolvedValue({ items: [] }),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
-            getUtxosPage: vi.fn().mockResolvedValue({ items: [] }),
-            deleteUtxos: vi.fn().mockResolvedValue(undefined),
-            saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
         };
 
@@ -1717,6 +1796,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 getContracts: vi.fn().mockResolvedValue(contracts),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                syncOnchain: vi.fn().mockResolvedValue(undefined),
             }),
             onchainProvider: {
                 getCoins: vi.fn().mockResolvedValue([]),
@@ -2028,6 +2108,35 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 total: 150000,
             },
         });
+    });
+
+    it("GET_BALANCE and history skip onchain coin rows of an onchain-scoped contract", async () => {
+        const boardingScript = "51".repeat(17);
+        const boardingAddress = "boarding-ark-address";
+        setupHandler([
+            { type: "boarding", params: {}, script: boardingScript, address: boardingAddress },
+        ]);
+        const onchainRow = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            script: boardingScript,
+            isSpent: false,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxosForScript({ script: boardingScript, address: boardingAddress }, [
+            onchainRow,
+        ]);
+
+        const balance = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+        expect(balance).toMatchObject({ payload: { unrolled: 0, total: 0 } });
+        const history = (await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_TRANSACTION_HISTORY",
+        } as any)) as any;
+        expect(history.payload.transactions).toEqual([]);
     });
 
     it("GET_BALANCE reports an unrolled swept VTXO as unrolled, not recoverable", async () => {
@@ -2464,6 +2573,41 @@ describe("WalletMessageHandler repo-backed reads", () => {
         ]);
     });
 
+    it("boarding refresh syncs onchain coins through the contract manager", async () => {
+        setupHandler();
+        const manager = await (updater as any).readonlyWallet.getContractManager();
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await (updater as any).onWalletInitialized();
+
+        expect(manager.syncOnchain).toHaveBeenCalledWith();
+    });
+
+    it("RELOAD_WALLET forces refreshVtxos before reading from repo", async () => {
+        setupHandler();
+        const refreshSpy = vi.fn().mockResolvedValue(undefined);
+        (updater as any).readonlyWallet.getContractManager = vi.fn().mockResolvedValue({
+            getContracts: vi.fn().mockResolvedValue([]),
+            onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            refreshVtxos: refreshSpy,
+            syncOnchain: vi.fn().mockResolvedValue(undefined),
+        });
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "RELOAD_WALLET",
+        } as any);
+
+        expect(refreshSpy).toHaveBeenCalled();
+    });
+
     it("RELOAD_WALLET does not re-subscribe or restart VtxoManager", async () => {
         setupHandler();
         const notifyFundsSpy = (updater as any).readonlyWallet.notifyIncomingFunds;
@@ -2473,6 +2617,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             refreshVtxos: refreshSpy,
+            syncOnchain: vi.fn().mockResolvedValue(undefined),
         });
         (updater as any).wallet = {
             getVtxoManager: getVtxoManagerSpy,
@@ -2507,6 +2652,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             refreshVtxos: refreshSpy,
+            syncOnchain: vi.fn().mockResolvedValue(undefined),
         });
         (updater as any).wallet = {
             getVtxoManager: vi.fn().mockResolvedValue({}),

@@ -1,5 +1,6 @@
 // Types
 export * from "./types";
+export * from "./scope";
 
 // Contract handlers
 export { contractHandlers } from "./handlers";
