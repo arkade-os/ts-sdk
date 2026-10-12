@@ -88,6 +88,32 @@ describe("requestOrigin", () => {
 });
 
 describe("OriginRateGate", () => {
+    it("sleeps a long cooldown in portable timer-sized chunks", async () => {
+        vi.useFakeTimers();
+        try {
+            const maxTimerMs = 2 ** 31 - 1;
+            const gate = new OriginRateGate({
+                defaultCooldownMs: maxTimerMs + 50,
+                maxCooldownMs: maxTimerMs + 50,
+                jitterMs: 0,
+            });
+            gate.reportRateLimited("https://a.example/x");
+            const fn = vi.fn().mockResolvedValue("ready");
+            const timer = vi.spyOn(globalThis, "setTimeout");
+            const pending = gate.run("https://a.example/x", fn);
+            await Promise.resolve();
+            expect(timer).toHaveBeenLastCalledWith(expect.any(Function), maxTimerMs);
+            await vi.advanceTimersByTimeAsync(maxTimerMs);
+            expect(fn).not.toHaveBeenCalled();
+            expect(timer).toHaveBeenLastCalledWith(expect.any(Function), 50);
+            await vi.advanceTimersByTimeAsync(50);
+            await expect(pending).resolves.toBe("ready");
+            timer.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it.each(["defaultCooldownMs", "maxCooldownMs", "jitterMs"] as const)(
         "validates %s while accepting zero",
         (key) => {

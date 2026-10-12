@@ -22,6 +22,7 @@
 import { hex } from "@scure/base";
 import {
     ArkErrorName,
+    assertTimerMs,
     isArkError,
     isContractVtxoEvent,
     maybeArkError,
@@ -615,6 +616,7 @@ export class RfqSwapManager {
     private running = false;
 
     constructor(deps: RfqSwapManagerDeps, config: RfqSwapManagerConfig = {}) {
+        assertTimerMs("pollIntervalMs", config.pollIntervalMs);
         this.deps = deps;
         this.config = {
             enableAutoActions: config.enableAutoActions ?? true,

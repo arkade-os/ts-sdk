@@ -1702,6 +1702,18 @@ describe("SettlementConfig", () => {
     });
 
     describe("VtxoManager constructor normalization", () => {
+        it("validates polling duration while accepting zero", async () => {
+            const wallet = createMockWallet([]);
+            for (const value of [-1, 0.5, NaN, Infinity, 2 ** 31]) {
+                expect(() => new VtxoManager(wallet, { pollIntervalMs: value })).toThrow(
+                    "pollIntervalMs",
+                );
+            }
+            const manager = new VtxoManager(wallet, { pollIntervalMs: 0 });
+            expect(manager.settlementConfig).toEqual({ pollIntervalMs: 0 });
+            await manager.dispose();
+        });
+
         it("should enable settlementConfig by default when no config provided", () => {
             const wallet = createMockWallet();
             const manager = new VtxoManager(wallet);

@@ -121,6 +121,59 @@ async function sendInit(id = "init-1") {
 }
 
 describe("MessageBus PING/PONG", () => {
+    it.each(["tickIntervalMs", "messageTimeoutMs", "messageTimeoutOverrides"] as const)(
+        "rejects timer overflow in %s",
+        (key) => {
+            const options =
+                key === "messageTimeoutOverrides"
+                    ? { messageTimeoutOverrides: { TEST: 2 ** 31 } }
+                    : { [key]: 2 ** 31 };
+            expect(
+                () =>
+                    new MessageBus(
+                        new InMemoryWalletRepository(),
+                        new InMemoryContractRepository(),
+                        { messageHandlers: [], ...options },
+                    ),
+            ).toThrow("must not exceed 2147483647 milliseconds");
+        },
+    );
+
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "reports an invalid page timeout %s without starting handlers",
+        async (value) => {
+            const handler = new TestHandler();
+            const buildServices = vi.fn().mockResolvedValue({});
+            const bus = new MessageBus(
+                new InMemoryWalletRepository(),
+                new InMemoryContractRepository(),
+                { messageHandlers: [handler], buildServices },
+            );
+            await bus.start();
+            const postMessage = vi.fn();
+            await messageHandler({
+                data: {
+                    type: "INITIALIZE_MESSAGE_BUS",
+                    id: "invalid-timeout",
+                    tag: "INITIALIZE_MESSAGE_BUS",
+                    config: { messageTimeouts: { TEST: value } },
+                },
+                source: { postMessage },
+                waitUntil: (p) => p,
+            });
+            expect(postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    error: expect.objectContaining({
+                        message: expect.stringContaining("messageTimeouts.TEST"),
+                    }),
+                }),
+            );
+            expect(buildServices).not.toHaveBeenCalled();
+            expect(handler.start).not.toHaveBeenCalled();
+            await bus.stop();
+        },
+    );
+
     it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
         "rejects invalid timeout configuration %s",
         (value) => {

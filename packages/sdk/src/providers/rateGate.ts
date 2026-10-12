@@ -17,7 +17,7 @@
  *   application level, so a certain missed round beats a possible `429`.
  */
 
-import { assertNonNegativeMs } from "../utils/time";
+import { assertNonNegativeMs, MAX_TIMER_MS } from "../utils/time";
 
 /** Per-origin in-flight cap on the wait+report path (the browser per-host cap). */
 const DEFAULT_MAX_CONCURRENT = 6;
@@ -47,7 +47,8 @@ interface OriginState {
     queue: (() => void)[];
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, Math.min(ms, MAX_TIMER_MS)));
 
 /**
  * Parse a `Retry-After` header into milliseconds, in either spec encoding

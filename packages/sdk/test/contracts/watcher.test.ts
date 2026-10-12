@@ -27,6 +27,21 @@ import {
 } from "./helpers";
 
 describe("ContractWatcher", () => {
+    it.each(["failsafePollIntervalMs", "reconnectDelayMs", "maxReconnectDelayMs"] as const)(
+        "validates %s without rejecting zero",
+        (key) => {
+            const config = {
+                indexerProvider: createMockIndexerProvider(),
+                walletRepository: new InMemoryWalletRepository(),
+            };
+            expect(() => new ContractWatcher({ ...config, [key]: 0 })).not.toThrow();
+            expect(() => new ContractWatcher({ ...config, [key]: 2 ** 31 - 1 })).not.toThrow();
+            for (const value of [-1, 0.5, NaN, Infinity, 2 ** 31]) {
+                expect(() => new ContractWatcher({ ...config, [key]: value })).toThrow(key);
+            }
+        },
+    );
+
     let watcher: ContractWatcher;
     let mockIndexer: IndexerProvider;
 

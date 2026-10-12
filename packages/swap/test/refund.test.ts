@@ -6,7 +6,7 @@
  * `refundWithoutReceiver` leaf (carrying the CLTV that makes it valid), and
  * that a dead-but-funded swap is still refunded rather than reported done.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -571,6 +571,24 @@ describe("refundIfUnresolved", () => {
         refundLocktime: REFUND_LOCKTIME,
         pollMs: 1,
     });
+
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid retry delay %s before consulting the transport",
+        async (pollMs) => {
+            const transport = fakeTransport(["settled"]);
+            const status = vi.spyOn(transport, "status");
+            await expect(
+                refundIfUnresolved(
+                    transport,
+                    fakeOperator(),
+                    fakeContracts(VTXOS),
+                    fakeIndexer(VTXOS),
+                    { ...baseInput(), pollMs },
+                ),
+            ).rejects.toThrow("pollMs");
+            expect(status).not.toHaveBeenCalled();
+        },
+    );
 
     it("stops without refunding when the solver resolved it", async () => {
         for (const state of RFQ_RESOLVED_STATES) {

@@ -2,7 +2,7 @@
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
-import { assertNonNegativeMs } from "../utils/time";
+import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
 import {
@@ -229,9 +229,10 @@ export class MessageBus {
             buildServices,
         }: Options,
     ) {
-        assertNonNegativeMs("messageTimeoutMs", messageTimeoutMs);
+        assertTimerMs("tickIntervalMs", tickIntervalMs);
+        assertTimerMs("messageTimeoutMs", messageTimeoutMs);
         for (const [key, value] of Object.entries(messageTimeoutOverrides)) {
-            assertNonNegativeMs(`messageTimeoutOverrides.${key}`, value);
+            assertTimerMs(`messageTimeoutOverrides.${key}`, value);
         }
         this.intentRepository = intentRepository;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
@@ -458,7 +459,7 @@ export class MessageBus {
 
     private async doInit(config: Initialize["config"]) {
         for (const [key, value] of Object.entries(config.messageTimeouts ?? {})) {
-            assertNonNegativeMs(`messageTimeouts.${key}`, value);
+            assertTimerMs(`messageTimeouts.${key}`, value);
         }
         // Cancel any tick scheduled by a previous init so it cannot fire while
         // handlers are stopped or rebuilt.

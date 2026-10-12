@@ -20,6 +20,10 @@ style and have not been backfilled.
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
   fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+  Timer-backed settings additionally reject delays above 2,147,483,647 milliseconds
+  (the portable timer limit). Zero still disables optional timers or schedules an
+  immediate timeout/poll, depending on the existing API; reconnect caps still clamp
+  the base delay rather than requiring a particular ordering.
 
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads

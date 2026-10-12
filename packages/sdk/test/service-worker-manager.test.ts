@@ -41,6 +41,18 @@ const createServiceWorkerContainer = (registration: Partial<ServiceWorkerRegistr
 };
 
 describe("service-worker-manager", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid activation timeout %s before registering",
+        async (activationTimeoutMs) => {
+            const container = createServiceWorkerContainer();
+            stubNavigator(container);
+            await expect(
+                setupServiceWorkerOnce({ path: "/sw.js", activationTimeoutMs }),
+            ).rejects.toThrow("activationTimeoutMs");
+            expect(container.register).not.toHaveBeenCalled();
+        },
+    );
+
     beforeEach(() => {
         vi.useFakeTimers();
     });
@@ -126,6 +138,8 @@ describe("service-worker-manager", () => {
         expect(waiting.postMessage).toHaveBeenCalledWith({
             type: "SKIP_WAITING",
         });
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(waiting.postMessage).toHaveBeenCalledTimes(1);
 
         container.dispatch("controllerchange");
         expect(onUpdated).toHaveBeenCalledTimes(1);

@@ -1,4 +1,4 @@
-import { assertNonNegativeMs } from "../../utils/time";
+import { assertTimerMs } from "../../utils/time";
 import {
     IWallet,
     WalletBalance,
@@ -532,6 +532,7 @@ const initializeMessageBus = (
     config: MessageBusInitConfig,
     timeoutMs = 2000,
 ) => {
+    assertTimerMs("messageBusTimeoutMs", timeoutMs);
     const initCmd = {
         tag: "INITIALIZE_MESSAGE_BUS",
         id: getRandomId(),
@@ -657,7 +658,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         // Precompute the merged timeout map so page-side waiting and
         // worker-side enforcement are derived from the same source.
         for (const [key, value] of Object.entries(options.messageTimeouts ?? {})) {
-            assertNonNegativeMs(`messageTimeouts.${key}`, value);
+            assertTimerMs(`messageTimeouts.${key}`, value);
         }
         const messageTimeouts = options.messageTimeouts
             ? ({

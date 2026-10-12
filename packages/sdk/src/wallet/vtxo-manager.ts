@@ -1,3 +1,4 @@
+import { assertTimerMs } from "../utils/time";
 import {
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -920,6 +921,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         readonly wallet: IWallet,
         settlementConfig?: SettlementConfig | false,
     ) {
+        if (settlementConfig !== false) {
+            assertTimerMs("pollIntervalMs", settlementConfig?.pollIntervalMs);
+        }
         this.settlementConfig =
             settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
 
