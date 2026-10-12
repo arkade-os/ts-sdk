@@ -89,8 +89,8 @@ export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
  * Compute the `after` lower-bound for a delta sync query. No `before` bound, so fresh virtual
  * outputs are never excluded; the safety lag applies only to {@link cursorCutoff}.
  */
-export function computeSyncWindow(cursor: number): { after: number } {
-    const after = Math.max(0, cursor - OVERLAP_MS);
+export function computeSyncWindow(cursor: number, overlapMs = OVERLAP_MS): { after: number } {
+    const after = Math.max(0, cursor - overlapMs);
     return { after };
 }
 

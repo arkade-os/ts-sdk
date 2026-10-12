@@ -156,6 +156,8 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
      * @see ContractWatcherConfig
      */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /** Delta-sync overlap in milliseconds, including boot; defaults to 24 hours. */
+    vtxoSyncOverlapMs?: number;
 }
 
 /**

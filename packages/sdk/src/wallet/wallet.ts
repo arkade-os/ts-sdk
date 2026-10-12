@@ -630,6 +630,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+    protected vtxoSyncOverlapMs?: number;
+
+    protected copySyncOverlapTo(wallet: ReadonlyWallet): void {
+        wallet.vtxoSyncOverlapMs = this.vtxoSyncOverlapMs;
+    }
 
     /** Opt-in intent-lifecycle repository; `undefined` ⇒ intent persistence is a no-op. */
     public intentRepository?: IntentRepository;
@@ -1088,6 +1093,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
+        wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
@@ -1927,6 +1933,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
+            vtxoSyncOverlapMs: this.vtxoSyncOverlapMs,
             lookAhead: this.lookAheadConfig(),
             // Without it every height-typed CLTV reads as unsatisfied, and seconds-typed timelocks
             // would be judged against the host clock. @see ContractManagerConfig.chainTip
@@ -3169,6 +3176,7 @@ export class Wallet
             }
         }
 
+        wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
@@ -3215,6 +3223,7 @@ export class Wallet
             this.watcherConfig,
             this.walletContractTimelocks,
         );
+        this.copySyncOverlapTo(readonly);
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
         // boarding watch path and spendability split match the source wallet's.
         (readonly as unknown as { _deprecatedSigners: Map<string, bigint> })._deprecatedSigners =

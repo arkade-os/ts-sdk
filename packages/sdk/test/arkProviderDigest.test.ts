@@ -309,7 +309,10 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(warn).toHaveBeenCalled();
     });
 
-    it("exposes DigestMismatchError from the package entry point", async () => {
+    // A cold import transforms the whole package, past the 5 s default on a loaded machine.
+    it("exposes DigestMismatchError from the package entry point", {
+        timeout: 30_000,
+    }, async () => {
         const pkg = await import("../src");
         expect(pkg.DigestMismatchError).toBe(DigestMismatchError);
         expect(new pkg.DigestMismatchError("x")).toBeInstanceOf(Error);
