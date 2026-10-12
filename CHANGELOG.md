@@ -9,6 +9,12 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
+  decoding, and compiler artifact import recognize the emulator's variable
+  assignment opcode.
+
 ### Changed
 
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
