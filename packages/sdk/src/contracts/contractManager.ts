@@ -44,7 +44,7 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
-import { reconcileIntents } from "../wallet/intentReconciliation";
+import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -498,6 +498,9 @@ export interface ContractManagerConfig {
      */
     intentRepository?: IntentRepository;
 
+    /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
+    intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
+
     /**
      * Exit-data capture hook, fired best-effort after VTXOs are persisted so a
      * virtualTxRepository can store each one's unilateral-exit branch.
@@ -827,6 +830,7 @@ export class ContractManager implements IContractManager {
         if (!this.config.intentRepository) return;
         try {
             await reconcileIntents({
+                ...this.config.intentReconciliation,
                 intentRepository: this.config.intentRepository,
                 indexerProvider: this.config.indexerProvider,
             });

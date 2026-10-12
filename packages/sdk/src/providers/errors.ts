@@ -28,6 +28,7 @@ export const ArkErrorName = {
      * timestamp**, not wall clock, so a prompt spend is rejected until a later block lands.
      */
     FORFEIT_CLOSURE_LOCKED: "FORFEIT_CLOSURE_LOCKED",
+    INVALID_INTENT_PROOF: "INVALID_INTENT_PROOF",
 } as const;
 
 export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];

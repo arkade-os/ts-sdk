@@ -1423,7 +1423,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         try {
             await this.dispose();
         } finally {
-            await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
+            await Promise.all([
+                this.walletRepository.clear(),
+                this.contractRepository.clear(),
+                this.intentRepository?.clear(),
+            ]);
         }
     }
     /**
@@ -1895,6 +1899,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return undefined;
     }
 
+    /** Readonly wallets never settle, so they neither release nor own server intents. */
+    protected intentReconciliationConfig(): ContractManagerConfig["intentReconciliation"] {
+        return undefined;
+    }
+
     private async initializeContractManager(): Promise<ContractManager> {
         // When a virtualTxRepository is configured, capture each received VTXO's
         // unilateral-exit branch and prune it on spend (both best-effort).
@@ -1930,6 +1939,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
             intentRepository: this.intentRepository,
+            intentReconciliation: this.intentReconciliationConfig(),
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
@@ -2175,6 +2185,13 @@ export class Wallet
 
     /** Per-side width of the HD look-ahead band. @see WalletConfig.lookAheadWindow */
     private readonly _lookAheadWindow: number;
+
+    protected override intentReconciliationConfig(): ContractManagerConfig["intentReconciliation"] {
+        return {
+            deleteIntent: (intent) => this.arkProvider.deleteIntent(intent),
+            isOutpointInFlight: (o) => this._settlingOutpoints.has(`${o.txid}:${o.vout}`),
+        };
+    }
 
     /**
      * Watch a band of receive scripts around the HD watermark so payments to an externally-issued
@@ -2735,6 +2752,8 @@ export class Wallet
      * transactions for the same inputs.
      */
     private _txLock: Promise<void> = Promise.resolve();
+    // Every input (boarding included) of an intent a live settle owns; reconciliation skips them.
+    private readonly _settlingOutpoints = new Set<string>();
 
     /** Coalesces concurrent {@link restore} calls into one scan; cleared on settle. */
     private _restoreInFlight?: Promise<void>;
@@ -3500,6 +3519,24 @@ export class Wallet
                 .sort()
                 .join("|");
         }
+
+        // Last check before anything leaves the wallet: `updateDbAfterSettle` re-annotates these
+        // inputs only after the batch finalized. After the cheap local validation, before the
+        // intent; arknotes and boarding inputs carry no vtxo script.
+        const settleInputVtxos = params.inputs.filter(isVirtualCoin);
+        const contractManager = await this.getContractManager();
+        await contractManager.assertAnnotatable(settleInputVtxos);
+        // Immature timelocks otherwise register fine and are refused server-side, unhelpfully.
+        // Only certain handlers answer, so a no-op for ordinary coins.
+        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
+            hex.encode(await this.identity.xOnlyPublicKey()),
+        );
+
+        // Hide the inputs from concurrent getVtxos() callers before the intent registers, and
+        // claim them before the first persist so reconciliation never races this settle.
+        this._addPendingSpends(params.inputs);
+        const settlingKeys = params.inputs.map((i) => `${i.txid}:${i.vout}`);
+        for (const key of settlingKeys) this._settlingOutpoints.add(key);
         await this.persistIntentSnapshot(
             intentTxId,
             "waiting_to_submit",
@@ -3519,21 +3556,6 @@ export class Wallet
         // local cleanup failure may cancel it. Authoritative in memory even if
         // the hook's terminal repo write failed, which repo state can't tell us.
         let committedTxid: string | undefined;
-
-        // Last check before anything leaves the wallet: `updateDbAfterSettle` re-annotates these
-        // inputs only after the batch finalized. After the cheap local validation, before the
-        // intent; arknotes and boarding inputs carry no vtxo script.
-        const settleInputVtxos = params.inputs.filter(isVirtualCoin);
-        const contractManager = await this.getContractManager();
-        await contractManager.assertAnnotatable(settleInputVtxos);
-        // Immature timelocks otherwise register fine and are refused server-side, unhelpfully.
-        // Only certain handlers answer, so a no-op for ordinary coins.
-        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
-            hex.encode(await this.identity.xOnlyPublicKey()),
-        );
-
-        // Hide the inputs from concurrent getVtxos() callers before the intent registers.
-        this._addPendingSpends(params.inputs);
 
         try {
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
@@ -3625,6 +3647,7 @@ export class Wallet
         } finally {
             // Clear first so a synchronous handler firing from abort() never sees stale state.
             this._removePendingSpends(params.inputs);
+            for (const key of settlingKeys) this._settlingOutpoints.delete(key);
             // abort() covers a started generator; return() also releases one that never ran.
             abortController.abort();
             await stream?.return?.().catch(() => {});

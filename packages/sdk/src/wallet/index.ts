@@ -234,7 +234,9 @@ export type StorageConfig = {
     /**
      * Optional intent-lifecycle repository. Opt-in: when present, the wallet
      * persists settlement intents and excludes intent-locked VTXOs from
-     * spendable balance. Absent ⇒ those code paths are no-ops.
+     * spendable balance. Absent ⇒ those code paths are no-ops. Only one wallet
+     * instance may settle against it: reconciliation deletes from the server any
+     * pending intent that instance is not settling itself.
      */
     intentRepository?: IntentRepository;
     /**

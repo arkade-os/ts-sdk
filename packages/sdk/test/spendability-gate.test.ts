@@ -772,6 +772,7 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
             getSpendableVtxos,
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             makeRegisterIntentSignature: registerInputs,
             makeDeleteIntentSignature: vi.fn().mockResolvedValue({
