@@ -407,6 +407,10 @@ export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
 };
+/** Answers a `watchStateOnly` update; carries no row, so nothing is re-read. */
+export type ResponseContractWatchStateSet = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
+};
 
 export type RequestDeleteContract = RequestEnvelope & {
     type: "DELETE_CONTRACT";
@@ -941,6 +945,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
+        | ResponseContractWatchStateSet
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1437,12 +1442,7 @@ export class WalletMessageHandler
                     const { script, updates, watchStateOnly } = message.payload;
                     if (watchStateOnly && updates.watch) {
                         await manager.setContractWatchState(script, updates.watch);
-                        const [contract] = await manager.getContracts({ script });
-                        return this.tagged({
-                            id,
-                            type: "CONTRACT_UPDATED",
-                            payload: { contract },
-                        });
+                        return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
                     }
                     const contract = await manager.updateContract(script, updates);
                     return this.tagged({

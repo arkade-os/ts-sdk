@@ -1551,7 +1551,8 @@ export class ContractManager implements IContractManager {
 
     private async updateExistingContract(
         script: string,
-        update: (existing: Contract) => Contract,
+        /** `undefined` means unchanged: no write, no resubscribe. */
+        update: (existing: Contract) => Contract | undefined,
     ): Promise<Contract> {
         const [existing] = await collectContracts(this.config.contractRepository, { script });
         if (!existing) {
@@ -1559,6 +1560,7 @@ export class ContractManager implements IContractManager {
         }
 
         const updated = update(existing);
+        if (!updated) return existing;
 
         await this.config.contractRepository.saveContract(updated);
         await this.watcher.updateContract(updated);
@@ -1576,9 +1578,9 @@ export class ContractManager implements IContractManager {
 
     /** @see IContractManager.setContractWatchState */
     async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
-        const [existing] = await collectContracts(this.config.contractRepository, { script });
-        if (existing && watchStateOf(existing) === watch) return;
-        await this.updateContract(script, { watch });
+        await this.updateExistingContract(script, (existing) =>
+            watchStateOf(existing) === watch ? undefined : { ...existing, watch },
+        );
     }
 
     /**
