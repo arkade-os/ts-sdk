@@ -1,16 +1,9 @@
 import { hex } from "@scure/base";
-import { VtxoScript } from "../../script/base";
+import { equalBytes } from "@scure/btc-signer/utils.js";
+import { DefaultVtxo } from "../../script/default";
 import { defaultContract, type DelegateeDefault } from "../../script/delegateeTemplate";
-import { CSVMultisigTapscript } from "../../script/tapscript";
-import { timelockToSequence } from "../../utils/timelock";
-import {
-    Contract,
-    ContractHandler,
-    DerivedContractTapscripts,
-    PathContext,
-    PathSelection,
-    TapscriptDeriving,
-} from "../types";
+import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
+import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
 import { isCsvSpendable } from "./helpers";
 
 /**
@@ -46,25 +39,17 @@ function integer(value: string | undefined, name: string): number {
     return n;
 }
 
-/** forfeit (owner + server): the leaf the wallet signs with the server. */
-function forfeitLeaf(script: VtxoScript) {
-    return script.findLeaf(hex.encode(script.scripts[0]));
-}
-
-/** exit (owner after CSV): leaf 1 of both contracts. */
-function exitPath(script: VtxoScript): PathSelection {
-    const exit = CSVMultisigTapscript.decode(script.scripts[1]);
-    return {
-        leaf: script.findLeaf(hex.encode(exit.script)),
-        sequence: Number(timelockToSequence(exit.params.timelock)),
-    };
-}
-
 /** The covenant leaf is the service's and the server's to sign; it is never offered. */
-function paths(script: VtxoScript, context: PathContext, checkTimelocks: boolean): PathSelection[] {
-    const out: PathSelection[] = context.collaborative ? [{ leaf: forfeitLeaf(script) }] : [];
-    const exit = exitPath(script);
-    if (!checkTimelocks || isCsvSpendable(context, exit.sequence)) out.push(exit);
+function paths(
+    script: DefaultVtxo.Script,
+    context: PathContext,
+    checkTimelocks: boolean,
+): PathSelection[] {
+    const out: PathSelection[] = context.collaborative ? [{ leaf: script.forfeit() }] : [];
+    const sequence = Number(timelockToSequence(script.options.csvTimelock));
+    if (!checkTimelocks || isCsvSpendable(context, sequence)) {
+        out.push({ leaf: script.exit(), sequence });
+    }
     return out;
 }
 
@@ -79,13 +64,16 @@ function paths(script: VtxoScript, context: PathContext, checkTimelocks: boolean
  * - exit: (Owner) + CSV, the wallet's unilateral path
  * - renew/board: (Server + Emulator) covenant, the service's; never offered
  */
-export const DelegateeContractHandler: ContractHandler<DelegateeContractParams, VtxoScript> &
-    TapscriptDeriving<VtxoScript> = {
+export const DelegateeContractHandler: ContractHandler<
+    DelegateeContractParams,
+    DefaultVtxo.Script
+> = {
     type: "delegatee",
 
-    createScript(params: Record<string, string>): VtxoScript {
+    /** The default script of the owner with the covenant leaf after forfeit and exit. */
+    createScript(params: Record<string, string>): DefaultVtxo.Script {
         const p = this.deserializeParams(params);
-        return defaultContract(
+        const derived = defaultContract(
             p.template,
             {
                 delegatePubkey: hex.encode(p.delegatePubKey),
@@ -94,7 +82,19 @@ export const DelegateeContractHandler: ContractHandler<DelegateeContractParams, 
             },
             p.owner,
             p,
-        ).vtxoScript;
+        );
+        const script = new DefaultVtxo.Script(
+            {
+                pubKey: p.owner.subarray(1),
+                serverPubKey: p.serverPubKey.subarray(1),
+                csvTimelock: sequenceToTimelock(p.boardingExitDelay ?? p.exitDelay),
+            },
+            derived.scripts.slice(2),
+        );
+        if (!equalBytes(script.pkScript, derived.pkScript)) {
+            throw new Error(`delegatee ${p.template} contract is not forfeit, exit and covenant`);
+        }
+        return script;
     },
 
     serializeParams(params: DelegateeContractParams): Record<string, string> {
@@ -133,7 +133,7 @@ export const DelegateeContractHandler: ContractHandler<DelegateeContractParams, 
     },
 
     selectPath(
-        script: VtxoScript,
+        script: DefaultVtxo.Script,
         _contract: Contract,
         context: PathContext,
     ): PathSelection | null {
@@ -141,7 +141,7 @@ export const DelegateeContractHandler: ContractHandler<DelegateeContractParams, 
     },
 
     getAllSpendingPaths(
-        script: VtxoScript,
+        script: DefaultVtxo.Script,
         _contract: Contract,
         context: PathContext,
     ): PathSelection[] {
@@ -149,7 +149,7 @@ export const DelegateeContractHandler: ContractHandler<DelegateeContractParams, 
     },
 
     getSpendablePaths(
-        script: VtxoScript,
+        script: DefaultVtxo.Script,
         _contract: Contract,
         context: PathContext,
     ): PathSelection[] {
@@ -158,9 +158,4 @@ export const DelegateeContractHandler: ContractHandler<DelegateeContractParams, 
 
     /** The wallet's own money, renewed by the service. */
     isGenericallySpendable: () => true,
-
-    deriveTapscripts(script: VtxoScript): DerivedContractTapscripts {
-        const leaf = forfeitLeaf(script);
-        return { forfeitTapLeafScript: leaf, intentTapLeafScript: leaf, tapTree: script.encode() };
-    },
 };

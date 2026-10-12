@@ -183,7 +183,6 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         rotateServerSigner,
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),
@@ -915,7 +914,6 @@ function createPollableWallet() {
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),

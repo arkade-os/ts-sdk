@@ -169,7 +169,7 @@ import type {
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { DelegateeContractHandler } from "../contracts/handlers/delegatee";
-import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
+import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
     validateVtxosForScript,
@@ -220,25 +220,6 @@ import {
 } from "./signingErrors";
 
 const WALLET_CONTRACT_TYPES: readonly string[] = ["default", "delegate", "delegatee"];
-
-// A delegatee renewal contract as the wallet's receive tapscript: forfeit and exit are the
-// wallet's own leaves, the renewal covenant leaf rides along. Checked against the contract row.
-function delegatedTapscript(contract: Contract): DefaultVtxo.Script {
-    const p = DelegateeContractHandler.deserializeParams(contract.params);
-    const derived = DelegateeContractHandler.createScript(contract.params);
-    const script = new DefaultVtxo.Script(
-        {
-            pubKey: p.owner.subarray(1),
-            serverPubKey: p.serverPubKey.subarray(1),
-            csvTimelock: sequenceToTimelock(p.exitDelay),
-        },
-        derived.scripts.slice(2),
-    );
-    if (hex.encode(script.pkScript) !== contract.script) {
-        throw new Error(`delegatee contract ${contract.script} is not forfeit, exit and covenant`);
-    }
-    return script;
-}
 
 // Build per-input jobs for an intent proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -873,33 +854,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * contract repository, so it follows registrations made through any wallet front-end.
      */
     protected async syncDelegatedDefaults(): Promise<void> {
-        if (!this.delegateeProvider) {
-            this._delegatedTapscript = undefined;
-            this._delegatedBoardingAddress = undefined;
-            return;
+        let rows: Contract[] = [];
+        if (this.delegateeProvider) {
+            const owner = hex.encode(await this.identity.xOnlyPublicKey());
+            const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+            rows = (await collectContracts(this.contractRepository, { type: ["delegatee"] }))
+                .filter(
+                    (c) =>
+                        c.params.owner?.slice(2).toLowerCase() === owner &&
+                        toXOnlySignerHex(c.params.serverPubKey ?? "") === server,
+                )
+                .sort((a, b) => b.createdAt - a.createdAt);
         }
-        const owner = hex.encode(await this.identity.xOnlyPublicKey());
-        const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
-        const rows = (await collectContracts(this.contractRepository, { type: ["delegatee"] }))
-            .filter(
-                (c) =>
-                    c.params.owner?.slice(2).toLowerCase() === owner &&
-                    toXOnlySignerHex(c.params.serverPubKey ?? "") === server,
-            )
-            .sort((a, b) => b.createdAt - a.createdAt);
         const renewal = rows.find((c) => c.params.template === "renewal");
         const boarding = rows.find((c) => c.params.template === "boarding");
-        if (!renewal) {
-            this._delegatedTapscript = undefined;
-        } else if (
-            !this._delegatedTapscript ||
-            hex.encode(this._delegatedTapscript.pkScript) !== renewal.script
-        ) {
-            this._delegatedTapscript = delegatedTapscript(renewal);
-        }
-        this._delegatedBoardingAddress = boarding
-            ? DelegateeContractHandler.createScript(boarding.params).onchainAddress(this.network)
-            : undefined;
+        this._delegatedTapscript = renewal && DelegateeContractHandler.createScript(renewal.params);
+        this._delegatedBoardingAddress =
+            boarding &&
+            DelegateeContractHandler.createScript(boarding.params).onchainAddress(this.network);
     }
 
     /** Current active server signer (x-only, 32 bytes); changes only on server-signer rotation. */
@@ -1887,12 +1859,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         });
         for (const contract of contracts) {
             if (map.has(contract.script)) continue;
-            if (contract.type === "delegatee") {
-                if (contract.params.template === "renewal") {
-                    map.set(contract.script, delegatedTapscript(contract));
-                }
-                continue;
-            }
+            // boarding deposits are on-chain, not VTXOs
+            if (contract.type === "delegatee" && contract.params.template !== "renewal") continue;
             const handler = contractHandlers.get(contract.type);
             if (handler) {
                 const script = handler.createScript(contract.params) as

@@ -10,18 +10,15 @@ export interface DelegateeInfo {
     emulatorPubkey: string;
 }
 
+/** The service's keys a wallet's delegatee contracts are derived from. */
+export type DelegateeContractKeys = Pick<
+    DelegateeInfo,
+    "delegatePubkey" | "serverPubkey" | "emulatorPubkey"
+>;
+
 export interface DelegateeTemplate {
     id: string;
     status: string;
-}
-
-/** One template input of a delegation. */
-export interface DelegateeSlot {
-    name: string;
-    onchain: boolean;
-    tapscripts: string[];
-    /** "txid:vout" once bound, absent for a watch. */
-    outpoint?: string;
 }
 
 /** An instance of a template. */
@@ -32,37 +29,19 @@ export interface DelegateeDelegation {
     status: "active" | "cancelled" | "expired" | "done";
     templateId: string;
     variables: Record<string, string>;
-    /** The delegation whose settled transaction advertised this one, absent for a watch. */
-    parentId?: number;
     expiresAt?: number;
-    slots: DelegateeSlot[];
-    createdAt?: number;
-    updatedAt?: number;
 }
 
 export interface DelegateeVtxo {
     outpoint: string;
     amount: number;
     expiresAt?: number;
-    preconfirmed: boolean;
-    assets: { assetId: string; amount: bigint }[];
-    createdAt?: number;
     renewableAt?: number;
-    onchain: boolean;
-}
-
-export interface DelegateeRenewal {
-    outpoints: string[];
-    commitmentTxid?: string;
-    success: boolean;
-    error?: string;
-    attemptedAt?: number;
 }
 
 export interface DelegateeDelegationDetails {
     delegation: DelegateeDelegation;
     vtxos: DelegateeVtxo[];
-    renewals: DelegateeRenewal[];
 }
 
 export interface DelegateeProvider {
@@ -74,14 +53,6 @@ export interface DelegateeProvider {
         options?: { expiresAt?: number },
     ): Promise<DelegateeDelegation>;
     getDelegation(address: string): Promise<DelegateeDelegationDetails>;
-}
-
-/** A delegation address has not been registered with this delegatee. */
-export class DelegateeNotFoundError extends Error {
-    constructor(readonly address: string) {
-        super(`Delegatee delegation not found: ${address}`);
-        this.name = "DelegateeNotFoundError";
-    }
 }
 
 /** REST provider for delegatee's registration/renewal service. */
@@ -141,9 +112,6 @@ export class RestDelegateeProvider implements DelegateeProvider {
     async getDelegation(address: string): Promise<DelegateeDelegationDetails> {
         const url = this.endpoint(`/v1/delegate/${encodeURIComponent(address)}`);
         const response = await rateGate.runHttp(url, () => baseFetch(url));
-        if (response.status === 404) {
-            throw new DelegateeNotFoundError(address);
-        }
         if (!response.ok) {
             throw await failure(response, "get delegatee delegation");
         }
@@ -154,7 +122,6 @@ export class RestDelegateeProvider implements DelegateeProvider {
         return {
             delegation: parseDelegation(data.delegation),
             vtxos: optionalArray(data.vtxos, "vtxos").map(parseVtxo),
-            renewals: optionalArray(data.renewals, "renewals").map(parseRenewal),
         };
     }
 }
@@ -190,16 +157,6 @@ function parseInt64(value: unknown, label: string): number {
     throw new Error(`Invalid delegatee response: missing ${label}`);
 }
 
-function parseUint64(value: unknown, label: string): bigint {
-    if (
-        (typeof value === "string" && /^[0-9]+$/.test(value)) ||
-        (Number.isSafeInteger(value) && (value as number) >= 0)
-    ) {
-        return BigInt(value as string | number);
-    }
-    throw new Error(`Invalid delegatee response: ${label} is not an amount`);
-}
-
 function parseAmount(value: unknown, label: string): number {
     const amount = parseInt64(value, label);
     if (amount < 0) throw new Error(`Invalid delegatee response: ${label} is negative`);
@@ -219,10 +176,6 @@ function parseOptionalInt64(value: unknown, label: string): number | undefined {
     return parseInt64(value, label);
 }
 
-function optionalString(value: unknown): string | undefined {
-    return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function optionalArray(value: unknown, label: string): unknown[] {
     if (value === undefined) return [];
     if (!Array.isArray(value)) {
@@ -236,22 +189,6 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], label: s
         throw new Error(`Invalid delegatee delegation: unknown ${label} ${String(value)}`);
     }
     return value as T;
-}
-
-function parseSlot(value: unknown): DelegateeSlot {
-    if (!isObject(value)) {
-        throw new Error("Invalid delegatee delegation: invalid slot");
-    }
-    const name = value.name;
-    if (typeof name !== "string" || name.length === 0) {
-        throw new Error("Invalid delegatee delegation: slot missing name");
-    }
-    return {
-        name,
-        onchain: value.onchain === true,
-        tapscripts: optionalArray(value.tapscripts, "slot tapscripts").map((t) => String(t)),
-        outpoint: optionalString(value.outpoint),
-    };
 }
 
 function parseDelegation(value: unknown): DelegateeDelegation {
@@ -268,11 +205,7 @@ function parseDelegation(value: unknown): DelegateeDelegation {
         status: oneOf(value.status, ["active", "cancelled", "expired", "done"], "status"),
         templateId,
         variables: parseVariables(value.variables),
-        parentId: parseOptionalInt64(value.parentId, "parentId"),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
-        slots: optionalArray(value.slots, "slots").map(parseSlot),
-        createdAt: parseOptionalInt64(value.createdAt, "createdAt"),
-        updatedAt: parseOptionalInt64(value.updatedAt, "updatedAt"),
     };
 }
 
@@ -284,27 +217,7 @@ function parseVtxo(value: unknown): DelegateeVtxo {
         outpoint: value.outpoint,
         amount: parseAmount(value.amount, "amount"),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
-        preconfirmed: value.preconfirmed === true,
-        assets: optionalArray(value.assets, "assets").map((a) => {
-            if (!isObject(a) || typeof a.assetId !== "string") {
-                throw new Error("Invalid delegatee vtxo asset");
-            }
-            return { assetId: a.assetId, amount: parseUint64(a.amount, "asset amount") };
-        }),
-        createdAt: parseOptionalInt64(value.createdAt, "createdAt"),
         renewableAt: parseOptionalInt64(value.renewableAt, "renewableAt"),
-        onchain: value.onchain === true,
-    };
-}
-
-function parseRenewal(value: unknown): DelegateeRenewal {
-    if (!isObject(value)) throw new Error("Invalid delegatee renewal");
-    return {
-        outpoints: optionalArray(value.outpoints, "outpoints").map((o) => String(o)),
-        commitmentTxid: optionalString(value.commitmentTxid),
-        success: value.success === true,
-        error: optionalString(value.error),
-        attemptedAt: parseOptionalInt64(value.attemptedAt, "attemptedAt"),
     };
 }
 

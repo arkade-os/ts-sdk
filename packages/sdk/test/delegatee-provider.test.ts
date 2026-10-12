@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DelegateeNotFoundError, RestDelegateeProvider } from "../src/providers/delegatee";
-import { defaultTemplateIds } from "../src/script/delegateeTemplate";
+import { RestDelegateeProvider } from "../src/providers/delegatee";
+import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/delegateeTemplate";
 import { DelegateeManagerImpl } from "../src/wallet/delegatee";
 import vectors from "./fixtures/delegatee/vectors.json";
 
@@ -11,8 +11,6 @@ vi.mock("../src/utils/fetch", () => ({
     fetch: mockFetch,
     baseFetch: mockFetch,
 }));
-
-const ids = defaultTemplateIds();
 
 describe("RestDelegateeProvider", () => {
     beforeEach(() => mockFetch.mockReset());
@@ -48,7 +46,6 @@ describe("RestDelegateeProvider", () => {
             status: "active",
             templateId: "tpl-1",
             variables: { owner: "aa" },
-            slots: [{ name: "funds", onchain: false, tapscripts: ["aa", "bb"] }],
         };
         respond({ delegation });
         await expect(
@@ -61,13 +58,7 @@ describe("RestDelegateeProvider", () => {
             status: "active",
             templateId: "tpl-1",
             variables: { owner: "aa" },
-            parentId: undefined,
-            slots: [
-                { name: "funds", onchain: false, tapscripts: ["aa", "bb"], outpoint: undefined },
-            ],
             expiresAt: undefined,
-            createdAt: undefined,
-            updatedAt: undefined,
         });
         expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegate", {
             method: "POST",
@@ -82,7 +73,6 @@ describe("RestDelegateeProvider", () => {
             address: "tark1x",
             status: "active",
             templateId: "tpl-1",
-            slots: [],
         };
         respond({ delegation });
         await new RestDelegateeProvider("https://delegatee.test").registerDelegation(
@@ -104,133 +94,25 @@ describe("RestDelegateeProvider", () => {
         ).rejects.toThrow("template disabled");
     });
 
-    it("returns a typed delegation lookup with parsed slots", async () => {
-        const body = {
-            delegation: {
-                id: "5",
-                address: "tark1x",
-                status: "active",
-                templateId: "tpl-1",
-                slots: [{ name: "funds", onchain: false, tapscripts: ["aa"] }],
-            },
-            vtxos: [],
-            renewals: [],
-        };
-        respond(body);
-        const details = await new RestDelegateeProvider("https://delegatee.test").getDelegation(
-            "tark1x",
-        );
-        expect(details.delegation).toEqual({
-            id: 5,
-            address: "tark1x",
-            status: "active",
-            templateId: "tpl-1",
-            variables: {},
-            parentId: undefined,
-            expiresAt: undefined,
-            slots: [{ name: "funds", onchain: false, tapscripts: ["aa"], outpoint: undefined }],
-            createdAt: undefined,
-            updatedAt: undefined,
-        });
-        expect(details.vtxos).toEqual([]);
-        expect(details.renewals).toEqual([]);
-    });
-
-    it("accepts a successor, which has no address", async () => {
-        respond({
-            delegation: { id: "2", status: "active", parentId: "1", templateId: "tpl-1" },
-        });
-        await expect(
-            new RestDelegateeProvider("https://delegatee.test").getDelegation("tark1x"),
-        ).resolves.toMatchObject({
-            delegation: { address: "", parentId: 1, slots: [] },
-        });
-    });
-
-    it("rejects a delegation with an unknown status", async () => {
-        respond({ delegation: { id: "1", status: "paused", templateId: "t" } });
-        await expect(
-            new RestDelegateeProvider("https://delegatee.test").getDelegation("tark1x"),
-        ).rejects.toThrow("unknown status paused");
-    });
-
-    it("parses the coins and renewals of a delegation", async () => {
-        respond({
-            delegation: {
-                id: "5",
-                address: "tark1x",
-                status: "active",
-                templateId: "t",
-            },
-            vtxos: [
-                {
-                    outpoint: "aa:0",
-                    amount: "100000",
-                    expiresAt: "1700000000",
-                    assets: [{ assetId: "bb", amount: "18446744073709551615" }],
-                    renewableAt: "1699990000",
-                },
-            ],
-            renewals: [
-                { outpoints: ["aa:0"], commitmentTxid: "cc", success: true, attemptedAt: "1" },
-            ],
-        });
-        const details = await new RestDelegateeProvider("https://delegatee.test").getDelegation(
-            "tark1x",
-        );
-        expect(details.vtxos).toEqual([
-            {
-                outpoint: "aa:0",
-                amount: 100000,
-                expiresAt: 1700000000,
-                preconfirmed: false,
-                assets: [{ assetId: "bb", amount: 18446744073709551615n }],
-                createdAt: undefined,
-                renewableAt: 1699990000,
-                onchain: false,
-            },
-        ]);
-        expect(details.renewals).toEqual([
-            {
-                outpoints: ["aa:0"],
-                commitmentTxid: "cc",
-                success: true,
-                error: undefined,
-                attemptedAt: 1,
-            },
-        ]);
-    });
-
-    it("rejects non-string variables and a coin without an amount", async () => {
+    it("parses a delegation's coins, rejecting an unknown status, bad variables and amounts", async () => {
         const provider = new RestDelegateeProvider("https://delegatee.test");
-        const delegation = { id: "1", status: "active", templateId: "t" };
-        respond({ delegation: { ...delegation, variables: { exit_delay: 512 } } });
-        await expect(provider.getDelegation("tark1x")).rejects.toThrow("variables are not strings");
-        respond({ delegation, vtxos: [{ outpoint: "aa:0" }] });
-        await expect(provider.getDelegation("tark1x")).rejects.toThrow("missing amount");
-    });
-
-    it("rejects negative and fractional amounts", async () => {
-        const provider = new RestDelegateeProvider("https://delegatee.test");
-        const delegation = { id: "1", status: "active", templateId: "t" };
-        respond({ delegation, vtxos: [{ outpoint: "aa:0", amount: -5 }] });
-        await expect(provider.getDelegation("tark1x")).rejects.toThrow("amount is negative");
-        respond({ delegation, vtxos: [{ outpoint: "aa:0", amount: 1.5 }] });
-        await expect(provider.getDelegation("tark1x")).rejects.toThrow("amount is not an integer");
-        respond({
-            delegation,
-            vtxos: [{ outpoint: "aa:0", amount: 1, assets: [{ assetId: "x", amount: -1 }] }],
+        const delegation = { id: "5", address: "tark1x", status: "active", templateId: "t" };
+        const coin = { outpoint: "aa:0", amount: "100000", renewableAt: "1699990000" };
+        respond({ delegation, vtxos: [coin] });
+        await expect(provider.getDelegation("tark1x")).resolves.toEqual({
+            delegation: { ...delegation, id: 5, variables: {}, expiresAt: undefined },
+            vtxos: [{ ...coin, amount: 100000, expiresAt: undefined, renewableAt: 1699990000 }],
         });
-        await expect(provider.getDelegation("tark1x")).rejects.toThrow(
-            "asset amount is not an amount",
-        );
-    });
-
-    it("returns a typed not-found error for an unregistered address", async () => {
-        respond("not found", 404);
-        await expect(
-            new RestDelegateeProvider("https://delegatee.test").getDelegation("tark1missing"),
-        ).rejects.toBeInstanceOf(DelegateeNotFoundError);
+        for (const [body, error] of [
+            [{ delegation: { ...delegation, status: "paused" } }, "unknown status paused"],
+            [{ delegation: { ...delegation, variables: { a: 1 } } }, "variables are not strings"],
+            [{ delegation: { ...delegation, id: "1.5" } }, "id is not an integer"],
+            [{ delegation, vtxos: [{ outpoint: "aa:0" }] }, "missing amount"],
+            [{ delegation, vtxos: [{ outpoint: "aa:0", amount: -5 }] }, "amount is negative"],
+        ] as const) {
+            respond(body);
+            await expect(provider.getDelegation("tark1x")).rejects.toThrow(error);
+        }
     });
 });
 
@@ -268,14 +150,6 @@ describe("DelegateeManagerImpl.register", () => {
         await expect(manager.registerBoarding(params)).rejects.toThrow(
             `delegatee derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
-    });
-
-    it("refuses tapscripts the service derived differently", async () => {
-        const manager = new DelegateeManagerImpl(
-            makeProvider({ slots: [{ name: "deposit", onchain: true, tapscripts: ["00"] }] }),
-            wallet,
-        );
-        await expect(manager.registerBoarding(params)).rejects.toThrow("different tapscripts");
     });
 
     it("refuses a service whose server key is not the wallet's", async () => {
@@ -323,7 +197,6 @@ describe("DelegateeManagerImpl.delegateVtxos", () => {
             address: vectors.renewal.address,
             templateId: RENEWAL_ID,
             variables: vectors.renewal.variables,
-            slots: [{ name: "funds", onchain: false, tapscripts: vectors.renewal.tapscripts }],
         });
 
     it("registers the renewal watch and sends every spendable VTXO to it", async () => {
@@ -461,7 +334,6 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
             status: "active",
             templateId: BOARDING_ID,
             variables: vectors.boarding.variables,
-            slots: [{ name: "deposit", onchain: true, tapscripts: vectors.boarding.tapscripts }],
             ...overrides,
         }),
         getDelegation: vi.fn(),

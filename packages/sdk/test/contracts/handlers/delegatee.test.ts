@@ -12,6 +12,7 @@ import {
     type DelegateeDefault,
 } from "../../../src";
 import { resolveUnilateralPath } from "../../../src/wallet/exit/path";
+import { defaultVariables } from "../../../src/script/delegateeTemplate";
 import { ArkAddress } from "../../../src/script/address";
 import vectors from "../../fixtures/delegatee/vectors.json";
 import { createMockIndexerProvider, createMockVtxo } from "../helpers";
@@ -59,8 +60,19 @@ const leaves = (template: DelegateeDefault) =>
 const script = (leaf: [unknown, Uint8Array]) => leaf[1].subarray(0, -1);
 
 describe("DelegateeContractHandler", () => {
-    it("is registered under type 'delegatee'", () => {
+    it("is registered under type 'delegatee' and counts as generic spending", () => {
         expect(contractHandlers.get("delegatee")).toBe(DelegateeContractHandler);
+        expect(DelegateeContractHandler.isGenericallySpendable?.(contractOf("renewal"))).toBe(true);
+    });
+
+    it("derives the template variables of the Go engine, boarding needing its exit delay", () => {
+        const owner = hex.decode(vectors.owner);
+        expect(defaultVariables("renewal", owner, delegation)).toEqual(vectors.renewal.variables);
+        expect(defaultVariables("boarding", owner, delegation)).toEqual(vectors.boarding.variables);
+        const { boardingExitDelay: _, ...renewalOnly } = delegation;
+        expect(() => defaultVariables("boarding", owner, renewalOnly)).toThrow(
+            "boarding needs an exit delay",
+        );
     });
 
     it("derives the renewal leaves and Ark address of the Go engine", () => {
@@ -139,15 +151,6 @@ describe("DelegateeContractHandler", () => {
         const path = DelegateeContractHandler.selectPath(s, contract, at(600));
         expect(path && script(path.leaf)).toEqual(leaves("renewal")[1]);
         expect(path?.sequence).toBe(delegation.exitDelay);
-    });
-
-    it("annotates VTXOs with the forfeit leaf and counts them as generic spending", () => {
-        const contract = contractOf("renewal");
-        const s = DelegateeContractHandler.createScript(contract.params);
-        const derived = DelegateeContractHandler.deriveTapscripts(s, contract);
-        expect(script(derived.forfeitTapLeafScript)).toEqual(leaves("renewal")[0]);
-        expect(script(derived.intentTapLeafScript)).toEqual(leaves("renewal")[0]);
-        expect(DelegateeContractHandler.isGenericallySpendable?.(contract)).toBe(true);
     });
 
     it("pre-signs an unroll of a delegated coin through the owner exit", async () => {

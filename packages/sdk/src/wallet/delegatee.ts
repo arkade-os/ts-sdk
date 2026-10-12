@@ -1,16 +1,23 @@
 import { hex } from "@scure/base";
 import type { Asset, IWallet } from ".";
-import type { DelegateeDelegation, DelegateeInfo, DelegateeProvider } from "../providers/delegatee";
+import type {
+    DelegateeContractKeys,
+    DelegateeDelegation,
+    DelegateeInfo,
+    DelegateeProvider,
+} from "../providers/delegatee";
 import type { Contract } from "../contracts/types";
 import { DelegateeContractHandler } from "../contracts/handlers/delegatee";
+import { getNetwork, type NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import {
-    boardingWatch,
+    DEFAULT_TEMPLATE_IDS,
     type DelegateeDefault,
     type DelegationParams,
-    defaultTemplateIds,
-    renewalWatch,
+    defaultVariables,
 } from "../script/delegateeTemplate";
+
+export type { DelegateeContractKeys };
 
 /** A watch both sides derived: the address to fund and what restores it. */
 export interface DelegateeWatchRegistration {
@@ -23,11 +30,6 @@ export interface DelegateeWatchRegistration {
     keys: DelegateeContractKeys;
     delegation: DelegateeDelegation;
 }
-
-export type DelegateeContractKeys = Pick<
-    DelegateeInfo,
-    "delegatePubkey" | "serverPubkey" | "emulatorPubkey"
->;
 
 /** What the manager needs of a wallet: its key, its server, its coins and a way to send. */
 export type DelegateeWallet = Pick<
@@ -56,17 +58,7 @@ export async function watchDelegateeContracts(
         params.boardingExitDelay === undefined ? ["renewal"] : ["renewal", "boarding"];
     const contracts: Contract[] = [];
     for (const template of templates) {
-        const serialized = DelegateeContractHandler.serializeParams({
-            template,
-            owner,
-            exitDelay: params.exitDelay,
-            renewalWindow: params.renewalWindow,
-            maxFee: params.maxFee,
-            ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
-            delegatePubKey: hex.decode(keys.delegatePubkey),
-            serverPubKey: hex.decode(keys.serverPubkey),
-            emulatorPubKey: hex.decode(keys.emulatorPubkey),
-        });
+        const serialized = contractParams(template, owner, keys, params);
         const script = DelegateeContractHandler.createScript(serialized);
         contracts.push(
             await manager.createContract({
@@ -79,6 +71,25 @@ export async function watchDelegateeContracts(
         );
     }
     return contracts;
+}
+
+function contractParams(
+    template: DelegateeDefault,
+    owner: Uint8Array,
+    keys: DelegateeContractKeys,
+    params: DelegationParams,
+): Record<string, string> {
+    return DelegateeContractHandler.serializeParams({
+        template,
+        owner,
+        exitDelay: params.exitDelay,
+        renewalWindow: params.renewalWindow,
+        maxFee: params.maxFee,
+        ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
+        delegatePubKey: hex.decode(keys.delegatePubkey),
+        serverPubKey: hex.decode(keys.serverPubkey),
+        emulatorPubKey: hex.decode(keys.emulatorPubkey),
+    });
 }
 
 export interface IDelegateeManager {
@@ -122,7 +133,7 @@ export class DelegateeManagerImpl implements IDelegateeManager {
     }
 
     async defaultTemplates(): Promise<Record<DelegateeDefault, string>> {
-        const ids = defaultTemplateIds();
+        const ids = { ...DEFAULT_TEMPLATE_IDS };
         const templates = await this.delegateeProvider.listTemplates();
         const active = new Set(templates.filter((t) => t.status === "active").map((t) => t.id));
         const missing = Object.entries(ids).filter(([, id]) => !active.has(id));
@@ -209,43 +220,41 @@ export class DelegateeManagerImpl implements IDelegateeManager {
             this.wallet.identity.compressedPublicKey(),
         ]);
         // the watch address commits to the service's server key, so it must be the wallet's
-        const server = hex.encode(ArkAddress.decode(address).serverPubKey);
+        const { hrp, serverPubKey } = ArkAddress.decode(address);
+        const server = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
                 `delegatee server key ${info.serverPubkey} is not the wallet's server ${server}`,
             );
-        }
-        const id = defaultTemplateIds()[kind];
-        const watch = (kind === "renewal" ? renewalWatch : boardingWatch)(info, owner, params);
-        // Registration is idempotent on the service: repeating it returns the existing watch.
-        const delegation = await this.delegateeProvider.registerDelegation(
-            id,
-            watch.variables,
-            options,
-        );
-        // the service fills <DELEGATE_KEY> with its key: the same address proves it is GetInfo's
-        if (delegation.address !== watch.address) {
-            throw new Error(
-                `delegatee derived a different address: expected ${watch.address}, got ${delegation.address}`,
-            );
-        }
-        const remote = delegation.slots[0]?.tapscripts ?? [];
-        const local = watch.tapscripts.map((s) => hex.encode(s));
-        if (remote.length !== local.length || remote.some((s, i) => s !== local[i])) {
-            throw new Error("delegatee derived different tapscripts");
         }
         const keys = {
             delegatePubkey: info.delegatePubkey,
             serverPubkey: info.serverPubkey,
             emulatorPubkey: info.emulatorPubkey,
         };
+        const variables = defaultVariables(kind, owner, params);
+        const script = DelegateeContractHandler.createScript(
+            contractParams(kind, owner, keys, params),
+        );
+        const watchAddress =
+            kind === "boarding"
+                ? script.onchainAddress(getNetwork(info.network as NetworkName))
+                : script.address(hrp, serverPubKey).encode();
+        const templateId = DEFAULT_TEMPLATE_IDS[kind];
+        // Registration is idempotent on the service: repeating it returns the existing watch.
+        const delegation = await this.delegateeProvider.registerDelegation(
+            templateId,
+            variables,
+            options,
+        );
+        // The service fills <DELEGATE_KEY> with its key: the same address proves it is GetInfo's,
+        // and commits to the same tapscripts.
+        if (delegation.address !== watchAddress) {
+            throw new Error(
+                `delegatee derived a different address: expected ${watchAddress}, got ${delegation.address}`,
+            );
+        }
         await watchDelegateeContracts(this.wallet, keys, params);
-        return {
-            address: watch.address,
-            templateId: id,
-            variables: watch.variables,
-            keys,
-            delegation,
-        };
+        return { address: watchAddress, templateId, variables, keys, delegation };
     }
 }

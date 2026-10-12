@@ -74,7 +74,6 @@ const createMockWallet = (
     // mock omits one — the pre-flight `revalidateBeforeSettle` invokes it
     // before every settle attempt.
     const contractManager = options.contractManager ?? {
-        getContracts: vi.fn().mockResolvedValue([]),
         onContractEvent: vi.fn().mockReturnValue(() => {}),
         refreshOutpoints: vi.fn().mockResolvedValue(undefined),
     };
@@ -512,7 +511,6 @@ describe("VtxoManager - Recovery", () => {
             ) => {
                 const wallet = createMockWallet(vtxos, arkAddress, {
                     contractManager: {
-                        getContracts: vi.fn().mockResolvedValue([]),
                         onContractEvent: vi.fn().mockReturnValue(() => {}),
                         refreshOutpoints: vi.fn().mockResolvedValue(undefined),
                         unspendableNowReasons: vi.fn().mockResolvedValue(refused),
@@ -722,7 +720,6 @@ describe("VtxoManager - Lifecycle", () => {
     it("should subscribe to contract events when settlement is enabled", async () => {
         const unsubscribe = vi.fn();
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -741,7 +738,6 @@ describe("VtxoManager - Lifecycle", () => {
 
     it("should not subscribe to contract events when settlement is disabled", async () => {
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -761,7 +757,6 @@ describe("VtxoManager - Lifecycle", () => {
     it("should unsubscribe from contract events on dispose", async () => {
         const unsubscribe = vi.fn();
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -1976,7 +1971,6 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
     ) => {
         const { boardingAddress = "bcrt1qtest", feeRate = 1, chainTipHeight = 1000 } = opts;
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -2178,7 +2172,6 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 getDelegateManager: vi.fn().mockResolvedValue(undefined),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
-                    getContracts: vi.fn().mockResolvedValue([]),
                     onContractEvent: vi.fn().mockReturnValue(() => {}),
                     refreshOutpoints: vi.fn().mockResolvedValue(undefined),
                 }),
@@ -2213,7 +2206,6 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         const createBlockBasedWallet = (boardingUtxos: ExtendedCoin[], chainTipHeight: number) => {
             const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
             const contractManager = {
-                getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),
             };
@@ -2339,7 +2331,6 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         let eventHandler: ((event: any) => void) | undefined;
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockImplementation((handler) => {
                 eventHandler = handler;
                 return () => {};
@@ -2398,7 +2389,6 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         let eventHandler: ((event: any) => void) | undefined;
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockImplementation((handler) => {
                 eventHandler = handler;
                 return () => {};
@@ -2445,7 +2435,6 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
         let eventHandler: ((event: any) => void) | undefined;
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockImplementation((handler) => {
                 eventHandler = handler;
                 return () => {};
@@ -2507,7 +2496,6 @@ describe("VtxoManager - Renewal loop prevention", () => {
 
             let eventHandler: ((event: any) => void) | undefined;
             const contractManager = {
-                getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockImplementation((handler) => {
                     eventHandler = handler;
                     return () => {};
@@ -2578,7 +2566,6 @@ describe("VtxoManager - Periodic settle cooldown", () => {
     const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
         const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
@@ -3291,7 +3278,6 @@ describe("VtxoManager - Cross-instance poll guard", () => {
     const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
         const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
         const contractManager = {
-            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
