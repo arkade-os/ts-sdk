@@ -1,0 +1,41 @@
+pragma arkade ^0.1.0;
+
+contract VHTLCSignaturesV1(
+    pubkey sender,
+    pubkey receiver,
+    bytes20 preimageHash,
+    int refundLocktime,
+    int claimSequence,
+    int refundSequence,
+    int refundWithoutReceiverSequence
+) {
+    function claim(bytes preimage, signature receiverSig, signature serverSig) tapscript {
+        require(hash160(preimage) == preimageHash);
+        require(checkMultisig([receiver, server], [receiverSig, serverSig], 2));
+    }
+
+    function refund(signature senderSig, signature receiverSig, signature serverSig) tapscript {
+        require(checkMultisig([sender, receiver, server], [senderSig, receiverSig, serverSig], 3));
+    }
+
+    function refundWithoutReceiver(signature senderSig, signature serverSig) tapscript {
+        require(after(refundLocktime));
+        require(checkMultisig([sender, server], [senderSig, serverSig], 2));
+    }
+
+    function unilateralClaim(bytes preimage, signature receiverSig) tapscript {
+        require(hash160(preimage) == preimageHash);
+        require(older(claimSequence));
+        require(checkSig(receiverSig, receiver));
+    }
+
+    function unilateralRefund(signature senderSig, signature receiverSig) tapscript {
+        require(older(refundSequence));
+        require(checkMultisig([sender, receiver], [senderSig, receiverSig], 2));
+    }
+
+    function unilateralRefundWithoutReceiver(signature senderSig) tapscript {
+        require(older(refundWithoutReceiverSequence));
+        require(checkSig(senderSig, sender));
+    }
+}

@@ -1,0 +1,77 @@
+# Compiler covenant comparison
+
+This is an additive comparison against the SDK 0.5 handwritten builders at `a3ddefb00ba0a5411acc4d8c5c4b60b89058e739`. Production imports, exports and contract builders stay unchanged. The compiler is built from clean source at `89a1ff73b24441699095c9135d6429f7dc6cb6ab` with Cargo's locked dependency graph; the VM is pinned to emulator `ce7fc1eafe3f406cd1eb2670f23912922fd0db97`.
+
+There are 10 `.ark` sources and 20 generated artifacts, covering optimized and unoptimized compilation:
+
+| Sources | Paths covered |
+| --- | --- |
+| [Swap contracts](../../packages/swap/contracts/) | Want BTC or assets; fulfill, cancel and optional block/second CSV exit |
+| [VHTLC signature contracts](../../packages/sdk/contracts/vhtlc/) | Claim, refund, timed refund and their unilateral CSV paths |
+| [VHTLC payout contracts](../../packages/sdk/contracts/vhtlc/) | Noninteractive BTC/asset claim, refund and timed refund without the receiver |
+
+VHTLC sources include V1 and explicitly labeled V2 candidates. Fixtures select the production leaf order for full nine-leaf and historical eight-leaf contracts. The standard no-covenant six-leaf VHTLC uses the signature contract's leaves, whose V1 bytes are identical to production; this suite does not separately assemble that six-leaf address. Taxi already has compiler sources and artifacts, so its runtime is outside this conversion.
+
+## Measured size differences
+
+The [size report](sizes.json) contains 784 manual/generated leaf pairs, raw script lengths, SHA256 digests, opcode counts and data-push lengths. These are script bytes, not complete transaction weight or a cost model for offchain execution. A negative delta means the compiler is smaller.
+
+| Covenant | Optimized delta | Unoptimized delta |
+| --- | ---: | ---: |
+| Swap want BTC, with or without exit | +6 bytes | +11 bytes |
+| Swap want assets, with or without exit | +10 bytes | +15 bytes |
+| VHTLC BTC payout | +5 bytes | +10 bytes |
+| VHTLC asset payout | −24 to −21 bytes | −18 to −15 bytes |
+
+Swap cancel/exit and all six standard V1 VHTLC signature leaves are byte-identical. Payout covenants differ, which changes the emulator's tweaked signing key, the associated leaf and the complete Taproot address even where the leaf length stays equal. A compiled candidate cannot replace a funded contract in place.
+
+The handwritten payout code checks witness version and destination from one `INSPECTOUTPUTSCRIPTPUBKEY` result. The compiler inspects twice and adds stack operations. Both source checks are necessary: dropping the version check would weaken the covenant. The compiler's VHTLC asset code saves bytes by reusing bound asset parameters instead of pushing the asset ID twice. The opcode report exposes the remaining stack and inspection overhead; source-level readability alone does not establish an optimization win.
+
+## V2 compiler gap
+
+The pinned compiler accepts `bytes32 preimage` in source and records it in the artifact's witness ABI. It does not generate the production V2 `OP_SIZE 32 OP_EQUALVERIFY` guard. Real Bitcoin VM executions with valid signatures confirm that generated candidates accept hash-matching 31- and 33-byte preimages which production V2 rejects.
+
+**V2 candidates are not adoptable.** V1 intentionally has the older variable-length hashlock. V2 needs compiler support, a new pin, fresh artifacts and renewed comparisons; do not patch generated assembly to conceal the gap.
+
+## Execution evidence and limits
+
+[Vectors](vectors.json) preserve both bytecode forms, constructor bindings, transaction context and deterministic test-only signing keys. [Covenant results](engine-results.json) execute the actual emulator `arkade.NewEngine`; [Bitcoin results](engine-results-tapscript.json) execute actual `txscript.NewEngine` Taproot witnesses with signatures for each variant's own leaf.
+
+The current matrix has 3,350 covenant pairs (6,700 executions) and 4,992 signed Bitcoin pairs (9,984 executions), covering both optimizer modes. Every one of the 784 leaf fixtures executes with real signatures. There are zero unexpected disagreements and 24 expected V2 length-guard disagreements. This is fixture coverage, not a count of distinct contract policies.
+
+The economic mutation matrix checks destinations, witness versions, sats, asset amounts, lookup presence, asset IDs/group indices, output asset count, input/output index pairing and numeric boundaries. The signature matrix checks valid witnesses, wrong preimages, each required signature independently wrong or missing, CLTV/CSV boundaries, transaction version, the CSV disable flag and final CLTV sequence. Expected ordered signer lists come from independent path policies, so the candidate cannot pass by silently dropping a signer. Known V2 counterexamples are recorded as expected differences; any other divergent result fails the tests. BTC amounts above the engine's money range are labeled separately and must be rejected by both economic variants, rather than counted as valid spends. Bitcoin signature checks on those amounts are cryptographic fixtures, not valid financial transactions. Asset quantities exercise unsigned 64-bit boundaries.
+
+These tests establish agreement for the executed fixtures. They do not prove universal equivalence, provider admission, PSBT commitments, funded settlement, recovery or full transaction weight. In particular, a Bitcoin-valid block-height CLTV operand may still fail an Ark provider's forfeit policy. Existing consumer and integration gates remain separate.
+
+The existing `banco-btc-to-asset.artifact.json` fixture has no embedded source/compiler provenance. Its equality with a handwritten program is not evidence of a fresh build; this comparison compiles the committed `.ark` sources instead.
+
+## Verify and regenerate
+
+Requirements: repository Node/pnpm versions, Git, Rust 1.96.0, Go 1.26.9 or Docker, and network access for pinned compiler/emulator checkouts and their dependencies. The repository must contain the manual baseline commit; use a full checkout or fetch that commit when starting from shallow history.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm -C packages/sdk build
+pnpm compiler:artifacts
+pnpm compiler:typecheck
+pnpm compiler:compare
+pnpm compiler:engine
+```
+
+`compiler:artifacts` checks a clean pinned compiler checkout, builds it, recompiles both modes and compares committed artifacts. It also rejects changes to the recorded manual source inputs against the baseline. `compiler:compare` verifies byte/opcode snapshots. `compiler:engine` verifies execution snapshots and fails unexpected acceptance changes. None silently refreshes committed results.
+
+Use `pnpm compiler:engine --docker` for the same execution suite in `golang:1.26.9`. Scratch checkouts and caches live under ignored `.tmp/compiler-comparison` and `.reference/compiler-emulator`. To reuse a clean compiler checkout, set `ARKADE_COMPILER_SOURCE`; `CARGO_TARGET_DIR` optionally selects an external build directory. The actual compiler binary SHA256, Rust/Cargo versions and platform are recorded in `.tmp/compiler-comparison/toolchain.json` rather than claimed to be identical across platforms.
+
+Intentional regeneration in PowerShell:
+
+```powershell
+pnpm compiler:artifacts --write
+$env:ARKADE_COMPILER_WRITE = '1'
+pnpm compiler:compare
+Remove-Item Env:ARKADE_COMPILER_WRITE
+pnpm compiler:engine --docker --write
+```
+
+On POSIX shells, replace the three environment lines with `ARKADE_COMPILER_WRITE=1 pnpm compiler:compare`. Review changes to artifacts, vectors and execution results together, then rerun the verification commands. Updating the manual builders requires an explicit comparison-baseline update; changing generated snapshots alone cannot relabel a new builder as the old baseline.
+
+The [manifest](manifest.json) retains compiler revision, source and artifact digests, embedded compiler provenance and manual source digests. Source text is canonicalized to LF; only the volatile `updatedAt` artifact field is removed. The dedicated workflow checks generation and reports on Windows and Linux, with the actual engine tests on Linux. The ordinary build, unit and integration workflow remains intact.

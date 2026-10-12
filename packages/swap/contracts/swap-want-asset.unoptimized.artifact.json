@@ -1,0 +1,126 @@
+{
+    "formatVersion": 1,
+    "contractName": "SwapWantAsset",
+    "constructorInputs": [
+        {
+            "name": "makerWP",
+            "type": "pubkey"
+        },
+        {
+            "name": "wantAmount",
+            "type": "int"
+        },
+        {
+            "name": "wantAssetTxid",
+            "type": "bytes32"
+        },
+        {
+            "name": "wantAssetGroupIndex",
+            "type": "int"
+        },
+        {
+            "name": "user",
+            "type": "pubkey"
+        }
+    ],
+    "functions": [
+        {
+            "name": "fulfill",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "<wantAssetGroupIndex>",
+                    "<wantAssetTxid>",
+                    "<wantAmount>",
+                    "<makerWP>",
+                    "0",
+                    "OP_3",
+                    "OP_ROLL",
+                    "OP_4",
+                    "OP_ROLL",
+                    "OP_INSPECTOUTASSETLOOKUP",
+                    "OP_VERIFY",
+                    "OP_2",
+                    "OP_ROLL",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_NIP",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_DROP",
+                    "OP_1",
+                    "OP_ROLL",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_1"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "fulfill",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:fulfill>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "cancel",
+            "leaves": [
+                {
+                    "name": "cancel",
+                    "witness": [
+                        {
+                            "name": "userSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"]
+                }
+            ]
+        }
+    ],
+    "source": {
+        "entry": "swap-want-asset.ark",
+        "files": {
+            "swap-want-asset.ark": "pragma arkade ^0.1.0;\n\ncontract SwapWantAsset(\n  pubkey makerWP,\n  int wantAmount,\n  bytes32 wantAssetTxid,\n  int wantAssetGroupIndex,\n  pubkey user\n) {\n  function fulfill() {\n    require(tx.outputs[0].assets.lookup(wantAssetTxid, wantAssetGroupIndex) >= wantAmount);\n    require(tx.outputs[0].witnessVersion == 1);\n    require(tx.outputs[0].scriptPubKey == makerWP);\n  }\n\n  function cancel(signature userSig, signature serverSig) tapscript {\n    require(checkMultisig([user, server], [userSig, serverSig], 2));\n  }\n}\n"
+        }
+    },
+    "compiler": {
+        "name": "arkadec",
+        "version": "0.1.0",
+        "options": {
+            "optimize": false
+        }
+    },
+    "fingerprint": "sha256:85ea4f72783e5231a9935f69bf153e3f914ff68c8d1549d39d6eb6ce516ff8d7"
+}

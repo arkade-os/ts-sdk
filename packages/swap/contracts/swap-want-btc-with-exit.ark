@@ -1,0 +1,23 @@
+pragma arkade ^0.1.0;
+
+contract SwapWantBtcWithExit(
+  pubkey makerWP,
+  int wantAmount,
+  pubkey user,
+  int exitSequence
+) {
+  function fulfill() {
+    require(tx.outputs[0].value >= wantAmount);
+    require(tx.outputs[0].witnessVersion == 1);
+    require(tx.outputs[0].scriptPubKey == makerWP);
+  }
+
+  function cancel(signature userSig, signature serverSig) tapscript {
+    require(checkMultisig([user, server], [userSig, serverSig], 2));
+  }
+
+  function exit(signature userSig) tapscript {
+    require(older(exitSequence));
+    require(checkSig(userSig, user));
+  }
+}

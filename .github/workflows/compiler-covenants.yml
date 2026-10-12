@@ -1,0 +1,68 @@
+name: Compiler covenants
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, next]
+  pull_request:
+
+jobs:
+  comparison:
+    name: Compiler comparison (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      ARKADE_COMPILER_SOURCE: ${{ github.workspace }}/.tmp/compiler-comparison/compiler
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: arkade-os/compiler
+          ref: 89a1ff73b24441699095c9135d6429f7dc6cb6ab
+          path: .tmp/compiler-comparison/compiler
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.25.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C packages/sdk build
+      - run: pnpm compiler:artifacts
+      - run: pnpm compiler:typecheck
+      - run: pnpm exec biome format scripts/compiler-covenants.mjs scripts/compiler-report.test.ts scripts/compiler-vitest.config.ts scripts/tsconfig.compiler.json scripts/run-compiler-engine.mjs
+      - run: pnpm compiler:compare
+
+      - uses: actions/setup-go@v6
+        if: runner.os == 'Linux'
+        with:
+          go-version: 1.26.9
+          cache: false
+
+      - run: pnpm compiler:engine
+        if: runner.os == 'Linux'
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: compiler-comparison-${{ runner.os }}
+          path: |
+            contracts/compiler-comparison/
+            .tmp/compiler-comparison/toolchain.json
