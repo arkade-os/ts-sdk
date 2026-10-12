@@ -186,7 +186,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
 
 type ReleaseDeps = Pick<
     IntentReconciliationDeps,
-    "intentRepository" | "deleteIntent" | "isOutpointInFlight"
+    "intentRepository" | "deleteIntent" | "isOutpointInFlight" | "now"
 >;
 
 /**
@@ -204,9 +204,10 @@ export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
         console.error("releaseIntents: failed to read non-terminal intents", e);
         return false;
     }
+    const now = deps.now ?? Date.now;
     let released = true;
     for (const intent of intents) {
-        if (!(await releaseFromServer(intent, deps, Date.now()))) released = false;
+        if (!(await releaseFromServer(intent, deps, now()))) released = false;
     }
     return released;
 }
