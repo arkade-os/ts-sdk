@@ -554,6 +554,8 @@ export type RequestSend = RequestEnvelope & {
         recipients: [Recipient, ...Recipient[]];
         /** @see SendParams.selectedVtxos */
         selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
     };
 };
 export type ResponseSend = ResponseEnvelope & {
@@ -1574,13 +1576,14 @@ export class WalletMessageHandler
                 }
                 case "SEND": {
                     const wallet = this.requireWallet();
-                    const { recipients, selectedVtxos } = (message as RequestSend).payload;
+                    const { recipients, selectedVtxos, maxChangeFee } = (message as RequestSend)
+                        .payload;
                     // Object form only when the client asked for it: the
                     // variadic form is what every existing client sends, and
                     // routing it through `{ recipients }` regardless would put
                     // a behaviour change behind a protocol field nobody set.
-                    const txid = await (selectedVtxos
-                        ? wallet.send({ recipients, selectedVtxos })
+                    const txid = await (selectedVtxos || maxChangeFee !== undefined
+                        ? wallet.send({ recipients, selectedVtxos, maxChangeFee })
                         : wallet.send(...recipients));
                     return this.tagged({
                         id,

@@ -26,6 +26,21 @@ type MessageHandler = (event: { data: any }) => void;
 
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
+it("forwards an offchain change fee cap through the worker request", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ payload: { txid: "txid" } });
+    const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
+
+    await (ServiceWorkerWallet.prototype.send as any).call(proxy, {
+        recipients: [{ address: "ark1example", amount: 505 }],
+        maxChangeFee: 111,
+    });
+
+    expect(sendMessage.mock.calls[0][0].payload).toEqual({
+        recipients: [{ address: "ark1example", amount: 505 }],
+        maxChangeFee: 111,
+    });
+});
+
 // Errors cross the harness through the REAL structured-clone algorithm, so
 // its fidelity is the platform's problem, not a hand-maintained simulation's.
 // A stub that copied `name` verbatim once certified a fix the browser would
