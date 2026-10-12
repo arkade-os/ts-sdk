@@ -32,31 +32,20 @@ const SECOND_SCRIPT_OPTIONS = {
 const SECOND_PARAMS = DefaultContractHandler.serializeParams(SECOND_SCRIPT_OPTIONS);
 const SECOND_SCRIPT = hex.encode(new DefaultVtxo.Script(SECOND_SCRIPT_OPTIONS).pkScript);
 
-/**
- * The page-side proxy wired to a real `WalletMessageHandler` and `ContractManager`.
- * `stale` emulates a worker predating SET_CONTRACT_WATCH_STATE.
- */
-const createBridgedWallet = (manager: ContractManager, options: { stale?: boolean } = {}) => {
+/** The page-side proxy wired to a real `WalletMessageHandler` and `ContractManager`. */
+const createBridgedWallet = (manager: ContractManager) => {
     const handler = new WalletMessageHandler();
     (handler as any).readonlyWallet = {
         getContractManager: async () => manager,
         getContractSyncState: () => ({ mode: "online" }),
     };
 
-    const requests: string[] = [];
     const listeners = new Set<(event: { data: any }) => void>();
     const emit = (data: any) => listeners.forEach((l) => l({ data }));
     const serviceWorker = {
         postMessage: (message: WalletUpdaterRequest & { tag?: string }) => {
             if (message.tag === "PING") {
                 emit({ id: message.id, tag: "PONG" });
-                return;
-            }
-            requests.push(message.type);
-            if (options.stale && message.type === "SET_CONTRACT_WATCH_STATE") {
-                queueMicrotask(() =>
-                    emit({ id: message.id, tag: message.tag, error: new Error("Unknown message") }),
-                );
                 return;
             }
             void handler.handleMessage(message).then(emit);
@@ -74,14 +63,13 @@ const createBridgedWallet = (manager: ContractManager, options: { stale?: boolea
         },
     } as any);
 
-    const wallet = new (ServiceWorkerReadonlyWallet as any)(
+    return new (ServiceWorkerReadonlyWallet as any)(
         serviceWorker as any,
         { xOnlyPublicKey: async () => new Uint8Array(32).fill(0xab) } as any,
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
         handler.messageTag,
     ) as ServiceWorkerReadonlyWallet;
-    return { wallet, requests };
 };
 
 describe("ServiceWorkerWallet contract watch state", () => {
@@ -119,7 +107,7 @@ describe("ServiceWorkerWallet contract watch state", () => {
     });
 
     it("does not rewrite or resubscribe when the proxy repeats the same watch state", async () => {
-        const proxy = await createBridgedWallet(manager).wallet.getContractManager();
+        const proxy = await createBridgedWallet(manager).getContractManager();
         const save = vi.spyOn(repository, "saveContract");
         const subscribe = vi.mocked(mockIndexer.subscribeForScripts);
         subscribe.mockClear();
@@ -138,7 +126,7 @@ describe("ServiceWorkerWallet contract watch state", () => {
     });
 
     it("persists real transitions made through the proxy", async () => {
-        const proxy = await createBridgedWallet(manager).wallet.getContractManager();
+        const proxy = await createBridgedWallet(manager).getContractManager();
         const subscribe = vi.mocked(mockIndexer.subscribeForScripts);
 
         for (const watch of ["retained", "watched", "awaiting-funds"] as const) {
@@ -155,28 +143,37 @@ describe("ServiceWorkerWallet contract watch state", () => {
         }
     });
 
-    it("propagates the worker-side error for a missing contract", async () => {
-        const proxy = await createBridgedWallet(manager).wallet.getContractManager();
+    it("still rejects a missing contract", async () => {
+        const proxy = await createBridgedWallet(manager).getContractManager();
         const save = vi.spyOn(repository, "saveContract");
 
         await expect(proxy.setContractWatchState("deadbeef", "retained")).rejects.toThrow(
-            /Contract deadbeef not found/,
+            "Failed to update contract watch state",
         );
         expect(save).not.toHaveBeenCalled();
     });
 
-    it("falls back to the generic update on a worker predating the message", async () => {
-        const { wallet, requests } = createBridgedWallet(manager, { stale: true });
-        const proxy = await wallet.getContractManager();
+    it("returns the stored contract when a watch-only update is a no-op", async () => {
+        const proxy = await createBridgedWallet(manager).getContractManager();
+        const [stored] = await manager.getContracts({ script: TEST_DEFAULT_SCRIPT });
+        const save = vi.spyOn(repository, "saveContract");
 
-        await proxy.setContractWatchState(TEST_DEFAULT_SCRIPT, "retained");
+        const updated = await proxy.updateContract(TEST_DEFAULT_SCRIPT, { watch: "watched" });
 
-        expect(requests.filter((type) => type !== "GET_CONTRACT_SYNC_STATE")).toEqual([
-            "SET_CONTRACT_WATCH_STATE",
-            "UPDATE_CONTRACT",
-        ]);
-        expect((await manager.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0].watch).toBe(
-            "retained",
-        );
+        expect(updated).toEqual(stored);
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    it("keeps other updates on the generic path", async () => {
+        const proxy = await createBridgedWallet(manager).getContractManager();
+        const save = vi.spyOn(repository, "saveContract");
+
+        const updated = await proxy.updateContract(TEST_DEFAULT_SCRIPT, {
+            label: "renamed",
+            watch: "watched",
+        });
+
+        expect(updated.label).toBe("renamed");
+        expect(save).toHaveBeenCalledTimes(1);
     });
 });

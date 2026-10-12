@@ -10,7 +10,6 @@ import { WalletRepository } from "../../repositories";
 import type {
     Contract,
     ContractEvent,
-    ContractWatchState,
     ContractWithVtxos,
     GetContractsFilter,
     PathSelection,
@@ -402,15 +401,6 @@ export type RequestUpdateContract = RequestEnvelope & {
 export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
-};
-
-/** Routed to `ContractManager.setContractWatchState`, which skips unchanged states. */
-export type RequestSetContractWatchState = RequestEnvelope & {
-    type: "SET_CONTRACT_WATCH_STATE";
-    payload: { script: string; watch: ContractWatchState };
-};
-export type ResponseSetContractWatchState = ResponseEnvelope & {
-    type: "CONTRACT_WATCH_STATE_SET";
 };
 
 export type RequestDeleteContract = RequestEnvelope & {
@@ -886,7 +876,6 @@ export type WalletUpdaterRequest =
     | RequestGetWatchedScripts
     | RequestAnnotateVtxos
     | RequestUpdateContract
-    | RequestSetContractWatchState
     | RequestDeleteContract
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
@@ -947,7 +936,6 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
-        | ResponseSetContractWatchState
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1441,23 +1429,24 @@ export class WalletMessageHandler
                 }
                 case "UPDATE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contract = await manager.updateContract(
-                        message.payload.script,
-                        message.payload.updates,
-                    );
+                    const { script, updates } = message.payload;
+                    const keys = Object.keys(updates);
+                    // The proxy's setContractWatchState: keep the manager's unchanged-state no-op.
+                    if (keys.length === 1 && keys[0] === "watch" && updates.watch) {
+                        await manager.setContractWatchState(script, updates.watch);
+                        const [contract] = await manager.getContracts({ script });
+                        return this.tagged({
+                            id,
+                            type: "CONTRACT_UPDATED",
+                            payload: { contract },
+                        });
+                    }
+                    const contract = await manager.updateContract(script, updates);
                     return this.tagged({
                         id,
                         type: "CONTRACT_UPDATED",
                         payload: { contract },
                     });
-                }
-                case "SET_CONTRACT_WATCH_STATE": {
-                    const manager = await this.readonlyWallet.getContractManager();
-                    await manager.setContractWatchState(
-                        message.payload.script,
-                        message.payload.watch,
-                    );
-                    return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
                 }
                 case "DELETE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
