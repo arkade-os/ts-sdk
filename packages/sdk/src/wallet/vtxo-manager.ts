@@ -1350,21 +1350,23 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // partial/complete recovery sees the rest already spent.
         const recoverable = vtxos.filter((vtxo) => vtxo.isSwept && !isVtxoSpent(vtxo));
 
-        // Cap to the server's intent-size and per-output limits, highest-value
-        // first (mirrors recoverVtxos); the overflow recovers next cycle. A
-        // lone arkcash VTXO — the common case — is unaffected.
+        // Price against the intent-fee policy BEFORE capping, so an input that
+        // can't pay its own fee neither takes a viable one's slot nor joins the
+        // batch; it stays at the address (mirrors recoverVtxos). Then cap to the
+        // server's intent-size and per-output limits, highest-value first; the
+        // overflow recovers next cycle. `info` is undefined only with no ark
+        // provider wired, which prices as zero.
+        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const { payable, net } = priceSettlementInputs(recoverable, estimator);
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
         const batch =
-            recoverable.length > 0
-                ? capSettlementBatch(byValueDescending(recoverable), vtxoMaxAmount)
-                : [];
+            payable.length > 0 ? capSettlementBatch(byValueDescending(payable), vtxoMaxAmount) : [];
 
         if (batch.length > 0) {
-            const totalAmount = batch.reduce((sum, vtxo) => sum + BigInt(vtxo.value), 0n);
-            // The highest-value fitting subset is still below dust — the server
-            // would reject it. Leave it for a later cycle. arkcash is >= dust by
-            // construction, so this only guards a pathological remainder.
-            if (totalAmount < dustAmount) return;
+            // The output fee only lowers this, so a sub-dust net subtotal can't
+            // settle: skip before rotating, and retry on a later cycle.
+            const subtotal = subtotalOf(batch, net);
+            if (subtotal < dustAmount) return;
 
             // Rotation guard: if a swept input is under a now-deprecated signer
             // and the wallet's own snapshot is that old signer, pin the wallet
@@ -1378,7 +1380,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 await this.rotateForRecoverableInputs(batch, info, contract);
             }
 
+            // Read AFTER any rotation, so the output fee is priced against the
+            // script the recovered VTXO lands on.
             const arkAddress = await wallet.getAddress();
+            const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
+            if (totalAmount < dustAmount) return;
+
             await wallet.settle({
                 inputs: batch,
                 outputs: [{ address: arkAddress, amount: totalAmount }],

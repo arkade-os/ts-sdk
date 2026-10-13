@@ -775,6 +775,43 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
+    it("settles net of intent fees", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick } = await claimSwept(cash);
+        kick.mockRestore();
+        vi.mocked(wallet.arkProvider.getInfo).mockResolvedValue({
+            ...info,
+            fees: { intentFee: { offchainInput: "100.0", offchainOutput: "50.0" }, txFeeRate: "0" },
+        } as never);
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        await manager.recoverImportedContracts();
+
+        // A gross output offers zero fee and is rejected as INTENT_INSUFFICIENT_FEE.
+        expect(settle).toHaveBeenCalledOnce();
+        expect(settle.mock.calls[0][0]!.outputs).toEqual([
+            { address: await wallet.getAddress(), amount: BigInt(CASH_VALUE - 150) },
+        ]);
+    });
+
+    it("leaves an input that can't pay its own fee out, keeping contract and key", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
+        kick.mockRestore();
+        vi.mocked(wallet.arkProvider.getInfo).mockResolvedValue({
+            ...info,
+            fees: { intentFee: { offchainInput: `${CASH_VALUE}.0` }, txFeeRate: "0" },
+        } as never);
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        await manager.recoverImportedContracts();
+
+        expect(settle).not.toHaveBeenCalled();
+        const cm = await wallet.getContractManager();
+        expect(await cm.getContracts({ script: cashPkScript })).toHaveLength(1);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(true);
+    });
+
     it("purges on a later pass when the first pass's purge failed", async () => {
         // Re-entry is what makes a failed `removeRecoveryContract` self-heal,
         // and it needs the settled VTXO to still be in the view — spent, so
