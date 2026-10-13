@@ -2251,6 +2251,16 @@ export class Wallet
      */
     private readonly _keyring?: KeyringDescriptorProvider;
 
+    /**
+     * The built-in HD provider behind any keyring wrapping, or `undefined` when there is none.
+     * Every HD-specific branch goes through this: a wrapped HD provider (a public `walletMode`
+     * shape) fails `instanceof HDDescriptorProvider` and would silently take the non-HD path.
+     */
+    private get _hdProvider(): HDDescriptorProvider | undefined {
+        const provider = unwrapKeyring(this._descriptorProvider);
+        return provider instanceof HDDescriptorProvider ? provider : undefined;
+    }
+
     /** Per-side width of the HD look-ahead band. @see WalletConfig.lookAheadWindow */
     private readonly _lookAheadWindow: number;
 
@@ -2267,8 +2277,8 @@ export class Wallet
      * band rebuilt after {@link rotateServerSigner} fans the new signer set.
      */
     protected override lookAheadConfig(): ContractManagerConfig["lookAhead"] {
-        const provider = unwrapKeyring(this._descriptorProvider);
-        if (!(provider instanceof HDDescriptorProvider)) return undefined;
+        const provider = this._hdProvider;
+        if (!provider) return undefined;
         return {
             size: this._lookAheadWindow,
             currentWatermark: async () => (await provider.getLastIndexUsed()) ?? -1,
@@ -2432,7 +2442,7 @@ export class Wallet
         // `undefined` ("declined").
         const descriptor = !provider
             ? undefined
-            : provider instanceof HDDescriptorProvider
+            : this._hdProvider
               ? await manager.getNextSigningDescriptor()
               : await provider.getNextSigningDescriptor();
 
@@ -2586,9 +2596,7 @@ export class Wallet
      * @see HDWalletCapable.getCurrentSigningDescriptor
      */
     async getCurrentSigningDescriptor(): Promise<string | undefined> {
-        const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider)) return undefined;
-        return provider.getCurrentSigningDescriptor();
+        return this._hdProvider?.getCurrentSigningDescriptor();
     }
 
     /**
@@ -2598,7 +2606,7 @@ export class Wallet
      * contract manager; otherwise the identity key as `tr(pubkey)`, the same every call.
      */
     async getNextSigningDescriptor(): Promise<string | undefined> {
-        if (this._descriptorProvider instanceof HDDescriptorProvider) {
+        if (this._hdProvider) {
             return (await this.getContractManager()).getNextSigningDescriptor();
         }
         return identityDescriptor(this.identity);
@@ -2608,9 +2616,9 @@ export class Wallet
      * @see HDAllocationCapable.advanceSigningDescriptorWatermark
      */
     async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
-        const provider = this._descriptorProvider;
+        const provider = this._hdProvider;
         // Nothing to move without an index stream, so nothing to validate.
-        if (!(provider instanceof HDDescriptorProvider)) return;
+        if (!provider) return;
         if (!provider.isOurs(descriptor)) {
             throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
         }
@@ -2629,9 +2637,9 @@ export class Wallet
      * and descriptors persisted on contracts (covers rows a restore scan wrote).
      */
     async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
-        const provider = this._descriptorProvider;
+        const provider = this._hdProvider;
         const descriptors = new Set<string>();
-        if (provider instanceof HDDescriptorProvider) {
+        if (provider) {
             const lastIndexUsed = await provider.getLastIndexUsed();
             const requestedLookAhead = opts?.lookAhead ?? 0;
             if (!Number.isFinite(requestedLookAhead)) {
@@ -2892,13 +2900,11 @@ export class Wallet
 
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
-        // Keyring foreign keys sit outside the derivation tree the gap scan walks; a wrapped HD
-        // provider is still HD for scan purposes.
-        const provider = unwrapKeyring(this._descriptorProvider);
-        // `instanceof`, not duck-typing: a non-HD provider exposing a same-named method would be
-        // mis-classified and TypeError mid-scan. Lift into a type guard if custom HD providers
-        // are ever supported.
-        const hd = provider instanceof HDDescriptorProvider;
+        // Keyring foreign keys sit outside the derivation tree the gap scan walks, so only the
+        // unwrapped HD provider counts. `instanceof` (inside the getter), not duck-typing: a
+        // non-HD provider exposing a same-named method would TypeError mid-scan.
+        const provider = this._hdProvider;
+        const hd = provider !== undefined;
 
         const staticDescriptor = hd ? undefined : await identityDescriptor(this.identity);
         const materialize = (index: number): string =>
