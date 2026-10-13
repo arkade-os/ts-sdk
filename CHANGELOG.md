@@ -330,9 +330,10 @@ style and have not been backfilled.
 
 - **An offchain send recovers from `VTXO_ALREADY_REGISTERED`.** When arkd
   refuses an input that a leftover queued intent still holds, the wallet
-  deletes that intent and resubmits the same signed transaction once, as
-  settle already did for "duplicated input". An input held by a settle
-  running in the same wallet is left alone. `maybeArkError` now returns an
+  deletes every queued intent holding any of the send's inputs and resubmits
+  the same signed transaction once, as settle already did for "duplicated
+  input". If a settle running in the same wallet holds an input, nothing is
+  deleted. `maybeArkError` now returns an
   already-decoded `ArkError` as-is, so `isArkError(maybeArkError(e), …)`
   matches what `RestArkProvider` throws.
 

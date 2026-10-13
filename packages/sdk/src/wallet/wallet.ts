@@ -5350,8 +5350,10 @@ export class Wallet
      * {@link safeRegisterIntent}. Kept here, not in the shared `submitOffchainTx`: the delete
      * proof needs this wallet's signer.
      *
-     * An input a live settle in this wallet owns is left alone: deleting its intent would kill
-     * our own settlement.
+     * The delete proof covers every input, so one call clears every leftover intent holding any
+     * of them (arkd matches on any shared outpoint). If a live settle in this wallet owns an
+     * input, nothing is deleted: that would kill our own settlement, and the send cannot succeed
+     * while it holds the input anyway.
      */
     private withAlreadyRegisteredRecovery(
         provider: OffchainTxSubmitProvider,
@@ -5364,13 +5366,16 @@ export class Wallet
                     return await provider.submitTx(signedArkTx, checkpointTxs);
                 } catch (e) {
                     const outpoint = extractVtxoOutpoint(e, ArkErrorName.VTXO_ALREADY_REGISTERED);
-                    const coin =
+                    const ours =
                         outpoint &&
-                        inputs.find((c) => c.txid === outpoint.txid && c.vout === outpoint.vout);
-                    if (!coin || this._settlingOutpoints.has(`${coin.txid}:${coin.vout}`)) {
+                        inputs.some((c) => c.txid === outpoint.txid && c.vout === outpoint.vout);
+                    if (
+                        !ours ||
+                        inputs.some((c) => this._settlingOutpoints.has(`${c.txid}:${c.vout}`))
+                    ) {
                         throw e;
                     }
-                    const deleteIntent = await this.makeDeleteIntentSignature([coin]);
+                    const deleteIntent = await this.makeDeleteIntentSignature(inputs);
                     await this.arkProvider.deleteIntent(deleteIntent);
                     // Once: a second failure is rethrown, never looped.
                     return provider.submitTx(signedArkTx, checkpointTxs);

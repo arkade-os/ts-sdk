@@ -3123,6 +3123,8 @@ describe("Wallet offchain send: VTXO_ALREADY_REGISTERED recovery", () => {
             vtxo_outpoint: `${outpoint.txid}:${outpoint.vout}`,
         });
 
+    const other = { txid: "d".repeat(64), vout: 0 };
+
     const setup = (submitTx: ReturnType<typeof vi.fn>, settling: string[] = []) => {
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
         const makeDeleteIntentSignature = vi.fn().mockResolvedValue({ proof: "dp", message: {} });
@@ -3132,7 +3134,10 @@ describe("Wallet offchain send: VTXO_ALREADY_REGISTERED recovery", () => {
             makeDeleteIntentSignature,
             _settlingOutpoints: new Set(settling),
         };
-        const inputs = [{ ...outpoint, value: 1 }] as any[];
+        const inputs = [
+            { ...outpoint, value: 1 },
+            { ...other, value: 2 },
+        ] as any[];
         const wrapped = (Wallet.prototype as any).withAlreadyRegisteredRecovery.call(
             thisArg,
             { submitTx, finalizeTx },
@@ -3141,7 +3146,7 @@ describe("Wallet offchain send: VTXO_ALREADY_REGISTERED recovery", () => {
         return { wrapped, deleteIntent, makeDeleteIntentSignature, inputs };
     };
 
-    it("deletes the leftover intent with a fresh proof and retries once", async () => {
+    it("deletes leftover intents over every input and retries once", async () => {
         const submitTx = vi
             .fn()
             .mockRejectedValueOnce(alreadyRegistered())
@@ -3153,17 +3158,36 @@ describe("Wallet offchain send: VTXO_ALREADY_REGISTERED recovery", () => {
             signedCheckpointTxs: [],
         });
 
-        expect(makeDeleteIntentSignature).toHaveBeenCalledWith([inputs[0]]);
+        // All inputs: one delete clears every leftover holding any of them.
+        expect(makeDeleteIntentSignature).toHaveBeenCalledWith(inputs);
         expect(deleteIntent).toHaveBeenCalledTimes(1);
         expect(submitTx).toHaveBeenCalledTimes(2);
         // Same signed tx: no re-signing.
         expect(submitTx.mock.calls[1]).toEqual(["ark", ["cp"]]);
     });
 
-    it("leaves an in-flight outpoint to its settle and rethrows", async () => {
+    it.each([
+        ["the reported input", `${outpoint.txid}:${outpoint.vout}`],
+        ["another input", `${other.txid}:${other.vout}`],
+    ])("leaves inputs to a live settle holding %s and rethrows", async (_, settling) => {
         const err = alreadyRegistered();
         const submitTx = vi.fn().mockRejectedValue(err);
-        const { wrapped, deleteIntent } = setup(submitTx, [`${outpoint.txid}:${outpoint.vout}`]);
+        const { wrapped, deleteIntent } = setup(submitTx, [settling]);
+
+        await expect(wrapped.submitTx("ark", [])).rejects.toBe(err);
+
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(submitTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("rethrows when the error carries no outpoint", async () => {
+        const err = new ArkError(
+            4,
+            "vtxo already registered",
+            ArkErrorName.VTXO_ALREADY_REGISTERED,
+        );
+        const submitTx = vi.fn().mockRejectedValue(err);
+        const { wrapped, deleteIntent } = setup(submitTx);
 
         await expect(wrapped.submitTx("ark", [])).rejects.toBe(err);
 
