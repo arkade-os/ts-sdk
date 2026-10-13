@@ -169,6 +169,26 @@ describe("pushClaim", () => {
         expect(operator.finalized).toHaveLength(0);
     });
 
+    it("keeps the two-step flow with oneShot: false", async () => {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+            oneShot: false,
+        });
+
+        for (const checkpoint of operator.submitted[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        }
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0]!.txid).toBe(result.txid);
+    });
+
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
         // A signer that records whether the ConditionWitness field was already
         // present AT SIGN TIME: it must not be, or the signature covers a
