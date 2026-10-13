@@ -4297,7 +4297,7 @@ describe("VtxoManager - renewal output split", () => {
 
     // `gross - n * fee` is wrong for a proportional policy; one evaluation at the subtotal is wrong for all but one piece.
     it("prices each piece's output fee at that piece's own size", async () => {
-        const wallet = createMockWallet([expiring(500_000)], ADDRESS, {
+        const wallet = createMockWallet([expiring(152_000)], ADDRESS, {
             intentFee: { offchainOutput: "amount * 0.01" },
         });
         const split = fixedSplit(4, [100_000n, 50_000n]);
@@ -4373,6 +4373,22 @@ describe("VtxoManager - renewal output split", () => {
 
             await expect(run()).rejects.toThrow("claims 8250 with fees, more than the 8000");
             expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        // The residue is paid as fee: a rung-sized plan would hand the operator the rest.
+        it("when it leaves dust or more unclaimed", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [5000n, 2000n]));
+
+            await expect(run()).rejects.toThrow("leaves 1000 of 8000 unclaimed");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("still accepts a sub-dust residue", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [5000n, 2001n]));
+
+            await run();
+
+            expect(settled(wallet).outputs).toHaveLength(2);
         });
 
         it("when a piece is over the per-output ceiling", async () => {

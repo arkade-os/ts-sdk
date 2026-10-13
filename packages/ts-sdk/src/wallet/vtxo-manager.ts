@@ -418,11 +418,11 @@ function offchainOutputFee(amount: bigint, estimator: Estimator, arkAddress: str
  * every output whichever path produced it, so the one rule cannot drift.
  *
  * Refused, not corrected — a reshaped plan renews the float into a shape nobody
- * asked for. Under-claiming IS allowed: it leaves a residue as fee, the
- * direction {@link deductOffchainOutputFee} already errs in.
+ * asked for. Under-claiming is allowed only below dust: the residue is paid as
+ * fee, so anything that could have been a piece of its own is refused instead.
  */
 function planSplitOutputs(split: RenewalSplit, context: RenewalSplitContext): bigint[] {
-    const { subtotal, outputFeeOn, maxAmount, hasAssets } = context;
+    const { subtotal, outputFeeOn, maxAmount, dust, hasAssets } = context;
     const amounts = [...split.plan(context)];
     if (amounts.length === 0) {
         throw new Error(`Renewal split produced no outputs for a subtotal of ${subtotal}`);
@@ -452,6 +452,12 @@ function planSplitOutputs(split: RenewalSplit, context: RenewalSplitContext): bi
     if (claimed > subtotal) {
         throw new Error(
             `Renewal split claims ${claimed} with fees, more than the ${subtotal} available`,
+        );
+    }
+    if (subtotal - claimed >= dust) {
+        throw new Error(
+            `Renewal split leaves ${subtotal - claimed} of ${subtotal} unclaimed, at or above ` +
+                `the dust threshold ${dust}; the operator would take it as fee`,
         );
     }
     return amounts;
@@ -798,6 +804,7 @@ export interface RenewalSplitContext {
     outputFeeOn(amount: bigint): bigint;
     /** Server per-output ceiling; `-1n` means none. */
     maxAmount: bigint;
+    /** Floor for each piece, and the bound on what a plan may leave unclaimed. */
     dust: bigint;
     /** The address every piece lands on — the wallet's own, after any signer rotation. */
     address: string;
