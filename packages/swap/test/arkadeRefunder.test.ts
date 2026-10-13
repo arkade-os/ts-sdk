@@ -10,12 +10,20 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { CSVMultisigTapscript, SingleKey, Transaction, type IWallet } from "@arkade-os/sdk";
+import {
+    CSVMultisigTapscript,
+    SingleKey,
+    Transaction,
+    getNetwork,
+    type ArkProvider,
+    type IWallet,
+    type Network,
+} from "@arkade-os/sdk";
 
-import { lightningSendVtxoScript } from "../src/rfq";
+import { lightningSendContract } from "../src/rfq";
 import { arkadeRefunder } from "../src/arkadeRefunder";
 import { RefundNotLocallyPossibleError } from "../src/refundBlocked";
-import { LockupNeedsRecoveryError, type RefundArkProvider } from "../src/refund";
+import { LockupNeedsRecoveryError } from "../src/refund";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import type { RfqSwapRecord } from "../src/rfqRecord";
 import type { LightningSendSwap } from "../src/swapManager";
@@ -29,9 +37,9 @@ const REFUND_LOCKTIME = 1_800_000_000;
 const SENDER = SingleKey.fromPrivateKey(priv(13));
 const PAYMENT_HASH = hex.encode(sha256(new Uint8Array(32).fill(7)));
 
-const LOCKUP = lightningSendVtxoScript({
+const LOCKUP = lightningSendContract({
     solverPubkey: key(1),
-    serverPubkey: key(3),
+    operatorPubkey: key(3),
     paymentHash: PAYMENT_HASH,
     refundLocktime: REFUND_LOCKTIME,
     claimDelay: 4096,
@@ -48,31 +56,50 @@ const CHECKPOINT_TAPSCRIPT = hex.encode(
     }).script,
 );
 
-const fakeOperator = (): RefundArkProvider =>
+const fakeOperator = (): ArkProvider =>
     ({
-        getInfo: async () => ({ checkpointTapscript: CHECKPOINT_TAPSCRIPT }),
-        submitTx: async (arkTx: string, checkpoints: string[]) => ({
-            arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-            finalArkTx: arkTx,
+        getInfo: async () => ({
+            checkpointTapscript: CHECKPOINT_TAPSCRIPT,
+            network: "regtest",
+            forfeitPubkey: hex.encode(key(3)),
+        }),
+        submitTx: async (tx: string, checkpoints: string[]) => ({
+            arkTxid: Transaction.fromPSBT(base64.decode(tx)).id,
+            finalArkTx: tx,
             signedCheckpointTxs: checkpoints,
         }),
         finalizeTx: async () => {},
-    }) as unknown as RefundArkProvider;
+    }) as unknown as ArkProvider;
 
-/** The lockup as the indexer reports it: `getVtxos` is asked twice, once per
- * filter, and only the spendable half answers unless a test says otherwise. */
-const fakeIndexer = (over: { spendable?: unknown[]; recoverable?: unknown[] } = {}) =>
+/** The lockup as the contract manager serves it: the registered row, one
+ * normalized output per entry. The swept half arrives already tagged. */
+const fakeContracts = (over: { unspent?: typeof FUNDED; swept?: typeof FUNDED } = {}) =>
     ({
-        getVtxos: async (opts?: { spendableOnly?: boolean; recoverableOnly?: boolean }) => ({
-            vtxos: opts?.spendableOnly
-                ? (over.spendable ?? [])
-                : opts?.recoverableOnly
-                  ? (over.recoverable ?? [])
-                  : [],
-        }),
+        getContractsWithVtxos: async () => [
+            {
+                contract: {
+                    script: "5120",
+                    type: "vhtlc-v2",
+                    params: {},
+                    address: "ark1lockup",
+                    state: "active",
+                    createdAt: 1,
+                },
+                vtxos: [
+                    ...(over.unspent ?? []).map(({ recoverable: _r, ...vtxo }) => ({
+                        ...vtxo,
+                        isSwept: false,
+                    })),
+                    ...(over.swept ?? []).map(({ recoverable: _r, ...vtxo }) => ({
+                        ...vtxo,
+                        isSwept: true,
+                    })),
+                ],
+            },
+        ],
     }) as never;
 
-const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000 }];
+const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false }];
 
 const walletFor = (identity = SENDER) => ({ identity }) as unknown as IWallet;
 
@@ -105,19 +132,21 @@ const record = async (over: Partial<RfqSwapRecord> = {}): Promise<RfqSwapRecord>
 
 const refunderWith = async (
     input: {
-        indexer?: ReturnType<typeof fakeIndexer>;
+        contracts?: ReturnType<typeof fakeContracts>;
         stored?: RfqSwapRecord | null;
         wallet?: IWallet;
+        network?: () => Promise<Network>;
     } = {},
 ) => {
     const repository = new InMemoryAssetSwapRepository();
     const stored = input.stored === null ? undefined : (input.stored ?? (await record()));
     if (stored) await repository.saveRfqSwap(stored);
     return arkadeRefunder({
-        ark: fakeOperator(),
-        indexer: input.indexer ?? fakeIndexer({ spendable: FUNDED }),
+        operator: fakeOperator(),
+        contracts: input.contracts ?? fakeContracts({ unspent: FUNDED }),
         wallet: input.wallet ?? walletFor(),
         repository,
+        ...(input.network ? { network: input.network } : {}),
     });
 };
 
@@ -127,11 +156,16 @@ describe("arkadeRefunder", () => {
         const result = await refund(swap());
 
         expect(result?.amount).toBe(60_000);
-        expect(result?.arkTxid).toMatch(/^[0-9a-f]{64}$/);
+        expect(result?.txid).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("floors the checkpoint script against the caller's network, not the operator's", async () => {
+        const refund = await refunderWith({ network: async () => getNetwork("bitcoin") });
+        await expect(refund(swap())).rejects.toThrow(/checkpoint exit delay rejected/);
     });
 
     it("returns null for an empty lockup, which is not a failure", async () => {
-        const refund = await refunderWith({ indexer: fakeIndexer() });
+        const refund = await refunderWith({ contracts: fakeContracts() });
         await expect(refund(swap())).resolves.toBeNull();
     });
 
@@ -155,7 +189,7 @@ describe("arkadeRefunder", () => {
 
     it("lets LockupNeedsRecoveryError through instead of retrying the window away", async () => {
         const refund = await refunderWith({
-            indexer: fakeIndexer({ recoverable: FUNDED }),
+            contracts: fakeContracts({ swept: FUNDED }),
         });
         await expect(refund(swap())).rejects.toThrow(LockupNeedsRecoveryError);
     });

@@ -52,7 +52,6 @@ const ctxWith = (send = vi.fn(async () => "txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<CrossAssetRailDeps> = {}): CrossAssetRailDeps => ({
-    arkServerUrl: "http://ark",
     discover: vi.fn(async () => [market()]),
     quote: vi.fn(async () => plan(100_000n, 500n)),
     btcBalance: vi.fn(async () => 1_000_000n),
@@ -207,6 +206,20 @@ describe("crossAssetRail.quote", () => {
         expect(quote.assets?.spent.assetId).not.toBe(quote.assets?.delivered.assetId);
     });
 
+    it("derives the market label when the wire pair is absent", async () => {
+        const pairless = {
+            ...plan(100_000n, 500n),
+            market: market({
+                pair: undefined,
+                base_asset: { id: "arkade:mutinynet/slip44:1", decimals: 8, ticker: "BTC" },
+                quote_asset: { id: USDX_ID, decimals: 2, ticker: "USDX" },
+            }),
+        } as OfferPlan;
+        const rail = crossAssetRail(depsWith({ quote: vi.fn(async () => pairless) }));
+
+        expect((await rail.quote(req, ctxWith())).meta?.market).toBe("BTC/USDX");
+    });
+
     it("prices BOTH legs into the sats that leave the wallet", async () => {
         const quote = await crossAssetRail(depsWith({ carrierSats: 330 })).quote(req, ctxWith());
         expect(quote).toMatchObject({ amount: 330, fee: 100_000, total: 100_330 });
@@ -334,7 +347,7 @@ describe("crossAssetRail.send", () => {
         // an undefined want-asset rather than throw — funded, unfillable.
         let seen: unknown;
         offerStub = async (..._args: unknown[]) => {
-            seen = (_args[2] as { wantAsset?: unknown }).wantAsset;
+            seen = (_args[1] as { wantAsset?: unknown }).wantAsset;
             return offer;
         };
         const quote = await crossAssetRail(depsWith()).quote(req, ctxWith());
@@ -382,7 +395,6 @@ describe("no BTC-only rail silently drops an asset", () => {
         const btc = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
         const onchain = solverOnchainRail({
-            arkServerUrl: "http://ark",
             l1Network: "regtest",
             payoutPubkey: new Uint8Array(32).fill(15),
             discover: vi.fn(async () => []),
@@ -397,7 +409,6 @@ describe("no BTC-only rail silently drops an asset", () => {
         ).rejects.toThrow(/cannot deliver/);
 
         const lightning = solverLightningRail({
-            arkServerUrl: "http://ark",
             decodeInvoice: () => ({
                 raw: "lnbcrt1u1p",
                 paymentHash: "cc".repeat(32),

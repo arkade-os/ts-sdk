@@ -46,7 +46,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build TSDoc
-        run: pnpm -C packages/ts-sdk run docs:build
+        run: pnpm -C packages/sdk run docs:build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
