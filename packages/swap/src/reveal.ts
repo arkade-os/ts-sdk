@@ -7,11 +7,10 @@
  * Sealing to the key THIS base URL serves removes the mismatch by construction.
  */
 import { base64, hex } from "@scure/base";
-import { ripemd160 } from "@noble/hashes/legacy.js";
-import { sha256 } from "@noble/hashes/sha2.js";
 import { ArkAddress, type VHTLC } from "@arkade-os/sdk";
 
 import { sealClaimPacket } from "./claimPacket";
+import { assertPreimageMatches } from "./onchainHtlc";
 
 /**
  * `retryable` is the point of the type: a 400 says the packet does not bind to
@@ -206,12 +205,7 @@ export async function revealClaimPacket(
     ) {
         throw new Error("address does not belong to this covenant");
     }
-    if (
-        hex.encode(ripemd160(sha256(input.preimage))) !==
-        hex.encode(input.script.options.preimageHash)
-    ) {
-        throw new Error("preimage does not match the covenant's payment hash");
-    }
+    assertPreimageMatches(input.preimage, input.script.options.preimageHash);
 
     const { ciphertext } = await sealClaimPacket({
         preimage: input.preimage,

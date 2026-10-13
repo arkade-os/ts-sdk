@@ -3,7 +3,7 @@
  * fund — and check the wallet then treats the lockup as owned-but-escrowed.
  *
  * This is `swap.test.ts`'s escrow test for the other corridor, and the reason
- * it needs its own stack: `lightningSendVtxoScript` emits SECONDS-typed
+ * it needs its own stack: `lightningSendContract` emits SECONDS-typed
  * timelocks on all three unilateral tiers, and `unilateralClaimDelay` refuses a
  * server exit delay below 512s — so on the offer suite's block-typed arkd
  * (`ARKD_UNILATERAL_EXIT_DELAY=20`) `requestLightningSend` throws before it
@@ -16,7 +16,7 @@
  * side does: arkd's parameters, the covenant, the contract row, the funding
  * transaction, the indexer sync and the spendability gate.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -36,15 +36,15 @@ import {
     SWAP_LOCKUP_CONTRACT_KIND,
     SWAP_LOCKUP_CONTRACT_LABEL,
     SWAP_LOCKUP_CONTRACT_TYPE,
-    lightningSendVtxoScript,
+    lightningSendContract,
     registerLockupContract,
     requestLightningSend,
     unilateralClaimDelay,
     type RfqQuote,
     type RfqTransport,
-} from "../../src";
+} from "../../src/protocol";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
 
@@ -71,19 +71,34 @@ const execCommand = (command: string): string => {
     return result;
 };
 
-const waitFor = async (
-    fn: () => Promise<boolean>,
-    { timeout = 30_000, interval = 500 } = {},
-): Promise<void> => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("timeout in waitFor");
+// expect.poll would do, but it refuses to run outside a test (the beforeAll
+// faucet wait needs this too); vi.waitFor polls anywhere. vi.waitFor retries
+// ANY throw until the deadline, so a real error from `fn` (stack down, HTTP
+// 500) would burn the whole timeout: capture it, stop polling, rethrow at
+// once — only a `false` (not ready yet) may spin.
+const waitFor = (fn: () => Promise<boolean>, timeout = 30_000): Promise<void> => {
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error("timeout in waitFor");
+            },
+            { timeout, interval: 500 },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
 let emulatorPubkey: Uint8Array;
 let operatorPubkey: Uint8Array;
@@ -106,12 +121,14 @@ const stubTransport = (): RfqTransport => ({
     async requestQuote(payload) {
         const profile = (payload as { profile: Record<string, unknown> }).profile;
         const refundLocktime = NOW() + 24 * 3600;
-        const script = lightningSendVtxoScript({
+        const refundWithoutReceiverDelay = Math.ceil((24 * 3600) / 512) * 512;
+        const contract = lightningSendContract({
             solverPubkey: SOLVER,
             refundLocktime,
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
             paymentHash: PAYMENT_HASH,
             claimDelay,
+            refundWithoutReceiverDelay,
             emulatorPubkey,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -129,7 +146,8 @@ const stubTransport = (): RfqTransport => ({
             refund_locktime: refundLocktime,
             profile: {
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
-                lockup_address: script.address(hrp, operatorPubkey).encode(),
+                lockup_address: contract.address(hrp, operatorPubkey).encode(),
+                refund_without_receiver_delay: refundWithoutReceiverDelay,
             },
         } satisfies RfqQuote;
     },
@@ -142,7 +160,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -160,9 +178,10 @@ beforeAll(async () => {
     execCommand(`${arkdExec} ark send --to ${address} --amount ${FAUCET_SATS} --password secret`);
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
-    // The stub solver has to derive the same script the maker will, so it needs
-    // the same server-derived inputs `requestLightningSend` reads for itself.
-    const info = await new RestArkProvider(ARK_URL).getInfo();
+    // The stub solver has to derive the same script the maker will, so it reads
+    // the server through the same seam `requestLightningSend` now uses — a
+    // second provider built from a URL would only agree by coincidence.
+    const info = await wallet.getArkadeInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
@@ -177,7 +196,7 @@ describe("RFQ lockup registration (regtest)", () => {
     let lockupScript: string;
 
     it("registers the lockup before the maker can fund it", async () => {
-        swap = await requestLightningSend(wallet, ARK_URL, stubTransport(), {
+        swap = await requestLightningSend(wallet, stubTransport(), {
             invoice: {
                 raw: "lnbcrt10u1p",
                 paymentHash: PAYMENT_HASH,
