@@ -26,6 +26,10 @@ pnpm -C packages/sdk vitest run test/wallet.test.ts   # Single test file
 
 Release and regtest/integration workflows are documented in `CONTRIBUTING.md`.
 
+## Changelog
+
+Add a `CHANGELOG.md` entry under `## [Unreleased]` in the same commit as the change, grouped and styled to match the existing entries (bolded headline, root-cause prose, section ordering); the `[Unreleased]` header is retitled to `## [X.Y.Z] - YYYY-MM-DD` by hand at release time — no script or CI step does this.
+
 ## Contracts Subsystem Ownership
 
 The `src/contracts/` pipeline is event-driven with strict ownership rules:

@@ -1,7 +1,10 @@
 # Changelog
 
-All notable changes to `@arkade-os/sdk` are documented here. Format
-conventions and section ordering are defined in [`CLAUDE.md`](CLAUDE.md).
+All notable changes to `@arkade-os/sdk` are documented here. Entries land
+under `## [Unreleased]` in the same commit as the change, grouped in this
+order (omit empty sections): `### Breaking Changes`, `### Features`,
+`### Bug Fixes`, `### Performance`, `### Internal`. See
+[`AGENTS.md`](AGENTS.md#changelog) for the mechanism.
 
 This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
