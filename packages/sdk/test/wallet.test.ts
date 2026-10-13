@@ -1,5 +1,8 @@
 import { collectVtxos } from "../src/repositories/walletRepository";
 import { collectContracts } from "../src/repositories/contractRepository";
+import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { collectIntents } from "../src/repositories/intentRepository";
+import type { ArkIntent, IntentRepository } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
@@ -1050,7 +1053,7 @@ describe("Wallet", () => {
             };
         }
 
-        async function createReadonlyTestWallet() {
+        async function createReadonlyTestWallet(storage?: { intentRepository?: IntentRepository }) {
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
@@ -1076,7 +1079,7 @@ describe("Wallet", () => {
                     getSubscription: async function* () {},
                 } as Partial<IndexerProvider> as IndexerProvider,
                 onchainProvider: {} as OnchainProvider,
-                storage: { walletRepository, contractRepository },
+                storage: { walletRepository, contractRepository, ...storage },
             });
 
             return { wallet, walletRepository, contractRepository };
@@ -1095,6 +1098,80 @@ describe("Wallet", () => {
 
             expect(await collectVtxos(walletRepository, address)).toEqual([]);
             expect(await collectContracts(contractRepository)).toEqual([]);
+        });
+
+        const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
+            intentTxId: "i1",
+            state: "waiting_for_batch",
+            createdAt: 1,
+            updatedAt: 1,
+            registerProof: "rp",
+            registerProofMessage: "rpm",
+            deleteProof: "dp",
+            deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }),
+            partialForfeits: [],
+            intentVtxos: [{ txid: "v", vout: 0 }],
+            ...over,
+        });
+        const intentIds = async (repo: IntentRepository) =>
+            (await collectIntents(repo)).map((i) => i.intentTxId);
+
+        it("wipes intents once none is pending", async () => {
+            const intentRepository = new InMemoryIntentRepository();
+            const { wallet } = await createReadonlyTestWallet({ intentRepository });
+            await intentRepository.saveIntent(storedIntent({ state: "batch_succeeded" }));
+
+            await wallet.clear();
+
+            expect(await intentIds(intentRepository)).toEqual([]);
+        });
+
+        it("keeps pending intents a readonly wallet cannot release", async () => {
+            const intentRepository = new InMemoryIntentRepository();
+            const { wallet } = await createReadonlyTestWallet({ intentRepository });
+            await intentRepository.saveIntent(storedIntent());
+
+            await wallet.clear();
+
+            expect(await intentIds(intentRepository)).toEqual(["i1"]);
+        });
+
+        describe("clearIntents with a release-capable wallet", () => {
+            const clearIntents = (intentRepository: IntentRepository, deleteIntent: any) =>
+                (ReadonlyWallet.prototype as any).clearIntents.call({
+                    intentRepository,
+                    intentReconciliationConfig: () => ({ deleteIntent }),
+                });
+
+            it("releases pending intents from the server, then wipes them", async () => {
+                const intentRepository = new InMemoryIntentRepository();
+                await intentRepository.saveIntent(storedIntent());
+                const deleteIntent = vi.fn().mockResolvedValue(undefined);
+
+                await clearIntents(intentRepository, deleteIntent);
+
+                expect(deleteIntent).toHaveBeenCalledWith({
+                    proof: "dp",
+                    message: { type: "delete", expire_at: 0 },
+                });
+                expect(await intentIds(intentRepository)).toEqual([]);
+            });
+
+            it("keeps every intent when one release fails", async () => {
+                const intentRepository = new InMemoryIntentRepository();
+                await intentRepository.saveIntent(storedIntent());
+                await intentRepository.saveIntent(
+                    storedIntent({ intentTxId: "i2", intentVtxos: [{ txid: "w", vout: 0 }] }),
+                );
+                const deleteIntent = vi
+                    .fn()
+                    .mockResolvedValueOnce(undefined)
+                    .mockRejectedValueOnce(new Error("network down"));
+
+                await clearIntents(intentRepository, deleteIntent);
+
+                expect((await intentIds(intentRepository)).sort()).toEqual(["i1", "i2"]);
+            });
         });
     });
 
@@ -1919,6 +1996,7 @@ describe("Wallet._settleImpl", () => {
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
             makeRegisterIntentSignature: vi.fn().mockResolvedValue({
                 proof: "register-proof",
@@ -1994,6 +2072,7 @@ describe("Wallet._settleImpl", () => {
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
             makeRegisterIntentSignature: vi.fn().mockResolvedValue({
                 proof: "register-proof",
@@ -2030,6 +2109,49 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 
+    it("claims its inputs for reconciliation before the first intent persist", async () => {
+        const key = `${input.txid}:${input.vout}`;
+        const claimedAt: Record<string, boolean> = {};
+        const settling = new Set<string>();
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue({
+                    next: vi.fn(() => new Promise(() => {})),
+                    return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+                }),
+                deleteIntent: vi.fn().mockResolvedValue(undefined),
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            _settlingOutpoints: settling,
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
+            safeRegisterIntent: vi.fn().mockRejectedValue(new Error("register failed")),
+            persistIntentSnapshot: vi.fn(async (_id: string, state: string) => {
+                claimedAt[state] = settling.has(key);
+            }),
+        };
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(thisArg, { inputs: [input], outputs: [] }),
+        ).rejects.toThrow("register failed");
+
+        expect(claimedAt).toEqual({ waiting_to_submit: true, cancelled: true });
+        expect(settling.size).toBe(0);
+    });
+
     it("keeps a committed batch as batch_succeeded when a post-commit step throws", async () => {
         const stream = {
             next: vi.fn().mockResolvedValue({ done: false, value: { type: "batch_started" } }),
@@ -2053,6 +2175,7 @@ describe("Wallet._settleImpl", () => {
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
             makeRegisterIntentSignature: vi.fn().mockResolvedValue({
                 proof: "register-proof",
