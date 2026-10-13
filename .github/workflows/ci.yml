@@ -33,7 +33,7 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      - name: Type-check sdk
+      - name: Type-check sdk (src and tests)
         run: pnpm -C packages/sdk run typecheck
 
       - name: Type-check sdk type tests
@@ -42,7 +42,7 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Type-check swap
+      - name: Type-check swap (src and tests)
         run: pnpm -C packages/swap run typecheck
 
       - name: Smoke-test sdk dist

@@ -48,7 +48,7 @@ function expoFetchTransport(): Transport {
     return {
         install: () => vi.doMock("expo/fetch", () => ({ fetch: spy })),
         restore: () => vi.doUnmock("expo/fetch"),
-        requests: () => spy.mock.calls.map((call) => call[1] as RequestInit),
+        requests: () => spy.mock.calls.map((call) => (call as unknown[])[1] as RequestInit),
     };
 }
 

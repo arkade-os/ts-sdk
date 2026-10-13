@@ -37,7 +37,6 @@ const spentDeposit = (): ExtendedVirtualCoin => ({
     vout: 0,
     value: 10_000,
     status: { confirmed: true },
-    virtualStatus: { state: "spent" },
     createdAt: new Date("2024-01-15T12:00:00Z"),
     isUnrolled: false,
     isSpent: true,
@@ -108,7 +107,6 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         await saveVtxosForContract(repository, contract, [spentDeposit()]);
         const stale: ExtendedVirtualCoin = {
             ...spentDeposit(),
-            virtualStatus: { state: "settled" },
             isSpent: false,
             spentBy: "",
             arkTxId: undefined,
@@ -136,7 +134,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         await saveVtxosForContract(repository, contract, [settled]);
 
         await saveVtxosForContract(repository, contract, [
-            { ...settled, virtualStatus: { state: "settled" }, isSpent: false, settledBy: "" },
+            { ...settled, isSpent: false, settledBy: "" },
         ]);
 
         const vtxos = await getVtxosForContract(repository, contract);
@@ -151,9 +149,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         const bare = { ...spentDeposit(), spentBy: "", arkTxId: undefined, settledBy: "" };
 
         await saveVtxosForContract(repository, contract, [bare]);
-        await saveVtxosForContract(repository, contract, [
-            { ...bare, virtualStatus: { state: "settled" } as const, isSpent: false },
-        ]);
+        await saveVtxosForContract(repository, contract, [{ ...bare, isSpent: false }]);
 
         const vtxos = await getVtxosForContract(repository, contract);
         expect(vtxos).toHaveLength(1);
@@ -164,7 +160,6 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         const other: ExtendedVirtualCoin = {
             ...spentDeposit(),
             txid: "ef".repeat(32),
-            virtualStatus: { state: "settled" },
             isSpent: false,
             spentBy: "",
             arkTxId: undefined,
@@ -188,7 +183,6 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
 
     const staleRow = (): ExtendedVirtualCoin => ({
         ...spentDeposit(),
-        virtualStatus: { state: "settled" },
         isSpent: false,
         spentBy: "",
         arkTxId: undefined,
@@ -230,7 +224,6 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         const unspent: ExtendedVirtualCoin = {
             ...spentDeposit(),
             txid: "ef".repeat(32),
-            virtualStatus: { state: "settled" },
             isSpent: false,
             spentBy: "",
             arkTxId: undefined,

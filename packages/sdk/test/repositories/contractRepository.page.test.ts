@@ -155,7 +155,7 @@ it("reads a watch filter through the IndexedDB watch indexes, never a retained r
         ] as const) {
             seek.mockClear();
             step.mockClear();
-            const rows = await collectContracts(repository, filter as ContractFilter);
+            const rows = await collectContracts(repository, filter as unknown as ContractFilter);
             expect(rows.map((contract) => contract.script)).toEqual(["a", "b", "c"]);
             expect(seek.mock.contexts.map((source) => (source as IDBIndex).name)).toEqual([
                 index,

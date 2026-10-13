@@ -13,7 +13,6 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 
 import {
     AddressMismatch,
-    ARKADE_BTC,
     LIGHTNING_SEND_PAIR,
     MAX_PAIR_LENGTH,
     SOLO_REFUND_HEADROOM_SECONDS,

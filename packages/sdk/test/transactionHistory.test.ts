@@ -11,9 +11,14 @@ type LegacyVirtualStatus = {
     commitmentTxIds?: string[];
 };
 
-function canonicalizeVtxoForTest(vtxo: VirtualCoin): VirtualCoin {
-    const legacy = (vtxo as VirtualCoin & { virtualStatus?: LegacyVirtualStatus }).virtualStatus;
-    const canonical = { ...vtxo } as VirtualCoin & { virtualStatus?: LegacyVirtualStatus };
+type LegacyVirtualCoin = Omit<VirtualCoin, "script"> & {
+    script?: string;
+    virtualStatus?: LegacyVirtualStatus;
+};
+
+function canonicalizeVtxoForTest(vtxo: LegacyVirtualCoin): VirtualCoin {
+    const legacy = vtxo.virtualStatus;
+    const canonical = { script: "", ...vtxo } as VirtualCoin & LegacyVirtualCoin;
     delete canonical.virtualStatus;
     if (!legacy) return canonical;
 
@@ -33,7 +38,7 @@ function canonicalizeVtxoForTest(vtxo: VirtualCoin): VirtualCoin {
 }
 
 function buildTransactionHistory(
-    vtxos: VirtualCoin[],
+    vtxos: LegacyVirtualCoin[],
     allBoardingTxs: ArkTransaction[],
     commitmentsToIgnore: Set<string>,
     resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
@@ -66,7 +71,7 @@ describe("buildTransactionHistory", () => {
             const baseDate = new Date("2025-10-31T20:00:00Z");
 
             // The original vtxo that was spent (1000 sats)
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "9ad04d80b9025762d029388e550c20a12a4fc7373be215cd300e8aacaf7f8e0b",
                 vout: 0,
                 value: 1000,
@@ -87,7 +92,7 @@ describe("buildTransactionHistory", () => {
 
             // The two resulting vtxos from the split (500 sats each)
             // Only one is returned to us (change), the other went to the recipient
-            const resultVtxo0: VirtualCoin = {
+            const resultVtxo0: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 500,
@@ -136,32 +141,10 @@ describe("buildTransactionHistory", () => {
             // - Should show as 0 net sent (or possibly not show at all)
 
             const arkTxId = "98b1cdc34d006e0956b1a828c65cd222780348d94b706a69a933ee58b19ab8e0";
-            const commitmentTxId =
-                "3a74555034c7f3c8053d0b30441178630dd98f645d9ed42aa9425fdc2279e159";
-            const spentByTxId = "90a9f4b835db83cc55a67bc5f362d139e81eb268f4f30b156cc8b0e5a1fdd6b0";
             const baseDate = new Date("2025-10-31T20:00:00Z");
 
-            const spentVtxo: VirtualCoin = {
-                txid: "9ad04d80b9025762d029388e550c20a12a4fc7373be215cd300e8aacaf7f8e0b",
-                vout: 0,
-                value: 1000,
-                status: {
-                    confirmed: true,
-                    block_height: 100,
-                },
-                virtualStatus: {
-                    state: "preconfirmed",
-                    commitmentTxIds: [commitmentTxId],
-                },
-                spentBy: spentByTxId,
-                arkTxId: arkTxId,
-                createdAt: baseDate,
-                isUnrolled: false,
-                isSpent: true,
-            };
-
             // Both resulting vtxos belong to the user
-            const resultVtxo0: VirtualCoin = {
+            const resultVtxo0: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 500,
@@ -176,7 +159,7 @@ describe("buildTransactionHistory", () => {
                 isSpent: false,
             };
 
-            const resultVtxo1: VirtualCoin = {
+            const resultVtxo1: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 1,
                 value: 500,
@@ -215,20 +198,22 @@ describe("buildTransactionHistory", () => {
             const arkTxId = "migration-ark-tx";
             const baseDate = new Date("2026-06-15T07:45:58Z");
 
-            const oldSignerVtxos: VirtualCoin[] = [1000, 2471, 173875, 7529].map((value, i) => ({
-                txid: `old-signer-vtxo-${i}`,
-                vout: 0,
-                value,
-                status: { confirmed: false },
-                virtualStatus: { state: "preconfirmed" },
-                createdAt: new Date(baseDate.getTime() - 1000),
-                isUnrolled: false,
-                isSpent: true,
-                arkTxId,
-            }));
+            const oldSignerVtxos: LegacyVirtualCoin[] = [1000, 2471, 173875, 7529].map(
+                (value, i) => ({
+                    txid: `old-signer-vtxo-${i}`,
+                    vout: 0,
+                    value,
+                    status: { confirmed: false },
+                    virtualStatus: { state: "preconfirmed" },
+                    createdAt: new Date(baseDate.getTime() - 1000),
+                    isUnrolled: false,
+                    isSpent: true,
+                    arkTxId,
+                }),
+            );
 
             // Single new-signer output holding the full migrated amount (self change).
-            const newSignerOutput: VirtualCoin = {
+            const newSignerOutput: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 184875,
@@ -275,7 +260,7 @@ describe("buildTransactionHistory", () => {
             };
 
             // 2. Leaf VTXO as returned by the indexer
-            const leafVtxo: VirtualCoin = {
+            const leafVtxo: LegacyVirtualCoin = {
                 txid: "leaf-vtxo-txid",
                 vout: 0,
                 value: amount,
@@ -328,7 +313,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: baseDate.getTime(),
             };
 
-            const leafVtxo: VirtualCoin = {
+            const leafVtxo: LegacyVirtualCoin = {
                 txid: "86e31825f6a50d88c71eca33c7b4830d0aae4f320c12b12df0053c7b341cd4f3",
                 vout: 0,
                 value: amount,
@@ -385,7 +370,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: baseDate.getTime(),
             };
 
-            const leafVtxo: VirtualCoin = {
+            const leafVtxo: LegacyVirtualCoin = {
                 txid: "86e31825f6a50d88c71eca33c7b4830d0aae4f320c12b12df0053c7b341cd4f3",
                 vout: 0,
                 value: amount,
@@ -436,7 +421,7 @@ describe("buildTransactionHistory", () => {
                 settled: true,
                 createdAt: baseDate.getTime(),
             };
-            const boardingSweepLeaf: VirtualCoin = {
+            const boardingSweepLeaf: LegacyVirtualCoin = {
                 txid: "boarding-sweep-vtxo",
                 vout: 0,
                 value: amount,
@@ -450,7 +435,7 @@ describe("buildTransactionHistory", () => {
                 isUnrolled: false,
                 isSpent: false,
             };
-            const independentReceiveLeaf: VirtualCoin = {
+            const independentReceiveLeaf: LegacyVirtualCoin = {
                 txid: "independent-receive-vtxo",
                 vout: 0,
                 value: amount,
@@ -505,7 +490,7 @@ describe("buildTransactionHistory", () => {
                 settled: true,
                 createdAt: new Date("2026-02-23T18:37:36Z").getTime(),
             };
-            const combinedVtxo: VirtualCoin = {
+            const combinedVtxo: LegacyVirtualCoin = {
                 txid: "34592d08e0a22d91d58a9e80afdc87073831e5bea856e985daf52fadee62063c",
                 vout: 0,
                 value: 228532,
@@ -549,7 +534,7 @@ describe("buildTransactionHistory", () => {
                 createdAt: new Date("2025-12-06T12:13:48Z").getTime(),
             };
             // The combined leaf created by the sweep (boarding + refreshed funds).
-            const combinedVtxo: VirtualCoin = {
+            const combinedVtxo: LegacyVirtualCoin = {
                 txid: "d46e8991f8bc534f63cd05cf673791d024a440fde9e80891eb5698fb53dff7ec",
                 vout: 0,
                 value: 82147,
@@ -577,7 +562,7 @@ describe("buildTransactionHistory", () => {
             const arkTxId = "receive-ark-tx-id";
             const baseDate = new Date("2025-10-31T20:00:00Z");
 
-            const receivedVtxo: VirtualCoin = {
+            const receivedVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 1000,
@@ -592,8 +577,6 @@ describe("buildTransactionHistory", () => {
                 isSpent: false,
             };
 
-            const spendable = [receivedVtxo];
-            const spent: VirtualCoin[] = [];
             const boardingBatchTxids = new Set<string>();
 
             const transactions = await buildTransactionHistory(
@@ -615,7 +598,7 @@ describe("buildTransactionHistory", () => {
         const assetB = "asset-id-bbb";
 
         it("should include assets on offchain received transaction", async () => {
-            const vtxo: VirtualCoin = {
+            const vtxo: LegacyVirtualCoin = {
                 txid: "offchain-rx-tx",
                 vout: 0,
                 value: 1000,
@@ -636,7 +619,7 @@ describe("buildTransactionHistory", () => {
 
         it("should include assets on batch received transaction", async () => {
             const commitmentTxId = "batch-commitment-tx";
-            const vtxo: VirtualCoin = {
+            const vtxo: LegacyVirtualCoin = {
                 txid: "batch-rx-vtxo",
                 vout: 0,
                 value: 2000,
@@ -666,7 +649,7 @@ describe("buildTransactionHistory", () => {
         });
 
         it("should not include assets property when vtxos have no assets", async () => {
-            const vtxo: VirtualCoin = {
+            const vtxo: LegacyVirtualCoin = {
                 txid: "no-asset-tx",
                 vout: 0,
                 value: 500,
@@ -686,7 +669,7 @@ describe("buildTransactionHistory", () => {
         it("should subtract assets for offchain sent with change", async () => {
             const arkTxId = "offchain-sent-ark-tx";
 
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-1",
                 vout: 0,
                 value: 1000,
@@ -699,7 +682,7 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 100n }],
             };
 
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 400,
@@ -722,7 +705,7 @@ describe("buildTransactionHistory", () => {
         it("should omit assets on sent tx when all assets go to change", async () => {
             const arkTxId = "offchain-sent-all-change";
 
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-2",
                 vout: 0,
                 value: 1000,
@@ -735,7 +718,7 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 50n }],
             };
 
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 400,
@@ -758,7 +741,7 @@ describe("buildTransactionHistory", () => {
         it("should collect assets for offchain sent without change", async () => {
             const arkTxId = "offchain-sent-no-change";
 
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-3",
                 vout: 0,
                 value: 1000,
@@ -788,7 +771,7 @@ describe("buildTransactionHistory", () => {
         it("should include assets on exit sent with change", async () => {
             const commitmentTxId = "exit-commitment-with-change";
 
-            const forfeitVtxo: VirtualCoin = {
+            const forfeitVtxo: LegacyVirtualCoin = {
                 txid: "forfeit-vtxo-1",
                 vout: 0,
                 value: 2000,
@@ -801,7 +784,7 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 80n }],
             };
 
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: "change-leaf-vtxo",
                 vout: 0,
                 value: 500,
@@ -828,7 +811,7 @@ describe("buildTransactionHistory", () => {
         it("should include assets on exit sent without change", async () => {
             const commitmentTxId = "exit-commitment-no-change";
 
-            const forfeitVtxo: VirtualCoin = {
+            const forfeitVtxo: LegacyVirtualCoin = {
                 txid: "forfeit-vtxo-2",
                 vout: 0,
                 value: 1000,
@@ -853,7 +836,7 @@ describe("buildTransactionHistory", () => {
         it("should include assets on issuance (self-send with new assets in change)", async () => {
             const arkTxId = "issuance-ark-tx";
 
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-issuance",
                 vout: 0,
                 value: 1000,
@@ -865,7 +848,7 @@ describe("buildTransactionHistory", () => {
                 arkTxId,
             };
 
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 1000,
@@ -888,7 +871,7 @@ describe("buildTransactionHistory", () => {
         it("should include assets on reissuance (change has more assets than spent)", async () => {
             const arkTxId = "reissuance-ark-tx";
 
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-reissuance",
                 vout: 0,
                 value: 1000,
@@ -901,7 +884,7 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 50n }],
             };
 
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 1000,
@@ -925,7 +908,7 @@ describe("buildTransactionHistory", () => {
             const arkTxId = "burn-ark-tx";
 
             // Spent VTXO has assets
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-burn",
                 vout: 0,
                 value: 1000,
@@ -939,7 +922,7 @@ describe("buildTransactionHistory", () => {
             };
 
             // Change VTXO has all BTC back but no assets (fully burned)
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 1000,
@@ -964,7 +947,7 @@ describe("buildTransactionHistory", () => {
             const assetC = "asset-id-ccc";
 
             // Spent VTXO has ASSET_A (will be burned) and ASSET_B (partially transferred)
-            const spentVtxo: VirtualCoin = {
+            const spentVtxo: LegacyVirtualCoin = {
                 txid: "spent-vtxo-mixed",
                 vout: 0,
                 value: 1000,
@@ -981,7 +964,7 @@ describe("buildTransactionHistory", () => {
             };
 
             // Change VTXO: no ASSET_A (burned), less ASSET_B (transferred), new ASSET_C (issued)
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: arkTxId,
                 vout: 0,
                 value: 500,
@@ -1011,7 +994,7 @@ describe("buildTransactionHistory", () => {
         it("should aggregate assets from multiple spent vtxos", async () => {
             const arkTxId = "multi-spent-ark-tx";
 
-            const spentVtxo1: VirtualCoin = {
+            const spentVtxo1: LegacyVirtualCoin = {
                 txid: "multi-spent-1",
                 vout: 0,
                 value: 500,
@@ -1024,7 +1007,7 @@ describe("buildTransactionHistory", () => {
                 assets: [{ assetId: assetA, amount: 30n }],
             };
 
-            const spentVtxo2: VirtualCoin = {
+            const spentVtxo2: LegacyVirtualCoin = {
                 txid: "multi-spent-2",
                 vout: 0,
                 value: 500,
@@ -1055,7 +1038,11 @@ describe("buildTransactionHistory", () => {
     describe("batched createdAt resolver", () => {
         const baseDate = new Date("2025-11-01T10:00:00Z");
 
-        const spentVtxo = (txid: string, arkTxId: string, createdAt = baseDate): VirtualCoin => ({
+        const spentVtxo = (
+            txid: string,
+            arkTxId: string,
+            createdAt = baseDate,
+        ): LegacyVirtualCoin => ({
             txid,
             vout: 0,
             value: 1000,
@@ -1097,9 +1084,11 @@ describe("buildTransactionHistory", () => {
         });
 
         it("does not call the resolver when every spending tx has a change output", async () => {
-            const resolver = vi.fn((txids: string[]) => Promise.resolve(new Map<string, number>()));
+            const resolver = vi.fn((_txids: string[]) =>
+                Promise.resolve(new Map<string, number>()),
+            );
 
-            const changeVtxo: VirtualCoin = {
+            const changeVtxo: LegacyVirtualCoin = {
                 txid: "ark-tx-1",
                 vout: 0,
                 value: 400,
@@ -1201,11 +1190,11 @@ describe("buildTransactionHistory", () => {
          * beside the point here, and no `createdAt` resolver is wired: the one
          * test that cares whether it is called passes its own.
          */
-        const history = (vtxos: VirtualCoin[], contract: Contract = offerContract()) =>
+        const history = (vtxos: LegacyVirtualCoin[], contract: Contract = offerContract()) =>
             buildTransactionHistory(vtxos, [], new Set(), undefined, gatedContracts([contract]));
 
         /** The same builder with no gate at all: the behaviour that predates it. */
-        const ungatedHistory = (vtxos: VirtualCoin[]) =>
+        const ungatedHistory = (vtxos: LegacyVirtualCoin[]) =>
             buildTransactionHistory(vtxos, [], new Set());
 
         /**
@@ -1213,12 +1202,12 @@ describe("buildTransactionHistory", () => {
          * the offer — a solver's fill, or a cancel. Keyed on the script rather
          * than a position, so it survives a fixture growing an output.
          */
-        const closedBy = (coins: VirtualCoin[], txid: string) =>
+        const closedBy = (coins: LegacyVirtualCoin[], txid: string) =>
             coins.map((c) => (c.script === covenantScript ? { ...c, ...spentIn(txid) } : c));
 
         const coin = (
             over: Partial<VirtualCoin> & Pick<VirtualCoin, "txid" | "value">,
-        ): VirtualCoin => ({
+        ): LegacyVirtualCoin => ({
             vout: 0,
             status: { confirmed: false },
             virtualStatus: { state: "preconfirmed" },
@@ -1631,7 +1620,7 @@ describe("buildTransactionHistory", () => {
                         vtxos.map((_) => ({
                             ..._,
                             createdAt: new Date(_.createdAt),
-                        })) as VirtualCoin[],
+                        })) as unknown as LegacyVirtualCoin[],
                         allBoardingTxs as ArkTransaction[],
                         new Set(commitmentsToIgnore),
                         resolveTxCreatedAt,

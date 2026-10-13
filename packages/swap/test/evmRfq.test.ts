@@ -776,8 +776,12 @@ describe("assertFundable refuses EVM quotes until local funding is implemented",
 
     it("leaves the sats-only gate on a BTC quote working", () => {
         const btc = {
+            v: 1 as const,
+            type: "rfq_quote" as const,
             rfq_id: RFQ_ID,
             pair: "arkade:BTC->lightning:BTC",
+            solver_pubkey: "cc".repeat(32),
+            profile: {},
             from_amount: 100_000,
             to_amount: 99_500,
             valid_until: NOW + 60,

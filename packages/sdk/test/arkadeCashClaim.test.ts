@@ -99,7 +99,6 @@ function spentCashVtxo(cashPkScript: string): VirtualCoin {
         value: CASH_VALUE,
         script: cashPkScript,
         status: { confirmed: true },
-        virtualStatus: { state: "preconfirmed" },
         isSpent: true,
         createdAt: new Date(),
     } as VirtualCoin;

@@ -421,8 +421,10 @@ describe("ArkadeContract — extended features", () => {
         const { arkProvider, send } = await sendTwoCheckpointSpend((cps) => [...cps].reverse());
         await send;
 
-        const submitted = arkProvider.submitTx.mock.calls[0][1] as string[];
-        expect(arkProvider.finalizeTx.mock.calls[0][1]).toEqual([...submitted].reverse());
+        const submitted = (arkProvider.submitTx.mock.calls[0] as unknown[])[1] as string[];
+        expect((arkProvider.finalizeTx.mock.calls[0] as unknown[])[1]).toEqual(
+            [...submitted].reverse(),
+        );
     });
 
     it("arkd path rejects a checkpoint it did not submit", async () => {

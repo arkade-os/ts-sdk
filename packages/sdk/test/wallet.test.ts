@@ -315,7 +315,6 @@ describe("Wallet", () => {
 
         it("should throw error when funds are insufficient", async () => {
             const mockFeeRate = 3;
-            const mockTxId = hex.encode(new Uint8Array(32).fill(1));
 
             mockFetch.mockResolvedValueOnce(jsonResponse(mockUTXOs));
             mockFetch.mockResolvedValueOnce(jsonResponse({ "1": mockFeeRate }));
@@ -2935,7 +2934,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
             intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
-        }) as ExtendedCoin;
+        }) as unknown as ExtendedCoin;
 
     it("saves single-contract settle rows under the primary bucket", async () => {
         const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
