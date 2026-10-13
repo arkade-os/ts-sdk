@@ -1,6 +1,6 @@
 /**
  * The RFQ backend: one addressed request per route, verified before it is returned and persisted by
- * nobody. Three routes cross a corridor and lock a VHTLC; the fourth (arkade->arkade) derives an
+ * nobody. Four routes cross a corridor and lock a VHTLC; the fifth (arkade->arkade) derives an
  * offer covenant instead. No contract registration, record or funding here — `accept()` does that,
  * reusing the covenant derived here via {@link RfqPreparation}.
  *
@@ -38,12 +38,14 @@ import {
     arkadeSwapRequest,
     deriveLightningReceive,
     deriveLightningSend,
+    deriveOnchainReceive,
     deriveOnchainSend,
     l1NetworkFromArk,
     lightningReceiveRequest,
     lightningSendRequest,
     newRfqId,
     offerTermsFromQuote,
+    onchainReceiveRequest,
     onchainSendRequest,
     unilateralClaimDelay,
     verifyOfferAddress,
@@ -57,6 +59,7 @@ import { UnsupportedRoute } from "./errors";
 import { feedSpread, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
 import type { CardMarketRef, PinnedAmount, Quote, QuoteId, ResolvedEndpoint } from "./quote";
 import type { MarketCandidate } from "./market";
+import type { Artifact } from "./route";
 import type { SwapPolicy } from "./policy";
 import { parseRfqQuote, rfqPairFor, withCanonicalAmount, type ParsedRfqQuote } from "./rfqWire";
 import { toRfqAmountSide } from "./rfqAmount";
@@ -158,6 +161,23 @@ export type CorridorRfqPreparation =
           readonly htlcParams: OnchainHtlcParams;
           readonly l1Network: OnchainNetwork;
           readonly minConfirmations: number;
+      })
+    | (CommonPreparation & {
+          readonly route: "onchain->arkade";
+          /** The Arkade claim: the key the solver's lockup pays, and the P that unlocks it. */
+          readonly secrets: ProvisionedClaimSecret;
+          readonly payoutAddress: string;
+          /** What the solver's lockup must carry — the claim refuses less. */
+          readonly expectedAmount: bigint;
+          /** The HTLC's refund key, provisioned by the wallet like every other key. */
+          readonly refundKey: ProvisionedKey;
+          /** Where the L1 refund PAYS: a boarding address of this wallet. */
+          readonly refundPkScript: Uint8Array;
+          /** The L1 HTLC the trader funds, derived locally. */
+          readonly htlc: OnchainHtlc;
+          readonly htlcParams: OnchainHtlcParams;
+          readonly l1Network: OnchainNetwork;
+          readonly minConfirmations: number;
       });
 
 export interface RfqQuoteInput {
@@ -166,7 +186,8 @@ export interface RfqQuoteInput {
         | "arkade->arkade"
         | "arkade->lightning"
         | "lightning->arkade"
-        | "arkade->onchain";
+        | "arkade->onchain"
+        | "onchain->arkade";
     readonly candidate: MarketCandidate;
     readonly market: CardMarketRef;
     readonly legs: { readonly give: DiscoveryLeg; readonly take: DiscoveryLeg };
@@ -272,6 +293,8 @@ export const quoteViaRfq = async (
             return quoteLightningReceive(input);
         case "arkade->onchain":
             return quoteOnchainSend(input);
+        case "onchain->arkade":
+            return quoteOnchainReceive(input);
     }
 };
 
@@ -786,6 +809,142 @@ const quoteOnchainSend = async (
             htlc: derived.htlc,
             htlcParams: derived.htlcParams,
             l1Network: derived.l1Network,
+            minConfirmations: derived.minConfirmations,
+        },
+    };
+};
+
+/**
+ * The trader funds an L1 HTLC from outside this wallet and claims the solver's Arkade lockup with
+ * `P`; if the solver never funds, the trader takes the L1 funding back through the refund leaf.
+ *
+ * Both destinations are this wallet's own: the claim pays its Arkade address, and the refund a
+ * boarding address, so refunded coins can board again (NArk's
+ * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice). No claim packet is sealed: an
+ * unclaimed lockup only means the solver reclaims it and the trader refunds L1, so nothing is lost
+ * without covclaimd.
+ */
+const quoteOnchainReceive = async (
+    input: RfqQuoteInput,
+): Promise<{ quote: Quote; preparation: RfqPreparation }> => {
+    const pinned = pinnedFor(input);
+    const pair = rfqPairFor(input.legs.give, input.legs.take);
+    const rfqId = newRfqId();
+    const l1Network = l1NetworkFromArk(input.info.network);
+
+    // Two wallet keys: the claim secret (P, covenant receiver role) and the L1 refund key. Asking
+    // twice keeps them distinct; minting one here is what key provisioning forbids.
+    const secrets = await provisionClaimSecret(input.wallet);
+    const refundKey = await provisionRefundKey(input.wallet);
+    const paymentHash = hex.encode(secrets.paymentHash);
+    const payoutAddress = await input.wallet.getAddress();
+    // Fixed at quote time: the manager refuses a record without it, and a refund must never be
+    // built against a destination chosen after the money moved.
+    const refundPkScript = l1ScriptForAddress(await input.wallet.getBoardingAddress(), l1Network);
+
+    const wire = await input.transport.requestQuote(
+        withCanonicalAmount(
+            onchainReceiveRequest({
+                rfqId,
+                paymentHash,
+                payoutAddress,
+                payoutPubkey: secrets.pubkey,
+                refundPubkey: refundKey.pubkey,
+                // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
+                amount: 0,
+                amountSide: toRfqAmountSide(pinned.on),
+            }),
+            pinned.value,
+        ),
+    );
+    verifyPair(wire.pair, pair);
+    const parsed = parseRfqQuote(wire);
+    verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
+
+    const covenant = covenantInputs(input);
+    const derived = verifyingDerivation(() =>
+        deriveOnchainReceive({
+            quote: wire,
+            paymentHash,
+            payoutPubkey: secrets.pubkey,
+            payoutAddress,
+            refundPubkey: refundKey.pubkey,
+            ...covenant,
+            l1Network,
+        }),
+    );
+    verifySendWindow({
+        quote: wire,
+        quoteId: input.quoteId,
+        now: input.now,
+        onchain: {
+            htlcLocktime: derived.htlcLocktime,
+            minConfirmations: derived.minConfirmations,
+            direction: "receive",
+        },
+    });
+    // The trader's L1 funding is what stays locked if the solver never pays, until the HTLC's own
+    // refund leaf opens.
+    verifyRefundWindow({
+        refundLocktime: derived.htlcLocktime,
+        now: input.now,
+        maxSeconds: input.policy?.maxRefundWindowSeconds,
+    });
+    verifyQuoteTtl({
+        quoteId: input.quoteId,
+        expiresAt: parsed.validUntil,
+        now: input.now,
+        floorSeconds: input.policy?.quoteTtlFloorSeconds,
+    });
+
+    // The give leg's instrument IS the artifact: the HTLC the trader funds, for exactly this much.
+    const artifact = {
+        kind: "deposit",
+        corridor: "onchain",
+        address: derived.htlc.address,
+        asset: input.endpoints.give.asset,
+        amount: parsed.give,
+        expiresAt: parsed.validUntil,
+    } as Artifact;
+    return {
+        quote: {
+            id: input.quoteId,
+            route: assembleRoute(
+                {
+                    ...input.endpoints.give,
+                    instrument: {
+                        kind: "address",
+                        address: derived.htlc.address,
+                        amount: parsed.give,
+                    },
+                },
+                { ...input.endpoints.take, instrument: { kind: "wallet" } },
+            ),
+            give: { asset: input.endpoints.give.asset, amount: parsed.give },
+            take: { asset: input.endpoints.take.asset, amount: parsed.take },
+            lock: { hash: paymentHash },
+            market: input.market,
+            solver: parsed.solver,
+            expiresAt: parsed.validUntil,
+            refundLocktime: derived.refundLocktime,
+            artifact,
+            fee: { amount: parsed.give - parsed.take, asset: input.endpoints.give.asset },
+        },
+        preparation: {
+            backend: "rfq",
+            route: "onchain->arkade",
+            card: input.candidate.card,
+            rfqId,
+            wire: parsed,
+            lockup: lockupOf(derived),
+            secrets,
+            payoutAddress,
+            expectedAmount: parsed.take,
+            refundKey,
+            refundPkScript,
+            htlc: derived.htlc,
+            htlcParams: derived.htlcParams,
+            l1Network,
             minConfirmations: derived.minConfirmations,
         },
     };

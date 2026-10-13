@@ -2297,6 +2297,8 @@ export function deriveOnchainReceive(input: {
     script: InstanceType<typeof VHTLC.ScriptV2>;
     /** The L1 HTLC the trader funds, derived locally — fund only this. */
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was derived from; a restore rebuilds it from these. */
+    htlcParams: OnchainHtlcParams;
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
@@ -2325,15 +2327,13 @@ export function deriveOnchainReceive(input: {
         solverRefundPkScriptHex,
     ).matched;
 
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash: input.paymentHash,
-            claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
-            refundKey: input.refundPubkey,
-            refundLocktime: htlcLocktime,
-        },
-        input.l1Network,
-    );
+    const htlcParams: OnchainHtlcParams = {
+        paymentHash: input.paymentHash,
+        claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
+        refundKey: input.refundPubkey,
+        refundLocktime: htlcLocktime,
+    };
+    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
     if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
 
     return {
@@ -2341,6 +2341,7 @@ export function deriveOnchainReceive(input: {
         swapPkScript: script.pkScript,
         script,
         htlc,
+        htlcParams,
         refundLocktime,
         htlcLocktime,
         minConfirmations,

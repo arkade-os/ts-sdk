@@ -421,6 +421,12 @@ export const RFQ_CONFIGURATION_REFUSAL = {
         "no claimOnchain callback is wired, so this wallet cannot claim the L1 fill",
     autoActionsDisabled: "automatic actions are disabled, so this wallet will not push the refund",
     noCallbacksForRefund: "no callbacks are wired, so this wallet cannot push the refund",
+    noRefundOnchainCallback:
+        "no refundOnchain callback is wired, so this wallet cannot take the L1 funding back",
+    noCallbacksForL1Refund:
+        "no callbacks are wired, so this wallet cannot take the L1 funding back",
+    autoActionsDisabledForL1Refund:
+        "automatic actions are disabled, so this wallet will not push the L1 refund",
 } as const;
 
 /** {@link RFQ_CONFIGURATION_REFUSAL}'s values. */
@@ -1518,15 +1524,14 @@ export class RfqSwapManager {
             return {
                 verdict: "live",
                 blocked: this.callbacks
-                    ? "no refundOnchain callback is wired, so this wallet cannot take the L1 funding back"
-                    : "no callbacks are wired, so this wallet cannot take the L1 funding back",
+                    ? RFQ_CONFIGURATION_REFUSAL.noRefundOnchainCallback
+                    : RFQ_CONFIGURATION_REFUSAL.noCallbacksForL1Refund,
             };
         }
         if (!this.config.enableAutoActions) {
             return {
                 verdict: "live",
-                blocked:
-                    "automatic actions are disabled, so this wallet will not push the L1 refund",
+                blocked: RFQ_CONFIGURATION_REFUSAL.autoActionsDisabledForL1Refund,
             };
         }
         try {

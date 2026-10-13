@@ -253,6 +253,9 @@ export interface OnchainReceiveProfile extends Record<string, unknown> {
     /** The SOLVER's L1 key; `refundKey` is the TRADER's own. */
     claimKey: string;
     refundKey: string;
+    /** The wallet descriptor {@link refundKey} came from, when the wallet provisioned it; the
+     * client's default refund signs through it. */
+    refundDescriptor?: string;
     /** The trader's L1 deadline, not the lockup's. */
     htlcLocktime: number;
     network: OnchainNetwork;
@@ -272,6 +275,7 @@ export function onchainReceiveProfile(result: {
     l1Network: OnchainNetwork;
     minConfirmations: number;
     refundPkScript: Uint8Array;
+    refundDescriptor?: string;
 }): Omit<
     OnchainReceiveProfile,
     "signer" | "hashlock" | "expectedAmount" | "payoutAddress" | "claimTxid"
@@ -284,6 +288,9 @@ export function onchainReceiveProfile(result: {
         htlcAddress: result.htlc.address,
         minConfirmations: result.minConfirmations,
         refundPkScript: hex.encode(result.refundPkScript),
+        ...(result.refundDescriptor === undefined
+            ? {}
+            : { refundDescriptor: result.refundDescriptor }),
     };
 }
 

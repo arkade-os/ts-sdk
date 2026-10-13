@@ -77,8 +77,12 @@ export interface CorridorOverrides {
         /** How the trader's L1 claim is built and broadcast. Default: synthesized from
          * {@link claimFeeRateSatVb} when resolvable (see {@link OnchainCorridorDeps.claim}). */
         claim?: OnchainClaim | null;
+        /** How the trader's L1 refund of an `onchain -> arkade` funding is built and broadcast.
+         * Default: synthesized from {@link claimFeeRateSatVb} when resolvable (see
+         * {@link OnchainCorridorDeps.refund}). */
+        refund?: OnchainRefund | null;
         /**
-         * Sat/vB the trader's L1 claim is built at, and the rate the take leg is grossed up by so the
+         * Sat/vB the trader's L1 claim (and refund) is built at, and the rate the take leg is grossed up by so the
          * recipient nets the requested amount. Default: {@link ONCHAIN_CLAIM_FEE_RATE_SATVB}.
          *
          * `null` is NOT a refusal here: it is "no default claim" — manual mode. The corridor still
@@ -93,6 +97,9 @@ export interface CorridorOverrides {
 
 /** Build and broadcast the L1 claim of an `arkade -> onchain` fill (the manager's own type). */
 export type OnchainClaim = RfqSwapManagerCallbacks["claimOnchain"];
+
+/** Build and broadcast the L1 refund of an `onchain -> arkade` funding (the manager's own type). */
+export type OnchainRefund = RfqSwapManagerCallbacks["refundOnchain"];
 
 /**
  * Per-network default L1 claim fee rate, sat/vB — deliberately the RELAY FLOOR, since it both builds
@@ -138,9 +145,14 @@ export interface OnchainCorridorDeps {
      * {@link claimFeeRateSatVb}; with neither, the L1 half reports blocked while the Arkade lockup is
      * still driven and refunded. */
     readonly claim?: OnchainClaim;
+    /** The caller's L1 refund callback, verbatim. The default refund is built in the drive from
+     * {@link claimFeeRateSatVb}; with neither, an `onchain -> arkade` swap whose solver never
+     * funds reports blocked until one is wired. */
+    readonly refund?: OnchainRefund;
     /**
      * The one fee rate both recipient-exact halves share: the quote's gross-up (`claimFeeSats`) and
      * the default claim build. Two numbers would short the recipient. `undefined` = manual mode.
+     * The default refund is built at it too.
      */
     readonly claimFeeRateSatVb?: number;
     /**
@@ -247,6 +259,11 @@ export function resolveCorridorDeps(
         case "onchain": {
             const chain = refusedIfNull(overrides?.onchain?.chain, "onchain", "chain source");
             const claim = refusedIfNull(overrides?.onchain?.claim, "onchain", "L1 claim callback");
+            const refund = refusedIfNull(
+                overrides?.onchain?.refund,
+                "onchain",
+                "L1 refund callback",
+            );
             // `null` is manual mode (see the override's doc), so `===` rather than `??`: it must not
             // fall through to the table. A non-positive/non-finite rate would misprice both fee-paid
             // halves (or NaN-poison them), so it refuses here at resolution.
@@ -269,6 +286,7 @@ export function resolveCorridorDeps(
                     fetchImpl: base.fetchImpl,
                 }),
                 ...(claim === undefined ? {} : { claim }),
+                ...(refund === undefined ? {} : { refund }),
                 ...(claimFeeRateSatVb === undefined ? {} : { claimFeeRateSatVb }),
                 claimVsize,
             };

@@ -16,8 +16,7 @@ import type { OnchainCorridorDeps } from "./deps";
 /**
  * On `onchain -> arkade` the Arkade lockup is the solver's and the L1 HTLC's refund leaf the
  * trader's own: the trader claims the lockup, or takes its L1 funding back after
- * `htlc.refundLocktime`. Declared for the manager's records; `resolve` still refuses to quote the
- * pair.
+ * `htlc.refundLocktime`.
  *
  * On `arkade -> onchain` the two covenants have different owners: the Arkade lockup is
  * the trader's (`refundLocktime` = money comes back), but the L1 HTLC's refund leaf is

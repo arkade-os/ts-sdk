@@ -9,21 +9,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
+import { contractSigner } from "@arkade-os/sdk";
 import { claimPacketShape } from "../../src/claimPacket";
 import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
-import {
-    AmountMismatch,
-    QuoteExpired,
-    QuoteVerificationFailed,
-    UnsupportedRoute,
-} from "../../src/client/errors";
+import { AmountMismatch, QuoteExpired, QuoteVerificationFailed } from "../../src/client/errors";
 import { AmountEncodingUnsupported } from "../../src/client/errors";
 import { MIN_HEADROOM_SECONDS, SwapRefusal } from "../../src/rfq";
 import { MissingCorridorDep } from "../../src/client/errors";
 import { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "../../src/client/policy";
 import type { QuoteInput } from "../../src/client/quote";
+import { l1ScriptForAddress } from "../../src/onchainHtlc";
 import {
+    BOARDING_ADDRESS,
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
     SOLVER_DISCOVERY_KEY,
@@ -37,6 +35,7 @@ import {
     lightningReceiveAnswer,
     lightningSendAnswer,
     onchainCard,
+    onchainReceiveAnswer,
     onchainSendAnswer,
     solverTransport,
     solverFor,
@@ -350,13 +349,62 @@ describe("the boundary quote() stops at", () => {
     });
 });
 
-describe("the route the union excludes", () => {
-    it("refuses onchain -> arkade before anything is disclosed", async () => {
-        const { client, transport } = await setup();
-        await expect(
-            client.quote({ via: "onchain", amount: 100_000n, amountOn: "give" }),
-        ).rejects.toThrow(UnsupportedRoute);
-        expect(transport.sent).toHaveLength(0);
+describe("quote() on onchain -> arkade", () => {
+    const receive = (): QuoteInput => ({ via: "onchain", amount: 100_000n, amountOn: "give" });
+
+    it("hands back the L1 HTLC to fund as the give leg's instrument and artifact", async () => {
+        const { client } = await setup();
+        const quote = await client.quote(receive());
+
+        expect(quote.give).toEqual({ asset: "bitcoin:regtest/slip44:1", amount: 100_000n });
+        expect(quote.take).toEqual({ asset: "arkade:regtest/slip44:1", amount: 99_000n });
+        const preparation = client.preparationOf(quote.id);
+        if (preparation?.backend !== "rfq" || preparation.route !== "onchain->arkade") {
+            throw new Error("expected an onchain->arkade preparation");
+        }
+        const htlcAddress = preparation.htlc.address;
+        expect(quote.route.give.instrument).toEqual({
+            kind: "address",
+            address: htlcAddress,
+            amount: 100_000n,
+        });
+        expect(quote.route.take.instrument).toEqual({ kind: "wallet" });
+        expect(quote.artifact).toMatchObject({
+            kind: "deposit",
+            corridor: "onchain",
+            address: htlcAddress,
+            amount: 100_000n,
+        });
+        expect(quote.refundLocktime).toBe(CLOCK.refundLocktime);
+        expect(preparation).toMatchObject({
+            minConfirmations: 2,
+            l1Network: "regtest",
+            expectedAmount: 99_000n,
+        });
+    });
+
+    it("binds the HTLC's refund leaf to a wallet key and refunds to a boarding address", async () => {
+        const { client, transport, wallet } = await setup();
+        const quote = await client.quote(receive());
+        const preparation = client.preparationOf(quote.id);
+        if (preparation?.backend !== "rfq" || preparation.route !== "onchain->arkade") {
+            throw new Error("expected an onchain->arkade preparation");
+        }
+
+        const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
+        expect(profile.refund_pubkey).toBe(hex.encode(preparation.refundKey.pubkey));
+        expect(preparation.htlcParams.refundKey).toEqual(preparation.refundKey.pubkey);
+        const signer = await contractSigner(wallet, preparation.refundKey.descriptor);
+        expect(await signer.xOnlyPublicKey()).toEqual(preparation.refundKey.pubkey);
+        expect(preparation.refundPkScript).toEqual(l1ScriptForAddress(BOARDING_ADDRESS, "regtest"));
+    });
+
+    it("refuses an HTLC address it did not derive", async () => {
+        const { client } = await setup({
+            answer: (payload) =>
+                onchainReceiveAnswer(payload, CLOCK, { profile: { htlc_address: BCRT1 } }),
+        });
+        await expect(client.quote(receive())).rejects.toThrow(QuoteVerificationFailed);
     });
 });
 
