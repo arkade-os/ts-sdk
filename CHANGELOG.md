@@ -11,6 +11,14 @@ style and have not been backfilled.
 
 ### Added
 
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
+
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
@@ -23,6 +31,16 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
   contract, intent, or wallet repositories and swap repositories must implement
