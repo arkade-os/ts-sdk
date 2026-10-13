@@ -434,6 +434,7 @@ export async function pushRefundWithoutReceiver(
         refundPkScript?: Uint8Array;
         /** @see operatorUnrollScript */
         network?: Network;
+        oneShot?: boolean;
     },
 ): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
@@ -460,6 +461,7 @@ export async function pushRefundWithoutReceiver(
         inputs: lockupInputs(input.vtxos, input.contract, leaf),
         outputs: [{ script: refundPkScript, amount: BigInt(amount) }],
         serverUnrollScript,
+        oneShot: input.oneShot,
     });
     return { txid, amount };
 }

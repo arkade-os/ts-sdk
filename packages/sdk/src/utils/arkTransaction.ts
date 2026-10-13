@@ -807,6 +807,7 @@ export async function submitOffchainTx(
     return result;
 }
 
+// Input 0 only: a checkpoint spends exactly one VTXO.
 function carriesTapscriptSigs(server: Transaction, userSigned: Transaction): boolean {
     const entries = (tx: Transaction) =>
         (tx.getInput(0).tapScriptSig ?? []).map(

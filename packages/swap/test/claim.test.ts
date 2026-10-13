@@ -162,7 +162,6 @@ describe("pushClaim", () => {
         const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
-        // …and the checkpoints went out signed, so the cosigning operator finalized on submit.
         for (const checkpoint of operator.submitted[0]!.checkpoints) {
             const cp = Transaction.fromPSBT(base64.decode(checkpoint));
             expect(cp.getInput(0).tapScriptSig?.length).toBeGreaterThan(0);

@@ -269,6 +269,23 @@ describe("pushRefundWithoutReceiver", () => {
         expect(result.txid).toBe(tx.id);
     });
 
+    it("keeps the two-step flow with oneShot: false", async () => {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: VTXOS,
+            oneShot: false,
+        });
+
+        for (const checkpoint of operator.submitted[0].checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        }
+        expect(operator.finalized).toHaveLength(1);
+        expect(operator.finalized[0].txid).toBe(result.txid);
+    });
+
     it("honours an explicit destination override", async () => {
         const operator = fakeOperator();
         const elsewhere = p2tr(key(21));
