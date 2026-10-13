@@ -43,6 +43,39 @@ export interface IntentReconciliationDeps {
     isOutpointInFlight?: (outpoint: Outpoint) => boolean;
     /** Injectable clock (tests). Defaults to `Date.now`. */
     now?: () => number;
+    /**
+     * Minimum gap between two "no matching intents" answers before the intent is cancelled; see
+     * {@link NO_MATCH_CONFIRM_FLOOR_MS}. Absent ⇒ the floor. If it rejects, "no matching" neither
+     * marks nor cancels in that pass.
+     *
+     * Only {@link reconcileIntents} reads it. {@link releaseIntents} ignores it by design (its
+     * `ReleaseDeps` does not pick it): it cancels on the first answer.
+     */
+    noMatchConfirmMs?: () => Promise<number>;
+}
+
+/** Lower bound of the gap between two "no matching" answers (2 minutes). */
+export const NO_MATCH_CONFIRM_FLOOR_MS = 120_000;
+
+/**
+ * Gap required between two "no matching intents" answers: longer than a whole round, so both
+ * can't come from the same confirmation phase. arkd's confirmation phase takes about 5/12 of
+ * `sessionDuration`; `max(2 × sessionDuration, 2 min)`. A missing (0) `sessionDuration` gets the
+ * floor.
+ */
+export function noMatchConfirmMs(sessionDurationSeconds: number): number {
+    return Math.max(2 * sessionDurationSeconds * 1000, NO_MATCH_CONFIRM_FLOOR_MS);
+}
+
+/** What {@link reconcileIntents} reports back, for callers that want to schedule a re-check. */
+export interface ReconcileIntentsResult {
+    /** ms-epoch of the earliest pending "no matching" confirmation, if any. */
+    recheckAt?: number;
+    /**
+     * Set when the pass stopped before looking at any intent (store or indexer read failed). It
+     * then knows nothing about pending confirmations: `recheckAt` is absent but not "none".
+     */
+    incomplete?: true;
 }
 
 /** A VTXO is consumed once the indexer reports it spent (offchain) or settled onchain. */
@@ -135,8 +168,11 @@ export async function classifyIntent(
  * to read the intent store or reconcile a single intent is logged and skipped
  * so it can never break sync. Never runs when no intent store is configured.
  */
-export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<void> {
+export async function reconcileIntents(
+    deps: IntentReconciliationDeps,
+): Promise<ReconcileIntentsResult> {
     const now = deps.now ?? Date.now;
+    const result: ReconcileIntentsResult = {};
     let intents: ArkIntent[];
     try {
         intents = await collectIntents(deps.intentRepository, {
@@ -144,9 +180,9 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
         });
     } catch (e) {
         console.error("reconcileIntents: failed to read non-terminal intents", e);
-        return;
+        return { incomplete: true };
     }
-    if (intents.length === 0) return;
+    if (intents.length === 0) return result;
 
     // One indexer round-trip covering every locked input across all intents.
     const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.intentVtxos));
@@ -157,17 +193,38 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             vtxosByOutpoint = new Map(vtxos.map((v) => [outpointKey(v), v]));
         } catch (e) {
             console.error("reconcileIntents: failed to fetch input VTXO state", e);
-            return;
+            return { incomplete: true };
         }
     }
 
     const nowMs = now();
+    // Resolved lazily, at most once per pass, and only if some intent gets "no matching".
+    let confirmMsPromise: Promise<number> | undefined;
+    const confirmMs = () => {
+        confirmMsPromise ??= deps.noMatchConfirmMs
+            ? deps.noMatchConfirmMs()
+            : Promise.resolve(NO_MATCH_CONFIRM_FLOOR_MS);
+        return confirmMsPromise;
+    };
     for (const intent of intents) {
         try {
             if (isInFlight(intent, deps)) continue;
-            const next =
-                (await classifyIntent(intent, vtxosByOutpoint, nowMs)) ??
-                (await releaseFromServer(intent, deps, nowMs));
+            let next = await classifyIntent(intent, vtxosByOutpoint, nowMs);
+            if (!next) {
+                const outcome = await releaseFromServer(intent, deps, nowMs, "confirm", confirmMs);
+                if (outcome?.kind === "wait") {
+                    result.recheckAt = Math.min(
+                        result.recheckAt ?? outcome.recheckAt,
+                        outcome.recheckAt,
+                    );
+                } else if (outcome) {
+                    next = outcome.next;
+                    if (outcome.kind === "mark") {
+                        const at = nowMs + (await confirmMs());
+                        result.recheckAt = Math.min(result.recheckAt ?? at, at);
+                    }
+                }
+            }
             if (!next) continue;
             // Freshness guard: reconciliation runs on reconnect, alongside
             // in-flight settlements. Re-read and only persist if the intent is
@@ -182,6 +239,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
         }
     }
+    return result;
 }
 
 type ReleaseDeps = Pick<
@@ -193,6 +251,10 @@ type ReleaseDeps = Pick<
  * Delete every non-terminal intent from arkd before its store is wiped, so no proof the server
  * still needs is lost. True only when each is confirmed gone; without `deleteIntent`, only when
  * there is nothing to release.
+ *
+ * Unlike {@link reconcileIntents}, a single "no matching intents" answer counts as released:
+ * the store is wiped right after, and keeping an intent locked here would block `clear()`
+ * indefinitely.
  */
 export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
     let intents: ArkIntent[];
@@ -207,7 +269,8 @@ export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
     const now = deps.now ?? Date.now;
     let released = true;
     for (const intent of intents) {
-        if (!(await releaseFromServer(intent, deps, now()))) released = false;
+        const outcome = await releaseFromServer(intent, deps, now(), "cancel");
+        if (outcome?.kind !== "cancel") released = false;
     }
     return released;
 }
@@ -218,28 +281,81 @@ function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
 }
 
 /**
+ * How "no matching intents" is treated: `"cancel"` on the first answer ({@link releaseIntents}),
+ * `"confirm"` only on a second one, at least the confirmation gap after the first
+ * ({@link reconcileIntents}).
+ */
+type NoMatchPolicy = "cancel" | "confirm";
+
+type ReleaseOutcome =
+    /** Terminal: persist. */
+    | { kind: "cancel"; next: ArkIntent }
+    /** Non-terminal with `noMatchSeenAt` set: persist, state unchanged. */
+    | { kind: "mark"; next: ArkIntent }
+    /** Still waiting out the gap: nothing to persist, re-check at `recheckAt`. */
+    | { kind: "wait"; recheckAt: number };
+
+/**
  * Delete a submitted intent from arkd with its stored proof (`expire_at: 0`, so it needs no
- * signer). Only a confirmed removal cancels it: any other failure leaves the inputs locked.
+ * signer). A successful delete is definitive: arkd held the intent queued and dropped it. Any
+ * other failure leaves the inputs locked.
+ *
+ * "no matching intents" is NOT proof the intent is gone. arkd only searches its queue, and pops
+ * intents off it for a round's confirmation phase, re-queuing those that don't confirm (a dead
+ * client never does); a batch about to succeed answers the same way. Under `"confirm"` the first
+ * answer is recorded as `noMatchSeenAt` and only a later one, `confirmMs` after it, cancels. Even
+ * two answers a round apart don't prove it (a dead client's intent is off the queue for roughly
+ * 5/12 of the time while rounds run back to back), and arkd has no endpoint that would settle it.
+ * A wrong `cancelled` is therefore made harmless on the server-facing paths instead: settle and
+ * renewal (`safeRegisterIntent`) and offchain send both delete the leftover intent and retry.
+ * Don't treat two answers as proof, or drop that recovery as redundant.
  */
 async function releaseFromServer(
     intent: ArkIntent,
     deps: ReleaseDeps,
     now: number,
-): Promise<ArkIntent | undefined> {
+    onNoMatch: NoMatchPolicy,
+    confirmMs?: () => Promise<number>,
+): Promise<ReleaseOutcome | undefined> {
     // Re-checked: a settle may have claimed these inputs since the loop's check.
     if (!deps.deleteIntent || isInFlight(intent, deps)) return undefined;
+    const cancelled = () => ({
+        kind: "cancel" as const,
+        next: terminal(intent, "cancelled", now, {
+            cancellationReason: "reconciliation: intent released from the server",
+        }),
+    });
     try {
         const message = JSON.parse(intent.deleteProofMessage) as Intent.DeleteMessage;
         await deps.deleteIntent({ proof: intent.deleteProof, message });
+        return cancelled();
     } catch (e) {
         if (!isNoMatchingIntentsError(e)) {
             console.warn(`failed to delete intent ${intent.intentTxId} from the server`, e);
             return undefined;
         }
     }
-    return terminal(intent, "cancelled", now, {
-        cancellationReason: "reconciliation: intent released from the server",
-    });
+    if (onNoMatch === "cancel") return cancelled();
+
+    if (intent.noMatchSeenAt === undefined) {
+        // Resolved first so a failure marks nothing (no silent fall back to a shorter gap).
+        try {
+            await confirmMs?.();
+        } catch (e) {
+            console.warn("failed to resolve the no-match confirmation gap", e);
+            return undefined;
+        }
+        return { kind: "mark", next: { ...intent, noMatchSeenAt: now, updatedAt: now } };
+    }
+    let gap: number;
+    try {
+        gap = await (confirmMs?.() ?? Promise.resolve(NO_MATCH_CONFIRM_FLOOR_MS));
+    } catch (e) {
+        console.warn("failed to resolve the no-match confirmation gap", e);
+        return undefined;
+    }
+    if (now - intent.noMatchSeenAt >= gap) return cancelled();
+    return { kind: "wait", recheckAt: intent.noMatchSeenAt + gap };
 }
 
 /**

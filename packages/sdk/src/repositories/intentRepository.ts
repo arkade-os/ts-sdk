@@ -58,6 +58,13 @@ export interface ArkIntent {
     signerDescriptor?: string;
     /** Input VTXOs locked by this intent. */
     intentVtxos: Outpoint[];
+    /**
+     * ms-epoch of the first time arkd answered "no matching intents" to deleting this intent
+     * while it was still non-terminal. One such answer does not prove the intent is gone (arkd
+     * pops intents off its queue during a round's confirmation phase), so reconciliation
+     * cancels only on a later one. Never changes `state`.
+     */
+    noMatchSeenAt?: number;
 }
 
 export interface IntentFilter {
@@ -75,7 +82,7 @@ export interface IntentFilter {
 export type IntentPageFilter = IntentFilter;
 
 export interface IntentRepository extends AsyncDisposable {
-    readonly version: 1;
+    readonly version: 2;
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;

@@ -10,7 +10,7 @@ import {
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 export class InMemoryIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private byId = new Map<string, ArkIntent>();
 
     async clear(): Promise<void> {

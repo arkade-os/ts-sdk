@@ -31,11 +31,12 @@ function toIntent(o: any): ArkIntent {
         partialForfeits: JSON.parse(o.partialForfeitsJson),
         signerDescriptor: o.signerDescriptor ?? undefined,
         intentVtxos: JSON.parse(o.intentVtxosJson),
+        noMatchSeenAt: o.noMatchSeenAt ?? undefined,
     };
 }
 
 export class RealmIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     constructor(private readonly realm: RealmLike) {}
 
     async clear(): Promise<void> {
@@ -72,6 +73,7 @@ export class RealmIntentRepository implements IntentRepository {
                     partialForfeitsJson: JSON.stringify(intent.partialForfeits),
                     signerDescriptor: intent.signerDescriptor ?? null,
                     intentVtxosJson: JSON.stringify(intent.intentVtxos),
+                    noMatchSeenAt: intent.noMatchSeenAt ?? null,
                 },
                 "modified",
             );

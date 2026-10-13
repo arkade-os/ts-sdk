@@ -30,10 +30,11 @@ interface IntentRow {
     partial_forfeits_json: string;
     signer_descriptor: string | null;
     intent_vtxos_json: string;
+    no_match_seen_at: number | null;
 }
 
 export class SQLiteIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly t: string;
@@ -71,12 +72,20 @@ export class SQLiteIntentRepository implements IntentRepository {
             signer_descriptor TEXT,
             intent_vtxos_json TEXT NOT NULL
         )`);
+        // Added in repository version 2; tables created earlier lack it.
+        await this.addColumnIfMissing("no_match_seen_at", "INTEGER");
         await this.db.run(
             `CREATE UNIQUE INDEX IF NOT EXISTS idx_${this.prefix}intent_id ON ${this.t} (intent_id) WHERE intent_id IS NOT NULL`,
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}intent_state ON ${this.t} (state)`,
         );
+    }
+
+    private async addColumnIfMissing(column: string, type: string): Promise<void> {
+        const columns = await this.db.all<{ name: string }>(`PRAGMA table_info(${this.t})`);
+        if (columns.some((c) => c.name === column)) return;
+        await this.db.run(`ALTER TABLE ${this.t} ADD COLUMN ${column} ${type}`);
     }
 
     async clear(): Promise<void> {
@@ -102,8 +111,8 @@ export class SQLiteIntentRepository implements IntentRepository {
                   created_at, updated_at, register_proof, register_proof_message,
                   delete_proof, delete_proof_message, batch_id, commitment_txid,
                   cancellation_reason, partial_forfeits_json, signer_descriptor,
-                  intent_vtxos_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  intent_vtxos_json, no_match_seen_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(intent_tx_id) DO UPDATE SET
                   intent_id = excluded.intent_id,
                   state = excluded.state,
@@ -120,7 +129,8 @@ export class SQLiteIntentRepository implements IntentRepository {
                   cancellation_reason = excluded.cancellation_reason,
                   partial_forfeits_json = excluded.partial_forfeits_json,
                   signer_descriptor = excluded.signer_descriptor,
-                  intent_vtxos_json = excluded.intent_vtxos_json`,
+                  intent_vtxos_json = excluded.intent_vtxos_json,
+                  no_match_seen_at = excluded.no_match_seen_at`,
                 [
                     intent.intentTxId,
                     intent.intentId ?? null,
@@ -139,6 +149,7 @@ export class SQLiteIntentRepository implements IntentRepository {
                     JSON.stringify(intent.partialForfeits),
                     intent.signerDescriptor ?? null,
                     JSON.stringify(intent.intentVtxos),
+                    intent.noMatchSeenAt ?? null,
                 ],
             );
         });
@@ -209,5 +220,6 @@ function rowToIntent(r: IntentRow): ArkIntent {
         partialForfeits: JSON.parse(r.partial_forfeits_json),
         signerDescriptor: r.signer_descriptor ?? undefined,
         intentVtxos: JSON.parse(r.intent_vtxos_json),
+        noMatchSeenAt: r.no_match_seen_at ?? undefined,
     };
 }

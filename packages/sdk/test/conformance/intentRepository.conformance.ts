@@ -35,6 +35,20 @@ export function intentRepositoryConformance(
             expect((await collectIntents(r)).length).toBe(1);
         });
 
+        it("round-trips noMatchSeenAt, and reads it back absent when unset", async () => {
+            const r = await make();
+            await r.saveIntent(intent("a", { noMatchSeenAt: 12345 }));
+            await r.saveIntent(intent("b"));
+            const [a, b] = await collectIntents(r, { intentTxIds: ["a", "b"] });
+            expect(a.noMatchSeenAt).toBe(12345);
+            expect(b.noMatchSeenAt).toBeUndefined();
+            // Saving without it clears it.
+            await r.saveIntent(intent("a"));
+            expect((await collectIntents(r, { intentTxIds: ["a"] }))[0].noMatchSeenAt).toBe(
+                undefined,
+            );
+        });
+
         it("rejects reusing an intentId for a different intentTxId, without losing the original", async () => {
             const r = await make();
             await r.saveIntent(intent("a", { intentId: "srv1" }));

@@ -19,6 +19,12 @@ export class ArkError extends Error {
 export const ArkErrorName = {
     DIGEST_MISMATCH: "DIGEST_MISMATCH",
     VTXO_ALREADY_SPENT: "VTXO_ALREADY_SPENT",
+    /**
+     * An intent queued on arkd already holds the VTXO. `SubmitOffchainTx` attaches the outpoint as
+     * `vtxo_outpoint` metadata; settle registration reports it as an `INTERNAL_ERROR` carrying
+     * "duplicated input" instead.
+     */
+    VTXO_ALREADY_REGISTERED: "VTXO_ALREADY_REGISTERED",
     INVALID_TX_FILTER: "INVALID_TX_FILTER",
     TX_FILTERS_LIMIT_EXCEEDED: "TX_FILTERS_LIMIT_EXCEEDED",
     /**
@@ -122,10 +128,14 @@ export function toProviderUnavailable(err: unknown, kind: ProviderKind): unknown
 
 /**
  * Try to convert an error to an ArkError class, returning undefined if the error is not an ArkError
+ *
+ * An `ArkError` is returned as-is: `RestArkProvider` already decodes arkd's body, so what
+ * its calls throw carries the human message, not the JSON.
  * @param error - The error to parse
  * @returns The parsed ArkError, or undefined if the error is not an ArkError
  */
 export function maybeArkError(error: any): ArkError | undefined {
+    if (error instanceof ArkError) return error;
     try {
         if (!(error instanceof Error)) return undefined;
         const decoded = JSON.parse(error.message);
@@ -168,6 +178,26 @@ export function maybeArkError(error: any): ArkError | undefined {
     } catch (e) {
         return undefined;
     }
+}
+
+/**
+ * The outpoint an arkd error named `name` carries in `metadata.vtxo_outpoint`, if any. Decodes
+ * through {@link maybeArkError}: provider errors arrive as a plain `Error` with arkd's JSON in
+ * `message`.
+ */
+export function extractVtxoOutpoint(
+    error: unknown,
+    name: ArkErrorName,
+): { txid: string; vout: number } | undefined {
+    const ark = maybeArkError(error);
+    if (!isArkError(ark, name)) return undefined;
+    const raw = ark.metadata?.vtxo_outpoint;
+    if (typeof raw !== "string") return undefined;
+    const [txid, voutStr] = raw.split(":");
+    if (!txid || !voutStr) return undefined;
+    const vout = Number(voutStr);
+    if (!Number.isInteger(vout) || vout < 0) return undefined;
+    return { txid, vout };
 }
 
 function isMetadata(value: any): value is Record<string, string> {

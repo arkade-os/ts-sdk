@@ -132,6 +132,7 @@ export const ArkIntentSchema = {
         partialForfeitsJson: "string",
         signerDescriptor: "string?",
         intentVtxosJson: "string",
+        noMatchSeenAt: "int?",
     },
 } as const;
 

@@ -103,6 +103,7 @@ import {
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
+    type OffchainTxSubmitProvider,
 } from "../utils/arkTransaction";
 import { toXOnly } from "../utils/keys";
 import { Transaction } from "../utils/transaction";
@@ -124,7 +125,7 @@ import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
-import { releaseIntents } from "./intentReconciliation";
+import { noMatchConfirmMs, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
@@ -142,7 +143,13 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
+import {
+    ArkError,
+    ArkErrorName,
+    extractVtxoOutpoint,
+    ProviderUnavailableError,
+    type ProviderKind,
+} from "../providers/errors";
 import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
@@ -2207,6 +2214,11 @@ export class Wallet
         return {
             deleteIntent: (intent) => this.arkProvider.deleteIntent(intent),
             isOutpointInFlight: (o) => this._settlingOutpoints.has(`${o.txid}:${o.vout}`),
+            // Read by reconcileIntents only. releaseIntents (clear()) is handed this same config
+            // but ignores it on purpose: it cancels on the first "no matching". Don't add it to
+            // that function's ReleaseDeps.
+            noMatchConfirmMs: async () =>
+                noMatchConfirmMs(Number((await this.arkProvider.getInfo()).sessionDuration)),
         };
     }
 
@@ -5304,7 +5316,7 @@ export class Wallet
         };
 
         return submitOffchainTx(
-            this.arkProvider,
+            this.withAlreadyRegisteredRecovery(this.arkProvider, inputs),
             offchainTx,
             signer,
             {
@@ -5330,6 +5342,46 @@ export class Wallet
                 },
             },
         );
+    }
+
+    /**
+     * Wraps `submitTx` so an input held by a leftover queued intent (`VTXO_ALREADY_REGISTERED`)
+     * is released and the same signed tx is submitted once more, with no re-signing. Mirrors
+     * {@link safeRegisterIntent}. Kept here, not in the shared `submitOffchainTx`: the delete
+     * proof needs this wallet's signer.
+     *
+     * The delete proof covers every input, so one call clears every leftover intent holding any
+     * of them (arkd matches on any shared outpoint). If a live settle in this wallet owns an
+     * input, nothing is deleted: that would kill our own settlement, and the send cannot succeed
+     * while it holds the input anyway.
+     */
+    private withAlreadyRegisteredRecovery(
+        provider: OffchainTxSubmitProvider,
+        inputs: ExtendedVirtualCoin[],
+    ): OffchainTxSubmitProvider {
+        return {
+            finalizeTx: (arkTxid, checkpoints) => provider.finalizeTx(arkTxid, checkpoints),
+            submitTx: async (signedArkTx, checkpointTxs) => {
+                try {
+                    return await provider.submitTx(signedArkTx, checkpointTxs);
+                } catch (e) {
+                    const outpoint = extractVtxoOutpoint(e, ArkErrorName.VTXO_ALREADY_REGISTERED);
+                    const ours =
+                        outpoint &&
+                        inputs.some((c) => c.txid === outpoint.txid && c.vout === outpoint.vout);
+                    if (
+                        !ours ||
+                        inputs.some((c) => this._settlingOutpoints.has(`${c.txid}:${c.vout}`))
+                    ) {
+                        throw e;
+                    }
+                    const deleteIntent = await this.makeDeleteIntentSignature(inputs);
+                    await this.arkProvider.deleteIntent(deleteIntent);
+                    // Once: a second failure is rethrown, never looped.
+                    return provider.submitTx(signedArkTx, checkpointTxs);
+                }
+            },
+        };
     }
 
     // Mark inputs spent and save change. `offchainTapscript`/`serverPubKey` are the caller's epoch
