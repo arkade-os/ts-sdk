@@ -44,7 +44,11 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
-import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
+import {
+    NO_MATCH_CONFIRM_FLOOR_MS,
+    reconcileIntents,
+    type IntentReconciliationDeps,
+} from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -499,7 +503,10 @@ export interface ContractManagerConfig {
     intentRepository?: IntentRepository;
 
     /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
-    intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
+    intentReconciliation?: Pick<
+        IntentReconciliationDeps,
+        "deleteIntent" | "isOutpointInFlight" | "noMatchConfirmMs"
+    >;
 
     /**
      * Exit-data capture hook, fired best-effort after VTXOs are persisted so a
@@ -660,6 +667,12 @@ export class ContractManager implements IContractManager {
     /** Set by {@link dispose}, cleared by a re-`initialize`. A drain outlives the synchronous
      * `dispose()`, so it re-checks this at every await rather than run on a torn-down watcher. */
     private disposed = false;
+
+    /** Re-runs {@link reconcileStaleIntents} once a pending "no matching" confirmation is due. */
+    private intentRecheckTimer: ReturnType<typeof setTimeout> | undefined;
+    /** When {@link intentRecheckTimer} was last armed for; kept after it fires, until a pass
+     * completes, so a failed pass knows a confirmation is still owed. */
+    private intentRecheckAt: number | undefined;
 
     private constructor(config: ContractManagerConfig) {
         assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
@@ -829,14 +842,48 @@ export class ContractManager implements IContractManager {
     private async reconcileStaleIntents(): Promise<void> {
         if (!this.config.intentRepository) return;
         try {
-            await reconcileIntents({
+            const { recheckAt, incomplete } = await reconcileIntents({
                 ...this.config.intentReconciliation,
                 intentRepository: this.config.intentRepository,
                 indexerProvider: this.config.indexerProvider,
             });
+            if (incomplete) this.retryIntentRecheck();
+            else this.scheduleIntentRecheck(recheckAt);
         } catch (e) {
             console.error("ContractManager: intent reconciliation failed", e);
+            this.retryIntentRecheck();
         }
+    }
+
+    /**
+     * After a pass that learned nothing: an armed timer is still right, so keep it. If the failed
+     * pass was the one that timer was owed, try again after the floor gap instead of dropping the
+     * confirmation until the next reconnect or restart.
+     */
+    private retryIntentRecheck(): void {
+        if (this.intentRecheckTimer !== undefined || this.intentRecheckAt === undefined) return;
+        this.scheduleIntentRecheck(Date.now() + NO_MATCH_CONFIRM_FLOOR_MS);
+    }
+
+    /**
+     * A first "no matching intents" is only confirmed by a later pass; without this a live process
+     * would wait for a reconnect or restart for it. One unref'd timer, replaced on every pass.
+     */
+    private scheduleIntentRecheck(recheckAt: number | undefined): void {
+        clearTimeout(this.intentRecheckTimer);
+        this.intentRecheckTimer = undefined;
+        this.intentRecheckAt = undefined;
+        if (recheckAt === undefined || this.disposed) return;
+        this.intentRecheckAt = recheckAt;
+        const timer = setTimeout(
+            () => {
+                this.intentRecheckTimer = undefined;
+                if (!this.disposed) void this.reconcileStaleIntents();
+            },
+            Math.max(0, recheckAt - Date.now()),
+        );
+        (timer as { unref?: () => void }).unref?.();
+        this.intentRecheckTimer = timer;
     }
 
     /** @see IContractManager.refillLookAhead */
@@ -2104,6 +2151,9 @@ export class ContractManager implements IContractManager {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
         // not addContract or persist catch-up VTXOs after teardown.
         this.disposed = true;
+        clearTimeout(this.intentRecheckTimer);
+        this.intentRecheckTimer = undefined;
+        this.intentRecheckAt = undefined;
         const pendingDrain = this.lookAheadDrain;
 
         this.stopWatcherFn?.();

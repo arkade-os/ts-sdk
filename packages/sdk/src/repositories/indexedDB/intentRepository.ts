@@ -21,7 +21,7 @@ import {
  * {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
  */
 export class IndexedDBIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+    readonly version = 2 as const;
     private readonly connection: ManagedConnection;
     constructor(dbName: string = BATCHES_DB_NAME) {
         this.connection = createManagedConnection(dbName, BATCHES_DB_VERSION, initBatchesDatabase);

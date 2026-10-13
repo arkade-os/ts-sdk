@@ -19,7 +19,7 @@ import {
     type TimeHeight,
 } from "./vtxo";
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
-import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
+import { ArkErrorName, extractVtxoOutpoint, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { ExtendedContractVtxo } from "../contracts/types";
 import { isContractVtxoEvent } from "../contracts/types";
@@ -2221,7 +2221,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                                 return;
                             }
                             if (
-                                e.message.includes("VTXO_ALREADY_REGISTERED") ||
+                                isArkError(
+                                    maybeArkError(e),
+                                    ArkErrorName.VTXO_ALREADY_REGISTERED,
+                                ) ||
                                 e.message.includes("duplicated input")
                             ) {
                                 // In use by a concurrent user operation; retried next cycle.
@@ -2289,15 +2292,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /** The outpoint a `VTXO_ALREADY_SPENT` error carries in `metadata.vtxo_outpoint`, if any. */
     private extractSpentOutpoint(error: unknown): Outpoint | undefined {
-        const ark = maybeArkError(error);
-        if (!isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return undefined;
-        const raw = ark.metadata?.vtxo_outpoint;
-        if (typeof raw !== "string") return undefined;
-        const [txid, voutStr] = raw.split(":");
-        if (!txid || !voutStr) return undefined;
-        const vout = Number(voutStr);
-        if (!Number.isInteger(vout) || vout < 0) return undefined;
-        return { txid, vout };
+        return extractVtxoOutpoint(error, ArkErrorName.VTXO_ALREADY_SPENT);
     }
 
     /**

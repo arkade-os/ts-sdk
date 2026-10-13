@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ArkError, ArkErrorName, isArkError, maybeArkError } from "../src/providers/errors";
+import {
+    ArkError,
+    ArkErrorName,
+    extractVtxoOutpoint,
+    isArkError,
+    maybeArkError,
+} from "../src/providers/errors";
 
 describe("maybeArkError", () => {
     it("parses a structured ark.v1.ErrorDetails in details[]", () => {
@@ -55,6 +61,36 @@ describe("maybeArkError", () => {
     it("returns undefined for non-JSON / non-Error input", () => {
         expect(maybeArkError(new Error("not json"))).toBeUndefined();
         expect(maybeArkError("nope" as unknown as Error)).toBeUndefined();
+    });
+
+    it("returns an already-decoded ArkError as-is, as RestArkProvider throws it", () => {
+        const err = new ArkError(4, "vtxo already registered", "VTXO_ALREADY_REGISTERED");
+        expect(maybeArkError(err)).toBe(err);
+    });
+});
+
+describe("extractVtxoOutpoint", () => {
+    const named = (metadata?: Record<string, string>) =>
+        new ArkError(4, "vtxo already registered", ArkErrorName.VTXO_ALREADY_REGISTERED, metadata);
+
+    it("reads metadata.vtxo_outpoint off a decoded ArkError", () => {
+        expect(
+            extractVtxoOutpoint(
+                named({ vtxo_outpoint: `${"a".repeat(64)}:2` }),
+                ArkErrorName.VTXO_ALREADY_REGISTERED,
+            ),
+        ).toEqual({ txid: "a".repeat(64), vout: 2 });
+    });
+
+    it("is undefined for another name, missing metadata or a malformed outpoint", () => {
+        const ok = { vtxo_outpoint: `${"a".repeat(64)}:2` };
+        expect(extractVtxoOutpoint(named(ok), ArkErrorName.VTXO_ALREADY_SPENT)).toBeUndefined();
+        expect(extractVtxoOutpoint(named(), ArkErrorName.VTXO_ALREADY_REGISTERED)).toBeUndefined();
+        for (const vtxo_outpoint of ["nocolon", ":1", "a:-1", "a:x"]) {
+            expect(
+                extractVtxoOutpoint(named({ vtxo_outpoint }), ArkErrorName.VTXO_ALREADY_REGISTERED),
+            ).toBeUndefined();
+        }
     });
 });
 

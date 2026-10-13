@@ -1,7 +1,10 @@
 import { collectIntents } from "../src/repositories/intentRepository";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { ContractManager } from "../src/contracts/contractManager";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import {
+    NO_MATCH_CONFIRM_FLOOR_MS,
+    noMatchConfirmMs,
     reconcileIntents,
     releaseIntents,
     type IntentReconcilerIndexer,
@@ -133,7 +136,7 @@ describe("reconcileIntents", () => {
         expect(await stateOf(repo)).toBe("batch_succeeded");
     });
 
-    it("is a no-op (no throw) when the indexer read fails", async () => {
+    it("is a no-op (no throw) reported as incomplete when the indexer read fails", async () => {
         const repo = await seed(
             new InMemoryIntentRepository(),
             intent({ state: "waiting_for_batch" }),
@@ -144,19 +147,19 @@ describe("reconcileIntents", () => {
 
         await expect(
             reconcileIntents({ intentRepository: repo, indexerProvider }),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ incomplete: true });
         // Untouched, so still locked.
         expect(await stateOf(repo)).toBe("waiting_for_batch");
     });
 
-    it("is a no-op (no throw) when the intent store read fails", async () => {
+    it("is a no-op (no throw) reported as incomplete when the intent store read fails", async () => {
         const repo = new InMemoryIntentRepository();
         vi.spyOn(repo, "getIntentsPage").mockRejectedValueOnce(new Error("db corrupt"));
         const getVtxos = vi.fn();
 
         await expect(
             reconcileIntents({ intentRepository: repo, indexerProvider: { getVtxos } }),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ incomplete: true });
         expect(getVtxos).not.toHaveBeenCalled();
     });
 
@@ -299,17 +302,135 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
     });
 
-    it("cancels when the server no longer holds the intent", async () => {
-        const repo = await seed(new InMemoryIntentRepository(), stale());
-        const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+    describe('a "no matching intents" answer', () => {
+        const T0 = 1_000_000;
+        const gap = NO_MATCH_CONFIRM_FLOOR_MS;
+        const pass = (
+            repo: InMemoryIntentRepository,
+            deleteIntent: ReturnType<typeof vi.fn>,
+            at: number,
+            indexerProvider: IntentReconcilerIndexer = unspent(),
+        ) =>
+            reconcileIntents({
+                intentRepository: repo,
+                indexerProvider,
+                deleteIntent,
+                now: () => at,
+            });
+        const only = async (repo: InMemoryIntentRepository) =>
+            (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
 
-        await reconcileIntents({
-            intentRepository: repo,
-            indexerProvider: unspent(),
-            deleteIntent,
+        it("does not cancel on the first answer: stays locked and records noMatchSeenAt", async () => {
+            const repo = await seed(new InMemoryIntentRepository(), stale());
+            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+
+            const result = await pass(repo, deleteIntent, T0);
+
+            const after = await only(repo);
+            expect(after.state).toBe("waiting_for_batch");
+            expect(after.noMatchSeenAt).toBe(T0);
+            expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
+            expect(result.recheckAt).toBe(T0 + gap);
         });
 
-        expect(await stateOf(repo)).toBe("cancelled");
+        it("stays non-terminal on a second answer before the gap", async () => {
+            const repo = await seed(new InMemoryIntentRepository(), stale());
+            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+            await pass(repo, deleteIntent, T0);
+
+            const result = await pass(repo, deleteIntent, T0 + gap - 1);
+
+            const after = await only(repo);
+            expect(after.state).toBe("waiting_for_batch");
+            expect(after.noMatchSeenAt).toBe(T0);
+            expect(result.recheckAt).toBe(T0 + gap);
+        });
+
+        it("cancels on a second answer after the gap, from a fresh reconcile call", async () => {
+            const repo = await seed(new InMemoryIntentRepository(), stale());
+            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+            await pass(repo, deleteIntent, T0);
+
+            // A new call over the same repository stands in for a restart.
+            await pass(repo, deleteIntent, T0 + gap);
+
+            expect(await stateOf(repo)).toBe("cancelled");
+            expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
+        });
+
+        it("cancels when the next pass's delete succeeds (re-queued intent)", async () => {
+            const repo = await seed(new InMemoryIntentRepository(), stale());
+            await pass(repo, vi.fn().mockRejectedValue(noMatch()), T0);
+
+            await pass(repo, vi.fn().mockResolvedValue(undefined), T0 + 1);
+
+            expect(await stateOf(repo)).toBe("cancelled");
+        });
+
+        it("becomes batch_succeeded when the next pass finds the inputs spent", async () => {
+            const repo = await seed(new InMemoryIntentRepository(), stale());
+            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+            await pass(repo, deleteIntent, T0);
+
+            await pass(
+                repo,
+                deleteIntent,
+                T0 + 1,
+                indexerReturning([coin("v", 0, { isSpent: true, settledBy: "ctx" })]),
+            );
+
+            const after = await only(repo);
+            expect(after.state).toBe("batch_succeeded");
+            expect(after.commitmentTransactionId).toBe("ctx");
+        });
+
+        it("uses the configured gap and resolves it once per pass", async () => {
+            const repo = new InMemoryIntentRepository();
+            await repo.saveIntent(
+                stale({ intentTxId: "a", intentVtxos: [{ txid: "va", vout: 0 }] }),
+            );
+            await repo.saveIntent(
+                stale({ intentTxId: "b", intentVtxos: [{ txid: "vb", vout: 0 }] }),
+            );
+            const confirm = vi.fn().mockResolvedValue(10 * gap);
+
+            const result = await reconcileIntents({
+                intentRepository: repo,
+                indexerProvider: indexerReturning([coin("va", 0), coin("vb", 0)]),
+                deleteIntent: vi.fn().mockRejectedValue(noMatch()),
+                noMatchConfirmMs: confirm,
+                now: () => T0,
+            });
+
+            expect(confirm).toHaveBeenCalledTimes(1);
+            expect(result.recheckAt).toBe(T0 + 10 * gap);
+        });
+
+        it("neither marks nor cancels when the gap cannot be resolved", async () => {
+            const repo = await seed(new InMemoryIntentRepository(), stale());
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            await reconcileIntents({
+                intentRepository: repo,
+                indexerProvider: unspent(),
+                deleteIntent: vi.fn().mockRejectedValue(noMatch()),
+                noMatchConfirmMs: vi.fn().mockRejectedValue(new Error("getInfo down")),
+                now: () => T0,
+            });
+
+            const after = await only(repo);
+            expect(after.state).toBe("waiting_for_batch");
+            expect(after.noMatchSeenAt).toBeUndefined();
+        });
+    });
+
+    describe("noMatchConfirmMs", () => {
+        it("falls back to the 2-minute floor for a missing sessionDuration", () => {
+            expect(noMatchConfirmMs(0)).toBe(120_000);
+        });
+        it("is twice sessionDuration once that exceeds the floor", () => {
+            expect(noMatchConfirmMs(600)).toBe(1_200_000);
+        });
     });
 
     it("keeps the intent locked when the delete fails for another reason", async () => {
@@ -452,5 +573,76 @@ describe("releaseIntents", () => {
 
         const held = await seed(new InMemoryIntentRepository(), pending());
         expect(await releaseIntents({ intentRepository: held })).toBe(false);
+    });
+});
+
+describe("ContractManager: re-checking a pending no-match confirmation", () => {
+    const deleteMessage = { type: "delete", expire_at: 0 } as const;
+    const noMatch = () =>
+        new ArkError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
+
+    beforeEach(() => {
+        // setImmediate stays real so advance() can let a timer's async pass run to the end.
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        vi.spyOn(console, "error").mockImplementation(() => {});
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    const advance = async (ms: number) => {
+        vi.advanceTimersByTime(ms);
+        for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    };
+
+    // Only the fields reconcileStaleIntents reads: a full create() would boot a watcher.
+    const setup = async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            intent({ deleteProofMessage: JSON.stringify(deleteMessage) }),
+        );
+        const getVtxos = vi.fn().mockResolvedValue({ vtxos: [coin("v", 0)] });
+        const manager: any = Object.create(ContractManager.prototype);
+        manager.config = {
+            intentRepository: repo,
+            indexerProvider: { getVtxos },
+            intentReconciliation: { deleteIntent: vi.fn().mockRejectedValue(noMatch()) },
+        };
+        await manager.reconcileStaleIntents(); // first answer: marks, arms the timer
+        expect((await collectIntents(repo, { intentTxIds: ["i1"] }))[0].noMatchSeenAt).toBe(
+            Date.now(),
+        );
+        return { repo, getVtxos, manager };
+    };
+
+    it("cancels on the timer's pass once the gap has passed", async () => {
+        const { repo } = await setup();
+
+        await advance(NO_MATCH_CONFIRM_FLOOR_MS);
+
+        expect(await stateOf(repo)).toBe("cancelled");
+    });
+
+    it("retries after the floor when the timer's own pass fails", async () => {
+        const { repo, getVtxos } = await setup();
+        getVtxos.mockRejectedValueOnce(new Error("indexer down"));
+
+        await advance(NO_MATCH_CONFIRM_FLOOR_MS);
+        expect(await stateOf(repo)).toBe("waiting_for_batch");
+
+        await advance(NO_MATCH_CONFIRM_FLOOR_MS);
+        expect(await stateOf(repo)).toBe("cancelled");
+    });
+
+    it("keeps the armed timer when another pass fails before it is due", async () => {
+        const { repo, getVtxos, manager } = await setup();
+        getVtxos.mockRejectedValueOnce(new Error("indexer down"));
+
+        await advance(NO_MATCH_CONFIRM_FLOOR_MS / 2);
+        await manager.reconcileStaleIntents(); // e.g. a reconnect pass
+
+        await advance(NO_MATCH_CONFIRM_FLOOR_MS / 2);
+        expect(await stateOf(repo)).toBe("cancelled");
     });
 });

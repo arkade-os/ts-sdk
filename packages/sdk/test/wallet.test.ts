@@ -17,6 +17,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
+    ArkErrorName,
     type IndexerProvider,
     type ArkProvider,
     type OnchainProvider,
@@ -3111,5 +3112,72 @@ describe("Wallet.updateDbAfterSettle", () => {
         ).rejects.toThrow(/no contract owns script/);
 
         expect(saveVtxos).not.toHaveBeenCalled();
+    });
+});
+
+describe("Wallet offchain send: VTXO_ALREADY_REGISTERED recovery", () => {
+    const outpoint = { txid: "c".repeat(64), vout: 1 };
+    // Already decoded, as RestArkProvider throws it: the message is arkd's text, not its JSON.
+    const alreadyRegistered = () =>
+        new ArkError(4, "vtxo already registered", ArkErrorName.VTXO_ALREADY_REGISTERED, {
+            vtxo_outpoint: `${outpoint.txid}:${outpoint.vout}`,
+        });
+
+    const setup = (submitTx: ReturnType<typeof vi.fn>, settling: string[] = []) => {
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+        const makeDeleteIntentSignature = vi.fn().mockResolvedValue({ proof: "dp", message: {} });
+        const finalizeTx = vi.fn();
+        const thisArg: any = {
+            arkProvider: { deleteIntent },
+            makeDeleteIntentSignature,
+            _settlingOutpoints: new Set(settling),
+        };
+        const inputs = [{ ...outpoint, value: 1 }] as any[];
+        const wrapped = (Wallet.prototype as any).withAlreadyRegisteredRecovery.call(
+            thisArg,
+            { submitTx, finalizeTx },
+            inputs,
+        );
+        return { wrapped, deleteIntent, makeDeleteIntentSignature, inputs };
+    };
+
+    it("deletes the leftover intent with a fresh proof and retries once", async () => {
+        const submitTx = vi
+            .fn()
+            .mockRejectedValueOnce(alreadyRegistered())
+            .mockResolvedValueOnce({ arkTxid: "t", signedCheckpointTxs: [] });
+        const { wrapped, deleteIntent, makeDeleteIntentSignature, inputs } = setup(submitTx);
+
+        await expect(wrapped.submitTx("ark", ["cp"])).resolves.toEqual({
+            arkTxid: "t",
+            signedCheckpointTxs: [],
+        });
+
+        expect(makeDeleteIntentSignature).toHaveBeenCalledWith([inputs[0]]);
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+        expect(submitTx).toHaveBeenCalledTimes(2);
+        // Same signed tx: no re-signing.
+        expect(submitTx.mock.calls[1]).toEqual(["ark", ["cp"]]);
+    });
+
+    it("leaves an in-flight outpoint to its settle and rethrows", async () => {
+        const err = alreadyRegistered();
+        const submitTx = vi.fn().mockRejectedValue(err);
+        const { wrapped, deleteIntent } = setup(submitTx, [`${outpoint.txid}:${outpoint.vout}`]);
+
+        await expect(wrapped.submitTx("ark", [])).rejects.toBe(err);
+
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(submitTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("rethrows a second failure without looping", async () => {
+        const submitTx = vi.fn().mockRejectedValue(alreadyRegistered());
+        const { wrapped, deleteIntent } = setup(submitTx);
+
+        await expect(wrapped.submitTx("ark", [])).rejects.toThrow();
+
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+        expect(submitTx).toHaveBeenCalledTimes(2);
     });
 });

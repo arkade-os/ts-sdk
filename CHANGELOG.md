@@ -179,6 +179,15 @@ style and have not been backfilled.
   `const { create } = Wallet`, throws `this is not a constructor`. Call
   `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
 
+- **`IntentRepository.version` is `2`: `ArkIntent` gains `noMatchSeenAt`.**
+  Custom intent repositories must persist and return the new optional field,
+  which the version literal makes fail to compile until they do. The four
+  in-tree backends are updated; SQLite adds the column to an existing table
+  on open, and IndexedDB and in-memory need no migration. Realm consumers who
+  opted into `ArkExperimentalRealmSchemas` get a new optional `noMatchSeenAt`
+  property on `ArkIntent` and must bump their own `schemaVersion`, or
+  `Realm.open` fails with a migration-required error.
+
 ### Features
 
 - **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
@@ -310,6 +319,22 @@ style and have not been backfilled.
   has a name to import. (#734)
 
 ### Bug Fixes
+
+- **Intent reconciliation no longer cancels on a single "no matching
+  intents" answer.** arkd also answers that way while an intent is off its
+  queue for a round's confirmation phase, about to be re-queued or to
+  succeed. The first answer is now recorded and keeps the inputs locked; a
+  second one, at least `max(2 × sessionDuration, 2 min)` later, cancels. A
+  live process re-checks on a timer, and a restart picks it up from the
+  stored marker. `clear()` still releases on the first answer.
+
+- **An offchain send recovers from `VTXO_ALREADY_REGISTERED`.** When arkd
+  refuses an input that a leftover queued intent still holds, the wallet
+  deletes that intent and resubmits the same signed transaction once, as
+  settle already did for "duplicated input". An input held by a settle
+  running in the same wallet is left alone. `maybeArkError` now returns an
+  already-decoded `ArkError` as-is, so `isArkError(maybeArkError(e), …)`
+  matches what `RestArkProvider` throws.
 
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,

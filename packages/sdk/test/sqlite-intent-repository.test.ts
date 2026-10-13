@@ -2,6 +2,7 @@ import { intentRepositoryConformance } from "./conformance/intentRepository.conf
 import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { expect, it, vi } from "vitest";
+import { collectIntents } from "../src/repositories/intentRepository";
 
 // Real node:sqlite (not the regex mock): the intent upsert uses
 // `ON CONFLICT ... DO UPDATE` and a partial unique index on intent_id, which
@@ -44,4 +45,39 @@ it("filters selective intent states in one SQLite page query", async () => {
     expect(second.items.map((intent) => intent.intentTxId)).toEqual(["z2", "z3"]);
     expect(all).toHaveBeenCalledTimes(1);
     expect((await repository.getIntentsPage({ states: [] }, { limit: 2 })).items).toEqual([]);
+});
+
+it("migrates an intents table created before noMatchSeenAt", async () => {
+    const db = createNodeSQLExecutor();
+    await db.run(`CREATE TABLE ark_intents (
+        intent_tx_id TEXT PRIMARY KEY,
+        intent_id TEXT,
+        state TEXT NOT NULL,
+        valid_from INTEGER,
+        valid_until INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        register_proof TEXT NOT NULL,
+        register_proof_message TEXT NOT NULL,
+        delete_proof TEXT NOT NULL,
+        delete_proof_message TEXT NOT NULL,
+        batch_id TEXT,
+        commitment_txid TEXT,
+        cancellation_reason TEXT,
+        partial_forfeits_json TEXT NOT NULL,
+        signer_descriptor TEXT,
+        intent_vtxos_json TEXT NOT NULL
+    )`);
+    await db.run(
+        `INSERT INTO ark_intents VALUES ('old', NULL, 'waiting_for_batch', NULL, NULL, 1, 1,
+         'rp', 'rpm', 'dp', 'dpm', NULL, NULL, NULL, '[]', NULL, '[]')`,
+    );
+
+    const repository = new SQLiteIntentRepository(db);
+    const [old] = await collectIntents(repository, { intentTxIds: ["old"] });
+    expect(old.noMatchSeenAt).toBeUndefined();
+
+    await repository.saveIntent({ ...old, noMatchSeenAt: 99 });
+    const [after] = await collectIntents(repository, { intentTxIds: ["old"] });
+    expect(after.noMatchSeenAt).toBe(99);
 });
