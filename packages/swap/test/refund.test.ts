@@ -772,7 +772,7 @@ describe("refundIfUnresolved", () => {
         // the doomed push from going out and burning the whole window.
         const { operator, provider, pushes } = watchedOperator();
         const indexer = {
-            getVtxos: async (opts?: { spendableOnly?: boolean }) => ({
+            getVtxos: async () => ({
                 vtxos: [],
             }),
             getVirtualTxs: async () => ({ txs: [] }),

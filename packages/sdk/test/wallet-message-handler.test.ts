@@ -27,16 +27,6 @@ describe("WalletMessageHandler handleMessage", () => {
         updater = new WalletMessageHandler();
     });
 
-    const init = () =>
-        updater.handleMessage({
-            ...baseMessage(),
-            type: "INIT_WALLET",
-            payload: {
-                key: { publicKey: "00" },
-                arkServerUrl: "http://example.com",
-            },
-        } as any);
-
     it("initializes the wallet on INIT_WALLET", async () => {
         const initSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).handleInitWallet = initSpy;
@@ -1737,7 +1727,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
@@ -1765,12 +1754,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const first = createMockExtendedVtxo({
             txid: "08".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         const second = createMockExtendedVtxo({
             txid: "09".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         const readPage = vi
             .spyOn(walletRepo, "getVtxosForScriptPage")
@@ -1808,7 +1795,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const live = createMockExtendedVtxo({
             txid: "01".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         const swept = createMockExtendedVtxo({
             txid: "02".repeat(32),
@@ -1818,31 +1804,26 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const expired = createMockExtendedVtxo({
             txid: "03".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             expiresAt: new Date(Date.now() - 60_000),
         });
         const subdust = createMockExtendedVtxo({
             txid: "04".repeat(32),
             value: 100,
-            virtualStatus: { state: "settled" },
         });
         const spent = createMockExtendedVtxo({
             txid: "05".repeat(32),
             value: 50000,
-            virtualStatus: { state: "spent" },
             isSpent: true,
         });
         const unrolled = createMockExtendedVtxo({
             txid: "06".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             isUnrolled: true,
         });
         const spentUnrolled = createMockExtendedVtxo({
             txid: "07".repeat(32),
             value: 50000,
-            virtualStatus: { state: "spent" },
             isSpent: true,
             isUnrolled: true,
         });
@@ -1921,20 +1902,17 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const exitedSwept = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "swept" },
             isUnrolled: true,
         });
         const exitedExpired = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             expiresAt: new Date(Date.now() - 60000),
             isUnrolled: true,
         });
         const exitedSpent = createMockExtendedVtxo({
             txid: "cc".repeat(32),
             value: 50000,
-            virtualStatus: { state: "spent" },
             isSpent: true,
             isUnrolled: true,
         });
@@ -1969,7 +1947,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         const preconfirmed = createMockExtendedVtxo({
             txid: "bb".repeat(32),
@@ -1999,12 +1976,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         const unrolled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             isUnrolled: true,
         });
@@ -2035,14 +2010,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         // Swept AND exited: a batch cannot lift an output that already sits onchain, so the
         // location wins over the recovery test.
         const exitedSwept = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "swept" },
             isUnrolled: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSwept]);
@@ -2070,14 +2043,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         // The completed unroll: exited, then swept onchain. The repository read is unfiltered,
         // so only the terminal-spend guard keeps this out of `unrolled` and out of `total`.
         const exitedSpent = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "spent" },
             isSpent: true,
             isUnrolled: true,
         });
@@ -2107,12 +2078,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         const pendingExpired = createMockExtendedVtxo({
             txid: "cc".repeat(32),
             value: 70000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, pendingExpired]);
 
@@ -2154,7 +2123,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 txid: "dd".repeat(32),
                 value: 30000,
                 script: gatedContract.script,
-                virtualStatus: { state: "settled" },
             }),
         ]);
 
@@ -2180,7 +2148,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 100000,
-                virtualStatus: { state: "settled" },
             }),
         ]);
 
@@ -2199,7 +2166,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             createdAt: new Date(),
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
@@ -2226,13 +2192,11 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo1 = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 10000,
-            virtualStatus: { state: "settled" },
             script: "s1",
         });
         const vtxo2 = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 20000,
-            virtualStatus: { state: "settled" },
             script: "s2",
         });
         await walletRepo.saveVtxos("contract-1", [vtxo1]);
@@ -2259,7 +2223,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 10000,
-                virtualStatus: { state: "settled" },
                 script: "s1",
             }),
         ]);
@@ -2267,7 +2230,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "bb".repeat(32),
                 value: 20000,
-                virtualStatus: { state: "settled" },
                 script: "s2",
             }),
         ]);
@@ -2298,7 +2260,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 10000,
-                virtualStatus: { state: "settled" },
                 script: "s1",
                 assets: [{ assetId: "cc".repeat(32), amount: 3n }],
             }),
@@ -2307,7 +2268,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "bb".repeat(32),
                 value: 20000,
-                virtualStatus: { state: "settled" },
                 script: "s2",
                 assets: [{ assetId: "cc".repeat(32), amount: 4n }],
             }),
@@ -2342,7 +2302,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 10000,
-                virtualStatus: { state: "settled" },
                 script: "s1",
             }),
         ]);
@@ -2405,7 +2364,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         // Save same VTXO under both keys (contract address = wallet address)
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
@@ -2431,7 +2389,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 30000,
-            virtualStatus: { state: "settled" },
         });
         const swept = createMockExtendedVtxo({
             txid: "cc".repeat(32),
@@ -2441,7 +2398,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const spent = createMockExtendedVtxo({
             txid: "dd".repeat(32),
             value: 10000,
-            virtualStatus: { state: "settled" },
             isSpent: true,
             spentBy: "ee".repeat(32),
         });
@@ -2549,7 +2505,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const initial = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 10000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [initial]);
 
@@ -2557,7 +2512,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const newVtxo = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 20000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [newVtxo]);
 
@@ -2593,7 +2547,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "ee".repeat(32),
             vout: 0,
             value: 1000,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             script: "scriptB",
         });
@@ -2605,7 +2558,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "ee".repeat(32),
             vout: 0,
             value: 1000,
-            virtualStatus: { state: "settled" },
             isSpent: true,
             script: "scriptB",
         });

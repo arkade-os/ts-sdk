@@ -14,12 +14,12 @@ const chainTx = (txid: string, type: ChainTxType) => ({
 function makeSession(repo?: InMemoryVirtualTxRepository) {
     const indexer = {
         getVirtualTxs: vi.fn(async () => ({ txs: ["INDEXER_PSBT"] })),
-    } as never;
+    };
     const session = new Unroll.Session(
         { txid: "v", vout: 0, chain: [] },
         {} as never,
         {} as never,
-        indexer,
+        indexer as never,
         repo,
     );
     return { session, indexer };

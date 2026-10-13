@@ -62,7 +62,7 @@ function htlcProgram() {
 // Compile-time guard for the strong typing — never executed; exists only so
 // `tsc --noEmit` fails if the input-descriptor → argument-type inference breaks.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function _typecheckStrongInputs(ark: arkade.Arkade) {
+export function _typecheckStrongInputs(ark: arkade.Arkade) {
     const c = ark.contract(htlcProgram(), {});
     c.functions.claim(new Uint8Array(32)); // ok: `preimage` is a Uint8Array
     // @ts-expect-error preimage must be Uint8Array, not a number

@@ -994,7 +994,6 @@ describe("Wallet HD rotation", () => {
                 vout: 0,
                 value: 50_000,
                 status: { confirmed: true },
-                virtualStatus: { state: "settled" },
                 createdAt: new Date(),
                 isUnrolled: false,
                 isSpent: false,
@@ -1220,7 +1219,6 @@ describe("Wallet HD rotation", () => {
                 vout: 0,
                 value: 50_000,
                 status: { confirmed: true },
-                virtualStatus: { state: "settled" },
                 createdAt: new Date(),
                 isUnrolled: false,
                 isSpent: false,
@@ -1483,7 +1481,6 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             vout: 0,
             value: 50_000,
             status: { confirmed: true },
-            virtualStatus: { state: "settled" },
             createdAt: new Date(),
             isUnrolled: false,
             isSpent: false,
@@ -1865,7 +1862,6 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         return {
             ...base,
             // A real (post-2025) wall-clock expiry, so the coin reads as live.
-            virtualStatus: { state: "settled", batchExpiry },
             expiresAt: new Date(batchExpiry),
             ...extra,
         };
@@ -1993,7 +1989,6 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             hash: "00".repeat(32),
         });
         const coin = makeMigratableCoin(wallet, {
-            virtualStatus: { state: "settled", batchExpiry: 500_000 },
             expiresAt: undefined,
             expiresAtHeight: 500,
         });

@@ -114,7 +114,12 @@ describe("VtxoScript.encode as a PSBT output tapTree", () => {
             // tree shape: rebuild the tree from the serialized depths and
             // verify it re-derives the same taproot output key.
             const rebuiltTree = treeFromBIP371Leaves(roundtrippedLeaves!);
-            const rebuilt = p2tr(taprootNumsKey(), rebuiltTree, undefined, true);
+            const rebuilt = p2tr(
+                taprootNumsKey(),
+                rebuiltTree as Parameters<typeof p2tr>[1],
+                undefined,
+                true,
+            );
             expect(hex.encode(rebuilt.tweakedPubkey)).toBe(hex.encode(script.tweakedPublicKey));
         },
     );
