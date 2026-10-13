@@ -17,6 +17,7 @@ import {
     type Network,
     type OfferPlan,
     type Side,
+    type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import { isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
@@ -92,7 +93,18 @@ export const makeCachedFeedFetch = (
 
 /** How long a discovered market set is reused. Shared with v2 discovery so the two
  * paths cannot drift into different answers. */
-export const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
+export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** Lazy, so `nostr-tools` stays an optional peer: `discover()` fetches only with a solver to ask. */
+const nostrCards: TransportCardFetcher = {
+    fetch: async (solvers, network) =>
+        (await import("./nostr")).nostrCardFetcher().fetch(solvers, network),
+};
+
+/** A `transportCards` option resolved: omitted means the Nostr fetcher, `null` none. */
+export const transportCardsOf = (
+    option: TransportCardFetcher | null | undefined,
+): TransportCardFetcher | undefined => (option === undefined ? nostrCards : (option ?? undefined));
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
@@ -130,11 +142,14 @@ export interface DiscoverMarketsOptions {
     /** Overrides the network's default registry. `undefined` follows
      * `@arkade-os/solver-discovery`'s per-network default (never hardcoded here). */
     registryUrl: string | undefined;
-    /** Backs the 1-hour markets cache and its stale fallback. Omit for a
+    /** Backs the 10-minute markets cache and its stale fallback. Omit for a
      * one-shot discovery that always hits the registry. */
     repository?: AssetSwapRepository;
     /** Locally pinned solver cards to merge with the registry's markets. */
     localCards?: LocalCardInput[];
+    /** Reads the cards listed solvers publish on their own transports. Omitted means Nostr
+     * (needs the optional `nostr-tools` peer); `null` reads registry cards only. */
+    transportCards?: TransportCardFetcher | null;
     /** Receives discovery warnings (stale index, skipped cards, …). */
     logger?: (...args: unknown[]) => void;
     /** Custom fetch (tests, mobile runtimes). Defaults to global fetch.
@@ -148,7 +163,7 @@ export interface DiscoverMarketsOptions {
 }
 
 /**
- * Markets from this network's solver registry, cached for an hour, with a stale cache
+ * Markets from this network's solver registry, cached for ten minutes, with a stale cache
  * backstopping an unreachable registry. Only an unrecognised network yields [].
  */
 export const discoverMarkets = async (
@@ -176,6 +191,7 @@ export const discoverMarkets = async (
         localCards,
         network,
         fetchImpl,
+        transportCards: transportCardsOf(options.transportCards),
     });
     if (warnings.length) logger?.("solver discovery:", ...warnings);
     // A reachable registry is authoritative even when empty.

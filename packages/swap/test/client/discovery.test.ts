@@ -118,6 +118,26 @@ describe("a reachable registry", () => {
         await index.load({ refresh: true });
         expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
+
+    it("refetches on use once the held snapshot is ten minutes old", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const fetchImpl = serving([lightningCard]);
+            const index = discoveryIndex({
+                network: "regtest",
+                config: { registryUrl: REGISTRY, fetchImpl },
+            });
+            await index.load();
+            vi.advanceTimersByTime(9 * 60_000);
+            await index.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(60_000);
+            await index.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("an unreachable registry with a cache behind it", () => {

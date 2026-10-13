@@ -17,7 +17,12 @@ import {
     type CorridorBase,
     type CorridorOverrides,
 } from "./corridors/deps";
-import { discoveryIndex, type DiscoveryConfig, type DiscoveryIndex } from "./discovery";
+import {
+    discoveryIndex,
+    type DiscoveryConfig,
+    type DiscoveryIndex,
+    type DiscoverySnapshot,
+} from "./discovery";
 import { ClientDisposed, MissingCorridorDep, NotCancellable, UnsupportedRoute } from "./errors";
 import { acceptQuote, type QuotePreparation } from "./accept";
 import { cancelSwap, type CancelOutcome } from "./cancel";
@@ -157,6 +162,15 @@ export interface SwapClient {
     markets(): Promise<Market[]>;
 
     /**
+     * Called with {@link markets}'s answer when a refresh changes the market set: a solver added, a
+     * card changed, a solver gone. Refreshes happen on use, and on the `discovery.watch` timer,
+     * which runs only while a listener is attached.
+     *
+     * @throws {ClientDisposed} after disposal.
+     */
+    onMarketsChanged(fn: (markets: Market[]) => void): Unsubscribe;
+
+    /**
      * The route, the market that would price it, and what the active snapshot serves — disclosing
      * nothing. Network-free against injected or cached discovery data, so application policy can
      * veto before an RFQ round trip discloses an invoice or amount.
@@ -220,6 +234,8 @@ export interface SwapFilter {
 /** Bounded because a quote UI re-quotes per keystroke; dropping one costs only a re-quote. */
 const PREPARATIONS_HELD = 64;
 
+const WATCH_INTERVAL_MS = 5 * 60 * 1000;
+
 const mintQuoteId = (): QuoteId => hex.encode(crypto.getRandomValues(new Uint8Array(16)));
 
 export const createSwapClient = (config: SwapClientConfig): SwapClient => {
@@ -250,6 +266,46 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             indexer,
         }));
 
+    const marketListeners = new Set<(markets: Market[]) => void>();
+    let watchTimer: ReturnType<typeof setInterval> | undefined;
+    let polling = false;
+
+    // the routing read's own filter, so this cannot offer a card `quote()` would refuse
+    const marketsOf = (snapshot: DiscoverySnapshot): Market[] =>
+        usableMarkets(snapshot, config.policy).map((card) =>
+            cardMarketOf(card, snapshot.ref, marketKeyOf(card), marketBackendOf(card)),
+        );
+
+    const announce = (snapshot: DiscoverySnapshot): void => {
+        const markets = marketsOf(snapshot);
+        for (const listener of marketListeners) {
+            try {
+                listener(markets);
+            } catch {
+                // A consumer's callback is not this client's correctness.
+            }
+        }
+    };
+
+    const poll = async (): Promise<void> => {
+        if (polling) return;
+        polling = true;
+        try {
+            await (await resolved()).discovery.load({ refresh: true });
+        } catch (error) {
+            // a timer has nobody to throw to; the next tick retries
+            config.discovery?.logger?.("solver discovery watch:", error);
+        } finally {
+            polling = false;
+        }
+    };
+
+    const stopWatch = (): void => {
+        if (watchTimer === undefined) return;
+        clearInterval(watchTimer);
+        watchTimer = undefined;
+    };
+
     let context:
         | Promise<{ base: CorridorBase; corridors: CorridorSet; discovery: DiscoveryIndex }>
         | undefined;
@@ -275,6 +331,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                     network: base.networkName,
                     ...(config.discovery === undefined ? {} : { config: config.discovery }),
                     ...(config.repository === undefined ? {} : { repository: config.repository }),
+                    onChange: announce,
                 }),
             };
         })().catch((error) => {
@@ -468,11 +525,23 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             const { discovery } = await resolved();
             // `load`, as `quote()` reads it: a never-routed client must not refuse where the quote
             // would not
-            const snapshot = await discovery.load();
-            // the routing read's own filter, so this cannot offer a card `quote()` would refuse
-            return usableMarkets(snapshot, config.policy).map((card) =>
-                cardMarketOf(card, snapshot.ref, marketKeyOf(card), marketBackendOf(card)),
-            );
+            return marketsOf(await discovery.load());
+        },
+
+        onMarketsChanged: (fn) => {
+            ensureLive("onMarketsChanged");
+            marketListeners.add(fn);
+            if (config.discovery?.watch && watchTimer === undefined) {
+                watchTimer = setInterval(
+                    poll,
+                    config.discovery.watchIntervalMs ?? WATCH_INTERVAL_MS,
+                );
+                (watchTimer as { unref?: () => void }).unref?.();
+            }
+            return () => {
+                marketListeners.delete(fn);
+                if (marketListeners.size === 0) stopWatch();
+            };
         },
 
         pay: async (destination, options) => {
@@ -511,6 +580,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         [Symbol.asyncDispose]: async () => {
             if (disposed) return;
             disposed = true;
+            stopWatch();
+            marketListeners.clear();
             // only a drive that exists: never build one just to dispose it
             await drive?.dispose();
         },

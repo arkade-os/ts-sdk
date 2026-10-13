@@ -311,6 +311,21 @@ style and have not been backfilled.
   listed under Breaking Changes above. The shape is exported as
   `ArkadeServerProvider`, so a caller building a derivation-only client
   has a name to import. (#734)
+- **`@arkade-os/swap`: markets come from the cards solvers publish
+  themselves, and stay current in a long-lived wallet.** A registry can
+  list a solver by key alone and leave its markets to the signed card the
+  solver publishes over Nostr (kind 38859, `d` = network; exported as
+  `SOLVER_CARD_KIND`, with `RFQ_AD_KIND` kept as its alias).
+  `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
+  default to `nostrCardFetcher` from `@arkade-os/swap/nostr`, which loads
+  the optional `nostr-tools` peer only once a registry lists such a solver;
+  `null` reads registry cards only. The markets cache now lasts ten
+  minutes, not an hour, so a wallet that swaps sees solvers added, changed
+  and gone within that window. `discovery: { watch: true }` also refetches
+  every `watchIntervalMs` (five minutes by default) while a
+  `client.onMarketsChanged` listener is attached, and the listener receives
+  `markets()`'s answer whenever the market set changes. Needs
+  `@arkade-os/solver-discovery` 0.3.0.
 
 ### Bug Fixes
 

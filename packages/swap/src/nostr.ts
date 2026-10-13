@@ -8,6 +8,7 @@
  * fails loudly at resolution, by design. A dynamic `import()` in the factory was rejected: it
  * would make construction async, and the subscription is opened eagerly.
  */
+import type { TransportCard, TransportCardFetcher } from "@arkade-os/solver-discovery";
 import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
 import {
     finalizeEvent,
@@ -15,6 +16,7 @@ import {
     getPublicKey,
     nip44,
     SimplePool,
+    verifyEvent,
     type Event,
 } from "nostr-tools";
 
@@ -29,13 +31,17 @@ import {
 export const RFQ_DIRECTED_KIND = 24859;
 
 /**
- * Indicative solver advertisement — never binding; only a quote binds.
- * Addressable (30000–39999), not ephemeral: an ad is standing state relays should retain. The
+ * A solver's signed card, `d` tag = network, authored by its `discovery_pubkey`.
+ * Addressable (30000–39999), not ephemeral: a card is standing state relays should retain. The
  * opposite retention to {@link RFQ_DIRECTED_KIND} is intentional, not a typo.
  */
-export const RFQ_AD_KIND = 38859;
+export const SOLVER_CARD_KIND = 38859;
+
+/** {@link SOLVER_CARD_KIND} under its old name: the kind now carries the signed solver card. */
+export const RFQ_AD_KIND = SOLVER_CARD_KIND;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const CARD_FETCH_TIMEOUT_MS = 5_000;
 
 /**
  * Every relay dropped the subscription, so no reply can arrive on it. Distinct from a timeout:
@@ -208,3 +214,72 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         },
     };
 };
+
+export interface NostrCardFetcherOptions {
+    /** Injectable for tests; a lent pool is never closed, only the subscription on it. */
+    pool?: SimplePool;
+    /** How long to wait for every relay's EOSE before answering with what arrived. */
+    timeoutMs?: number;
+}
+
+/**
+ * Reads listed solvers' {@link SOLVER_CARD_KIND} cards: one REQ over the union of their relays,
+ * closed on EOSE or `timeoutMs`, keeping each author's latest event. It authenticates delivery
+ * (the event signature) only; the discovery client validates the card itself.
+ */
+export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): TransportCardFetcher => ({
+    async fetch(solvers, network) {
+        const authors = [...new Set(solvers.map((solver) => solver.discovery_pubkey))];
+        const relays = [
+            ...new Set(solvers.flatMap((solver) => solver.transports?.nostr?.relays ?? [])),
+        ];
+        if (authors.length === 0 || relays.length === 0) return [];
+        const asked = new Set(authors);
+        const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
+        const pool = options.pool ?? new SimplePool();
+        const latest = new Map<string, Event>();
+        let subscription: { close: () => void } | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, timeoutMs);
+                subscription = pool.subscribeMany(
+                    relays,
+                    { kinds: [SOLVER_CARD_KIND], authors, "#d": [network] },
+                    {
+                        // Relays are untrusted: re-check the filter and the signature, so a stray
+                        // or forged later event cannot shadow the real card.
+                        onevent(event: Event) {
+                            if (event.kind !== SOLVER_CARD_KIND || !asked.has(event.pubkey)) return;
+                            if (!verifyEvent(event)) return;
+                            if (event.tags.find((tag) => tag[0] === "d")?.[1] !== network) return;
+                            const held = latest.get(event.pubkey);
+                            const newer =
+                                !held ||
+                                event.created_at > held.created_at ||
+                                (event.created_at === held.created_at && event.id < held.id);
+                            if (newer) latest.set(event.pubkey, event);
+                        },
+                        oneose: () => resolve(),
+                        onclose: () => resolve(),
+                        maxWait: timeoutMs,
+                    },
+                );
+            });
+        } finally {
+            clearTimeout(timer);
+            if (options.pool) subscription?.close();
+            else pool.close(relays);
+        }
+        const cards: TransportCard[] = [];
+        for (const event of latest.values()) {
+            try {
+                const card: unknown = JSON.parse(event.content);
+                cards.push({ pubkey: event.pubkey, createdAt: event.created_at, card });
+            } catch {
+                // Not an older card instead: the newest event is the solver's current statement.
+            }
+        }
+        return cards;
+    },
+});

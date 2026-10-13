@@ -261,6 +261,18 @@ describe("discoverMarkets caching", () => {
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
+    it("keeps a cache fresh for ten minutes, then refetches", async () => {
+        await seedCache(Date.now() - 9 * 60_000);
+        const fresh = jsonFetch([registryIndex()]);
+        await discoverWith(fresh);
+        expect(fresh).not.toHaveBeenCalled();
+
+        await seedCache(Date.now() - 11 * 60_000);
+        const aged = jsonFetch([registryIndex()]);
+        await discoverWith(aged);
+        expect(aged).toHaveBeenCalledTimes(1);
+    });
+
     it("serves a fresh pairless CAIP-19 cache without fetching", async () => {
         const pairless = {
             ...btcUsd,
