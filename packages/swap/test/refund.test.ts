@@ -265,8 +265,8 @@ describe("pushRefundWithoutReceiver", () => {
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
-        expect(operator.finalized).toHaveLength(1);
-        expect(operator.finalized[0].txid).toBe(result.txid);
+        expect(operator.finalized).toHaveLength(0);
+        expect(result.txid).toBe(tx.id);
     });
 
     it("honours an explicit destination override", async () => {

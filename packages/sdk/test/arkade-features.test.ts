@@ -67,8 +67,25 @@ function fundingCoin(value: number) {
     };
 }
 
+function withSig(tx: Transaction, key: Uint8Array): Transaction {
+    tx.updateInput(0, {
+        tapScriptSig: [[{ pubKey: key, leafHash: new Uint8Array(32) }, new Uint8Array(64).fill(1)]],
+    });
+    return tx;
+}
+
+/** An arkd without one-shot support: rebuilds each checkpoint and signs only its own share. */
+const preOneShotArkd =
+    (server: Uint8Array) =>
+    (cps: string[]): string[] =>
+        cps.map((c) => {
+            const tx = Transaction.fromPSBT(base64.decode(c));
+            tx.updateInput(0, { tapScriptSig: undefined }, true);
+            return base64.encode(withSig(tx, server).toPSBT());
+        });
+
 function mockIdentity(key = xOnly()) {
-    const sign = vi.fn(async (tx: Transaction, _idx?: number[]) => tx);
+    const sign = vi.fn(async (tx: Transaction, _idx?: number[]) => withSig(tx, key));
     const identity = {
         xOnlyPublicKey: async () => key,
         sign,
@@ -366,7 +383,7 @@ describe("ArkadeContract — extended features", () => {
         await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
         expect(captured.via).toBe("ark");
         expect(arkProvider.submitTx).toHaveBeenCalled();
-        expect(arkProvider.finalizeTx).toHaveBeenCalled();
+        expect(arkProvider.finalizeTx).not.toHaveBeenCalled();
         expect(emulator.submitTx).not.toHaveBeenCalled();
         // Prevout resolution is emulator-only: arkd-direct spends must keep the
         // bytes they had before v0.0.7 support landed.
@@ -418,11 +435,14 @@ describe("ArkadeContract — extended features", () => {
     }
 
     it("arkd path finalizes reordered server checkpoints in the server's order", async () => {
-        const { arkProvider, send } = await sendTwoCheckpointSpend((cps) => [...cps].reverse());
+        const { arkProvider, send } = await sendTwoCheckpointSpend((cps) =>
+            preOneShotArkd(server)(cps).reverse(),
+        );
         await send;
 
-        const submitted = arkProvider.submitTx.mock.calls[0][1] as string[];
-        expect(arkProvider.finalizeTx.mock.calls[0][1]).toEqual([...submitted].reverse());
+        const txids = (cps: string[]) => cps.map((c) => Transaction.fromPSBT(base64.decode(c)).id);
+        const submitted = txids(arkProvider.submitTx.mock.calls[0][1] as string[]);
+        expect(txids(arkProvider.finalizeTx.mock.calls[0][1])).toEqual([...submitted].reverse());
     });
 
     it("arkd path rejects a checkpoint it did not submit", async () => {
@@ -577,7 +597,12 @@ describe("ArkadeContract — extended features", () => {
 
     it("arkd path signs once per tx, no checkpoint double-signing (fix #2/#3)", async () => {
         const { identity, sign } = mockIdentity();
-        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        const { arkProvider, indexer, emulator } = providers(
+            server,
+            emulatorKey,
+            [COIN],
+            preOneShotArkd(server),
+        );
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
@@ -598,8 +623,6 @@ describe("ArkadeContract — extended features", () => {
             },
         });
         await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
-        // exactly: sign(arkTx) once + sign(returned checkpoint) once. The old code
-        // also pre-signed the checkpoint before submit → 3 calls.
         expect(sign.mock.calls.length).toBe(2);
         expect(arkProvider.finalizeTx).toHaveBeenCalled();
     });

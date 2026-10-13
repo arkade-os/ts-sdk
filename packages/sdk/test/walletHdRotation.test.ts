@@ -1300,7 +1300,7 @@ describe("Wallet HD rotation", () => {
             await wallet.buildAndSubmitOffchainTx([coin], outputs);
 
             expect(submitSpy).toHaveBeenCalledTimes(1);
-            expect(finalizeSpy).toHaveBeenCalledTimes(1);
+            expect(finalizeSpy).not.toHaveBeenCalled();
             expect(submittedArkTxB64).toBeDefined();
 
             const arkTx = Transaction.fromPSBT(base64.decode(submittedArkTxB64!));
@@ -1445,6 +1445,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         // Undecorated identity → `isBatchSignable` is false and the signer
         // router path runs instead.
         batchSignable = true,
+        oneShotSubmit?: boolean,
     ) {
         // Use a baseline SingleKey wallet (no HD rotation): every input
         // routes to the identity, so canBatch returns true and the batch
@@ -1462,6 +1463,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: contractRepo ?? new InMemoryContractRepository(),
             },
+            oneShotSubmit,
         });
         const getChainTipSpy = vi.spyOn(wallet.onchainProvider, "getChainTip").mockResolvedValue({
             height: 0,
@@ -1592,10 +1594,13 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             .mockImplementation(async (arkTxB64, checkpointsB64) => ({
                 arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
                 finalArkTx: await serverSignArkTx(arkTxB64),
-                // Server adds its share to the *unsigned* checkpoints it
-                // was handed — exactly what arkd does in production.
+                // A pre-one-shot arkd rebuilds the checkpoints unsigned and adds its share.
                 signedCheckpointTxs: await Promise.all(
-                    checkpointsB64.map((c) => serverSignCheckpoint(c)),
+                    checkpointsB64.map((c) => {
+                        const rebuilt = Transaction.fromPSBT(base64.decode(c));
+                        rebuilt.updateInput(0, { tapScriptSig: undefined }, true);
+                        return serverSignCheckpoint(base64.encode(rebuilt.toPSBT()));
+                    }),
                 ),
             }));
 
@@ -1615,11 +1620,37 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         expect(identity.signMultipleSpy).toHaveBeenCalledTimes(1);
         expect(identity.signSpy).not.toHaveBeenCalled();
 
+        expect(tapscriptSignerPubkeysHex(submitSpy.mock.calls[0][1][0], 0)).toEqual([userXOnlyHex]);
         expect(finalizedCheckpoints).toHaveLength(1);
         const signers = tapscriptSignerPubkeysHex(finalizedCheckpoints![0], 0);
         // The merge preserved the server sig AND added the user sig.
         expect(signers).toContain(serverXOnlyHex);
         expect(signers).toContain(userXOnlyHex);
+
+        submitSpy.mockRestore();
+        finalizeSpy.mockRestore();
+        await wallet.dispose();
+    });
+
+    it("oneShotSubmit: false submits unsigned checkpoints and finalizes", async () => {
+        const { wallet } = await makeStaticBatchWallet(undefined, true, false);
+        const coin = makeBaselineCoin(wallet);
+        const submitSpy = vi
+            .spyOn(wallet.arkProvider, "submitTx")
+            .mockImplementation(async (arkTxB64, checkpointsB64) => ({
+                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
+                finalArkTx: await serverSignArkTx(arkTxB64),
+                signedCheckpointTxs: await Promise.all(checkpointsB64.map(serverSignCheckpoint)),
+            }));
+        const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
+
+        await wallet.buildAndSubmitOffchainTx(
+            [coin],
+            [{ amount: BigInt(coin.value - 1000), script: wallet.arkAddress.pkScript }],
+        );
+
+        expect(tapscriptSignerPubkeysHex(submitSpy.mock.calls[0][1][0], 0)).toEqual([]);
+        expect(finalizeSpy).toHaveBeenCalledTimes(1);
 
         submitSpy.mockRestore();
         finalizeSpy.mockRestore();

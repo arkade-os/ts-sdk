@@ -11,6 +11,14 @@ style and have not been backfilled.
 
 ### Added
 
+- **Offchain sends finalize in one call on arkd with one-shot submit.**
+  Checkpoints are submitted already signed, so arkd finalizes the transaction
+  within `submitTx`; an arkd without support drops the signatures and the SDK
+  falls back to `finalizeTx` as before. Covers wallet sends, `signAndSubmitOffchainTx`,
+  Arkade contract spends and swap refunds. Set `WalletConfig.oneShotSubmit: false`
+  (or `oneShot: false` on the helpers) to keep the two-step flow, in which arkd
+  holds no checkpoint signature before the wallet holds the cosigned ark tx.
+
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.

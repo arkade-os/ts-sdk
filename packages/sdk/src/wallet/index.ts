@@ -217,6 +217,16 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `20`
      */
     lookAheadWindow?: number;
+
+    /**
+     * Submit offchain transactions with signed checkpoints, so a supporting
+     * arkd finalizes them in one call (older arkd falls back to finalizeTx).
+     * Set `false` to keep the two-step flow, in which the server holds no
+     * checkpoint signature before the wallet holds the cosigned ark tx.
+     *
+     * @defaultValue `true`
+     */
+    oneShotSubmit?: boolean;
 }
 
 /**

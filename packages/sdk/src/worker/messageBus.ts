@@ -170,6 +170,8 @@ type Initialize = {
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
+        /** @see WalletConfig.oneShotSubmit */
+        oneShotSubmit?: boolean;
         /** @see WalletConfig.minBatchExpirySeconds */
         minBatchExpirySeconds?: bigint;
         /** @see WalletConfig.minCheckpointExitDelaySeconds */
@@ -530,6 +532,7 @@ export class MessageBus {
                 walletMode: config.walletMode,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
+                oneShotSubmit: config.oneShotSubmit,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
                 minCheckpointExitDelaySeconds: config.minCheckpointExitDelaySeconds,
             });

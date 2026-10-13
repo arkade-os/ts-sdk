@@ -62,7 +62,7 @@ function signer(userSignedCheckpoints?: Transaction[]): OffchainTxSigner & {
 } {
     return {
         signArkTx: async (arkTx) => ({ arkTx, userSignedCheckpoints }),
-        signCheckpoint: vi.fn(async (checkpoint: Transaction) => checkpoint),
+        signCheckpoint: vi.fn(async (checkpoint: Transaction) => userSigned(checkpoint, 99)),
     };
 }
 
@@ -169,9 +169,9 @@ describe("submitOffchainTx ark txid reconciliation", () => {
         const p = provider(encode([checkpoint(1)]), { arkTxid: "ff".repeat(32) });
         const s = signer();
 
-        await expect(submitOffchainTx(p, offchainTx([checkpoint(1)]), s)).rejects.toThrow(
-            /submitTx returned ark txid/,
-        );
+        await expect(
+            submitOffchainTx(p, offchainTx([checkpoint(1)]), s, undefined, { oneShot: false }),
+        ).rejects.toThrow(/submitTx returned ark txid/);
         expect(s.signCheckpoint).not.toHaveBeenCalled();
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -219,7 +219,9 @@ describe("submitOffchainTx checkpoint txid matching", () => {
         const p = provider(encode([local[0], unsubmitted]));
         const s = signer();
 
-        await expect(submitOffchainTx(p, offchainTx(local), s)).rejects.toThrow(
+        await expect(
+            submitOffchainTx(p, offchainTx(local), s, undefined, { oneShot: false }),
+        ).rejects.toThrow(
             new RegExp(`submitTx checkpoint 1 txid ${unsubmitted.id} does not match`),
         );
         expect(s.signCheckpoint).not.toHaveBeenCalled();
@@ -280,9 +282,9 @@ describe("submitOffchainTx sighash guard", () => {
         const p = provider(encode([hostile]));
         const s = signer();
 
-        await expect(submitOffchainTx(p, offchainTx([local]), s)).rejects.toThrow(
-            /submitTx checkpoint 0: Unallowed sighash type 0x82 for input 0/,
-        );
+        await expect(
+            submitOffchainTx(p, offchainTx([local]), s, undefined, { oneShot: false }),
+        ).rejects.toThrow(/submitTx checkpoint 0: Unallowed sighash type 0x82 for input 0/);
         expect(s.signCheckpoint).not.toHaveBeenCalled();
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -316,5 +318,70 @@ describe("submitOffchainTx sighash guard", () => {
 
         await expect(submitOffchainTx(p, offchainTx([local]), signer())).resolves.toBeDefined();
         expect(p.finalizeTx).toHaveBeenCalled();
+    });
+});
+
+describe("submitOffchainTx one-shot", () => {
+    const local = () => [checkpoint(1), checkpoint(2)];
+    const batch = (cps: Transaction[]) => signer([userSigned(cps[0], 1), userSigned(cps[1], 2)]);
+
+    it("submits signed checkpoints and skips finalizeTx when the server keeps the signatures", async () => {
+        const cps = local();
+        const s = batch(cps);
+        const p = provider(encode([userSigned(cps[1], 2), userSigned(cps[0], 1)]));
+        const afterFinalize = vi.fn(async () => {});
+
+        await submitOffchainTx(p, offchainTx(cps), s, { afterFinalize });
+
+        expect(p.submitTx.mock.calls[0][1]).toEqual(
+            encode([userSigned(cps[0], 1), userSigned(cps[1], 2)]),
+        );
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+        expect(afterFinalize).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to finalizeTx when the server drops the signatures (pre-one-shot arkd)", async () => {
+        const cps = local();
+        const p = provider(encode(cps));
+
+        await submitOffchainTx(p, offchainTx(cps), batch(cps));
+
+        expect(finalizedSigners(p)).toEqual([
+            [hex.encode(SERVER_KEY), hex.encode(key(1))].sort(),
+            [hex.encode(SERVER_KEY), hex.encode(key(2))].sort(),
+        ]);
+    });
+
+    it("finalizes when only some checkpoints kept the signatures", async () => {
+        const cps = local();
+        const p = provider(encode([userSigned(cps[0], 1), cps[1]]));
+
+        await submitOffchainTx(p, offchainTx(cps), batch(cps));
+
+        expect(p.finalizeTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("pre-signs each checkpoint once on the sign-after path and reuses it on fallback", async () => {
+        const cps = local();
+        const s = signer();
+        const p = provider(encode(cps));
+
+        await submitOffchainTx(p, offchainTx(cps), s);
+
+        expect(s.signCheckpoint).toHaveBeenCalledTimes(2);
+        expect(finalizedSigners(p)).toEqual([
+            [hex.encode(SERVER_KEY), hex.encode(key(99))].sort(),
+            [hex.encode(SERVER_KEY), hex.encode(key(99))].sort(),
+        ]);
+    });
+
+    it("submits unsigned checkpoints when opted out", async () => {
+        const cps = local();
+        const p = provider(encode(cps));
+
+        await submitOffchainTx(p, offchainTx(cps), batch(cps), undefined, { oneShot: false });
+
+        expect(p.submitTx.mock.calls[0][1]).toEqual(encode(cps));
+        expect(p.finalizeTx).toHaveBeenCalledTimes(1);
     });
 });

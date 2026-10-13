@@ -162,9 +162,12 @@ describe("pushClaim", () => {
         const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
-        // …and finalize got the checkpoints back signed.
-        expect(operator.finalized).toHaveLength(1);
-        expect(operator.finalized[0]!.txid).toBe(result.txid);
+        // …and the checkpoints went out signed, so the cosigning operator finalized on submit.
+        for (const checkpoint of operator.submitted[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig?.length).toBeGreaterThan(0);
+        }
+        expect(operator.finalized).toHaveLength(0);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
