@@ -2650,6 +2650,9 @@ export class Wallet
             }
         }
         for (const contract of await collectContracts(this.contractRepository)) {
+            // A recovery-only row carries a keyring key outside the HD tree, which
+            // `signerForDescriptor` (correctly) refuses as foreign.
+            if (isRecoveryOnlyContract(contract)) continue;
             const descriptor = contract.metadata?.signingDescriptor;
             if (typeof descriptor === "string" && descriptor.length > 0) {
                 descriptors.add(descriptor);
@@ -4692,7 +4695,9 @@ export class Wallet
         }
         // Whether the key is already filed decides whether a failed contract
         // write may purge it below. Read BEFORE the import, which is idempotent
-        // and would otherwise erase the distinction.
+        // and would otherwise erase the distinction. Reads this instance's mirror,
+        // so a sibling context importing the same note concurrently can have its
+        // key purged; re-running `claimCash` re-imports it.
         const preExisting = this._keyring.hasKey(`tr(${hex.encode(cash.publicKey)})`);
         const descriptor = await this._keyring.importKey(cash.privateKey);
 

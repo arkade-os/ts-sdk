@@ -535,6 +535,13 @@ describe("claimCash import-for-recovery", () => {
         expect(contract.metadata?.recoveryOnly).toBe(true);
     });
 
+    it("keeps the imported descriptor out of the used signing descriptors", async () => {
+        const cash = makeCash();
+        const { wallet } = await claimSwept(cash);
+
+        expect(await wallet.getUsedSigningDescriptors()).toEqual([]);
+    });
+
     it("routes the imported input to the keyring, not the baseline identity", async () => {
         const cash = makeCash();
         const { wallet } = await claimSwept(cash);
