@@ -605,6 +605,11 @@ export interface RenewVtxosOptions {
  * How a renewal divides its proceeds across outputs. The arithmetic that gets a
  * settlement accepted stays here; this decides only the SHAPE, which is a policy
  * the wallet cannot know.
+ *
+ * Only the call it is passed to splits: automatic renewal settles everything it
+ * selects into one output, so it merges the pieces back once they near expiry.
+ * A caller keeping the shape across cycles disables it (`settlementConfig: false`)
+ * and renews itself.
  */
 export interface RenewalSplit {
     /**
