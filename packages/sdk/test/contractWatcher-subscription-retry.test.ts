@@ -23,7 +23,7 @@ describe("subscription update recovery", () => {
         vi.useRealTimers();
     });
 
-    async function setup(maxReconnectAttempts = 0) {
+    async function setup(maxReconnectAttempts = 0, subscriptionRequestTimeoutMs = 30_000) {
         const events: ContractEvent[] = [];
         const subscribe = vi.fn(async (_scripts: string[], _id?: string) => "sub-1");
         const unsubscribe = vi.fn(async (_id: string) => {});
@@ -47,6 +47,7 @@ describe("subscription update recovery", () => {
             reconnectDelayMs: 10,
             maxReconnectDelayMs: 25,
             maxReconnectAttempts,
+            subscriptionRequestTimeoutMs,
         });
         watchers.push(watcher);
         await watcher.addContract(contract("aa"));
@@ -68,6 +69,90 @@ describe("subscription update recovery", () => {
         expect(events.filter((event) => event.type === "connection_reset")).toHaveLength(1);
         await vi.advanceTimersByTimeAsync(100);
         expect(subscribe).toHaveBeenCalledTimes(2);
+    });
+
+    it("releases queued updates after a timeout and ignores a late response for the active ID", async () => {
+        const { watcher, subscribe, unsubscribe, listen, events } = await setup(0, 100);
+        let finish!: (id: string) => void;
+        subscribe.mockImplementationOnce(
+            () => new Promise<string>((resolve) => (finish = resolve)),
+        );
+        let settled = false;
+        const update = watcher.updateContract(contract("bb")).then(() => (settled = true));
+        await vi.advanceTimersByTimeAsync(0);
+        const queued = watcher.addContract(contract("cc"));
+        await vi.advanceTimersByTimeAsync(100);
+        try {
+            expect(settled).toBe(true);
+            await queued;
+            expect(subscribe).toHaveBeenLastCalledWith(
+                ["aa", "bb", "cc"],
+                "sub-1",
+                expect.any(AbortSignal),
+            );
+            expect(events.filter((event) => event.type === "connection_reset")).toHaveLength(1);
+            expect(listen).toHaveBeenCalledTimes(1);
+            finish("sub-1");
+            await vi.advanceTimersByTimeAsync(0);
+            expect(unsubscribe).not.toHaveBeenCalled();
+            await watcher.addContract(contract("dd"));
+            expect(subscribe).toHaveBeenLastCalledWith(
+                ["aa", "bb", "cc", "dd"],
+                "sub-1",
+                expect.any(AbortSignal),
+            );
+        } finally {
+            finish("sub-1");
+            await Promise.all([update, queued]);
+        }
+    });
+
+    it("reconnects the stream after a subscription request times out", async () => {
+        const { watcher, subscribe, listen, events, disconnect } = await setup(0, 100);
+        let finish!: (id: string) => void;
+        subscribe.mockImplementationOnce(
+            () => new Promise<string>((resolve) => (finish = resolve)),
+        );
+        const update = watcher.updateContract(contract("bb"));
+        await vi.advanceTimersByTimeAsync(0);
+        disconnect();
+        await vi.advanceTimersByTimeAsync(110);
+        try {
+            expect(watcher.getConnectionState()).toBe("connected");
+            expect(listen).toHaveBeenCalledTimes(2);
+            expect(events.filter((event) => event.type === "connection_reset")).toHaveLength(1);
+        } finally {
+            finish("sub-1");
+            await update;
+        }
+    });
+
+    it("cleans up a late fresh subscription without replacing the recovered ID", async () => {
+        const { watcher, subscribe, unsubscribe, events } = await setup(0, 100);
+        let finish!: (id: string) => void;
+        subscribe
+            .mockRejectedValueOnce(new Error("subscription sub-1 not found"))
+            .mockImplementationOnce(() => new Promise<string>((resolve) => (finish = resolve)))
+            .mockResolvedValue("recovered-subscription");
+        let settled = false;
+        const update = watcher.updateContract(contract("bb")).then(() => (settled = true));
+        await vi.advanceTimersByTimeAsync(110);
+        try {
+            expect(settled).toBe(true);
+            expect(events.filter((event) => event.type === "connection_reset")).toHaveLength(1);
+            finish("abandoned-subscription");
+            await vi.advanceTimersByTimeAsync(0);
+            expect(unsubscribe).toHaveBeenCalledExactlyOnceWith("abandoned-subscription");
+            await watcher.addContract(contract("cc"));
+            expect(subscribe).toHaveBeenLastCalledWith(
+                ["aa", "bb", "cc"],
+                "recovered-subscription",
+                expect.any(AbortSignal),
+            );
+        } finally {
+            finish("abandoned-subscription");
+            await update;
+        }
     });
 
     it("backs off repeated failures and caps the delay", async () => {

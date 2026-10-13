@@ -29,6 +29,7 @@ export const DEFAULT_CONTRACT_WATCHER_CONFIG = {
     reconnectDelayMs: 1_000,
     maxReconnectDelayMs: 5_000,
     maxReconnectAttempts: 0, // unlimited
+    subscriptionRequestTimeoutMs: 30_000,
 };
 
 /**
@@ -78,6 +79,14 @@ export interface ContractWatcherConfig {
      * @defaultValue `0` (unlimited)
      */
     maxReconnectAttempts?: number;
+
+    /**
+     * Deadline for each subscription POST, including its response body (ms).
+     * Timeouts use the subscription retry policy without interrupting the event stream.
+     *
+     * @defaultValue `30_000` (30 seconds)
+     */
+    subscriptionRequestTimeoutMs?: number;
 }
 
 interface ContractState {
@@ -145,7 +154,7 @@ export class ContractWatcher {
     private subscriptionRetryAttempts = 0;
     /** A failed update needs catch-up even when reconnect owns the next attempt. */
     private subscriptionNeedsCatchUp = false;
-    /** Serialize updates so an older retry cannot overwrite a newer script set. */
+    /** Serialize subscription creation and updates against the latest desired scripts. */
     private subscriptionUpdate: Promise<void> = Promise.resolve();
     /** See {@link reportEventSourceUnavailable} — said once, not per attempt. */
     private eventSourceReported = false;
@@ -788,7 +797,7 @@ export class ContractWatcher {
 
         let subscriptionId: string;
         try {
-            subscriptionId = await this.config.indexerProvider.subscribeForScripts(
+            subscriptionId = await this.subscribeWithTimeout(
                 scriptsToWatch,
                 this.subscriptionId,
                 signal,
@@ -801,21 +810,66 @@ export class ContractWatcher {
                 error instanceof Error && /subscription\b.*\bnot\s+found/i.test(error.message);
             if (this.subscriptionId && isStale) {
                 this.subscriptionId = undefined;
-                subscriptionId = await this.config.indexerProvider.subscribeForScripts(
-                    scriptsToWatch,
-                    undefined,
-                    signal,
-                );
+                subscriptionId = await this.subscribeWithTimeout(scriptsToWatch, undefined, signal);
             } else {
                 throw error;
             }
         }
         if (signal.aborted) {
             // The POST may have completed after stopWatching unsubscribed.
-            await this.config.indexerProvider.unsubscribeForScripts(subscriptionId).catch(() => {});
+            if (subscriptionId !== this.subscriptionId) {
+                void this.config.indexerProvider
+                    .unsubscribeForScripts(subscriptionId)
+                    .catch(() => {});
+            }
             return;
         }
         this.subscriptionId = subscriptionId;
+    }
+
+    private async subscribeWithTimeout(
+        scripts: string[],
+        subscriptionId: string | undefined,
+        sessionSignal: AbortSignal,
+    ): Promise<string> {
+        if (sessionSignal.aborted) throw sessionSignal.reason;
+        const request = new AbortController();
+        let cancel!: (reason: unknown) => void;
+        const cancelled = new Promise<never>((_resolve, reject) => {
+            cancel = (reason) => {
+                reject(reason);
+                request.abort(reason);
+            };
+        });
+        const onStop = () => cancel(sessionSignal.reason);
+        sessionSignal.addEventListener("abort", onStop, { once: true });
+        const timer = setTimeout(
+            () => cancel(new Error("Subscription request timed out")),
+            this.config.subscriptionRequestTimeoutMs,
+        );
+        try {
+            const pending = this.config.indexerProvider
+                .subscribeForScripts(scripts, subscriptionId, request.signal)
+                .then((id) => {
+                    // A provider may ignore cancellation. Clean up a late allocation,
+                    // but never delete the existing subscription a retry still uses.
+                    if (
+                        request.signal.aborted &&
+                        id !== subscriptionId &&
+                        id !== this.subscriptionId
+                    ) {
+                        void this.config.indexerProvider.unsubscribeForScripts(id).catch(() => {});
+                    }
+                    return id;
+                });
+            // The race also bounds providers that do not implement AbortSignal.
+            // An existing-ID POST only adds scripts, so retrying it is safe even
+            // when the server applied the request but its response was lost.
+            return await Promise.race([pending, cancelled]);
+        } finally {
+            clearTimeout(timer);
+            sessionSignal.removeEventListener("abort", onStop);
+        }
     }
 
     private async listenLoop(): Promise<void> {

@@ -5,17 +5,21 @@ import { expect, it } from "vitest";
 import { ContractWatcher, InMemoryWalletRepository, RestIndexerProvider } from "../src";
 import type { Contract } from "../src/contracts/types";
 
-it.each([false, true])(
-    "cancels an in-flight subscription on stop (stale ID recovery: %s)",
-    async (staleId) => {
+it.each(
+    [false, true].flatMap((staleId) =>
+        ["stop", "headers", "body"].map((stall) => ({ staleId, stall })),
+    ),
+)(
+    "cancels a pending subscription ($stall; stale ID recovery: $staleId)",
+    async ({ staleId, stall }) => {
         let posts = 0;
         let held: ServerResponse | undefined;
         let closed = false;
         const streams = new Set<ServerResponse>();
+        let streamCount = 0;
         const server = createServer(async (req, res) => {
-            for await (const _chunk of req) {
-                // Consume the request so only the response remains pending.
-            }
+            let body = "";
+            for await (const chunk of req) body += chunk;
             if (req.url?.endsWith("/subscribe")) {
                 posts++;
                 if (staleId && posts === 2) {
@@ -23,14 +27,23 @@ it.each([false, true])(
                     res.end("subscription sub-1 not found");
                 } else if (posts === (staleId ? 3 : 2)) {
                     held = res;
+                    if (stall === "body") {
+                        res.writeHead(200, { "content-type": "application/json" });
+                        res.write('{"subscriptionId":');
+                    }
                     res.on("close", () => (closed = true));
                 } else {
-                    res.end(JSON.stringify({ subscriptionId: `sub-${posts}` }));
+                    res.end(
+                        JSON.stringify({
+                            subscriptionId: JSON.parse(body).subscriptionId ?? `sub-${posts}`,
+                        }),
+                    );
                 }
             } else if (req.url?.includes("/subscription/")) {
                 res.writeHead(200, { "content-type": "text/event-stream" });
                 res.write(": connected\n\n");
                 streams.add(res);
+                streamCount++;
                 res.on("close", () => streams.delete(res));
             } else {
                 res.end(JSON.stringify({ vtxos: [] }));
@@ -43,6 +56,8 @@ it.each([false, true])(
                 eventSource: (url) => new EventSource(url),
             }),
             walletRepository: new InMemoryWalletRepository(),
+            subscriptionRequestTimeoutMs: 250,
+            reconnectDelayMs: 10,
         });
         const contract: Contract = {
             type: "default",
@@ -62,9 +77,15 @@ it.each([false, true])(
                 settled = true;
             });
             await expect.poll(() => held).toBeDefined();
-            await watcher.stopWatching();
+            if (stall === "stop") await watcher.stopWatching();
             await expect.poll(() => closed && settled).toBe(true);
-            await watcher.startWatching(() => {});
+            if (stall === "stop") {
+                await watcher.startWatching(() => {});
+            } else {
+                await expect.poll(() => posts).toBe(staleId ? 4 : 3);
+                expect(watcher.isCurrentlyWatching()).toBe(true);
+                expect(streamCount).toBe(1);
+            }
             expect(watcher.getConnectionState()).toBe("connected");
         } finally {
             held?.end(JSON.stringify({ subscriptionId: "old-subscription" }));
