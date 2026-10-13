@@ -152,7 +152,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(ARK_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -173,7 +173,7 @@ beforeAll(async () => {
     traderRefundKey = schnorr.getPublicKey(new Uint8Array(32).fill(11));
     solverRefundPkScript = ArkAddress.decode(address).pkScript;
 
-    const info = await new RestArkProvider(ARK_URL).getInfo();
+    const info = await wallet.getArkadeInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
