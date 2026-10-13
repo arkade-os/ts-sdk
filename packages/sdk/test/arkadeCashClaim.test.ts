@@ -187,7 +187,7 @@ const makeCash = () =>
     ArkadeCash.generate(
         hex.decode(SERVER_PUBKEY_HEX).slice(1),
         { type: "blocks", value: 144n },
-        "tarkcash",
+        "tarkadecash",
     );
 
 describe("claimCash drain-pending accounting", () => {
@@ -258,7 +258,7 @@ describe("claimCash drain-pending accounting", () => {
         const stranger = ArkadeCash.generate(
             hex.decode(SERVER_PUBKEY_HEX).slice(1),
             { type: "blocks", value: 144n },
-            "tarkcash",
+            "tarkadecash",
         );
         getPendingTxs.mockResolvedValue([pendingSweep(cash, stranger.vtxoScript.pkScript)]);
 

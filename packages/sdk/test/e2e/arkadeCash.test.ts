@@ -82,7 +82,7 @@ describe("ArkadeCash", () => {
         const cash = ArkadeCash.generate(
             hex.decode(info.signerPubkey).slice(1),
             { type: "blocks", value: 144n },
-            "tarkcash",
+            "tarkadecash",
         );
 
         await expect(alice.wallet.claimCash(cash.toString())).rejects.toThrow("No VTXOs found");
