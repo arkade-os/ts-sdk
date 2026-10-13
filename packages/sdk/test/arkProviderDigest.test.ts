@@ -318,3 +318,28 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(new pkg.DigestMismatchError("x")).toBeInstanceOf(Error);
     });
 });
+
+describe("RestArkProvider.submitTx response validation", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("rejects a response without finalArkTx", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => jsonResponse({ arkTxid: "aa", signedCheckpointTxs: [] })),
+        );
+        await expect(new RestArkProvider("http://ark.test").submitTx("rawtx", [])).rejects.toThrow(
+            /missing finalArkTx/,
+        );
+    });
+
+    it("returns a response carrying finalArkTx", async () => {
+        const body = { arkTxid: "aa", finalArkTx: "psbt", signedCheckpointTxs: ["cp"] };
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => jsonResponse(body)),
+        );
+        await expect(new RestArkProvider("http://ark.test").submitTx("rawtx", [])).resolves.toEqual(
+            body,
+        );
+    });
+});

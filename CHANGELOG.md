@@ -18,6 +18,7 @@ style and have not been backfilled.
   Arkade contract spends and swap refunds. Set `WalletConfig.oneShotSubmit: false`
   (or `oneShot: false` on the helpers) to keep the two-step flow, in which arkd
   holds no checkpoint signature before the wallet holds the cosigned ark tx.
+  `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable

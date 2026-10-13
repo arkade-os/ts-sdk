@@ -732,7 +732,7 @@ export class ArkadeTransactionBuilder {
         );
         return {
             txid: res.arkTxid,
-            // ArkadeBroadcaster types it as required; the helper's provider surface does not.
+            // Required by ArkadeBroadcaster; RestArkProvider.submitTx rejects a response without it.
             signedArkTx: res.finalArkTx!,
             signedCheckpointTxs: res.signedCheckpointTxs,
         };

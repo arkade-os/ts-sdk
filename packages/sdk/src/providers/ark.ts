@@ -623,6 +623,9 @@ export class RestArkProvider implements ArkProvider {
         );
 
         const data = await response.json();
+        if (typeof data.finalArkTx !== "string" || !data.finalArkTx) {
+            throw new Error("Invalid submitTx response: missing finalArkTx");
+        }
         return {
             arkTxid: data.arkTxid,
             finalArkTx: data.finalArkTx,
