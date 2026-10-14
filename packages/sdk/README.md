@@ -1378,6 +1378,35 @@ When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it
 
 `watcherConfig.failsafePollIntervalMs` (default `20_000`) controls how often the watcher replays repository changes into contract events; it does not fetch fresh VTXOs from the indexer.
 
+#### Compiler artifacts
+
+Read compiler format v1 JSON with `arkade.programFromArtifact`, which returns a normalized Program at version 1. `arkade.parseArtifact` reads normalized Program JSON and defaults omitted versions to 1. Only version 1 is supported, with typed `{ name, type }` declarations for every constructor parameter and call argument. Explicit version 0 programs, including persisted contracts, are rejected; there is no automatic migration. Older SDKs reject version 1 programs rather than silently reconstructing a different script. An Arkade function and its same-named Taproot leaf share one call, such as `contract.functions.claim(...)`. Standalone Taproot functions use their own names, such as `contract.functions.unilateral()`. Leaf order in the artifact still determines the Taproot tree. This example assumes a `digest: bytes32` constructor and a `claim` function with one `preimage: bytes32` covenant argument; providers, wallet, artifact JSON and matching digest/preimage values are already available.
+
+```typescript
+import { arkade, ArkAddress } from '@arkade-os/sdk'
+
+const program = arkade.programFromArtifact(artifactJson)
+const client = await arkade.Arkade.connect({
+  arkade: arkProvider,
+  emulator: emulatorProvider,
+  indexer: indexerProvider,
+  identity: wallet.identity,
+  contractManager: await wallet.getContractManager(),
+})
+const contract = client.contract(program, { digest })
+await contract.register({ label: 'Hashlock' })
+await wallet.send({ address: contract.address, amount: 10_000 })
+
+// Call after funding appears in contract.getUtxos().
+const { txid } = await contract.functions.claim(preimage)
+  .to(ArkAddress.decode(recipientAddress).pkScript, 10_000n)
+  .send()
+```
+
+The connected server supplies `<SERVER_KEY>` and `<SERVER_EXIT_DELAY>`; conflicting overrides fail, and time-based delays that are not multiples of 512 seconds fail rather than changing the advertised delay. Resolved bindings are persisted, so restoring the contract keeps its script through server key or policy changes. A declared constructor named `user` defaults to the connected identity; other constructor keys and flattened struct/array fields remain caller-provided, using names such as `owners.0.key`. Child-output placeholders remain explicit 32-byte constructor bindings. Leaf call inputs used as script operands cannot produce a fixed address and are rejected; raw CSV operands must be canonical BIP68 encodings.
+
+For compiler-derived programs, call arguments are covenant inputs in declaration order, followed by non-signature leaf inputs in declaration order. Same-named inputs in the two scopes remain separate positional arguments. Leaf signatures are PSBT signatures, not condition arguments: `send()` supports the connected identity and infrastructure signers; additional identities and covenant-tweaked leaf keys require explicit PSBT signing via `build()`. Covenant signature arguments remain caller-provided; transaction-bound Arkade `checkSig` signatures require an Arkade-specific digest helper, which is deferred. CSV leaves require aged onchain outputs and cannot use this offchain builder. Typed call validation and these spending limits apply to every normalized Program. The public `SignerRef` union is unchanged; version 1 programs store emulator signer placement in optional `emulatorIndex` metadata.
+
 #### HD look-ahead window
 
 HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.

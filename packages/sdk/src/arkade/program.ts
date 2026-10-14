@@ -1,15 +1,15 @@
 /**
  * Arkade Program model & compiler.
  *
- * A {@link Program} is the artifact shape shared with the ArkadeScript
- * compiler: named functions, each split into a `tapscript` segment enforced
+ * A {@link Program} is the normalized SDK model: named functions, each
+ * split into a `tapscript` segment enforced
  * on-chain and an optional `arkadeScript` segment emulated by the co-signing
  * service. This module owns everything that is *pure data → script*:
  *
  * - the Program/segment/token types,
  * - `$param` resolution ({@link resolveAsm}), witness and timelock resolution,
- * - program validation ({@link validateProgram}) — typed constructor params
- *   are authoritative when present,
+ * - program validation ({@link validateProgram}) — every referenced constructor
+ *   parameter must be declared and bound,
  * - {@link ArkadeProgramScript} — a {@link VtxoScript} compiled from a
  *   program, its constructor args and the signer keys,
  * - artifact JSON (de)serialization ({@link parseArtifact} /
@@ -25,6 +25,7 @@
 
 import { hex } from "@scure/base";
 import { ScriptNum } from "@scure/btc-signer";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import {
     MultisigTapscript,
@@ -78,15 +79,14 @@ export interface ArkadeValueType {
 export interface InputDef {
     name: string;
     type: ArkadeArgType;
+    /** Compiler wire encoding; omitted for unconstrained hand-written inputs. */
+    encoding?: "raw" | "raw-20" | "raw-32" | "schnorr-64" | "scriptnum";
+    /** Numeric boolean constrained to 0 or 1. */
+    boolean?: boolean;
 }
 
-/**
- * A function input or constructor param declaration: either a typed descriptor
- * `{ name, type }` (the argument is statically typed and its bound value is
- * validated) or a bare name string (the argument falls back to the loose
- * {@link ArkadeArgValue}).
- */
-export type InputRef = string | InputDef;
+/** A typed function input or constructor parameter. */
+export type InputRef = InputDef;
 
 /** Constructor pubkey `$param` tweaked by `fn`'s covenant. */
 export interface TweakedSigner {
@@ -103,16 +103,20 @@ export type WitnessRef = string | number | bigint | Uint8Array;
 /** Bitcoin Script segment of a spending path — enforced on-chain. */
 export interface TapscriptSegment {
     /**
-     * Required signers. A path with `arkadeScript` also appends the emulator
-     * co-signer, unless `emulator` is `null`.
+     * Required signers. A path with `arkadeScript` also inserts the emulator
+     * co-signer at `emulatorIndex` (last by default), unless `emulator` is `null`.
      */
     signers: SignerRef[];
+    /** Caller signature ABI; satisfied through PSBT signing, never ConditionWitness. */
+    signatures?: InputDef[];
     /**
      * Covenant named by `<EMULATOR_KEY:fn>`. `null` when this leaf belongs to a
      * covenant but signs with a constructor-key tweak instead. Omitted on
      * hand-written programs, which still append the co-signer.
      */
     emulator?: string | null;
+    /** Emulator's position in the full signer list; omitted to append it. */
+    emulatorIndex?: number;
     /**
      * Optional standard-opcode condition (e.g. a hashlock), encoded into a
      * ConditionMultisig leaf — or ConditionCSVMultisig when combined with `csv`.
@@ -145,19 +149,17 @@ export interface ArkadeSegment {
 
 /** One named spending path. */
 export interface ArkadeFunction {
-    /**
-     * The function ABI: an ordered list of call arguments. Each entry is a typed
-     * descriptor `{ name, type }` (which gives the matching `functions.<name>`
-     * argument a precise static type) or a bare name string (loose
-     * {@link ArkadeArgValue}). Absent for nullary paths (e.g. exit/cancel).
-     */
-    inputs?: readonly InputRef[];
+    /** Compiler spend group, used to resolve named covenant commitments. */
+    group?: string;
+    /** Ordered typed call arguments; absent for nullary paths. */
+    inputs?: readonly InputDef[];
     tapscript: TapscriptSegment;
     /** Present for covenant paths; absent for pure-tapscript paths (cancel/exit). */
     arkadeScript?: ArkadeSegment;
 }
 
-export const SUPPORTED_PROGRAM_VERSION = 0;
+/** Supported normalized Program version. */
+export const SUPPORTED_PROGRAM_VERSION = 1;
 
 /** An Arkade contract program (hand-written or compiler-emitted). */
 export interface Program {
@@ -167,25 +169,16 @@ export interface Program {
      * artifact JSON, never used in compilation or the taproot tree.
      */
     name?: string;
-    /**
-     * Ordered constructor parameters. Bare name strings are documentation only
-     * (the legacy hand-written form); typed descriptors `{ name, type }` make
-     * the list authoritative — see {@link validateProgram}.
-     */
-    params?: readonly InputRef[];
+    /** Ordered typed constructor parameters. */
+    params?: readonly InputDef[];
     functions: Record<string, ArkadeFunction>;
 }
 
 // --- helpers ---------------------------------------------------------------
 
-/** The declared name of a function input or constructor param, whether typed descriptor or bare string. */
-export function inputName(ref: InputRef): string {
-    return typeof ref === "string" ? ref : ref.name;
-}
-
 /** Look up a `$param` / function-input value in a bind map; throws when unbound. */
 export function bindValue(bind: Record<string, ArkadeParamValue>, name: string): ArkadeParamValue {
-    const v = bind[name];
+    const v = Object.hasOwn(bind, name) ? bind[name] : undefined;
     if (v === undefined) throw new Error(`unbound parameter '${name}'`);
     return v;
 }
@@ -287,7 +280,7 @@ export function witnessRefToBytes(
  * `arkadeScript` segment).
  */
 export function validateTapscript(seg: TapscriptSegment): void {
-    if (!seg.signers || seg.signers.length === 0) {
+    if (!seg.signers || (seg.signers.length === 0 && seg.emulatorIndex === undefined)) {
         throw new Error("tapscript: at least one signer is required");
     }
     if (seg.asm !== undefined && seg.cltv !== undefined) {
@@ -333,10 +326,18 @@ function collectParamRefs(program: Program): Set<string> {
 const TYPED_BYTE_LENGTHS: Partial<Record<ArkadeArgType, number>> = { pubkey: 32, sig: 64 };
 
 /** Validate a bound value against its typed declaration; errors name the parameter. */
-function validateParamValue(def: InputDef, value: ArkadeParamValue): void {
+export function validateParamValue(def: InputDef, value: ArkadeParamValue): void {
     if (def.type === "int") {
         if (typeof value !== "bigint" && typeof value !== "number") {
             throw new Error(`program parameter '${def.name}' expects an int, got bytes`);
+        }
+        if (typeof value === "number" && !Number.isSafeInteger(value)) {
+            throw new Error(
+                `program parameter '${def.name}' expects a safe integer; use bigint for larger values`,
+            );
+        }
+        if (def.boolean && value !== 0 && value !== 1 && value !== 0n && value !== 1n) {
+            throw new Error(`program parameter '${def.name}' expects a boolean encoded as 0 or 1`);
         }
         return;
     }
@@ -345,7 +346,14 @@ function validateParamValue(def: InputDef, value: ArkadeParamValue): void {
             `program parameter '${def.name}' expects ${def.type} bytes, got ${typeof value}`,
         );
     }
-    const length = TYPED_BYTE_LENGTHS[def.type];
+    const length =
+        def.encoding === "raw-20"
+            ? 20
+            : def.encoding === "raw-32"
+              ? 32
+              : def.encoding === "schnorr-64"
+                ? 64
+                : TYPED_BYTE_LENGTHS[def.type];
     if (length !== undefined && value.length !== length) {
         throw new Error(
             `program parameter '${def.name}' expects a ${length}-byte ${def.type}, got ${value.length} bytes`,
@@ -353,23 +361,13 @@ function validateParamValue(def: InputDef, value: ArkadeParamValue): void {
     }
 }
 
-/**
- * Validate a program's constructor-parameter declarations against the bound
- * args. A `params` list of bare name strings is documentation only (the
- * legacy hand-written form — no checks). When at least one entry is a typed
- * descriptor (the compiler-emitted form), the list is authoritative: every
- * declared param must be bound in `args`, every `"$name"` reference in the
- * program must be declared, and typed entries validate their bound value
- * (bytes-like types require a Uint8Array — 32 bytes for `pubkey`, 64 for
- * `sig`; `int` requires a bigint/number).
- */
+/** Validate declared constructor values and reject undeclared references. */
 export function validateProgram(program: Program, args: Record<string, ArkadeParamValue>): void {
-    const params = program.params;
-    if (!params || !params.some((p) => typeof p !== "string")) return;
+    const params = program.params ?? [];
 
-    const declared = new Set(params.map(inputName));
+    const declared = new Set(params.map((p) => p.name));
     for (const name of declared) {
-        if (args[name] === undefined) {
+        if (!Object.hasOwn(args, name) || args[name] === undefined) {
             throw new Error(`program parameter '${name}' is declared but not bound in args`);
         }
     }
@@ -379,7 +377,10 @@ export function validateProgram(program: Program, args: Record<string, ArkadePar
         }
     }
     for (const p of params) {
-        if (typeof p !== "string") validateParamValue(p, args[p.name]);
+        validateParamValue(p, args[p.name]);
+    }
+    for (const name of Object.keys(args)) {
+        if (!declared.has(name)) throw new Error(`program: undeclared argument '${name}'`);
     }
 }
 
@@ -483,10 +484,32 @@ function compileFunctions(
         throw new Error("ArkadeContract: program has no functions");
     }
     validateProgram(program, args);
+    if (
+        args.server !== undefined &&
+        (!(args.server instanceof Uint8Array) || !equalBytes(args.server, keys.serverKey))
+    ) {
+        throw new Error(
+            "ArkadeContract: reserved server parameter must match the contract server key",
+        );
+    }
     const defs = names.map((n) => functions[n]);
 
-    // Covenant functions need the emulator's co-signer key for the tweak.
-    const covenant = names.find((_, i) => defs[i].arkadeScript);
+    const covenants = new Map<string, Uint8Array>();
+    for (const [name, def] of Object.entries(functions)) {
+        if (!def.arkadeScript) continue;
+        const script = resolveAsm(def.arkadeScript.asm, args);
+        for (const target of [name, ...(def.group ? [def.group] : [])]) {
+            const previous = covenants.get(target);
+            if (previous && !equalBytes(previous, script)) {
+                throw new Error(`ArkadeContract: ambiguous covenant '${target}'`);
+            }
+            covenants.set(target, script);
+        }
+    }
+
+    const covenant = names.find(
+        (_, i) => defs[i].arkadeScript && defs[i].tapscript.emulator !== null,
+    );
     if (covenant && !keys.emulatorKey) {
         throw new Error(
             `ArkadeContract: function '${covenant}' has an arkadeScript but no emulator is configured — pass an \`emulator\` to Arkade.connect`,
@@ -497,25 +520,42 @@ function compileFunctions(
         validateTapscript(def.tapscript);
         const pubkeys = def.tapscript.signers.map((signer) => {
             if (!isTweakedSigner(signer)) return resolveSigner(signer, args);
-            const asm = functions[signer.fn]?.arkadeScript?.asm;
-            if (!asm) {
+            const script = covenants.get(signer.fn);
+            if (!script) {
                 throw new Error(
                     `ArkadeContract: function '${names[i]}' tweaks '${signer.fn}', which has no arkade script`,
                 );
             }
-            return computeArkadeScriptPublicKey(
-                resolveSigner(signer.tweak, args),
-                resolveAsm(asm, args),
-            );
+            return computeArkadeScriptPublicKey(resolveSigner(signer.tweak, args), script);
         });
 
-        // A covenant leaf appends the emulator co-signer. A constructor-key
-        // tweak of that covenant sets `emulator` to null and does not.
-        const arkadeScript = def.arkadeScript ? resolveAsm(def.arkadeScript.asm, args) : undefined;
-        const leafPubkeys =
-            arkadeScript && def.tapscript.emulator !== null
-                ? [...pubkeys, computeArkadeScriptPublicKey(keys.emulatorKey!, arkadeScript)]
-                : pubkeys;
+        const arkadeScript = def.arkadeScript ? covenants.get(names[i]) : undefined;
+        const leafPubkeys = [...pubkeys];
+        if (arkadeScript && def.tapscript.emulator !== null) {
+            const position = def.tapscript.emulatorIndex ?? pubkeys.length;
+            if (!Number.isInteger(position) || position < 0 || position > pubkeys.length) {
+                throw new Error(
+                    `ArkadeContract: function '${names[i]}' has an invalid emulator position ${position}`,
+                );
+            }
+            const target = def.group
+                ? covenants.get(def.tapscript.emulator ?? def.group)
+                : arkadeScript;
+            if (!target || !equalBytes(target, arkadeScript)) {
+                throw new Error(
+                    `ArkadeContract: function '${names[i]}' has an invalid emulator covenant '${def.tapscript.emulator}'`,
+                );
+            }
+            leafPubkeys.splice(
+                position,
+                0,
+                computeArkadeScriptPublicKey(keys.emulatorKey!, target),
+            );
+        } else if (def.tapscript.emulatorIndex !== undefined) {
+            throw new Error(
+                `ArkadeContract: function '${names[i]}' specifies an emulator position without an emulator`,
+            );
+        }
         const leafScript = encodeTapscriptSegment(def.tapscript, leafPubkeys, args).script;
         return { name: names[i], def, leafScript, arkadeScript, signerKeys: pubkeys };
     });
@@ -568,7 +608,7 @@ export class ArkadeProgramScript extends VtxoScript {
 export function parseArtifact(artifact: {
     version?: number;
     name?: string;
-    params?: readonly InputRef[];
+    params?: readonly InputDef[];
     functions: unknown;
 }): Program {
     // An arkadec ContractJson would otherwise become functions named "0", "1", "2".
@@ -592,11 +632,34 @@ export function parseArtifact(artifact: {
     const timelockValue = (v: unknown): bigint | string =>
         typeof v === "string" && v.startsWith("$") ? v : BigInt(v as string | number);
 
-    const functions: Record<string, ArkadeFunction> = {};
+    if (artifact.version !== undefined && artifact.version !== SUPPORTED_PROGRAM_VERSION) {
+        throw new Error(
+            `parseArtifact: unsupported program version ${artifact.version}; expected ${SUPPORTED_PROGRAM_VERSION}`,
+        );
+    }
+    for (const def of [
+        ...(artifact.params ?? []),
+        ...Object.values(artifact.functions as Record<string, ArkadeFunction>).flatMap(
+            (fn) => fn.inputs ?? [],
+        ),
+    ]) {
+        if (
+            !def ||
+            typeof def.name !== "string" ||
+            def.name.length === 0 ||
+            !["bytes", "pubkey", "sig", "hash", "int"].includes(def.type)
+        ) {
+            throw new Error(
+                "parseArtifact: parameters and inputs require typed { name, type } declarations",
+            );
+        }
+    }
+    const functions: Record<string, ArkadeFunction> = Object.create(null);
     for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
         const tap = fn.tapscript ?? {};
         const tapscript: TapscriptSegment = {
             signers: (tap.signers ?? []).map(signerRef),
+            ...(tap.signatures ? { signatures: tap.signatures } : {}),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
             ...(tap.csv
@@ -604,6 +667,7 @@ export function parseArtifact(artifact: {
                 : {}),
             ...(tap.cltv !== undefined ? { cltv: timelockValue(tap.cltv) } : {}),
             ...("emulator" in tap ? { emulator: tap.emulator as string | null } : {}),
+            ...(tap.emulatorIndex !== undefined ? { emulatorIndex: tap.emulatorIndex } : {}),
         };
         const arkadeScript = fn.arkadeScript
             ? {
@@ -614,6 +678,7 @@ export function parseArtifact(artifact: {
               }
             : undefined;
         functions[name] = {
+            ...(fn.group !== undefined ? { group: fn.group } : {}),
             ...(fn.inputs ? { inputs: fn.inputs } : {}),
             tapscript,
             ...(arkadeScript ? { arkadeScript } : {}),
@@ -649,13 +714,15 @@ export function stringifyArtifact(program: Program): string {
         return t;
     };
 
-    const functions: Record<string, unknown> = {};
+    const functions: Record<string, unknown> = Object.create(null);
     for (const [name, fn] of Object.entries(program.functions)) {
         const tap = fn.tapscript;
         functions[name] = {
+            ...(fn.group !== undefined ? { group: fn.group } : {}),
             ...(fn.inputs ? { inputs: fn.inputs } : {}),
             tapscript: {
                 signers: tap.signers.map(token),
+                ...(tap.signatures ? { signatures: tap.signatures } : {}),
                 ...(tap.asm ? { asm: tap.asm.map(token) } : {}),
                 ...(tap.witness ? { witness: tap.witness.map(token) } : {}),
                 ...(tap.csv
@@ -663,6 +730,7 @@ export function stringifyArtifact(program: Program): string {
                     : {}),
                 ...(tap.cltv !== undefined ? { cltv: tap.cltv.toString() } : {}),
                 ...(tap.emulator !== undefined ? { emulator: tap.emulator } : {}),
+                ...(tap.emulatorIndex !== undefined ? { emulatorIndex: tap.emulatorIndex } : {}),
             },
             ...(fn.arkadeScript
                 ? {
@@ -707,19 +775,9 @@ function serializeArgValue(v: ArkadeParamValue): string | number {
     return v;
 }
 
-function parseArgValue(v: unknown): ArkadeParamValue {
-    if (typeof v === "number") return v;
-    if (typeof v === "string") {
-        if (v.startsWith("0x")) return hex.decode(v.slice(2));
-        return BigInt(v);
-    }
-    throw new Error(`invalid arkade arg value: ${JSON.stringify(v)}`);
-}
-
 /**
  * Decode a persisted arg by its declared type — no `0x`/BigInt guessing. A
- * bytes-like param whose serialized value lacks the `0x` prefix is an error
- * (the untyped heuristic would silently decode such a value as a bigint).
+ * bytes-like param whose serialized value lacks the `0x` prefix is an error.
  */
 function parseTypedArgValue(name: string, type: ArkadeArgType, v: unknown): ArkadeParamValue {
     if (type === "int") {
@@ -737,7 +795,7 @@ function parseTypedArgValue(name: string, type: ArkadeArgType, v: unknown): Arka
 
 /** Serialize {@link ArkadeContractParams} to the string map `Contract.params` requires. */
 export function serializeArkadeContractParams(typed: ArkadeContractParams): Record<string, string> {
-    const args: Record<string, string | number> = {};
+    const args: Record<string, string | number> = Object.create(null);
     for (const [k, v] of Object.entries(typed.args)) {
         args[k] = serializeArgValue(v);
     }
@@ -761,17 +819,13 @@ export function deserializeArkadeContractParams(
         throw new Error("arkade contract params: missing 'serverKey'");
     }
     const program = parseArtifact(JSON.parse(params.program));
-    // Typed param declarations direct how their persisted args decode;
-    // untyped params keep the legacy 0x/BigInt heuristic.
-    const paramTypes = new Map<string, ArkadeArgType>();
-    for (const p of program.params ?? []) {
-        if (typeof p !== "string") paramTypes.set(p.name, p.type);
-    }
-    const args: Record<string, ArkadeParamValue> = {};
+    const paramTypes = new Map((program.params ?? []).map((p) => [p.name, p.type]));
+    const args: Record<string, ArkadeParamValue> = Object.create(null);
     if (params.args) {
         for (const [k, v] of Object.entries(JSON.parse(params.args))) {
             const type = paramTypes.get(k);
-            args[k] = type ? parseTypedArgValue(k, type, v) : parseArgValue(v);
+            if (!type) throw new Error(`arkade contract params: undeclared argument '${k}'`);
+            args[k] = parseTypedArgValue(k, type, v);
         }
     }
     return {

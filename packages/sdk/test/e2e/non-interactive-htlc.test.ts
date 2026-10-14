@@ -16,8 +16,14 @@ const HTLC_PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981"
 const CONTRACT_AMOUNT = 10_000n;
 
 const nonInteractiveHTLC = {
-    version: 0,
-    params: ["hash", "funder", "receiver", "amount", "server"],
+    version: 1,
+    params: [
+        { name: "hash", type: "hash" },
+        { name: "funder", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "amount", type: "int" },
+        { name: "server", type: "pubkey" },
+    ],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -64,7 +70,7 @@ const nonInteractiveHTLC = {
             },
         },
     },
-};
+} satisfies arkade.Program;
 
 describe("non-interactive vHTLC", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);

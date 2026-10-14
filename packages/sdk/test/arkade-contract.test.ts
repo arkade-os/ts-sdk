@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { Script } from "@scure/btc-signer";
+import { RawWitness, Script } from "@scure/btc-signer";
+import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import {
     arkade,
     ConditionMultisigTapscript,
@@ -43,8 +44,13 @@ const payTo = [
 // rather than falling back to the loose `(...args: ArkadeArgValue[])`.
 function htlcProgram() {
     return {
-        version: 0,
-        params: ["hash", "receiver", "amount", "server"],
+        version: 1,
+        params: [
+            { name: "hash", type: "hash" },
+            { name: "receiver", type: "pubkey" },
+            { name: "amount", type: "int" },
+            { name: "server", type: "pubkey" },
+        ],
         functions: {
             claim: {
                 inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -77,8 +83,11 @@ export function _typecheckStrongInputs(ark: arkade.Arkade) {
 // the only one that reaches `arkProvider.submitTx`/`finalizeTx`.
 function exitProgram() {
     return {
-        version: 0,
-        params: ["server", "user"],
+        version: 1,
+        params: [
+            { name: "server", type: "pubkey" },
+            { name: "user", type: "pubkey" },
+        ],
         functions: { exit: { tapscript: { signers: ["$server", "$user"] } } },
     } satisfies arkade.Program;
 }
@@ -278,8 +287,259 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const defaulted = ark.contract(program);
         const explicit = ark.contract(program, { server, user: userKey });
         expect(defaulted.address).toBe(explicit.address);
-        const overridden = ark.contract(program, { server: xOnly(), user: userKey });
-        expect(overridden.address).not.toBe(defaulted.address);
+        expect(() => ark.contract(program, { server: xOnly(), user: userKey })).toThrow(
+            /reserved server/,
+        );
+    });
+
+    it("requires explicit direct-constructor bindings and validates call arguments", async () => {
+        const { ark } = await connect({ identity: stubIdentity(receiver) });
+        expect(() => new arkade.ArkadeContract(ark, exitProgram())).toThrow(/not bound/);
+        const contract = ark.contract(htlcProgram(), args);
+        expect(() => (contract.functions.claim as any)(123n)).toThrow(/expects bytes/);
+    });
+
+    it("rejects an external leaf signer before signing", async () => {
+        const signed: number[][] = [];
+        const identity = {
+            ...stubIdentity(receiver),
+            sign: async (tx: Transaction, indexes: number[]) => {
+                signed.push(indexes);
+                return tx;
+            },
+        };
+        const { ark } = await connect({ identity });
+        const storedUser = xOnly();
+        const args = { server, user: storedUser };
+        const contract = new arkade.ArkadeContract(ark, exitProgram(), args, {
+            serverKey: server,
+            userKey: storedUser,
+        });
+        expect(contract.args).toBe(args);
+        await expect(
+            contract.functions
+                .exit()
+                .from(COIN)
+                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
+                .send(),
+        ).rejects.toThrow(/external leaf signatures/);
+        expect(signed).toEqual([]);
+    });
+
+    const compilerExit = () =>
+        arkade.programFromArtifact({
+            formatVersion: 1,
+            contractName: "SingleSig",
+            constructorInputs: [{ name: "user", type: "pubkey" }],
+            functions: [
+                {
+                    name: "unilateral",
+                    leaves: [
+                        {
+                            name: "unilateral",
+                            asm: [
+                                "<SERVER_EXIT_DELAY>",
+                                "OP_CHECKSEQUENCEVERIFY",
+                                "OP_DROP",
+                                "<user>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+
+    async function compilerClient(delay: bigint) {
+        const providers = stubProviders(server, emulatorKey);
+        const info = await providers.arkProvider.getInfo();
+        return arkade.Arkade.connect({
+            arkade: { getInfo: async () => ({ ...info, unilateralExitDelay: delay }) },
+            identity: stubIdentity(receiver),
+            network: networks.regtest,
+        });
+    }
+
+    it.each([
+        [144n, 144n],
+        [86_016n, 4_194_472n],
+    ])("binds server delay %s to sequence %s", async (delay, sequence) => {
+        const ark = await compilerClient(delay);
+        const program = compilerExit();
+        const contract = ark.contract(program);
+        expect(contract.args.SERVER_EXIT_DELAY).toBe(sequence);
+        expect(contract.args.user).toEqual(receiver);
+        expect(contract.args.server).toEqual(server);
+        const decoded = CSVMultisigTapscript.decode(contract.vtxoScript.compiled[0].leafScript);
+        expect(decoded.params.timelock).toEqual(
+            delay < 512n ? { type: "blocks", value: delay } : { type: "seconds", value: delay },
+        );
+        const stored = arkade.serializeArkadeContractParams({
+            program,
+            args: contract.args,
+            serverKey: server,
+            userKey: receiver,
+        });
+        const changed = await compilerClient(86_400n);
+        const restored = arkade.ArkadeContract.fromContract(changed, {
+            type: "arkade",
+            params: stored,
+        } as any);
+        expect(restored.pkScript).toEqual(contract.pkScript);
+        expect(restored.address).toBe(contract.address);
+    });
+
+    it("rejects unaligned server seconds and conflicting reserved overrides", async () => {
+        const invalid = await compilerClient(86_400n);
+        expect(() => invalid.contract(compilerExit())).toThrow(/multiple of 512/);
+        const ark = await compilerClient(144n);
+        expect(() => ark.contract(compilerExit(), { server: receiver })).toThrow(/reserved server/);
+        expect(() => ark.contract(compilerExit(), { SERVER_EXIT_DELAY: 10n })).toThrow(
+            /reserved SERVER_EXIT_DELAY/,
+        );
+    });
+
+    it("refuses CSV offchain spends before querying coins", async () => {
+        const ark = await compilerClient(144n);
+        await expect(ark.contract(compilerExit()).functions.unilateral().build()).rejects.toThrow(
+            /aged onchain output/,
+        );
+    });
+
+    it("keeps overlapping covenant and condition inputs independent and validates values", async () => {
+        const { ark } = await connect();
+        const program = arkade.programFromArtifact({
+            formatVersion: 1,
+            contractName: "Hashlock",
+            constructorInputs: [{ name: "digest", type: "bytes32" }],
+            functions: [
+                {
+                    name: "claim",
+                    arkade: {
+                        inputs: [
+                            { name: "preimage", type: "bytes32" },
+                            { name: "flag", type: "bool" },
+                        ],
+                        asm: ["OP_1"],
+                    },
+                    leaves: [
+                        {
+                            name: "claim",
+                            witness: [{ name: "preimage", type: "bytes32", encoding: "raw-32" }],
+                            asm: [
+                                "OP_SIZE",
+                                "32",
+                                "OP_EQUALVERIFY",
+                                "OP_SHA256",
+                                "<digest>",
+                                "OP_EQUAL",
+                                "OP_VERIFY",
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIGVERIFY",
+                                "<EMULATOR_KEY:claim>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+        expect(() => ark.contract(program, { digest: new Uint8Array(31) })).toThrow(/32-byte/);
+        const contract = ark.contract(program, { digest: new Uint8Array(32) });
+        const covenant = new Uint8Array(32).fill(1),
+            condition = new Uint8Array(32).fill(2);
+        const call = contract.functions.claim;
+        expect(() => call(covenant, 2n, condition)).toThrow(/boolean/);
+        expect(() => call(covenant, Number.MAX_SAFE_INTEGER + 1, condition)).toThrow(
+            /safe integer/,
+        );
+        expect(() => call(covenant, 1n, 3n)).toThrow(/bytes/);
+        expect(() => call(covenant, 1n, new Uint8Array(31))).toThrow(/32-byte/);
+        const { arkTx, checkpoints } = await call(covenant, 1n, condition)
+            .from(COIN)
+            .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
+            .build();
+        for (const tx of [arkTx, checkpoints[0]]) {
+            expect(getArkPsbtFields(tx, 0, ConditionWitness)[0]).toEqual([condition]);
+        }
+        const packet = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
+            .filter((out) => out.script && Extension.isExtension(out.script))
+            .map((out) => Extension.fromBytes(out.script!).getEmulatorPacket())[0]!;
+        expect(RawWitness.decode(packet.entries[0].witness!)).toEqual([
+            new Uint8Array([1]),
+            covenant,
+        ]);
+    });
+
+    it("fails locally when leaf signing needs another identity or a covenant tweak", async () => {
+        const { ark, captured } = await connect({ identity: stubIdentity(receiver) });
+        const external = ark.contract(
+            {
+                ...arkade.programFromArtifact({
+                    contractName: "External",
+                    constructorInputs: [
+                        { name: "a", type: "pubkey" },
+                        { name: "b", type: "pubkey" },
+                    ],
+                    functions: [
+                        {
+                            name: "spend",
+                            leaves: [
+                                {
+                                    name: "spend",
+                                    asm: [
+                                        "<SERVER_KEY>",
+                                        "OP_CHECKSIGVERIFY",
+                                        "<a>",
+                                        "OP_CHECKSIGVERIFY",
+                                        "<b>",
+                                        "OP_CHECKSIG",
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                }),
+            },
+            { a: receiver, b: xOnly() },
+        );
+        await expect(external.functions.spend().send()).rejects.toThrow(/external leaf signatures/);
+        const tweaked = ark.contract(
+            arkade.programFromArtifact({
+                contractName: "Tweaked",
+                constructorInputs: [{ name: "user", type: "pubkey" }],
+                functions: [
+                    {
+                        name: "claim",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [
+                            {
+                                name: "claim",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<EMULATOR_KEY:claim>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                            {
+                                name: "race",
+                                asm: [
+                                    "<SERVER_KEY>",
+                                    "OP_CHECKSIGVERIFY",
+                                    "<TWEAK:user:claim>",
+                                    "OP_CHECKSIG",
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
+        await expect(tweaked.functions.race().send()).rejects.toThrow(
+            /covenant-tweaked leaf signing/,
+        );
+        expect(captured.arkTx).toBeUndefined();
     });
 
     // A client connected for derivation/registration alone — `getInfo` and
@@ -344,8 +604,8 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
     describe("network resolution", () => {
         const program = {
-            version: 0,
-            params: ["server"],
+            version: 1,
+            params: [{ name: "server", type: "pubkey" }],
             functions: { exit: { tapscript: { signers: ["$server"] } } },
         } satisfies arkade.Program;
 

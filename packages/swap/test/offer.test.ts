@@ -128,7 +128,7 @@ describe("swap offer", () => {
             operatorPubkey,
         );
         expect(arkade.stringifyArtifact(program)).toBe(
-            '{"version":0,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
+            '{"version":1,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
                 '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
                 '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
                 '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +
