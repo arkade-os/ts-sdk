@@ -53,6 +53,11 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`ArkadeContract.getUtxos()` renamed to `getVtxos()`.** It never returned
+  on-chain outputs: both branches read the contract's VTXOs, from the contract
+  manager's repository or from the indexer. Behavior and return type
+  (`VirtualCoin[]`) are unchanged; callers rename the call.
+
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported
@@ -337,7 +342,7 @@ style and have not been backfilled.
   client needs to derive, register and inspect contracts. A client
   built without the two broadcast methods throws at `.send()` on the
   pure-tapscript path — the same deferred, explicit failure an absent
-  `indexer` gives `getUtxos()` and an absent `emulator` gives a covenant
+  `indexer` gives `getVtxos()` and an absent `emulator` gives a covenant
   spend.
   That lets a caller already holding the server info connect with
   `arkade: { getInfo: async () => info }` and no provider of its own,

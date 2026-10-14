@@ -857,7 +857,7 @@ export async function prepareOfferCancel(
         ? ArkAddress.decode(swapAddress).serverPubKey
         : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
-    // a mismatch means the wrong operator key; getUtxos would just return nothing, so fail with the
+    // a mismatch means the wrong operator key; getVtxos would just return nothing, so fail with the
     // diagnosis instead
     let rebuilt: InstanceType<typeof arkade.ArkadeProgramScript>;
     try {
@@ -871,7 +871,7 @@ export async function prepareOfferCancel(
     }
     const contract = new arkade.ArkadeContract(client, program, args, keys);
 
-    const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
+    const [vtxos, makerAddress] = await Promise.all([contract.getVtxos(), wallet.getAddress()]);
     if (!fundingTxid && vtxos.length > 1) {
         // identical offers share one address: guessing could cancel a deposit the caller didn't mean
         throw new Error(
@@ -1016,7 +1016,7 @@ export async function fillOffer(
     }
     const contract = new arkade.ArkadeContract(client, program, args, keys);
 
-    const [vtxos, takerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
+    const [vtxos, takerAddress] = await Promise.all([contract.getVtxos(), wallet.getAddress()]);
     if (!fundingTxid && vtxos.length > 1) {
         // identical offers share one address: guessing could fill a deposit the caller didn't mean
         throw new Error(

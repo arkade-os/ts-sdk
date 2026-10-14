@@ -44,7 +44,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
                 },
             },
             ArkadeContract: class {
-                getUtxos = async () => state.utxos;
+                getVtxos = async () => state.utxos;
                 functions = {
                     fulfill: () => {
                         const record =
@@ -182,7 +182,7 @@ describe("fillOffer refuses what it cannot build correctly", () => {
         reset();
         state.serverKey = rotatedServerKey;
         // Same failure mode cancelOffer names: a mismatched rebuild makes
-        // getUtxos return nothing, and "no deposit" is the wrong diagnosis.
+        // getVtxos return nothing, and "no deposit" is the wrong diagnosis.
         await expect(
             fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR }),
         ).rejects.toThrow(/signing key has likely rotated/);
