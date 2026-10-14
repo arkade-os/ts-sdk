@@ -7,16 +7,11 @@ import { collectVtxos } from "../../src/repositories/walletRepository";
 import { collectUtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-    type ArkTransaction,
     type ExtendedCoin,
-    type ExtendedVirtualCoin,
     IndexedDBWalletRepository,
     InMemoryWalletRepository,
-    type TapLeafScript,
     TxType,
 } from "../../src";
-import { TaprootControlBlock } from "@scure/btc-signer";
-import { hex } from "@scure/base";
 import {
     createMockTransaction,
     createMockUtxo,

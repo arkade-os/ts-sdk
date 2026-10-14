@@ -8,8 +8,11 @@ import {
     MAX_VTXOS_PER_SETTLEMENT,
     capSettlementBatch,
     SettlementConfig,
+    RenewalSplit,
+    RenewalSplitContext,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
+import type { NormalizedExtendedVirtualCoin } from "../src/wallet/vtxo";
 import type { IntentFeeConfig } from "../src/arkfee";
 import { filterSnapshotVtxos, Wallet } from "../src/wallet/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
@@ -42,11 +45,13 @@ type LegacyVirtualStatus = {
     commitmentTxIds?: string[];
 };
 
-const canonicalizeVtxoForTest = <T extends ExtendedVirtualCoin>(vtxo: T): T => {
-    const legacy = (vtxo as T & { virtualStatus?: LegacyVirtualStatus }).virtualStatus;
-    const canonical = { ...vtxo } as T & { virtualStatus?: LegacyVirtualStatus };
+type LegacyExtendedVirtualCoin = ExtendedVirtualCoin & { virtualStatus?: LegacyVirtualStatus };
+
+const canonicalizeVtxoForTest = <T extends LegacyExtendedVirtualCoin>(vtxo: T): T => {
+    const legacy = vtxo.virtualStatus;
+    const canonical = { ...vtxo } as T;
     delete canonical.virtualStatus;
-    if (!legacy) return canonical as T;
+    if (!legacy) return canonical;
 
     if (canonical.isSpent === undefined) canonical.isSpent = legacy.state === "spent";
     if (canonical.isSwept === undefined) canonical.isSwept = legacy.state === "swept";
@@ -65,7 +70,7 @@ const canonicalizeVtxoForTest = <T extends ExtendedVirtualCoin>(vtxo: T): T => {
 
 // Mock wallet implementation
 const createMockWallet = (
-    vtxos: ExtendedVirtualCoin[] = [],
+    vtxos: LegacyExtendedVirtualCoin[] = [],
     arkAddress = "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
     options: MockWalletOptions = {},
 ): IWallet => {
@@ -119,7 +124,7 @@ const createMockVtxo = (
     value: number,
     state: "settled" | "swept" | "spent" | "preconfirmed" = "settled",
     isSpent = false,
-): ExtendedVirtualCoin => {
+): LegacyExtendedVirtualCoin => {
     return {
         txid: `txid-${value}`,
         vout: 0,
@@ -776,7 +781,7 @@ describe("VtxoManager - Renewal utilities", () => {
         it("should return true for VTXO expiring within threshold", () => {
             const now = Date.now();
             const createdAt = new Date(now - 90_000);
-            const vtxo: ExtendedVirtualCoin = {
+            const vtxo: LegacyExtendedVirtualCoin = {
                 txid: "test",
                 vout: 0,
                 value: 1000,
@@ -786,7 +791,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     batchExpiry: now + 10_000, // expires in 10 seconds
                 },
                 expiresAt: new Date(now + 10_000),
-            } as ExtendedVirtualCoin;
+            } as unknown as LegacyExtendedVirtualCoin;
 
             // duration = 10s + 90s = 100s
 
@@ -801,7 +806,7 @@ describe("VtxoManager - Renewal utilities", () => {
         it("should return false for VTXO with no expiry", () => {
             const now = Date.now();
             const createdAt = new Date(now - 90_000);
-            const vtxo: ExtendedVirtualCoin = {
+            const vtxo: LegacyExtendedVirtualCoin = {
                 txid: "test",
                 vout: 0,
                 value: 1000,
@@ -810,7 +815,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     state: "settled",
                     // no batchExpiry
                 },
-            } as ExtendedVirtualCoin;
+            } as unknown as LegacyExtendedVirtualCoin;
 
             const thresholdMs = 10_000; // 10 seconds threshold
             expect(isVtxoExpiringSoon(vtxo, thresholdMs)).toBe(false);
@@ -818,7 +823,7 @@ describe("VtxoManager - Renewal utilities", () => {
 
         it("should return false for already expired VTXO", () => {
             const now = Date.now();
-            const vtxo: ExtendedVirtualCoin = {
+            const vtxo: LegacyExtendedVirtualCoin = {
                 txid: "test",
                 vout: 0,
                 value: 1000,
@@ -827,7 +832,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     batchExpiry: now - 1000, // already expired
                 },
                 expiresAt: new Date(now - 1000),
-            } as ExtendedVirtualCoin;
+            } as unknown as LegacyExtendedVirtualCoin;
 
             const thresholdMs = 10_000; // 10 seconds threshold
             expect(isVtxoExpiringSoon(vtxo, thresholdMs)).toBe(false);
@@ -847,7 +852,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     virtualStatus: { state: "settled", batchExpiry: now + 10_000 },
                     expiresAt: new Date(now + 10_000),
                     isUnrolled,
-                }) as ExtendedVirtualCoin;
+                }) as unknown as NormalizedExtendedVirtualCoin;
 
             expect(isVtxoExpiringSoon(expiring(false), 20_000)).toBe(true);
             expect(isVtxoExpiringSoon(expiring(true), 20_000)).toBe(false);
@@ -858,7 +863,7 @@ describe("VtxoManager - Renewal utilities", () => {
         it("should filter VTXOs expiring within threshold", () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: NormalizedExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -874,7 +879,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 5_000), // expiring soon
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
                     vout: 0,
@@ -890,7 +895,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 20_000), // not expiring soon
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
                     vout: 0,
@@ -906,7 +911,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 8_000), // expiring soon
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
@@ -923,7 +928,7 @@ describe("VtxoManager - Renewal utilities", () => {
         it("should return empty array when no VTXOs expiring", () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: NormalizedExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -933,7 +938,7 @@ describe("VtxoManager - Renewal utilities", () => {
                         state: "settled",
                         batchExpiry: now + 200_000,
                     },
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
@@ -963,7 +968,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now - 5_000),
-                }) as ExtendedVirtualCoin;
+                }) as unknown as NormalizedExtendedVirtualCoin;
 
             const expiring = getExpiringAndRecoverableVtxos(
                 [expired("healthy", 3000, false), expired("exited", 4000, true)],
@@ -992,7 +997,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     isUnrolled,
                     spentBy: "",
                     commitmentTxIds: [],
-                }) as ExtendedVirtualCoin;
+                }) as unknown as NormalizedExtendedVirtualCoin;
 
             const expiring = getExpiringAndRecoverableVtxos(
                 [subdust("healthy", false), subdust("exited", true)],
@@ -1007,7 +1012,7 @@ describe("VtxoManager - Renewal utilities", () => {
         it("should return recoverable and subdust VTXOs", () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: NormalizedExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1023,7 +1028,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now - 5000),
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
                     vout: 0,
@@ -1039,7 +1044,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 200_000), // not expiring soon
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
                     vout: 0,
@@ -1055,7 +1060,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 8_000), // expiring soon
-                } as ExtendedVirtualCoin,
+                } as unknown as NormalizedExtendedVirtualCoin,
             ];
 
             const thresholdMs = 10_000; // 10 seconds threshold
@@ -1077,7 +1082,7 @@ describe("VtxoManager - Renewal", () => {
         it("should return expiring VTXOs when renewal is enabled", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1093,7 +1098,7 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 40_000), // expires in 40 seconds
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
                     vout: 0,
@@ -1109,7 +1114,7 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 60_000), // expires in 60 seconds
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
                     vout: 0,
@@ -1125,7 +1130,7 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 200_000), // expires in 200 seconds
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, {
@@ -1155,7 +1160,7 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 40_000),
-                }) as ExtendedVirtualCoin;
+                }) as unknown as NormalizedExtendedVirtualCoin;
             const vtxos = [soon("healthy", 5000, false), soon("exited", 3000, true)];
             const wallet = createMockWallet(vtxos);
             // The bare mock hands back the snapshot verbatim; the real wallet
@@ -1163,11 +1168,10 @@ describe("VtxoManager - Renewal", () => {
             // dropped — so the renewal selection only holds if the manager asks
             // for a filter that leaves `withUnrolled` off.
             (wallet.getSpendableVtxos as any).mockImplementation(async (filter: any) =>
-                filterSnapshotVtxos([{ vtxos } as any], filter, new Set()),
+                filterSnapshotVtxos([{ contract: {}, vtxos } as any], filter, new Set()),
             );
             const manager = new VtxoManager(wallet, {
-                enabled: true,
-                thresholdMs: 100_000,
+                vtxoThreshold: 100,
             });
 
             const expiring = await manager.getExpiringVtxos();
@@ -1176,13 +1180,13 @@ describe("VtxoManager - Renewal", () => {
         });
 
         it("should return empty array when no VTXOs have expiry set", async () => {
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
                     value: 5000,
                     virtualStatus: { state: "settled" }, // No batchExpiry
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet);
@@ -1195,7 +1199,7 @@ describe("VtxoManager - Renewal", () => {
         it("should override thresholdMs parameter", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1205,7 +1209,7 @@ describe("VtxoManager - Renewal", () => {
                         state: "settled",
                         batchExpiry: now + 4 * 86400000, // in 4 days, not expiring soon with default threshold
                     },
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet);
@@ -1227,7 +1231,7 @@ describe("VtxoManager - Renewal", () => {
 
         it("should use default thresholdMs when not specified", async () => {
             const now = Date.now();
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1236,7 +1240,7 @@ describe("VtxoManager - Renewal", () => {
                         state: "settled",
                         batchExpiry: now + 6 * 86_400_000, // 6 days, 86_400_000ms = 1 day
                     },
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             // No thresholdMs in config, should use DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold (3 days)
@@ -1249,7 +1253,7 @@ describe("VtxoManager - Renewal", () => {
 
         it("should handle already expired VTXOs", async () => {
             const now = Date.now();
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1259,7 +1263,7 @@ describe("VtxoManager - Renewal", () => {
                         batchExpiry: now - 1000, // Already expired
                     },
                     isSpent: true,
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet);
@@ -1273,7 +1277,7 @@ describe("VtxoManager - Renewal", () => {
         it("should handle mixed VTXOs with and without expiry", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1289,14 +1293,14 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 5_000), // 5 seconds (expiring soon)
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
                 {
                     txid: "vtxo2",
                     vout: 0,
                     value: 3000,
                     createdAt,
                     virtualStatus: { state: "settled" }, // No expiry
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
                 {
                     txid: "vtxo3",
                     vout: 0,
@@ -1312,7 +1316,7 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 100_000), // not expiring soon
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, {
@@ -1738,7 +1742,7 @@ describe("SettlementConfig", () => {
     describe("getExpiringVtxos with settlementConfig", () => {
         it("should return empty array when settlementConfig is false", async () => {
             const now = Date.now();
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1754,7 +1758,7 @@ describe("SettlementConfig", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 1000), // about to expire
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, false);
@@ -1766,7 +1770,7 @@ describe("SettlementConfig", () => {
 
         it("should still allow thresholdMs override even when settlementConfig is false", async () => {
             const now = Date.now();
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1782,7 +1786,7 @@ describe("SettlementConfig", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 1000), // about to expire
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, false);
@@ -1796,7 +1800,7 @@ describe("SettlementConfig", () => {
         it("should use vtxoThreshold from settlementConfig (converted to ms)", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1812,7 +1816,7 @@ describe("SettlementConfig", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 50_000), // expires in 50 seconds
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             // 100 seconds threshold → 50s remaining is within threshold
@@ -1828,7 +1832,7 @@ describe("SettlementConfig", () => {
         it("should not return VTXOs outside settlementConfig threshold", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
-            const vtxos: ExtendedVirtualCoin[] = [
+            const vtxos: LegacyExtendedVirtualCoin[] = [
                 {
                     txid: "vtxo1",
                     vout: 0,
@@ -1844,7 +1848,7 @@ describe("SettlementConfig", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 200_000), // expires in 200 seconds
-                } as ExtendedVirtualCoin,
+                } as unknown as LegacyExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             // 100 seconds threshold → 200s remaining is NOT within threshold
@@ -1875,19 +1879,11 @@ describe("SettlementConfig", () => {
         it("should dispose the owned VtxoManager", async () => {
             const managerDispose = vi.fn().mockResolvedValue(undefined);
             const contractManagerDispose = vi.fn();
-            const wallet = Object.create(Wallet.prototype) as Wallet & {
-                _vtxoManager?: { dispose(): Promise<void> };
-                _vtxoManagerInitializing?: Promise<unknown>;
-                _contractManager?: { dispose(): void };
-                _contractManagerInitializing?: Promise<unknown>;
-            };
-
-            wallet._vtxoManager = {
-                dispose: managerDispose,
-            };
-            wallet._contractManager = {
-                dispose: contractManagerDispose,
-            };
+            const wallet = Object.create(Wallet.prototype) as Wallet;
+            Object.assign(wallet, {
+                _vtxoManager: { dispose: managerDispose },
+                _contractManager: { dispose: contractManagerDispose },
+            });
 
             await wallet.dispose();
 
@@ -2362,7 +2358,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
         const wallet = createMockWallet(vtxos, "arkade1myaddress", { contractManager });
         (wallet.settle as any).mockResolvedValue("mock-txid");
 
-        new VtxoManager(wallet, undefined, {});
+        new VtxoManager(wallet, undefined);
         await flushMicrotasks();
         await flushMicrotasks();
         await flushMicrotasks();
@@ -2879,7 +2875,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         value: number,
         vout = 0,
         batchExpiry = Date.now() + 60 * 60 * 1000,
-    ): ExtendedVirtualCoin =>
+    ): LegacyExtendedVirtualCoin =>
         ({
             txid: `vtxo-txid-${value}-${vout}`,
             vout,
@@ -3440,7 +3436,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
             },
         }) as ExtendedCoin;
 
-    const makeExpiringVtxo = (value: number, vout = 0): ExtendedVirtualCoin =>
+    const makeExpiringVtxo = (value: number, vout = 0): LegacyExtendedVirtualCoin =>
         ({
             txid: `vtxo-txid-${value}-${vout}`,
             vout,
@@ -3798,7 +3794,7 @@ describe("VtxoManager - intent fee pricing", () => {
         "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
 
     /** Near enough to batch expiry that `renewVtxos` selects it. */
-    const expiring = (value: number, txid = `expiring-${value}`): ExtendedVirtualCoin => {
+    const expiring = (value: number, txid = `expiring-${value}`): LegacyExtendedVirtualCoin => {
         const now = Date.now();
         return {
             txid,
@@ -3813,7 +3809,7 @@ describe("VtxoManager - intent fee pricing", () => {
     };
 
     /** Swept by the server, so `recoverVtxos` sweeps it back. */
-    const swept = (value: number, txid = `swept-${value}`): ExtendedVirtualCoin =>
+    const swept = (value: number, txid = `swept-${value}`): LegacyExtendedVirtualCoin =>
         ({
             txid,
             vout: 0,
@@ -4169,6 +4165,287 @@ describe("VtxoManager - intent fee pricing", () => {
                 "Recoverable amount 600 net of intent fees is below dust threshold 1000",
             );
             expect(wallet.settle).not.toHaveBeenCalled();
+        });
+    });
+});
+
+describe("VtxoManager - renewal output split", () => {
+    const ADDRESS =
+        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+
+    const expiring = (value: number, txid = `expiring-${value}`): ExtendedVirtualCoin => {
+        const now = Date.now();
+        return {
+            txid,
+            vout: 0,
+            value,
+            createdAt: new Date(now - 100_000),
+            virtualStatus: { state: "settled", batchExpiry: now + 5000 },
+            status: { confirmed: true },
+            isUnrolled: false,
+            isSpent: false,
+        } as any;
+    };
+
+    const settled = (wallet: IWallet) => (wallet.settle as any).mock.calls[0][0];
+
+    const fixedSplit = (
+        maxOutputs: number,
+        amounts: bigint[],
+    ): RenewalSplit & { seen: RenewalSplitContext[] } => {
+        const seen: RenewalSplitContext[] = [];
+        return {
+            maxOutputs,
+            seen,
+            plan(context) {
+                seen.push(context);
+                return amounts;
+            },
+        };
+    };
+
+    it("settles into every piece the plan asks for", async () => {
+        const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+        const manager = new VtxoManager(wallet, undefined);
+
+        await manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) });
+
+        expect(settled(wallet).outputs).toEqual([
+            { address: ADDRESS, amount: 5000n },
+            { address: ADDRESS, amount: 3000n },
+        ]);
+    });
+
+    it("still settles into exactly one output when no split is given", async () => {
+        const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+        const manager = new VtxoManager(wallet, undefined);
+
+        await manager.renewVtxos();
+
+        expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
+    });
+
+    it("offers the plan the subtotal net of each input's own intent fee", async () => {
+        const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
+            intentFee: { offchainInput: "amount * 0.01" },
+        });
+        const split = fixedSplit(4, [7000n]);
+
+        await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+        expect(split.seen[0].subtotal).toBe(7920n);
+        expect(split.seen[0].address).toBe(ADDRESS);
+    });
+
+    // `gross - n * fee` is wrong for a proportional policy; one evaluation at the subtotal is wrong for all but one piece.
+    it("prices each piece's output fee at that piece's own size", async () => {
+        const wallet = createMockWallet([expiring(152_000)], ADDRESS, {
+            intentFee: { offchainOutput: "amount * 0.01" },
+        });
+        const split = fixedSplit(4, [100_000n, 50_000n]);
+
+        await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+        const { outputFeeOn } = split.seen[0];
+        expect(outputFeeOn(100_000n)).toBe(1000n);
+        expect(outputFeeOn(50_000n)).toBe(500n);
+    });
+
+    it("tells the plan the server's per-output ceiling and dust floor", async () => {
+        const wallet = createMockWallet([expiring(5000)], ADDRESS, { vtxoMaxAmount: 4000n });
+        const split = fixedSplit(4, [3000n, 2000n]);
+
+        await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+        expect(split.seen[0].maxAmount).toBe(4000n);
+        expect(split.seen[0].dust).toBe(1000n);
+    });
+
+    // The ceiling bounds one OUTPUT; judged against a single one, every pass caps at one ceiling's worth.
+    it("admits a batch worth several ceilings once a split can place it", async () => {
+        const withoutSplit = createMockWallet([expiring(4000, "a"), expiring(4000, "b")], ADDRESS, {
+            vtxoMaxAmount: 5000n,
+        });
+        await new VtxoManager(withoutSplit, undefined).renewVtxos();
+        expect(settled(withoutSplit).inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
+
+        const withSplit = createMockWallet([expiring(4000, "a"), expiring(4000, "b")], ADDRESS, {
+            vtxoMaxAmount: 5000n,
+        });
+        await new VtxoManager(withSplit, undefined).renewVtxos(undefined, {
+            split: fixedSplit(4, [4000n, 4000n]),
+        });
+        expect(settled(withSplit).inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual([
+            "a",
+            "b",
+        ]);
+    });
+
+    // Both diagnostics count against `capacity`, so under a split they have to
+    // name it — an operator sent to the per-output ceiling would be diagnosing
+    // against a number nothing was compared to.
+    it("names the combined split capacity, not the per-output ceiling", async () => {
+        const wallet = createMockWallet([expiring(22_000)], ADDRESS, { vtxoMaxAmount: 5000n });
+        const manager = new VtxoManager(wallet, undefined);
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        try {
+            await expect(
+                manager.renewVtxos(undefined, { split: fixedSplit(4, [22_000n]) }),
+            ).rejects.toThrow("within the combined split capacity 20000 (4 x 5000)");
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining("exceed the combined split capacity 20000 (4 x 5000)"),
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    describe("refuses a plan the server would reject", () => {
+        const renewWith = (split: RenewalSplit, options: MockWalletOptions = {}) => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, options);
+            const manager = new VtxoManager(wallet, undefined);
+            return { wallet, run: () => manager.renewVtxos(undefined, { split }) };
+        };
+
+        it("when the pieces plus their fees claim more than the subtotal", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [8000n]), {
+                intentFee: { offchainOutput: "250.0" },
+            });
+
+            await expect(run()).rejects.toThrow("claims 8250 with fees, more than the 8000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        // The residue is paid as fee: a rung-sized plan would hand the operator the rest.
+        it("when it leaves dust or more unclaimed", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [5000n, 2000n]));
+
+            await expect(run()).rejects.toThrow("leaves 1000 of 8000 unclaimed");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("still accepts a sub-dust residue", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [5000n, 2001n]));
+
+            await run();
+
+            expect(settled(wallet).outputs).toHaveLength(2);
+        });
+
+        it("when a piece is over the per-output ceiling", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [6000n, 2000n]), {
+                vtxoMaxAmount: 5000n,
+            });
+
+            await expect(run()).rejects.toThrow("output 6000 exceeds the per-output limit 5000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when a piece is below dust", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, [7000n, 500n]));
+
+            await expect(run()).rejects.toThrow("Total amount 500 is below dust threshold 1000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when it emits more pieces than it allows", async () => {
+            const { wallet, run } = renewWith(fixedSplit(2, [3000n, 3000n, 1000n]));
+
+            await expect(run()).rejects.toThrow("produced 3 outputs, more than the 2 it allows");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when it emits nothing at all", async () => {
+            const { wallet, run } = renewWith(fixedSplit(4, []));
+
+            await expect(run()).rejects.toThrow("produced no outputs for a subtotal of 8000");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        it("when maxOutputs is not a positive integer", async () => {
+            const { wallet, run } = renewWith(fixedSplit(0, [8000n]));
+
+            await expect(run()).rejects.toThrow(TypeError);
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+    });
+
+    // settle bags every input asset onto the FIRST matching output, and every
+    // piece is on that script — so a split hands them all to piece 0.
+    describe("assets", () => {
+        const withAssets = (value: number, txid = `asset-${value}`): ExtendedVirtualCoin =>
+            ({ ...expiring(value, txid), assets: [{ assetId: "aa", amount: 5n }] }) as any;
+
+        it("reports no assets when none of the selected inputs carry any", async () => {
+            const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
+            const split = fixedSplit(4, [5000n, 3000n]);
+
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(false);
+        });
+
+        it("reports assets when any selected input carries them", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+            const split = fixedSplit(4, [8000n]);
+
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(true);
+        });
+
+        it("refuses a multi-piece plan over asset-bearing inputs", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+            const manager = new VtxoManager(wallet, undefined);
+
+            await expect(
+                manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) }),
+            ).rejects.toThrow("they would all land on piece 0");
+            expect(wallet.settle).not.toHaveBeenCalled();
+        });
+
+        // An unrenewed float expires, which is worse than one fat coin.
+        it("still renews an asset-bearing float into one piece", async () => {
+            const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
+
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, {
+                split: fixedSplit(4, [8000n]),
+            });
+
+            expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
+        });
+
+        // Admitting several ceilings' worth would leave an asset-bearing batch no
+        // valid plan: split and the asset guard refuses, don't and the ceiling does.
+        it("caps an asset-bearing batch to one ceiling so a single piece still fits", async () => {
+            const wallet = createMockWallet([withAssets(4000, "a"), expiring(4000, "b")], ADDRESS, {
+                vtxoMaxAmount: 5000n,
+            });
+            const split: RenewalSplit = {
+                maxOutputs: 4,
+                plan: ({ subtotal, hasAssets }) =>
+                    hasAssets ? [subtotal] : [subtotal / 2n, subtotal / 2n],
+            };
+
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+            const args = settled(wallet);
+            expect(args.inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
+            expect(args.outputs).toEqual([{ address: ADDRESS, amount: 4000n }]);
+        });
+
+        it("lets the plan split again once no asset-bearing input survives selection", async () => {
+            // The 1500 carries the assets and cannot pay its own 2000 fee.
+            const wallet = createMockWallet([expiring(5000), withAssets(1500)], ADDRESS, {
+                intentFee: { offchainInput: "2000.0" },
+            });
+            const split = fixedSplit(4, [2000n, 1000n]);
+
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
+
+            expect(split.seen[0].hasAssets).toBe(false);
+            expect(settled(wallet).outputs).toHaveLength(2);
         });
     });
 });

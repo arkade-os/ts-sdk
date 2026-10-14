@@ -1,4 +1,4 @@
-import type { RealmLike } from "@arkade-os/sdk/repositories/realm";
+import type { RealmLike } from "../../packages/sdk/src/repositories/realm";
 
 // In-memory RealmLike for tests. Stores shallow copies as row objects and
 // returns those same references from objects()/filtered(), so delete() can

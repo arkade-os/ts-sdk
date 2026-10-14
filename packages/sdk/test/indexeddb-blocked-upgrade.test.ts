@@ -24,8 +24,6 @@ const blockingConnection = (dbName: string): Promise<IDBDatabase> =>
         open.onerror = () => reject(open.error);
     });
 
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-
 /**
  * `onblocked` is dispatched on the task queue, which the fake clock only runs
  * once it is advanced — so the wait has to be split. Advancing in one step

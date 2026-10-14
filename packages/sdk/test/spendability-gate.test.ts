@@ -89,7 +89,7 @@ const onlineIndexer = (vtxos: { script: string }[]) =>
         subscribeForScripts: async () => "sub-1",
         unsubscribeForScripts: async () => undefined,
         getSubscription: async function* () {},
-    }) as Partial<IndexerProvider> as IndexerProvider;
+    }) as unknown as IndexerProvider;
 
 const contract = (script: string, type: string, metadata?: Record<string, unknown>): Contract => ({
     type,
@@ -107,7 +107,6 @@ const vtxo = (script: string, value: number, assets?: { assetId: string; amount:
         vout: 0,
         value,
         script,
-        virtualStatus: { state: "settled" },
         ...(assets ? { assets } : {}),
     });
 
@@ -536,7 +535,6 @@ describe("getBalance", () => {
                 vout: 0,
                 value: 25_000,
                 script: defaultScript,
-                virtualStatus: { state: "settled" },
                 isSpent: false,
                 isUnrolled: true,
                 assets: [{ assetId: ASSET_ID, amount: 3n }],
@@ -959,7 +957,6 @@ describe("getSpendableVtxos reports the exited coins it dropped", () => {
                 vout: 0,
                 value: 12_000,
                 script: seeded.defaultScript,
-                virtualStatus: { state: "settled" },
                 isSpent: over?.isSpent ?? false,
                 isUnrolled: true,
             }),
@@ -1024,7 +1021,6 @@ describe("getSpendableVtxos reports the exited coins it dropped", () => {
                 vout: 0,
                 value: 9_000,
                 script: ESCROW_SCRIPT,
-                virtualStatus: { state: "settled" },
                 isSpent: true,
             }),
         ]);
@@ -1162,7 +1158,6 @@ describe("main-thread / worker balance parity", () => {
                 vout: 0,
                 value: 25_000,
                 script: seeded.defaultScript,
-                virtualStatus: { state: "settled" },
                 isSpent: false,
                 isUnrolled: true,
             }),

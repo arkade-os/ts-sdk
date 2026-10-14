@@ -1,5 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
-import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { SQLExecutor } from "../../packages/sdk/src/repositories/sqlite";
 
 // A real in-memory SQLite engine backed by Node's built-in `node:sqlite`.
 // Unlike the regex-based mock, it executes actual SQL (JOINs, `IN (...)`,
@@ -24,6 +24,6 @@ export function createNodeSQLExecutor(): SQLExecutor {
 }
 
 // node:sqlite binds `undefined` as an error; normalise to `null`.
-function toBindable(params?: unknown[]): (null | unknown)[] {
-    return (params ?? []).map((p) => (p === undefined ? null : p));
+function toBindable(params?: unknown[]): SQLInputValue[] {
+    return (params ?? []).map((p) => (p === undefined ? null : p) as SQLInputValue);
 }

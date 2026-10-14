@@ -155,7 +155,9 @@ async function makeDecliningProviderWallet(walletRepo: InMemoryWalletRepository)
     const state = { declining: false };
     const custom: DescriptorProvider = {
         getNextSigningDescriptor: () =>
-            state.declining ? Promise.resolve(undefined) : inner.getNextSigningDescriptor(),
+            (state.declining
+                ? Promise.resolve(undefined)
+                : inner.getNextSigningDescriptor()) as unknown as Promise<string>,
         isOurs: (d) => inner.isOurs(d),
         signWithDescriptor: (r) => inner.signWithDescriptor(r),
         signMessageWithDescriptor: (d, m, t) => inner.signMessageWithDescriptor(d, m, t),

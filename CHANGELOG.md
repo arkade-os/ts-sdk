@@ -1,7 +1,10 @@
 # Changelog
 
-All notable changes to `@arkade-os/sdk` are documented here. Format
-conventions and section ordering are defined in [`CLAUDE.md`](CLAUDE.md).
+All notable changes to `@arkade-os/sdk` are documented here. Entries land
+under `## [Unreleased]` in the same commit as the change, grouped in this
+order (omit empty sections): `### Breaking Changes`, `### Features`,
+`### Bug Fixes`, `### Performance`, `### Internal`. See
+[`AGENTS.md`](AGENTS.md#changelog) for the mechanism.
 
 This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
@@ -11,9 +14,24 @@ style and have not been backfilled.
 
 ### Added
 
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
+
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
+
+- **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
+  takes a plan that returns piece amounts against the already-priced subtotal,
+  per-piece output fee, per-output ceiling and dust floor. A plan that claims
+  too much, breaks the ceiling, leaves dust or more unclaimed, or splits
+  asset-bearing inputs is refused rather than reshaped. Automatic renewal still
+  settles into one output, and `split` is refused on the service-worker wallet.
 
 ### Changed
 
@@ -23,6 +41,16 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
   contract, intent, or wallet repositories and swap repositories must implement
