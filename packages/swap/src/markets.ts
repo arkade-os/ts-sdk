@@ -19,7 +19,7 @@ import {
     type Side,
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
-import { isSubdust } from "@arkade-os/sdk";
+import { assertNonNegativeMs, isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
 import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
@@ -43,6 +43,7 @@ export const makeCachedFeedFetch = (
     ttlMs = 30_000,
     fetchImpl: typeof fetch = fetch,
 ): typeof fetch => {
+    assertNonNegativeMs("ttlMs", ttlMs);
     const cache = new Map<string, { at: number; body: string }>();
     // Sent-but-unanswered requests, so a burst inside one round trip collapses to a
     // single upstream call (the cache alone only dedups after the first response).

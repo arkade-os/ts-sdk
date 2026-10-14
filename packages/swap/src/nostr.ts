@@ -10,6 +10,7 @@
  */
 import type { TransportCard, TransportCardFetcher } from "@arkade-os/solver-discovery";
 import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
+import { assertTimerMs } from "@arkade-os/sdk";
 import {
     finalizeEvent,
     generateSecretKey,
@@ -99,6 +100,7 @@ export interface NostrRfqOptions {
  * long-lived subscription filtered to this transport key.
  */
 export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
+    assertTimerMs("timeoutMs", options.timeoutMs);
     const relays = options.relays;
     const solverPubkey = options.solverPubkey;
     const secretKey = options.secretKey ?? generateSecretKey();

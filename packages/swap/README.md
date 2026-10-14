@@ -54,8 +54,13 @@ artifact is an invoice whose claim secret has to be durable before a payer can a
 off it would show a payer an invoice this client could not yet claim; the verb removes the
 ordering from the caller.
 
-`onchain -> arkade` is not in the union. It resolves and quotes to `UnsupportedRoute` until the
-client owns the trader's L1 refund path end to end.
+`onchain -> arkade` is a receive too: `client.receive({ via: "onchain", amount })` returns a
+`deposit` artifact naming the L1 HTLC to fund, for exactly its `amount`, from any bitcoin wallet.
+The client claims the solver's Arkade lockup once it is funded. If the solver never funds it, the
+client takes the L1 funding back itself once the HTLC's refund leaf matures, paying a boarding
+address of this wallet fixed at quote time and signing with the wallet key the HTLC was derived
+with. The refund is built at the same `claimFeeRateSatVb` as the `arkade -> onchain` claim; wire
+your own with `corridors: { onchain: { refund } }`.
 
 An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that claim's miner fee
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the

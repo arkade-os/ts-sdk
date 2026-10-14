@@ -1,4 +1,5 @@
 import { Transaction } from "./utils/transaction";
+export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
@@ -171,6 +172,7 @@ import {
     type ArkadeCashClaimResult,
     type ArkadeCashUnclaimedReason,
     type ArkadeCashUnclaimedVtxo,
+    type ArkadeCashVtxoRef,
     ArkadeCashCreateError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
@@ -180,10 +182,15 @@ import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
 import { DustChangeError, OversizedChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
+import { StaticDescriptorProvider } from "./identity/staticDescriptorProvider";
+import { KeyringDescriptorProvider } from "./identity/keyringDescriptorProvider";
+import type { DescriptorProvider, DescriptorSigningRequest } from "./identity/descriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     SettlementConfig,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
@@ -644,6 +651,8 @@ export {
     isCooperativelyMigratable,
     toXOnlySignerHex,
     HDDescriptorProvider,
+    StaticDescriptorProvider,
+    KeyringDescriptorProvider,
     DelegateManagerImpl,
     RestDelegateProvider,
     // Providers
@@ -895,6 +904,10 @@ export type {
     NewAddressType,
     WalletConfig,
     WalletMode,
+    // Referenced by WalletMode: consumers need these to name or implement
+    // a provider they pass to the wallet.
+    DescriptorProvider,
+    DescriptorSigningRequest,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
@@ -996,9 +1009,12 @@ export type {
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,
     ArkadeCashUnclaimedVtxo,
+    ArkadeCashVtxoRef,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,

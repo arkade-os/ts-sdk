@@ -60,6 +60,7 @@ import {
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 import { DEFAULT_PAGE_SIZE } from "./constants";
+import { assertNonNegativeMs } from "../utils/time";
 
 /**
  * Whether two *different* contract types may share one repository row when their derived
@@ -585,12 +586,6 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
     /** Initial state (defaults to "active") */
     state?: ContractState;
 };
-
-function assertNonNegativeMs(name: string, ms: number | undefined): void {
-    if (ms !== undefined && (!Number.isSafeInteger(ms) || ms < 0)) {
-        throw new Error(`${name} must be a non-negative safe integer`);
-    }
-}
 
 /**
  * Central manager for contract lifecycle: creates and persists contracts, queries them with

@@ -108,6 +108,45 @@ describe("RFQ kinds", () => {
 });
 
 describe("nostrRfqTransport", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid timeout %s before opening a subscription",
+        (timeoutMs) => {
+            const solverSecret = generateSecretKey();
+            const { pool, seenFilters } = fakePool(solverSecret);
+            expect(() =>
+                nostrRfqTransport({
+                    relays: ["wss://x"],
+                    solverPubkey: getPublicKey(solverSecret),
+                    pool: pool as never,
+                    timeoutMs,
+                }),
+            ).toThrow("timeoutMs");
+            expect(seenFilters).toHaveLength(0);
+        },
+    );
+
+    it("keeps zero as an immediate reply timeout", async () => {
+        vi.useFakeTimers();
+        try {
+            const solverSecret = generateSecretKey();
+            const { pool } = fakePool(solverSecret);
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                pool: pool as never,
+                timeoutMs: 0,
+            });
+            const rejection = expect(
+                transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "zero" }),
+            ).rejects.toThrow("no solver reply within 0ms");
+            await vi.advanceTimersByTimeAsync(0);
+            await rejection;
+            await transport.close();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     const quote = (rfqId: string) => ({ v: 1, type: "rfq_quote", rfq_id: rfqId });
 
     it("returns the solver's quote for the negotiation it asked about", async () => {

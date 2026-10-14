@@ -14,11 +14,37 @@ style and have not been backfilled.
 
 ### Added
 
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
+
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
 
+- **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
+  takes a plan that returns piece amounts against the already-priced subtotal,
+  per-piece output fee, per-output ceiling and dust floor. A plan that claims
+  too much, breaks the ceiling, leaves dust or more unclaimed, or splits
+  asset-bearing inputs is refused rather than reshaped. Automatic renewal still
+  settles into one output, and `split` is refused on the service-worker wallet.
+
 ### Changed
+
+- **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
+  cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
+  fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+  Timer-backed settings additionally reject delays above 2,147,483,647 milliseconds
+  (the portable timer limit). Zero still disables optional timers or schedules an
+  immediate timeout/poll, depending on the existing API; reconnect caps still clamp
+  the base delay rather than requiring a particular ordering. A `messageTimeouts` key
+  set to `undefined` now falls back to its default instead of reaching the worker,
+  where it armed a timer of `undefined` and timed every such message out at once; the
+  message bus rejects such keys outright.
 
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
@@ -26,6 +52,16 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
   contract, intent, or wallet repositories and swap repositories must implement
