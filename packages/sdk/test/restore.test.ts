@@ -8,7 +8,6 @@ import {
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { HDKey, networks, scriptExpressions } from "@bitcoinerlab/descriptors-scure";
 import { deriveDescriptorLeafPubKey } from "../src/identity/descriptor";
-import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { makeHdProviderForTest } from "./helpers/hdProvider";
 import { isDiscoverable } from "../src/contracts/types";
 import { timelockToSequence } from "../src/utils/timelock";
@@ -1033,13 +1032,19 @@ describe("ContractManager.scanContracts", () => {
                 return [];
             }),
             vi
-                .spyOn(DefaultContractHandler, "discoverRange")
+                .spyOn(
+                    DefaultContractHandler as Required<typeof DefaultContractHandler>,
+                    "discoverRange",
+                )
                 .mockImplementation(async (entries) => {
                     order.push("default");
                     return new Map(entries.map((e) => [e.index, []]));
                 }),
             vi
-                .spyOn(DelegateContractHandler, "discoverRange")
+                .spyOn(
+                    DelegateContractHandler as Required<typeof DelegateContractHandler>,
+                    "discoverRange",
+                )
                 .mockImplementation(async (entries) => {
                     order.push("delegate");
                     return new Map(entries.map((e) => [e.index, []]));
@@ -1603,7 +1608,7 @@ describe("Wallet.restore", () => {
         // (not in fundedOnchain) and no L2 VTXO at its own index (not in
         // usedScripts). The single-branch / current-UTXO model accepts this —
         // the gap window is instead held open by the receive-destination index.
-        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
         try {
             const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
             const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
@@ -2109,7 +2114,7 @@ describe("Wallet.restore", () => {
 
     it("keeps concurrent restore calls coalesced until hooks finish", async () => {
         const { wallet } = await makeStaticWalletForTest();
-        let releaseHook = () => undefined;
+        let releaseHook: () => void = () => undefined;
         const hookGate = new Promise<void>((resolve) => {
             releaseHook = resolve;
         });

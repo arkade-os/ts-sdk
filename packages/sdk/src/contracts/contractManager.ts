@@ -44,7 +44,7 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
-import { reconcileIntents } from "../wallet/intentReconciliation";
+import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -354,7 +354,8 @@ export interface IContractManager extends Disposable {
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Update only the contract's watch state.
+     * Update only the contract's watch state. An unchanged state is a no-op (no write, no
+     * resubscribe); a missing `watch` field counts as `watched`.
      *
      * `retained` drops the script from the subscription and sweep while keeping the row (history,
      * annotation, restore). `awaiting-funds` watches only until funded, then the manager demotes
@@ -498,6 +499,9 @@ export interface ContractManagerConfig {
      * indexer state (crash recovery) on boot and reconnect; see {@link reconcileIntents}.
      */
     intentRepository?: IntentRepository;
+
+    /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
+    intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
 
     /**
      * Exit-data capture hook, fired best-effort after VTXOs are persisted so a
@@ -822,6 +826,7 @@ export class ContractManager implements IContractManager {
         if (!this.config.intentRepository) return;
         try {
             await reconcileIntents({
+                ...this.config.intentReconciliation,
                 intentRepository: this.config.intentRepository,
                 indexerProvider: this.config.indexerProvider,
             });
@@ -1545,7 +1550,8 @@ export class ContractManager implements IContractManager {
 
     private async updateExistingContract(
         script: string,
-        update: (existing: Contract) => Contract,
+        /** `undefined` means unchanged: no write, no resubscribe. */
+        update: (existing: Contract) => Contract | undefined,
     ): Promise<Contract> {
         const [existing] = await collectContracts(this.config.contractRepository, { script });
         if (!existing) {
@@ -1553,6 +1559,7 @@ export class ContractManager implements IContractManager {
         }
 
         const updated = update(existing);
+        if (!updated) return existing;
 
         await this.config.contractRepository.saveContract(updated);
         await this.watcher.updateContract(updated);
@@ -1570,7 +1577,9 @@ export class ContractManager implements IContractManager {
 
     /** @see IContractManager.setContractWatchState */
     async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
-        await this.updateContract(script, { watch });
+        await this.updateExistingContract(script, (existing) =>
+            watchStateOf(existing) === watch ? undefined : { ...existing, watch },
+        );
     }
 
     /**

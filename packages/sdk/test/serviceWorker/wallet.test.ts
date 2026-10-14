@@ -445,7 +445,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("ProviderUnavailableError");
     });
 
@@ -465,7 +465,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("Error");
         expect((err.cause as Error).message).toBe("no cached snapshot");
     });
@@ -1065,7 +1065,7 @@ describe("ServiceWorkerWallet", () => {
         });
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
         const wallet = createSWWallet(serviceWorker as any, messageTag);
-        let releaseHook = () => undefined;
+        let releaseHook: () => void = () => undefined;
         const hookGate = new Promise<void>((resolve) => {
             releaseHook = resolve;
         });

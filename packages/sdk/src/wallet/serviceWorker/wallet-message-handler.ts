@@ -15,6 +15,7 @@ import type {
     PathSelection,
     WatchedScript,
 } from "../../contracts";
+import { isRecoveryOnlyContract } from "../../contracts";
 import type {
     ContractSyncState,
     CreateContractParams,
@@ -396,11 +397,20 @@ export type RequestUpdateContract = RequestEnvelope & {
     payload: {
         script: string;
         updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        /**
+         * Set only by the proxy's `setContractWatchState`, so the worker keeps its
+         * unchanged-state no-op. A worker predating the flag ignores it and writes.
+         */
+        watchStateOnly?: boolean;
     };
 };
 export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
+};
+/** Answers a `watchStateOnly` update; carries no row, so nothing is re-read. */
+export type ResponseContractWatchStateSet = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
 };
 
 export type RequestDeleteContract = RequestEnvelope & {
@@ -936,6 +946,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
+        | ResponseContractWatchStateSet
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1429,10 +1440,12 @@ export class WalletMessageHandler
                 }
                 case "UPDATE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contract = await manager.updateContract(
-                        message.payload.script,
-                        message.payload.updates,
-                    );
+                    const { script, updates, watchStateOnly } = message.payload;
+                    if (watchStateOnly && updates.watch) {
+                        await manager.setContractWatchState(script, updates.watch);
+                        return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
+                    }
+                    const contract = await manager.updateContract(script, updates);
                     return this.tagged({
                         id,
                         type: "CONTRACT_UPDATED",
@@ -2171,9 +2184,18 @@ export class WalletMessageHandler
     /**
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
+     *
+     * Recovery-only contracts (imported by `claimCash` for server-swept
+     * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
+     * they are settled in their own isolated intent and must stay out of the
+     * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
+     * The transaction-history caller opts back in via `includeRecoveryOnly` to
+     * match the non-worker `getTransactionHistory`, which reads contracts
+     * directly and does include them.
      */
     private async getVtxosFromRepo(options?: {
         unspentOnly?: boolean;
+        includeRecoveryOnly?: boolean;
     }): Promise<NormalizedExtendedVirtualCoin[]> {
         return (await this.repoSnapshot(options)).vtxos;
     }
@@ -2190,8 +2212,13 @@ export class WalletMessageHandler
      * VTXOs with no matching row in the gate, and `gatedContracts` lists only
      * what it knows is closed — so the coins of a just-registered escrowed
      * contract would count as available until the next poll.
+     *
+     * Recovery-only contracts are skipped unless `includeRecoveryOnly` (see
+     * {@link getVtxosFromRepo}).
      */
-    private async repoSnapshot(options?: { unspentOnly?: boolean }): Promise<{
+    private async repoSnapshot(
+        options: { unspentOnly?: boolean; includeRecoveryOnly?: boolean } = {},
+    ): Promise<{
         // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
         // and the gate and signer classification only read `contract`/`vtxos`.
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
@@ -2222,6 +2249,7 @@ export class WalletMessageHandler
         const contracts = await manager.getContracts();
         const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
         for (const contract of contracts) {
+            if (!options.includeRecoveryOnly && isRecoveryOnlyContract(contract)) continue;
             snapshot.push({
                 contract,
                 vtxos: addVtxos(
@@ -2274,7 +2302,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) return null;
 
         const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
-            this.repoSnapshot(),
+            this.repoSnapshot({ includeRecoveryOnly: true }),
             this.readonlyWallet.getBoardingTxs(),
         ]);
 

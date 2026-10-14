@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { OnchainProvider } from "../src/providers/onchain";
 import { Executor, ExecutorEvent } from "../src/wallet/exit/executor";
 import { ExitPackage, ExitStep } from "../src/wallet/exit/types";
 
@@ -40,7 +41,7 @@ function scriptedProvider(opts?: { rejectTxids?: Set<string> }) {
                 state.set(txid, { confirmed: false });
                 return txid;
             },
-        } as never,
+        } as unknown as OnchainProvider,
     };
 }
 

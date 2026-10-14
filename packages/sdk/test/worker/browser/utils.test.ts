@@ -52,7 +52,7 @@ describe("setupServiceWorker", () => {
 
         stubNavigator({
             register: vi.fn().mockResolvedValue({
-                installing: { state: "installing" },
+                installing: { state: "installing" } as ServiceWorker,
                 update,
             } satisfies Partial<ServiceWorkerRegistration>),
             ready,
@@ -76,7 +76,7 @@ describe("setupServiceWorker", () => {
         const update = vi.fn().mockResolvedValue(undefined);
         stubNavigator({
             register: vi.fn().mockResolvedValue({
-                installing: { state: "installing" },
+                installing: { state: "installing" } as ServiceWorker,
                 update,
             } satisfies Partial<ServiceWorkerRegistration>),
             ready: new Promise<ServiceWorkerRegistration>(() => {}),

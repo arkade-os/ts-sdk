@@ -2,18 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     Contract,
     ContractEvent,
-    ContractManager,
+    type ContractVtxo,
     ContractWatcher,
-    DefaultContractHandler,
-    DefaultVtxo,
     type IndexerProvider,
-    InMemoryContractRepository,
     InMemoryWalletRepository,
     EventSourceUnavailableError,
 } from "../../src";
 import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import type { SubscriptionResponse } from "../../src/providers/indexer";
-import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
@@ -228,7 +224,7 @@ describe("ContractWatcher", () => {
                 // succeed when called without an ID (fresh subscription).
                 const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<typeof vi.fn>;
                 subscribeMock.mockReset();
-                subscribeMock.mockImplementation((scripts: string[], existingId?: string) => {
+                subscribeMock.mockImplementation((_scripts: string[], existingId?: string) => {
                     if (existingId) {
                         return Promise.reject(new Error(message(existingId)));
                     }
@@ -373,7 +369,7 @@ describe("ContractWatcher", () => {
 
                 expect(event.contractScript).toBe(TEST_DELEGATE_SCRIPT);
                 expect(event.vtxos).toHaveLength(1);
-                const vtxo = event.vtxos[0];
+                const vtxo = event.vtxos[0] as ContractVtxo;
                 expect(vtxo.contractScript).toBe(TEST_DELEGATE_SCRIPT);
                 // The exact tapscript bytes must come from the delegate
                 // handler. A regression that fell back to the default
@@ -423,7 +419,7 @@ describe("ContractWatcher", () => {
                     throw new Error("unreachable");
                 }
                 expect(event.vtxos).toHaveLength(1);
-                const vtxo = event.vtxos[0];
+                const vtxo = event.vtxos[0] as ContractVtxo;
                 expect(vtxo.contractScript).toBe(fakeScript);
                 expect(vtxo.forfeitTapLeafScript).toBeUndefined();
                 expect(vtxo.intentTapLeafScript).toBeUndefined();

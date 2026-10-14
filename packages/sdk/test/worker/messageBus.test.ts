@@ -1040,7 +1040,7 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         const bResponse = postMessage.mock.calls.find(
             (c) => (c[0] as ResponseEnvelope).tag === "B_HANDLER",
         )?.[0] as ResponseEnvelope;
-        expect(bResponse.payload).toEqual({ ok: true });
+        expect((bResponse as unknown as { payload: unknown }).payload).toEqual({ ok: true });
 
         await bus.stop();
     });

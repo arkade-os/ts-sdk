@@ -127,7 +127,9 @@ type Options = {
      * `storage.intentRepository`. Same opt-in as a main-thread wallet: without
      * it the worker persists no settlement intent, reconciles none on restart,
      * and counts intent-locked VTXOs as available. Pass the same repository the
-     * main thread uses so both sides read one intent state.
+     * main thread uses so both sides read one intent state, but settle from one
+     * side only: reconciliation deletes from the server any pending intent the
+     * worker's wallet is not settling itself.
      *
      * Ignored when `buildServices` is supplied — that override owns `storage`.
      */

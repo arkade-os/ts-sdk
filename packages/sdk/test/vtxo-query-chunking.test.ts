@@ -39,7 +39,6 @@ const vtxoFor = (script: string, n: number): VirtualCoin => ({
     vout: 0,
     value: 1000,
     status: { confirmed: true },
-    virtualStatus: { state: "settled" },
     createdAt: new Date(),
     isUnrolled: false,
     isSpent: false,

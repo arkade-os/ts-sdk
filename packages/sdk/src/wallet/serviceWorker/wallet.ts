@@ -1040,7 +1040,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         try {
             const response = await this.sendMessage(message);
             return (response as ResponseGetArkadeInfo).payload.info;
-        } catch (error) {
+        } catch (cause) {
             // Keep the original reachable as `cause`. Unlike its siblings, this
             // call reaches `resolveArkInfo` in the worker, which distinguishes
             // `ProviderUnavailableError` (offline — retry) from
@@ -1050,7 +1050,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // the worker sends the name beside the error as plain data and
             // `restoreErrorName` puts it back — which is what makes
             // `cause.name` the one thing a page can branch on.
-            throw new Error(`Failed to get arkade info: ${error}`, { cause: error });
+            throw new Error(`Failed to get arkade info: ${cause}`, { cause });
         }
     }
 
@@ -1080,8 +1080,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // array. `page` is copied for the same reason: dedup
                     // settles every caller with ONE shared response.
                     return { vtxos: vtxos.map(normalizeVtxo), page: page && { ...page } };
-                } catch (error) {
-                    throw new Error(`Failed to get vtxos: ${error}`, { cause: error });
+                } catch (cause) {
+                    throw new Error(`Failed to get vtxos: ${cause}`, { cause });
                 }
             },
             getVirtualTxs: async (txids, opts) => {
@@ -1099,8 +1099,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // returned by reference, a `txs.sort()` in one caller
                     // would silently reorder the other's result.
                     return { txs: [...txs], page: page && { ...page } };
-                } catch (error) {
-                    throw new Error(`Failed to get virtual txs: ${error}`, { cause: error });
+                } catch (cause) {
+                    throw new Error(`Failed to get virtual txs: ${cause}`, { cause });
                 }
             },
         };
@@ -1330,8 +1330,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // a prior degradation) — refresh the cached view.
                     await refreshSyncState();
                     return (response as ResponseCreateContract).payload.contract;
-                } catch (e) {
-                    throw new Error("Failed to create contract");
+                } catch (cause) {
+                    throw new Error(`Failed to create contract: ${cause}`, { cause });
                 }
             },
 
@@ -1345,8 +1345,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetContracts).payload.contracts;
-                } catch (e) {
-                    throw new Error("Failed to get contracts");
+                } catch (cause) {
+                    throw new Error(`Failed to get contracts: ${cause}`, { cause });
                 }
             },
 
@@ -1375,8 +1375,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     // to repository data or recovered — refresh the cached view.
                     await refreshSyncState();
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
-                } catch (e) {
-                    throw new Error("Failed to get contracts with vtxos");
+                } catch (cause) {
+                    throw new Error(`Failed to get contracts with vtxos: ${cause}`, {
+                        cause,
+                    });
                 }
             },
 
@@ -1392,8 +1394,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     await sendContractMessage(message);
-                } catch (e) {
-                    throw new Error("Failed to watch script");
+                } catch (cause) {
+                    throw new Error(`Failed to watch script: ${cause}`, { cause });
                 }
             },
 
@@ -1406,8 +1408,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 try {
                     await sendContractMessage(message);
-                } catch (e) {
-                    throw new Error("Failed to unwatch script");
+                } catch (cause) {
+                    throw new Error(`Failed to unwatch script: ${cause}`, { cause });
                 }
             },
 
@@ -1421,8 +1423,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetWatchedScripts).payload.scripts;
-                } catch (e) {
-                    throw new Error("Failed to get watched scripts");
+                } catch (cause) {
+                    throw new Error(`Failed to get watched scripts: ${cause}`, { cause });
                 }
             },
 
@@ -1462,8 +1464,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseAnnotateVtxos).payload.vtxos.map(normalizeVtxo);
-                } catch (e) {
-                    throw new Error("Failed to annotate vtxos");
+                } catch (cause) {
+                    throw new Error(`Failed to annotate vtxos: ${cause}`, { cause });
                 }
             },
 
@@ -1480,8 +1482,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseUpdateContract).payload.contract;
-                } catch (e) {
-                    throw new Error("Failed to update contract");
+                } catch (cause) {
+                    throw new Error(`Failed to update contract: ${cause}`, { cause });
                 }
             },
 
@@ -1495,8 +1497,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     await sendContractMessage(message);
                     return;
-                } catch (e) {
-                    throw new Error("Failed to update contract state");
+                } catch (cause) {
+                    throw new Error(`Failed to update contract state: ${cause}`, { cause });
                 }
             },
 
@@ -1505,13 +1507,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { script, updates: { watch } },
+                    payload: { script, updates: { watch }, watchStateOnly: true },
                 };
                 try {
                     await sendContractMessage(message);
                     return;
-                } catch (e) {
-                    throw new Error("Failed to update contract watch state");
+                } catch (cause) {
+                    throw new Error(`Failed to update contract watch state: ${cause}`, {
+                        cause,
+                    });
                 }
             },
 
@@ -1525,8 +1529,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     await sendContractMessage(message);
                     return;
-                } catch (e) {
-                    throw new Error("Failed to delete contract");
+                } catch (cause) {
+                    throw new Error(`Failed to delete contract: ${cause}`, { cause });
                 }
             },
 
@@ -1540,8 +1544,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetSpendablePaths).payload.paths;
-                } catch (e) {
-                    throw new Error("Failed to get spendable paths");
+                } catch (cause) {
+                    throw new Error(`Failed to get spendable paths: ${cause}`, { cause });
                 }
             },
 
@@ -1557,8 +1561,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetAllSpendingPaths).payload.paths;
-                } catch (e) {
-                    throw new Error("Failed to get all spending paths");
+                } catch (cause) {
+                    throw new Error(`Failed to get all spending paths: ${cause}`, { cause });
                 }
             },
 
@@ -1675,8 +1679,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseIsContractManagerWatching).payload.isWatching;
-                } catch (e) {
-                    throw new Error("Failed to check if contract manager is watching");
+                } catch (cause) {
+                    throw new Error(`Failed to check if contract manager is watching: ${cause}`, {
+                        cause,
+                    });
                 }
             },
 
@@ -1866,8 +1872,8 @@ export class ServiceWorkerWallet
         try {
             const response = await this.sendMessage(message);
             return (response as ResponseGetNewAddresses).payload.addresses;
-        } catch (error) {
-            throw new Error(`Failed to allocate new addresses: ${error}`, { cause: error });
+        } catch (cause) {
+            throw new Error(`Failed to allocate new addresses: ${cause}`, { cause });
         }
     }
 
@@ -1940,8 +1946,8 @@ export class ServiceWorkerWallet
                 try {
                     const response = await this.sendMessage(message);
                     return (response as ResponseSubmitTx).payload;
-                } catch (error) {
-                    throw new Error(`Failed to submit tx: ${error}`, { cause: error });
+                } catch (cause) {
+                    throw new Error(`Failed to submit tx: ${cause}`, { cause });
                 }
             },
             finalizeTx: async (arkTxid, finalCheckpointTxs) => {
@@ -1953,8 +1959,8 @@ export class ServiceWorkerWallet
                 };
                 try {
                     await this.sendMessage(message);
-                } catch (error) {
-                    throw new Error(`Failed to finalize tx: ${error}`, { cause: error });
+                } catch (cause) {
+                    throw new Error(`Failed to finalize tx: ${cause}`, { cause });
                 }
             },
         };

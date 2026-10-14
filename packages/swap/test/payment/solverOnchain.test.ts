@@ -49,6 +49,7 @@ const negotiated = (fundAmount: number, toAmount: number) =>
         address: "tark1lockup",
         fundAmount,
         quote: {
+            pair: "arkade:BTC->onchain:BTC",
             from_amount: fundAmount,
             to_amount: toAmount,
             valid_until: NOW() + 3600,
@@ -76,7 +77,7 @@ const depsWith = (over: Partial<SolverOnchainRailDeps> = {}): SolverOnchainRailD
 
 /** Stub `requestOnchainSend` for the tests that drive quote()/send(). */
 const mockRequest = (result = negotiated(101_000, 100_000)) => {
-    const spy = vi.fn(async () => result);
+    const spy = vi.fn(async (..._args: unknown[]) => result);
     return { spy, result };
 };
 

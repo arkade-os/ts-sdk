@@ -29,6 +29,7 @@ import {
     AddressMismatch,
     LIGHTNING_RECEIVE_PAIR,
     ONCHAIN_RECEIVE_PAIR,
+    SwapRefusal,
     assertReceivable,
     deriveLightningReceive,
     deriveOnchainReceive,
@@ -777,15 +778,26 @@ const lightningReceiveFlow = async (
         /** Reuse a wallet across flows, to observe what a second call
          * allocates. Carries its own writer, so `register` does not apply. */
         wallet?: IWallet;
+        /** How many requests the solver refuses `quote_conflict` before quoting. */
+        conflicts?: number;
     } = {},
 ) => {
     const createContract = vi.fn(over.register ?? (async () => ({})));
     const wallet = over.wallet ?? (await hdWallet(createContract));
-    const seen: { paymentHash?: string; payoutPubkey?: string; claimPacket?: unknown } = {};
+    const seen: {
+        paymentHash?: string;
+        payoutPubkey?: string;
+        claimPacket?: unknown;
+        requests: { rfqId: string; paymentHash: string }[];
+    } = { requests: [] };
     const transport: RfqTransport = {
         async requestQuote(payload) {
             const profile = (payload as { profile: Record<string, unknown> }).profile;
             seen.paymentHash = profile.payment_hash as string;
+            seen.requests.push({ rfqId: payload.rfq_id as string, paymentHash: seen.paymentHash });
+            if (seen.requests.length <= (over.conflicts ?? 0)) {
+                throw new SwapRefusal("quote_conflict", payload.rfq_id as string);
+            }
             seen.payoutPubkey = profile.payout_pubkey as string;
             seen.claimPacket = profile.claim_packet;
             return receiveQuote(payload, { from: 5_000, to: 4_950, ...over.quote });
@@ -978,6 +990,47 @@ describe("requestLightningReceive on an HD wallet", () => {
 
         expect(first.seen.paymentHash).toBeDefined();
         expect(second.seen.paymentHash).not.toBe(first.seen.paymentHash);
+    });
+
+    // Another wallet on this seed, behind its own watermark, already spent this index's hash.
+    it("retries a quote_conflict once on the next index, under the same rfq_id", async () => {
+        const flow = await lightningReceiveFlow({ conflicts: 1 });
+        const result = await flow.run();
+
+        const [refused, quoted] = flow.seen.requests;
+        expect(quoted.paymentHash).not.toBe(refused.paymentHash);
+        expect(quoted.rfqId).toBe(refused.rfqId);
+        expect(paymentHashOf(result.secrets.preimage)).toBe(quoted.paymentHash);
+    });
+
+    it("surfaces a second quote_conflict instead of burning more indices", async () => {
+        const flow = await lightningReceiveFlow({ conflicts: 2 });
+        await expect(flow.run()).rejects.toMatchObject({ reason: "quote_conflict" });
+        expect(flow.seen.requests).toHaveLength(2);
+        expect(flow.createContract).not.toHaveBeenCalled();
+    });
+
+    it("does not retry any other refusal", async () => {
+        const wallet = await hdWallet();
+        let calls = 0;
+        const transport: RfqTransport = {
+            async requestQuote(payload) {
+                calls++;
+                throw new SwapRefusal("exposure_cap", payload.rfq_id as string);
+            },
+            async status() {
+                return null;
+            },
+            async close() {},
+        };
+        await expect(
+            requestLightningReceive(wallet, transport, {
+                amount: 5_000,
+                amountSide: "from",
+                decodeInvoice: decodeStub,
+            }),
+        ).rejects.toMatchObject({ reason: "exposure_cap" });
+        expect(calls).toBe(1);
     });
 });
 

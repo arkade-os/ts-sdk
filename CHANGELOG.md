@@ -1,7 +1,10 @@
 # Changelog
 
-All notable changes to `@arkade-os/sdk` are documented here. Format
-conventions and section ordering are defined in [`CLAUDE.md`](CLAUDE.md).
+All notable changes to `@arkade-os/sdk` are documented here. Entries land
+under `## [Unreleased]` in the same commit as the change, grouped in this
+order (omit empty sections): `### Breaking Changes`, `### Features`,
+`### Bug Fixes`, `### Performance`, `### Internal`. See
+[`AGENTS.md`](AGENTS.md#changelog) for the mechanism.
 
 This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
@@ -10,6 +13,14 @@ style and have not been backfilled.
 ## [Unreleased]
 
 ### Added
+
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
 
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
@@ -31,6 +42,16 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
   contract, intent, or wallet repositories and swap repositories must implement
@@ -362,8 +383,24 @@ style and have not been backfilled.
   `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
   reads as 5,120 seconds and builds the artifact's own script bytes. A
   literal that does not round-trip through BIP68, such as `70000`, is
-  refused when the artifact is read. `$param` operands are still bound
-  as block counts. (#1012)
+  refused when the artifact is read. (#1012)
+
+- **`programFromArtifact` binds a `$param` CSV operand as a BIP68
+  sequence, not a block count.** The compiler emits a bare `<param>`
+  placeholder for a CSV operand and both it and the delegatee push the
+  parameter's raw value, which is the sequence. The reader tagged such
+  an operand `blocks`, so a seconds-domain exit delay could not be
+  built at all (`exitDelay = 4194472` threw `Expected Number blocks <=
+  65535`), and any delay a third party derived from the same artifact
+  pushed different bytes — a different address. An artifact CSV operand
+  now carries a new `sequence` kind in the Program format, decoded when
+  the parameter is bound with the same canonical check the literal path
+  uses; a value with the disable flag set or bits outside the value and
+  type fields is refused and names the parameter. A blocks-domain
+  sequence equals its block count, so every value that built before
+  builds the same bytes. Hand-written `blocks`/`seconds` programs are
+  unchanged. `ArtifactWitnessElement` also accepts the `encoding` field
+  `arkadec` tags signature witness items with.
 
 - **The missing-`EventSource` warning no longer promises polling.**
   `ContractWatcher` warned it was "falling back to polling", but for the
