@@ -4218,7 +4218,7 @@ describe("VtxoManager - renewal output split", () => {
 
     it("settles into every piece the plan asks for", async () => {
         const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
-        const manager = new VtxoManager(wallet, undefined, {});
+        const manager = new VtxoManager(wallet, undefined);
 
         await manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) });
 
@@ -4230,7 +4230,7 @@ describe("VtxoManager - renewal output split", () => {
 
     it("still settles into exactly one output when no split is given", async () => {
         const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
-        const manager = new VtxoManager(wallet, undefined, {});
+        const manager = new VtxoManager(wallet, undefined);
 
         await manager.renewVtxos();
 
@@ -4243,7 +4243,7 @@ describe("VtxoManager - renewal output split", () => {
         });
         const split = fixedSplit(4, [7000n]);
 
-        await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+        await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
         expect(split.seen[0].subtotal).toBe(7920n);
         expect(split.seen[0].address).toBe(ADDRESS);
@@ -4256,7 +4256,7 @@ describe("VtxoManager - renewal output split", () => {
         });
         const split = fixedSplit(4, [100_000n, 50_000n]);
 
-        await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+        await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
         const { outputFeeOn } = split.seen[0];
         expect(outputFeeOn(100_000n)).toBe(1000n);
@@ -4267,7 +4267,7 @@ describe("VtxoManager - renewal output split", () => {
         const wallet = createMockWallet([expiring(5000)], ADDRESS, { vtxoMaxAmount: 4000n });
         const split = fixedSplit(4, [3000n, 2000n]);
 
-        await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+        await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
         expect(split.seen[0].maxAmount).toBe(4000n);
         expect(split.seen[0].dust).toBe(1000n);
@@ -4278,13 +4278,13 @@ describe("VtxoManager - renewal output split", () => {
         const withoutSplit = createMockWallet([expiring(4000, "a"), expiring(4000, "b")], ADDRESS, {
             vtxoMaxAmount: 5000n,
         });
-        await new VtxoManager(withoutSplit, undefined, {}).renewVtxos();
+        await new VtxoManager(withoutSplit, undefined).renewVtxos();
         expect(settled(withoutSplit).inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
 
         const withSplit = createMockWallet([expiring(4000, "a"), expiring(4000, "b")], ADDRESS, {
             vtxoMaxAmount: 5000n,
         });
-        await new VtxoManager(withSplit, undefined, {}).renewVtxos(undefined, {
+        await new VtxoManager(withSplit, undefined).renewVtxos(undefined, {
             split: fixedSplit(4, [4000n, 4000n]),
         });
         expect(settled(withSplit).inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual([
@@ -4298,7 +4298,7 @@ describe("VtxoManager - renewal output split", () => {
     // against a number nothing was compared to.
     it("names the combined split capacity, not the per-output ceiling", async () => {
         const wallet = createMockWallet([expiring(22_000)], ADDRESS, { vtxoMaxAmount: 5000n });
-        const manager = new VtxoManager(wallet, undefined, {});
+        const manager = new VtxoManager(wallet, undefined);
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
         try {
@@ -4316,7 +4316,7 @@ describe("VtxoManager - renewal output split", () => {
     describe("refuses a plan the server would reject", () => {
         const renewWith = (split: RenewalSplit, options: MockWalletOptions = {}) => {
             const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, options);
-            const manager = new VtxoManager(wallet, undefined, {});
+            const manager = new VtxoManager(wallet, undefined);
             return { wallet, run: () => manager.renewVtxos(undefined, { split }) };
         };
 
@@ -4393,7 +4393,7 @@ describe("VtxoManager - renewal output split", () => {
             const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS);
             const split = fixedSplit(4, [5000n, 3000n]);
 
-            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
             expect(split.seen[0].hasAssets).toBe(false);
         });
@@ -4402,14 +4402,14 @@ describe("VtxoManager - renewal output split", () => {
             const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
             const split = fixedSplit(4, [8000n]);
 
-            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
             expect(split.seen[0].hasAssets).toBe(true);
         });
 
         it("refuses a multi-piece plan over asset-bearing inputs", async () => {
             const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
-            const manager = new VtxoManager(wallet, undefined, {});
+            const manager = new VtxoManager(wallet, undefined);
 
             await expect(
                 manager.renewVtxos(undefined, { split: fixedSplit(4, [5000n, 3000n]) }),
@@ -4421,7 +4421,7 @@ describe("VtxoManager - renewal output split", () => {
         it("still renews an asset-bearing float into one piece", async () => {
             const wallet = createMockWallet([withAssets(5000), expiring(3000)], ADDRESS);
 
-            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, {
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, {
                 split: fixedSplit(4, [8000n]),
             });
 
@@ -4440,7 +4440,7 @@ describe("VtxoManager - renewal output split", () => {
                     hasAssets ? [subtotal] : [subtotal / 2n, subtotal / 2n],
             };
 
-            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
             const args = settled(wallet);
             expect(args.inputs.map((v: ExtendedVirtualCoin) => v.txid)).toEqual(["a"]);
@@ -4454,7 +4454,7 @@ describe("VtxoManager - renewal output split", () => {
             });
             const split = fixedSplit(4, [2000n, 1000n]);
 
-            await new VtxoManager(wallet, undefined, {}).renewVtxos(undefined, { split });
+            await new VtxoManager(wallet, undefined).renewVtxos(undefined, { split });
 
             expect(split.seen[0].hasAssets).toBe(false);
             expect(settled(wallet).outputs).toHaveLength(2);
