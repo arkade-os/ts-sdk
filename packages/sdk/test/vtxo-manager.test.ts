@@ -1166,7 +1166,7 @@ describe("VtxoManager - Renewal", () => {
             // dropped — so the renewal selection only holds if the manager asks
             // for a filter that leaves `withUnrolled` off.
             (wallet.getSpendableVtxos as any).mockImplementation(async (filter: any) =>
-                filterSnapshotVtxos([{ vtxos } as any], filter, new Set()),
+                filterSnapshotVtxos([{ contract: {}, vtxos } as any], filter, new Set()),
             );
             const manager = new VtxoManager(wallet, {
                 vtxoThreshold: 100,

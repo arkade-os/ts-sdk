@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ArkadeCash } from "../src/arkadeCash";
-import { hex } from "@scure/base";
+import { bech32m, hex } from "@scure/base";
 import { pubSchnorr } from "@scure/btc-signer/utils.js";
 
 describe("ArkadeCash", () => {
@@ -51,14 +51,14 @@ describe("ArkadeCash", () => {
                     type: "blocks",
                     value: 144n,
                 },
-                "tarkcash",
+                "tarkadecash",
             );
 
             const encoded = cash.toString();
-            expect(encoded.startsWith("tarkcash1")).toBe(true);
+            expect(encoded.startsWith("tarkadecash1")).toBe(true);
 
             const decoded = ArkadeCash.fromString(encoded);
-            expect(decoded.hrp).toBe("tarkcash");
+            expect(decoded.hrp).toBe("tarkadecash");
         });
     });
 
@@ -198,7 +198,30 @@ describe("ArkadeCash", () => {
         });
 
         it("should throw on wrong data length", () => {
-            expect(() => ArkadeCash.fromString("arkcash1qqqqqqqqq0saqvp")).toThrow();
+            const short = bech32m.encode("arkadecash", bech32m.toWords(new Uint8Array(4)));
+            expect(() => ArkadeCash.fromString(short)).toThrow("Invalid arkadeCash data length");
+        });
+
+        it("should reject the legacy arkcash prefix", () => {
+            const valid = new ArkadeCash(testPrivKey, testServerPubKey, {
+                type: "blocks",
+                value: 144n,
+            }).toString();
+            const { words } = bech32m.decode(valid as `${string}1${string}`, 1023);
+            const legacy = bech32m.encode("arkcash", words, 1023);
+            expect(() => ArkadeCash.fromString(legacy)).toThrow("Invalid arkadeCash prefix");
+        });
+
+        it("should reject minting under a foreign prefix", () => {
+            expect(
+                () =>
+                    new ArkadeCash(
+                        testPrivKey,
+                        testServerPubKey,
+                        { type: "blocks", value: 144n },
+                        "arkcash",
+                    ),
+            ).toThrow("Invalid arkadeCash prefix");
         });
     });
 });
