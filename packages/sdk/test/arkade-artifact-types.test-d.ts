@@ -2,8 +2,9 @@ import { expectTypeOf, it } from "vitest";
 
 import type { ArtifactWitnessElement, ContractArtifact } from "../src/arkade/artifact";
 
-// arkadec v0.1.0-test tags every signature witness item with an encoding.
+// Compiler format v1 records the encoding of every leaf witness item.
 const artifact = {
+    formatVersion: 1,
     contractName: "T",
     constructorInputs: [{ name: "owner", type: "pubkey" }],
     functions: [
@@ -17,7 +18,6 @@ const artifact = {
                             name: "ownerSig",
                             type: "signature",
                             encoding: "schnorr-64",
-                            injected: true,
                         },
                     ],
                     asm: ["<owner>", "OP_CHECKSIG"],
