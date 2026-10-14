@@ -1,3 +1,4 @@
+import { assertTimerMs } from "../../utils/time";
 import {
     IWallet,
     WalletBalance,
@@ -531,6 +532,7 @@ const initializeMessageBus = (
     config: MessageBusInitConfig,
     timeoutMs = 2000,
 ) => {
+    assertTimerMs("messageBusTimeoutMs", timeoutMs);
     const initCmd = {
         tag: "INITIALIZE_MESSAGE_BUS",
         id: getRandomId(),
@@ -655,12 +657,17 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         // Precompute the merged timeout map so page-side waiting and
         // worker-side enforcement are derived from the same source.
-        const messageTimeouts = options.messageTimeouts
-            ? ({
-                  ...DEFAULT_MESSAGE_TIMEOUTS,
-                  ...options.messageTimeouts,
-              } as Record<RequestType, number>)
-            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+        // An undefined value means "use the default", so it must not reach the bus.
+        const overrides = Object.fromEntries(
+            Object.entries(options.messageTimeouts ?? {}).filter(([, ms]) => ms !== undefined),
+        );
+        for (const [key, value] of Object.entries(overrides)) {
+            assertTimerMs(`messageTimeouts.${key}`, value);
+        }
+        const messageTimeouts = {
+            ...DEFAULT_MESSAGE_TIMEOUTS,
+            ...overrides,
+        } as Record<RequestType, number>;
 
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,

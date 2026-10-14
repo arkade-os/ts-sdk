@@ -128,6 +128,15 @@ describe("quoteOffer with the package quote options", () => {
 });
 
 describe("makeCachedFeedFetch", () => {
+    it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+        "rejects invalid TTL %s",
+        (ttl) => {
+            expect(() => makeCachedFeedFetch(ttl)).toThrow(
+                "ttlMs must be a non-negative safe integer",
+            );
+        },
+    );
+
     it("keeps repeated quotes within the TTL to a single feed call", async () => {
         // the invariant behind the wallet's flat-feedCalls screen test: a burst of
         // debounced quotes against the same feed URL must hit the network once, or

@@ -17,6 +17,7 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import * as btc from "@scure/btc-signer";
+import { assertTimerMs } from "@arkade-os/sdk";
 
 // ── Guardrail constants (rfq.ts re-exports these; defined here to keep the
 //    claim path free of an rfq.ts import cycle) ───────────────────────────────
@@ -93,6 +94,7 @@ export async function pollUntil<T>(
     message: string,
 ): Promise<T> {
     const pollMs = options.pollMs ?? 5_000;
+    assertTimerMs("pollMs", pollMs);
     for (;;) {
         const value = await probe();
         if (value !== undefined) return value;

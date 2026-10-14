@@ -1,6 +1,7 @@
 import { OnchainProvider } from "../../providers/onchain";
 import { notifyExitObserved, type OnExitObserved } from "../exitObserver";
 import { ExitPackage, ExitStep, SweepStep } from "./types";
+import { assertTimerMs } from "../../utils/time";
 
 /**
  * Resolve the value to throw for an aborted signal.
@@ -100,6 +101,7 @@ export class Executor implements AsyncIterable<ExecutorEvent> {
         readonly provider: OnchainProvider,
         opts?: ExecutorOptions,
     ) {
+        assertTimerMs("pollIntervalMs", opts?.pollIntervalMs);
         this.pollIntervalMs = opts?.pollIntervalMs ?? 5_000;
         this.feeWallet = opts?.feeWallet;
         this.signal = opts?.signal;

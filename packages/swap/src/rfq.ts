@@ -28,6 +28,7 @@ import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
     ArkAddress,
+    assertTimerMs,
     VHTLC,
     asset,
     networkFromArkadeInfo,
@@ -800,6 +801,7 @@ export const relayTransport = (
     },
 ): RfqTransport => {
     const timeoutMs = options.timeoutMs ?? 30_000;
+    assertTimerMs("timeoutMs", timeoutMs);
     const Ctor =
         options.WebSocketCtor ?? (WebSocket as unknown as new (url: string) => RelaySocket);
     const pending = new Map<string, (payload: unknown) => void>();
