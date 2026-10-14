@@ -121,6 +121,7 @@ function sweptCashVtxo(cashPkScript: string): VirtualCoin {
         virtualStatus: { state: "swept" },
         isSwept: true,
         isSpent: false,
+        isUnrolled: false,
         createdAt: new Date(),
     } as VirtualCoin;
 }
