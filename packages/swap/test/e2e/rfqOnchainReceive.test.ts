@@ -26,12 +26,12 @@ import {
     classifyOnchainHtlc,
     nextOnchainReceiveAction,
     onchainHtlcScript,
-    receiveVtxoScript,
+    lightningReceiveContract,
     requestOnchainReceive,
     unilateralClaimDelay,
     type RfqQuote,
     type RfqTransport,
-} from "../../src";
+} from "../../src/protocol";
 
 const ARK_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
@@ -112,10 +112,10 @@ const stubTransport = (): RfqTransport => ({
             },
             "regtest",
         );
-        const lockup = receiveVtxoScript({
+        const lockup = lightningReceiveContract({
             solverPubkey: SOLVER,
             refundLocktime,
-            serverPubkey: operatorPubkey,
+            operatorPubkey,
             paymentHash,
             claimDelay,
             emulatorPubkey,
@@ -193,7 +193,7 @@ const classifier = (htlc: Parameters<typeof classifyOnchainHtlc>[1]["htlc"]) => 
 
 describe("onchain-receive corridor L1 half (regtest)", () => {
     it("walks the corridor's OWN htlc from unfunded to claimable on real chain state", async () => {
-        const received = await requestOnchainReceive(wallet, ARK_URL, stubTransport(), {
+        const received = await requestOnchainReceive(wallet, stubTransport(), {
             amount: SWAP_SATS,
             amountSide: "from",
             refundPubkey: traderRefundKey,

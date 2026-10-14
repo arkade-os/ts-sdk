@@ -874,6 +874,7 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         const m = new RfqSwapManager(
             {
                 indexer: fakeIndexer({ vtxos: [] }),
+                contracts: fakeContracts({ preexisting: REGISTERED_LOCKUP_ROWS() }),
                 chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
             },
             { now: () => SAFE_NOW },
