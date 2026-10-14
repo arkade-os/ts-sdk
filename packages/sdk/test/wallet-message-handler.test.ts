@@ -14,6 +14,7 @@ import {
     createMockIndexerProvider,
     TEST_DEFAULT_ARK_ADDRESS,
     TEST_DEFAULT_SCRIPT,
+    TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
 const baseMessage = (id: string = "1") => ({
     id,
@@ -1598,6 +1599,8 @@ describe("WalletMessageHandler handleMessage", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1741,6 +1744,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["boarding-address"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -2651,6 +2656,8 @@ describe("WalletMessageHandler event-push generations", () => {
         }),
         notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+        getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
         dispose: vi.fn().mockResolvedValue(undefined),
         clear: vi.fn().mockResolvedValue(undefined),
         ...overrides,

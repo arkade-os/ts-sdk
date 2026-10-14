@@ -1645,8 +1645,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fetch boarding UTXOs for the given signer set, grouped per address (see
-     * {@link BoardingUtxoGroup} for why), replacing the cache only for fetched addresses. No
+     * Fetch and cache boarding UTXOs for the given signer set, grouped per address (see
+     * {@link BoardingUtxoGroup} for why), saving every group in one `saveUtxos`. No
      * `getInfo()`: the only network calls are the per-address `getCoins`.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
@@ -1672,12 +1672,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Wait for every fetch before touching the cache so a network failure preserves it.
-        // saveUtxos merges: clear only the addresses we fetched, including empty results,
-        // so spent coins disappear without deleting unqueried deprecated-signer rows.
-        for (const address of addresses) {
-            await this.walletRepository.deleteUtxos(address);
-        }
+        // One write, made only once every fetch has succeeded, so a failure writes nothing.
         await this.walletRepository.saveUtxos(
             new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
         );

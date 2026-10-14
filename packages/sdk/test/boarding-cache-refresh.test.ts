@@ -21,7 +21,8 @@ const coin = (byte: string): Coin => ({
     value: 10_000,
     status: { confirmed: false },
 });
-const refreshPaths = ["direct", "INIT_WALLET", "RELOAD_WALLET"] as const;
+const workerPaths = ["INIT_WALLET", "RELOAD_WALLET"] as const;
+const refreshPaths = ["direct", ...workerPaths] as const;
 type RefreshPath = (typeof refreshPaths)[number];
 
 async function setup(hd: boolean) {
@@ -30,7 +31,10 @@ async function setup(hd: boolean) {
         : makeStaticWalletForTest());
     onTestFinished(() => wallet.dispose());
     const currentAddresses = [await wallet.getBoardingAddress()];
-    if (hd) currentAddresses.push(await wallet.getNewBoardingAddress());
+    if (hd) {
+        currentAddresses.push(await wallet.getNewBoardingAddress());
+        currentAddresses.push(await wallet.getNewBoardingAddress());
+    }
 
     // Persist a boarding contract from before the server rotated its signer.
     const params = {
@@ -54,9 +58,13 @@ async function setup(hd: boolean) {
 
     const coinsByAddress = new Map<string, Coin[]>([
         [currentAddresses[0], [coin("11")]],
-        ...(hd ? ([[currentAddresses[1], [coin("22")]]] as [string, Coin[]][]) : []),
+
         [deprecatedAddress, [coin("dd")]],
     ]);
+    if (hd) {
+        coinsByAddress.set(currentAddresses[1], [coin("22")]);
+        coinsByAddress.set(currentAddresses[2], [coin("44")]);
+    }
     const getCoins = vi
         .spyOn(wallet.onchainProvider, "getCoins")
         .mockImplementation(async (address) => {
@@ -112,7 +120,7 @@ describe("boarding cache refresh", () => {
     afterEach(teardownRestoreHarness);
 
     describe.each([false, true])("HD=%s", (hd) => {
-        it.each(refreshPaths)(
+        it.each(workerPaths)(
             "%s replaces fetched rows and preserves deprecated rows",
             async (path) => {
                 const fixture = await setup(hd);
@@ -128,8 +136,14 @@ describe("boarding cache refresh", () => {
                 expect(
                     (await collectUtxos(walletRepository, currentAddresses[0])).map((c) => c.txid),
                 ).toEqual([coin("33").txid]);
-                if (hd)
+                if (hd) {
                     expect(await collectUtxos(walletRepository, currentAddresses[1])).toEqual([]);
+                    expect(
+                        (await collectUtxos(walletRepository, currentAddresses[2])).map(
+                            (c) => c.txid,
+                        ),
+                    ).toEqual([coin("44").txid]);
+                }
                 expect(await collectUtxos(walletRepository, deprecatedAddress)).toEqual(
                     deprecatedBefore,
                 );
@@ -139,7 +153,7 @@ describe("boarding cache refresh", () => {
             },
         );
 
-        it.each(refreshPaths)(
+        it.each(workerPaths)(
             "%s preserves deprecated rows when every fetched address is empty",
             async (path) => {
                 const fixture = await setup(hd);
@@ -184,15 +198,26 @@ describe("boarding cache refresh", () => {
         },
     );
 
-    it("removes stale deprecated rows when migration explicitly fetches their address", async () => {
-        const fixture = await setup(false);
-        fixture.coinsByAddress.set(fixture.deprecatedAddress, []);
+    it.each(refreshPaths)(
+        "%s preserves the previous cache if saving the fetched coins fails",
+        async (path) => {
+            const fixture = await setup(true);
+            const addresses = [...fixture.currentAddresses, fixture.deprecatedAddress];
+            const before = await Promise.all(
+                addresses.map((address) => collectUtxos(fixture.walletRepository, address)),
+            );
+            fixture.coinsByAddress.set(fixture.currentAddresses[0], [coin("33")]);
+            vi.spyOn(fixture.walletRepository, "saveUtxos").mockRejectedValue(
+                new DOMException("Storage transaction aborted", "AbortError"),
+            );
 
-        await fixture.wallet.getBoardingUtxosForSigners(fixture.signers);
+            await expect(fixture.refresh(path)).rejects.toThrow("Storage transaction aborted");
 
-        expect(await collectUtxos(fixture.walletRepository, fixture.deprecatedAddress)).toEqual([]);
-        expect(
-            await collectUtxos(fixture.walletRepository, fixture.currentAddresses[0]),
-        ).toHaveLength(1);
-    });
+            expect(
+                await Promise.all(
+                    addresses.map((address) => collectUtxos(fixture.walletRepository, address)),
+                ),
+            ).toEqual(before);
+        },
+    );
 });

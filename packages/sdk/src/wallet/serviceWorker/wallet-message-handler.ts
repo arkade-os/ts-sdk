@@ -1,3 +1,5 @@
+import { hex } from "@scure/base";
+import { collectUtxos } from "../../repositories/walletRepository";
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
@@ -69,7 +71,7 @@ import type {
     MigrationVtxoRef,
     RenewVtxosOptions,
 } from "../vtxo-manager";
-import type { SignerStatus } from "../signerRotation";
+import { type SignerStatus, toXOnlySignerHex } from "../signerRotation";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
@@ -2023,9 +2025,26 @@ export class WalletMessageHandler
             return;
         }
 
-        // The wallet refreshes only fetched addresses, preserving cached boarding inputs
-        // at deprecated-signer addresses that normal boarding reads deliberately exclude.
-        await this.readonlyWallet.getBoardingUtxos();
+        // Fetch only current-signer boarding inputs, as getBoardingUtxos does. Keep the
+        // groups so cleanup covers exactly the fetched addresses, including empty ones.
+        const wallet = this.readonlyWallet;
+        const repository = this.walletRepository;
+        const currentSigner = toXOnlySignerHex(
+            hex.encode(wallet.boardingTapscript.options.serverPubKey),
+        );
+        const groups = await wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
+
+        // The fetch saves before returning: if fetching or that save fails, leave the
+        // previous snapshot intact. saveUtxos merges, so prune stale rows afterward.
+        for (const { tapscript, coins } of groups) {
+            const address = tapscript.onchainAddress(wallet.network);
+            const freshKeys = new Set(coins.map((coin) => `${coin.txid}:${coin.vout}`));
+            const cached = await collectUtxos(repository, address);
+            const kept = cached.filter((coin) => freshKeys.has(`${coin.txid}:${coin.vout}`));
+            if (kept.length === cached.length) continue;
+            await repository.deleteUtxos(address);
+            if (kept.length > 0) await repository.saveUtxos(address, kept);
+        }
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
