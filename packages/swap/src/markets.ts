@@ -12,6 +12,7 @@ import {
     marketLegKey,
     registryIndexUrl,
     sideLimits,
+    stableStringify,
     type DiscoveredMarket,
     type LocalCardInput,
     type Network,
@@ -95,6 +96,13 @@ export const makeCachedFeedFetch = (
 /** How long a discovered market set is reused. Shared with v2 discovery so the two
  * paths cannot drift into different answers. */
 export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** How often a watcher re-reads; the cache above still decides when the network is asked. */
+export const MARKETS_WATCH_INTERVAL_MS = 5 * 60 * 1000;
+
+/** A market set compared as a set: a re-ranking is no change. */
+export const marketSetDigest = (markets: readonly DiscoveredMarket[]): string =>
+    markets.map(stableStringify).sort().join("\n");
 
 /** Lazy, so `nostr-tools` stays an optional peer: `discover()` fetches only with a solver to ask. */
 const nostrCards: TransportCardFetcher = {
@@ -209,6 +217,48 @@ export const discoverMarkets = async (
         }
     }
     return markets;
+};
+
+export interface WatchMarketsOptions extends DiscoverMarketsOptions {
+    /** Defaults to {@link MARKETS_WATCH_INTERVAL_MS}. */
+    intervalMs?: number;
+}
+
+/**
+ * {@link discoverMarkets} kept current for a long-lived view: `onMarkets` gets the first read,
+ * then every later read that changes the market set (a solver added, a card changed, a solver
+ * gone). Returns a stop function. Pass a `repository` so a failed read answers from the cache.
+ */
+export const watchMarkets = (
+    options: WatchMarketsOptions,
+    onMarkets: (markets: DiscoveredMarket[]) => void,
+): (() => void) => {
+    let digest: string | undefined;
+    let reading = false;
+    let stopped = false;
+    const read = async (): Promise<void> => {
+        if (reading) return;
+        reading = true;
+        try {
+            const markets = await discoverMarkets(options);
+            const next = marketSetDigest(markets);
+            if (stopped || next === digest) return;
+            digest = next;
+            onMarkets(markets);
+        } catch (error) {
+            // a timer has nobody to throw to; the next tick reads again
+            options.logger?.("solver discovery watch:", error);
+        } finally {
+            reading = false;
+        }
+    };
+    void read();
+    const timer = setInterval(read, options.intervalMs ?? MARKETS_WATCH_INTERVAL_MS);
+    (timer as { unref?: () => void }).unref?.();
+    return () => {
+        stopped = true;
+        clearInterval(timer);
+    };
 };
 
 /** Best market for a from/to pair, in either orientation. `give` is the side

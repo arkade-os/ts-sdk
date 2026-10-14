@@ -360,7 +360,11 @@ style and have not been backfilled.
   and gone within that window. `discovery: { watch: true }` also refetches
   every `watchIntervalMs` (five minutes by default) while a
   `client.onMarketsChanged` listener is attached, and the listener receives
-  `markets()`'s answer whenever the market set changes. Needs
+  `markets()`'s answer whenever the market set changes. A view that reads
+  markets without a client (another tab, a status page) gets the same with
+  `watchMarkets(options, onMarkets)` from `@arkade-os/swap/protocol`, which
+  returns a stop function. A stale registry index no longer takes its
+  pointer-listed solvers with it: their fresh cards still count. Needs
   `@arkade-os/solver-discovery` 0.3.0.
 
 ### Bug Fixes

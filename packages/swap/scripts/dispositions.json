@@ -144,6 +144,7 @@
         "LockupSpend",
         "LockupVtxo",
         "makeCachedFeedFetch",
+        "MARKETS_WATCH_INTERVAL_MS",
         "MAX_MIN_CONFIRMATIONS",
         "newPreimage",
         "nextOnchainAction",
@@ -272,6 +273,8 @@
         "verifyLockupAddress",
         "verifyOfferAddress",
         "verifyReceiveInvoice",
+        "watchMarkets",
+        "WatchMarketsOptions",
         "watchOfferSwaps",
         "WatchOfferSwapsParams"
     ],

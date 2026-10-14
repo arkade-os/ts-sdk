@@ -19,14 +19,13 @@ import {
     MAX_RELAYS,
     discover,
     isRfqMarket,
-    stableStringify,
     type DiscoveredMarket,
     type LocalCardInput,
     type Network as IndexedNetwork,
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import type { NetworkName } from "@arkade-os/sdk";
-import { MARKETS_CACHE_TTL_MS, transportCardsOf } from "../markets";
+import { MARKETS_CACHE_TTL_MS, marketSetDigest, transportCardsOf } from "../markets";
 import type { AssetSwapRepository } from "../repository";
 import { marketAssetId } from "../marketShape";
 import { isIndexedNetwork } from "./aliases";
@@ -208,7 +207,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     const hold = (snapshot: DiscoverySnapshot): DiscoverySnapshot => {
         const previous = digest;
         held = snapshot;
-        digest = snapshot.markets.map(stableStringify).sort().join("\n");
+        digest = marketSetDigest(snapshot.markets);
         if (previous !== undefined && digest !== previous) input.onChange?.(snapshot);
         return snapshot;
     };

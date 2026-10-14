@@ -23,6 +23,7 @@ import {
     type DiscoveryIndex,
     type DiscoverySnapshot,
 } from "./discovery";
+import { MARKETS_WATCH_INTERVAL_MS } from "../markets";
 import { ClientDisposed, MissingCorridorDep, NotCancellable, UnsupportedRoute } from "./errors";
 import { acceptQuote, type QuotePreparation } from "./accept";
 import { cancelSwap, type CancelOutcome } from "./cancel";
@@ -233,8 +234,6 @@ export interface SwapFilter {
 
 /** Bounded because a quote UI re-quotes per keystroke; dropping one costs only a re-quote. */
 const PREPARATIONS_HELD = 64;
-
-const WATCH_INTERVAL_MS = 5 * 60 * 1000;
 
 const mintQuoteId = (): QuoteId => hex.encode(crypto.getRandomValues(new Uint8Array(16)));
 
@@ -534,7 +533,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             if (config.discovery?.watch && watchTimer === undefined) {
                 watchTimer = setInterval(
                     poll,
-                    config.discovery.watchIntervalMs ?? WATCH_INTERVAL_MS,
+                    config.discovery.watchIntervalMs ?? MARKETS_WATCH_INTERVAL_MS,
                 );
                 (watchTimer as { unref?: () => void }).unref?.();
             }
