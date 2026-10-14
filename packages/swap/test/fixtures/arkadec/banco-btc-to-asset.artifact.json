@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "contractName": "BancoBtcToAsset",
   "constructorInputs": [
     { "name": "makerWP", "type": "pubkey" },
@@ -14,11 +15,13 @@
         "inputs": [],
         "asm": ["0", "<wantAssetTxid>", "<wantAssetGroupIndex>", "OP_INSPECTOUTASSETLOOKUP", "OP_VERIFY", "<wantAmount>", "OP_GREATERTHANOREQUAL", "OP_VERIFY", "0", "OP_INSPECTOUTPUTSCRIPTPUBKEY", "1", "OP_EQUALVERIFY", "<makerWP>", "OP_EQUAL"]
       },
-      "leaves": [{ "name": "fulfill", "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:fulfill>", "OP_CHECKSIG"] }]
+      "leaves": [{ "name": "fulfill", "witness": [{"name": "serverSig", "type": "signature", "encoding": "schnorr-64", "injected": true}, {"name": "emulatorSig", "type": "signature", "encoding": "schnorr-64", "injected": true}], "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:fulfill>", "OP_CHECKSIG"] }]
     },
     {
       "name": "cancel",
-      "leaves": [{ "name": "cancel", "asm": ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"] }]
+      "leaves": [{ "name": "cancel", "witness": [{"name": "userSig", "type": "signature", "encoding": "schnorr-64"}, {"name": "serverSig", "type": "signature", "encoding": "schnorr-64", "injected": true}], "asm": ["<user>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"] }]
     }
-  ]
+  ],
+  "source": {"entry": "banco-btc-to-asset.ark", "files": {"banco-btc-to-asset.ark": "pragma arkade ^0.1.0;\ncontract BancoBtcToAsset(pubkey makerWP, int wantAmount, bytes32 wantAssetTxid, int wantAssetGroupIndex, pubkey user) {\n  function fulfill() {\n    require(tx.outputs[0].assets.lookup(wantAssetTxid, wantAssetGroupIndex) >= wantAmount);\n    let recipient = tx.outputs[0].script;\n    require(recipient.version == 1);\n    require(recipient.program == makerWP);\n  }\n  function cancel(signature userSig, signature serverSig) tapscript {\n    require(checkMultisig([user, server], [userSig, serverSig], 2));\n  }\n}\n"}},
+  "compiler": {"name": "arkadec", "version": "0.1.0", "options": {"optimize": true}}
 }

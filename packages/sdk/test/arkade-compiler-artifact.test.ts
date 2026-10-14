@@ -79,6 +79,12 @@ describe("reading an arkadec artifact", () => {
     });
 
     it("reads the escrow artifact into the same program and the same bytes", () => {
+        expect(artifact.formatVersion).toBe(1);
+        expect(
+            artifact.functions.every((group) =>
+                group.leaves.every((leaf) => Array.isArray(leaf.witness)),
+            ),
+        ).toBe(true);
         const program = programFromArtifact(artifact);
         expect(program.version).toBe(1);
         expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
