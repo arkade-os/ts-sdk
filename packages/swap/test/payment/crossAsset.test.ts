@@ -52,7 +52,6 @@ const ctxWith = (send = vi.fn(async () => "txid")): RouterContext =>
     ({ wallet: { send } as never, prefs: {} }) as RouterContext;
 
 const depsWith = (over: Partial<CrossAssetRailDeps> = {}): CrossAssetRailDeps => ({
-    arkServerUrl: "http://ark",
     discover: vi.fn(async () => [market()]),
     quote: vi.fn(async () => plan(100_000n, 500n)),
     btcBalance: vi.fn(async () => 1_000_000n),
@@ -111,7 +110,7 @@ describe("crossAssetRail.available", () => {
             base_asset: { id: USDX_ID, decimals: 2 },
             quote_asset: { id: "btc", decimals: 8 },
         });
-        const quoteFn = vi.fn(async () => plan(100_000n, 500n));
+        const quoteFn = vi.fn(async (..._args: unknown[]) => plan(100_000n, 500n));
         const deps = depsWith({ discover: vi.fn(async () => [inverted]), quote: quoteFn });
         expect(await crossAssetRail(deps).available?.(req, ctxWith())).toBe(true);
         expect(quoteFn.mock.calls[0][1]).toBe("quote");
@@ -227,7 +226,7 @@ describe("crossAssetRail.quote", () => {
     });
 
     it("asks the market for the amount the recipient must receive", async () => {
-        const quoteFn = vi.fn(async () => plan(100_000n, 500n));
+        const quoteFn = vi.fn(async (..._args: unknown[]) => plan(100_000n, 500n));
         await crossAssetRail(depsWith({ quote: quoteFn })).quote(req, ctxWith());
         expect(quoteFn.mock.calls[0][2]).toBe(500n);
     });
@@ -282,7 +281,7 @@ describe("crossAssetRail.send", () => {
 
     it("does not pay the recipient when the fill never lands", async () => {
         offerStub = async () => offer;
-        const send = vi.fn(async () => "txid");
+        const send = vi.fn(async (..._args: unknown[]) => "txid");
         const deps = depsWith({
             awaitFill: vi.fn(async () => {
                 throw new Error("offer expired");
@@ -297,7 +296,7 @@ describe("crossAssetRail.send", () => {
 
     it("does not fund the offer when the record could not be written", async () => {
         offerStub = async () => offer;
-        const send = vi.fn(async () => "txid");
+        const send = vi.fn(async (..._args: unknown[]) => "txid");
         const deps = depsWith({
             persist: vi.fn(async () => {
                 throw new Error("storage full");
@@ -311,7 +310,7 @@ describe("crossAssetRail.send", () => {
 
     it("deposits the planned sats into the offer, with the offer extension", async () => {
         offerStub = async () => offer;
-        const send = vi.fn(async () => "txid");
+        const send = vi.fn(async (..._args: unknown[]) => "txid");
         const quote = await crossAssetRail(depsWith()).quote(req, ctxWith(send as never));
         await (await quote.send()).settled();
 
@@ -324,7 +323,7 @@ describe("crossAssetRail.send", () => {
 
     it("pays the recipient the asset, on the carrier the quote named", async () => {
         offerStub = async () => offer;
-        const send = vi.fn(async () => "pay-txid");
+        const send = vi.fn(async (..._args: unknown[]) => "pay-txid");
         const quote = await crossAssetRail(depsWith({ carrierSats: 546 })).quote(
             req,
             ctxWith(send as never),
@@ -348,7 +347,7 @@ describe("crossAssetRail.send", () => {
         // an undefined want-asset rather than throw — funded, unfillable.
         let seen: unknown;
         offerStub = async (..._args: unknown[]) => {
-            seen = (_args[2] as { wantAsset?: unknown }).wantAsset;
+            seen = (_args[1] as { wantAsset?: unknown }).wantAsset;
             return offer;
         };
         const quote = await crossAssetRail(depsWith()).quote(req, ctxWith());
@@ -396,7 +395,6 @@ describe("no BTC-only rail silently drops an asset", () => {
         const btc = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
         const onchain = solverOnchainRail({
-            arkServerUrl: "http://ark",
             l1Network: "regtest",
             payoutPubkey: new Uint8Array(32).fill(15),
             discover: vi.fn(async () => []),
@@ -411,7 +409,6 @@ describe("no BTC-only rail silently drops an asset", () => {
         ).rejects.toThrow(/cannot deliver/);
 
         const lightning = solverLightningRail({
-            arkServerUrl: "http://ark",
             decodeInvoice: () => ({
                 raw: "lnbcrt1u1p",
                 paymentHash: "cc".repeat(32),

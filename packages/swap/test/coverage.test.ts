@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { promoteOfferContract, retireOfferContract } from "../src/coverage";
+import { LOCKUP_RETIRABLE, promoteOfferContract, retireOfferContract } from "../src/coverage";
 import type { AssetSwap } from "../src/store";
 
 const SCRIPT = "51" + "aa".repeat(32);
@@ -77,4 +77,17 @@ describe("offer contract coverage", () => {
 
         expect(row).toBe("watched");
     });
+});
+
+describe("corridor lockup coverage", () => {
+    it("retires only the two states that mean the lockup was spent", () => {
+        expect([...LOCKUP_RETIRABLE].sort()).toEqual(["refunded", "settled"]);
+    });
+
+    it.each(["pending", "claimable", "claimed", "needs_counterparty", "failed"] as const)(
+        "never retires %s, which can still hold the user's money",
+        (state) => {
+            expect(LOCKUP_RETIRABLE).not.toContain(state);
+        },
+    );
 });
