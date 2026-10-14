@@ -26,7 +26,7 @@ import {
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
-import { claimOnchainFill } from "../onchainHtlc";
+import { buildHtlcRefund, claimOnchainFill } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { restoreOfferCoverage } from "../offer";
 import { LockupContractMissing, lockupContractParams } from "../lockupContract";
@@ -154,8 +154,8 @@ export interface SwapDriveConfig {
      * `accept()` keeps its own refusal. */
     readonly repository?: AssetSwapRepository;
     /**
-     * The client's corridors, for the L1 chain source and claim callback a drive pass needs.
-     * Lazy, so a client with `null` onchain deps that never drives `arkade -> onchain` never
+     * The client's corridors, for the L1 chain source and claim/refund callbacks a drive pass
+     * needs. Lazy, so a client with `null` onchain deps that never drives an onchain swap never
      * resolves them.
      */
     readonly corridors: () => Promise<CorridorSet>;
@@ -304,8 +304,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     /**
-     * Records this client cannot drive (an `arkade -> onchain` swap whose chain source was
-     * refused), kept out of a manager that would fail them terminally.
+     * Records this client cannot drive (an onchain swap whose chain source was refused), kept out of a manager that would fail them terminally.
      */
     const undrivable = new Set<QuoteId>();
 
@@ -465,11 +464,15 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     });
 
     /**
-     * The L1 seams, resolved the first time a swap that reads them (`arkade -> onchain`) appears.
-     * A refusal is reported and the record left undriven. `null` = refused.
+     * The L1 seams, resolved the first time a swap that reads them (either onchain direction)
+     * appears. A refusal is reported and the record left undriven. `null` = refused.
      */
     let onchainSeams:
-        | { chain: RfqSwapManagerDeps["chain"]; claim?: RfqSwapManagerCallbacks["claimOnchain"] }
+        | {
+              chain: RfqSwapManagerDeps["chain"];
+              claim?: RfqSwapManagerCallbacks["claimOnchain"];
+              refund?: RfqSwapManagerCallbacks["refundOnchain"];
+          }
         | null
         | undefined;
 
@@ -529,6 +532,47 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         };
     };
 
+    /**
+     * The wallet-backed default L1 refund. Signs through the descriptor `provisionRefundKey` bound
+     * at quote time, checked against the key the HTLC was derived with, and pays the record's own
+     * `refundPkScript`. The manager calls it only once the refund leaf has matured on MTP.
+     */
+    const defaultOnchainRefund = (
+        chain: NonNullable<RfqSwapManagerDeps["chain"]>,
+        feeRateSatVb: number,
+    ): RfqSwapManagerCallbacks["refundOnchain"] => {
+        return async (swap, utxo) => {
+            const record = await corridorStore().getRfqSwap(swap.rfqId);
+            if (!record) {
+                throw new Error(`rfq swap ${swap.rfqId} has no stored record to refund from`);
+            }
+            const descriptor = record.profile.refundDescriptor;
+            if (typeof descriptor !== "string") {
+                throw new Error(
+                    `rfq swap ${swap.rfqId} carries no refund descriptor; wire the onchain ` +
+                        "corridor's refund callback to take its L1 funding back",
+                );
+            }
+            const signer = await contractSigner(wallet, descriptor);
+            const held = hex.encode(await signer.xOnlyPublicKey());
+            if (held !== record.profile.refundKey) {
+                throw new Error(
+                    `the key behind ${descriptor} is ${held}, not the refund key ` +
+                        `${String(record.profile.refundKey)} rfq swap ${swap.rfqId}'s HTLC was derived with`,
+                );
+            }
+            const { txHex } = await buildHtlcRefund({
+                htlc: swap.htlc,
+                utxo,
+                payoutPkScript: swap.refundPkScript,
+                feeRateSatVb,
+                sign: (sighash) => signer.signMessage(sighash, "schnorr"),
+            });
+            // Tracked so `idle()`/`dispose()` drain this money-moving broadcast.
+            return { txid: await track(chain.broadcast(txHex)) };
+        };
+    };
+
     const resolveOnchain = async (): Promise<boolean> => {
         if (onchainSeams !== undefined) return onchainSeams !== null;
         try {
@@ -539,7 +583,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 (deps.claimFeeRateSatVb === undefined
                     ? undefined
                     : defaultOnchainClaim(deps.chain, deps.claimFeeRateSatVb));
-            onchainSeams = { chain: deps.chain, ...(claim ? { claim } : {}) };
+            const refund =
+                deps.refund ??
+                (deps.claimFeeRateSatVb === undefined
+                    ? undefined
+                    : defaultOnchainRefund(deps.chain, deps.claimFeeRateSatVb));
+            onchainSeams = {
+                chain: deps.chain,
+                ...(claim ? { claim } : {}),
+                ...(refund ? { refund } : {}),
+            };
             managerDeps.chain = deps.chain;
             return true;
         } catch (error) {
@@ -649,6 +702,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             canRefundArkade,
             claimLockup,
             ...(onchainSeams?.claim ? { claimOnchain: onchainSeams.claim } : {}),
+            ...(onchainSeams?.refund ? { refundOnchain: onchainSeams.refund } : {}),
         });
     };
 
@@ -793,8 +847,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         if (mode === "readonly" || !startRequested) return;
         if (!repository) return;
         await contractsOf();
-        // Re-run on EVERY arm, not redundant: an early arm lacks `claimOnchain` (the seam is
-        // unresolved until an `onchain_send` record registers), and this is how it gets wired.
+        // Re-run on EVERY arm, not redundant: an early arm lacks the L1 callbacks (the seam is
+        // unresolved until an onchain record registers), and this is how they get wired.
         wireCallbacks();
         // Idempotent: `start()` no-ops when running; the watcher is rebuilt only after `stop()`.
         await manager.start();
