@@ -2425,7 +2425,7 @@ describe("RfqSwapManager — a lockup that was unilaterally exited", () => {
 
 describe("RfqSwapManager — bookkeeping", () => {
     it("validates poll intervals without rejecting zero", () => {
-        const deps = { indexer: fakeIndexer({ vtxos: unspent() }) };
+        const deps = { indexer: fakeIndexer({ vtxos: unspent() }), contracts: fakeContracts() };
         expect(() => new RfqSwapManager(deps, { pollIntervalMs: 0 })).not.toThrow();
         expect(() => new RfqSwapManager(deps, { pollIntervalMs: 2 ** 31 - 1 })).not.toThrow();
         for (const value of [-1, 0.5, NaN, Infinity, 2 ** 31]) {
