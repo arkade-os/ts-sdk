@@ -33,6 +33,11 @@ style and have not been backfilled.
   no longer hide subdust outputs. Explicit filter flags, spent-output
   exclusions, and the separate spendability-gated accessor are unchanged.
 
+- **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
+  `[]` with no wallet, which a caller could not tell from a wallet with no
+  boarding coins; it now throws `WalletNotInitializedError`, like
+  `GET_VTXOS`. (#943)
+
 ### Breaking Changes
 
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
@@ -201,6 +206,26 @@ style and have not been backfilled.
   `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
 
 ### Features
+
+- **Opt-in faster startup with repository-first reads.** Wallet
+  construction waited for the look-ahead band, the boot reconcile and the
+  watcher start, so a returning wallet showed nothing until the indexer
+  answered. `lazyInitialization: true` (on `Wallet`, `ReadonlyWallet` and
+  the service-worker factories) runs that boot in the background, and the
+  new `getStoredBalance()`, `getStoredVtxos()` and
+  `getStoredBoardingUtxos()` answer from the repository at once, requesting
+  a sync behind the read. They are for display, never coin selection, and
+  can be empty or stale: `ContractSyncState` and `ProviderConnectionState`
+  gain `syncing` (a provider sync is in flight), and
+  `ContractManager.whenBooted()` settles when the background boot is done,
+  which then reports any failure through `getSyncState()`.
+  `WalletBalance.boarding.loaded` is false until this wallet instance has
+  fetched its boarding inputs. The service-worker factories also take
+  `lazyBoarding: true`, which moves the explorer-backed boarding and
+  history refresh off `INIT_WALLET` and broadcasts `UTXO_UPDATE` when it
+  completes. Both options default to false, and the existing reads
+  (`getVtxos`, `getBalance`, `getTransactionHistory`) still sync before
+  answering. (#943)
 
 - **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
   Every delta sync re-read the 24 hours before the sync cursor, so a
