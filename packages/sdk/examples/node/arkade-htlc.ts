@@ -16,20 +16,19 @@ import { execFileSync } from "child_process";
 import { randomBytes } from "crypto";
 import { hash160 } from "@scure/btc-signer/utils.js";
 import { EventSource } from "eventsource";
-import type { Program } from "../../src/arkade";
-
-// EventSource is used internally by the SDK to watch contracts (SSE).
-// It is not available in Node.js by default, so we need to polyfill it.
-(globalThis as any).EventSource = EventSource;
-
-const {
-    arkade,
+import {
+    Arkade,
     ArkAddress,
+    configureEventSource,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     SingleKey,
     Wallet,
-} = await import("../../src");
+    type arkade,
+} from "../../src";
+
+// The SDK watches contracts over SSE; Node.js has no built-in EventSource.
+configureEventSource((url) => new EventSource(url));
 
 const ARK_SERVER_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
@@ -64,7 +63,7 @@ const htlcProgram = {
             },
         },
     },
-} satisfies Program;
+} satisfies arkade.Program;
 
 /** Pay `address` from the regtest arkd's CLI wallet, topping it up with a fresh note first. */
 function fund(address: string, amount: number) {
@@ -89,7 +88,7 @@ async function main() {
 
     const preimage = randomBytes(32);
 
-    const ark = await arkade.Arkade.connect({
+    const ark = await Arkade.connect({
         service: { serverUrl: ARK_SERVER_URL, emulatorUrl: EMULATOR_URL },
         storage: { contractRepository: new InMemoryContractRepository() },
     });

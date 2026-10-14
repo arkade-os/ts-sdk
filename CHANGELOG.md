@@ -24,7 +24,8 @@ style and have not been backfilled.
   store, chain tip from esplora) that the new `arkade.dispose()` stops; a
   caller-passed `contractManager` is never disposed. `service` and the provider
   fields (`arkade`/`emulator`/`indexer`) are exclusive at the type level. The
-  resolver is exported as `arkade.resolveArkadeService`.
+  resolver is exported as `arkade.resolveArkadeService`, and `Arkade` itself is
+  now exported from the package root as well as from the `arkade` namespace.
 
 - **`ArkadeContract.on` and `getVtxos`.** `await contract.on("vtxo_received" |
   "vtxo_spent" | "connection_reset", cb)` registers the contract and reports its

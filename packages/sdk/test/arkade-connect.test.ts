@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     arkade,
+    Arkade,
     BITCOIN_EMULATOR_PUBKEY,
     ContractManager,
     CSVMultisigTapscript,
@@ -154,6 +155,10 @@ describe("resolveArkadeService", () => {
 });
 
 describe("Arkade.connect with service", () => {
+    it("is exported from the package root", () => {
+        expect(Arkade).toBe(arkade.Arkade);
+    });
+
     it("network arm resolves the emulator and the pinned mainnet key", async () => {
         vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info());
         const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });

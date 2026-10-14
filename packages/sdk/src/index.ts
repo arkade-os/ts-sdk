@@ -491,6 +491,8 @@ export { collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+// Also at the root, so `import { Arkade }` works without the namespace.
+export { Arkade } from "./arkade";
 export * from "./extension/emulator";
 
 // BIP21 codec (reused by the payment rails) + the modular payment router.
