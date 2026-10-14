@@ -10,6 +10,7 @@ import {
     discoverMarkets,
     findMarket,
     makeCachedFeedFetch,
+    MARKETS_CACHE_TTL_MS,
     QUOTE_OPTIONS,
     validatePlan,
 } from "../src/markets";
@@ -251,6 +252,23 @@ describe("discoverMarkets caching", () => {
 
     beforeEach(() => {
         repository = new InMemoryAssetSwapRepository();
+    });
+
+    it("answers from the cache, and keeps it, when only a pinned card answered", async () => {
+        await seedCache(Date.now() - 2 * MARKETS_CACHE_TTL_MS, [btcUsd]);
+        const { solver: _solver, source: _source, sourceType: _type, ...market } = btcChf;
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: REGISTRY_URL,
+            repository,
+            fetchImpl: jsonFetch([new Error("registry down")]),
+            localCards: [
+                { card: { version: 0, name: "pinned", markets: [market] }, network: "mutinynet" },
+            ],
+            transportCards: null,
+        });
+        expect(markets.map((m) => m.pair)).toEqual(["BTC/USD"]);
+        expect((await cache())?.markets.map((m) => m.pair)).toEqual(["BTC/USD"]);
     });
 
     it("fetches on a cold start and caches the result", async () => {

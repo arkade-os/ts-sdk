@@ -25,7 +25,12 @@ import {
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import type { NetworkName } from "@arkade-os/sdk";
-import { MARKETS_CACHE_TTL_MS, marketSetDigest, transportCardsOf } from "../markets";
+import {
+    MARKETS_CACHE_TTL_MS,
+    marketSetDigest,
+    registryAnswered,
+    transportCardsOf,
+} from "../markets";
 import type { AssetSwapRepository } from "../repository";
 import { marketAssetId } from "../marketShape";
 import { isIndexedNetwork } from "./aliases";
@@ -280,7 +285,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
 
         // A registry answering with an empty index is authoritative about there being no
         // market, unlike one that did not answer.
-        if (result.sources.some((source) => source.ok)) {
+        if (registryAnswered(result.sources)) {
             const fetchedAt = Date.now();
             const snapshot = hold({
                 markets: result.markets,

@@ -18,6 +18,7 @@ import {
     type Network,
     type OfferPlan,
     type Side,
+    type SourceReport,
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import { assertNonNegativeMs, isSubdust } from "@arkade-os/sdk";
@@ -99,6 +100,11 @@ export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /** How often a watcher re-reads; the cache above still decides when the network is asked. */
 export const MARKETS_WATCH_INTERVAL_MS = 5 * 60 * 1000;
+
+/** Whether a discovery result can replace the cache: a pinned card always "answers",
+ * so on its own it would overwrite every registry market with the pins. */
+export const registryAnswered = (sources: readonly SourceReport[]): boolean =>
+    sources.some((source) => source.sourceType === "registry" && source.ok);
 
 /** A market set compared as a set: a re-ranking is no change. */
 export const marketSetDigest = (markets: readonly DiscoveredMarket[]): string =>
@@ -204,7 +210,7 @@ export const discoverMarkets = async (
     });
     if (warnings.length) logger?.("solver discovery:", ...warnings);
     // A reachable registry is authoritative even when empty.
-    const reachable = sources.some((source) => source.ok);
+    const reachable = registryAnswered(sources);
     if (!reachable && cached) return cached.markets;
     if (reachable && repository) {
         try {
