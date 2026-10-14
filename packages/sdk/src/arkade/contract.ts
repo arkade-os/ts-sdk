@@ -223,7 +223,7 @@ export interface ArkadeConnectOptions {
      */
     emulator?: EmulatorProvider;
     /**
-     * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
+     * Indexer — enables `getVtxos`/`getBalance` and coin auto-selection, and
      * resolves the previous ark txs a covenant spend must carry (see
      * {@link attachPrevArkTxs}). Required for covenant spends.
      */
@@ -246,7 +246,7 @@ export interface ArkadeConnectOptions {
     emulatorPubkey?: string;
     /**
      * The wallet's contract manager (`wallet.getContractManager()`). Enables
-     * {@link ArkadeContract.register}, and makes {@link ArkadeContract.getUtxos} read
+     * {@link ArkadeContract.register}, and makes {@link ArkadeContract.getVtxos} read
      * repository-backed state for registered contracts instead of the indexer.
      */
     contractManager?: IContractManager;
@@ -487,7 +487,7 @@ export class ArkadeContract<P extends Program = Program> {
      * `contractManager`, otherwise a direct indexer query. Both drop spent and unrolled outputs;
      * only the indexer branch (`spendableOnly`) also drops swept coins.
      */
-    async getUtxos(): Promise<VirtualCoin[]> {
+    async getVtxos(): Promise<VirtualCoin[]> {
         const manager = this.client.contractManager;
         const scriptHex = hex.encode(this.pkScript);
         if (manager) {
@@ -499,7 +499,7 @@ export class ArkadeContract<P extends Program = Program> {
             }
         }
         if (!this.client.indexer) {
-            throw new Error("ArkadeContract.getUtxos: an indexer is required");
+            throw new Error("ArkadeContract.getVtxos: an indexer is required");
         }
         const { vtxos } = await getNormalizedVtxos(this.client.indexer, {
             scripts: [scriptHex],
@@ -511,7 +511,7 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Total spendable balance (requires an indexer). */
     async getBalance(): Promise<bigint> {
-        const utxos = await this.getUtxos();
+        const utxos = await this.getVtxos();
         return utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
     }
 }
@@ -766,7 +766,7 @@ export class ArkadeTransactionBuilder {
     }
 
     private async selectCoin(amount: bigint): Promise<Utxo> {
-        const utxos = await this.contract.getUtxos();
+        const utxos = await this.contract.getVtxos();
         if (utxos.length === 0) throw new Error("no spendable coins for this contract");
         // Smallest covering coin, else the largest (the rest may come via `.fund()`).
         const covering = utxos

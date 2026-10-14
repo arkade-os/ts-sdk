@@ -389,7 +389,7 @@ describe("ArkadeContract ↔ ContractManager integration", () => {
         await expect(contract.register()).resolves.toBeDefined();
     });
 
-    it("getUtxos reads repository state through the manager once registered", async () => {
+    it("getVtxos reads repository state through the manager once registered", async () => {
         const ark = await connectArkade(manager);
         const contract = ark.contract(multisigProgram());
         const scriptHex = hex.encode(contract.pkScript);
@@ -400,7 +400,7 @@ describe("ArkadeContract ↔ ContractManager integration", () => {
             .mockResolvedValue({ vtxos: [createMockVtxo({ script: scriptHex, value: 4321 })] });
 
         await contract.register();
-        const utxos = await contract.getUtxos();
+        const utxos = await contract.getVtxos();
         expect(utxos).toHaveLength(1);
         expect(utxos[0].value).toBe(4321);
         expect(await contract.getBalance()).toBe(4321n);

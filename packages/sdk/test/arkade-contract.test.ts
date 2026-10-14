@@ -133,7 +133,7 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array, indexerVtxos
 /**
  * Minimal `IContractManager` that reports every script it is asked about as
  * registered, holding `vtxos`. The test builds exactly one contract, so echoing
- * the queried script is enough to put `getUtxos` on the manager-backed branch.
+ * the queried script is enough to put `getVtxos` on the manager-backed branch.
  */
 function stubManager(vtxos: unknown[]): IContractManager {
     return {
@@ -205,7 +205,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(await contract.getBalance()).toBe(BigInt(COIN.value));
     });
 
-    it("getUtxos drops exited and spent coins, keeping the healthy sibling", async () => {
+    it("getVtxos drops exited and spent coins, keeping the healthy sibling", async () => {
         const { ark: probe } = await connect();
         const script = hex.encode(probe.contract(htlcProgram(), args).pkScript);
 
@@ -218,7 +218,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
         // The value also proves the manager branch ran: the fallback indexer
         // would have answered with COIN (10_000) instead.
-        expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
+        expect((await contract.getVtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
         expect(await contract.getBalance()).toBe(7_000n);
     });
 
@@ -234,7 +234,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect({ indexerVtxos: [healthy, exited, spent] });
         const contract = ark.contract(htlcProgram(), args);
 
-        expect((await contract.getUtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
+        expect((await contract.getVtxos()).map((u) => u.txid)).toEqual([healthy.txid]);
         expect(await contract.getBalance()).toBe(7_000n);
     });
 

@@ -62,7 +62,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
             ...mod.arkade,
             Arkade: { connect: async () => ({ serverKey: state.serverKey }) },
             ArkadeContract: class {
-                getUtxos = async () => state.utxos;
+                getVtxos = async () => state.utxos;
                 functions = {
                     cancel: () => {
                         const chain = {
