@@ -10,6 +10,7 @@
  */
 import type { TransportCard, TransportCardFetcher } from "@arkade-os/solver-discovery";
 import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
+import { CloseOnceWebSocket } from "./closeOnceWebSocket";
 import { assertTimerMs } from "@arkade-os/sdk";
 import {
     finalizeEvent,
@@ -43,6 +44,14 @@ export const RFQ_AD_KIND = SOLVER_CARD_KIND;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CARD_FETCH_TIMEOUT_MS = 5_000;
+
+// SimplePool forwards `websocketImplementation` at runtime; its declared options just omit it.
+const newPool = (): SimplePool =>
+    new SimplePool(
+        (CloseOnceWebSocket ? { websocketImplementation: CloseOnceWebSocket } : undefined) as
+            | ConstructorParameters<typeof SimplePool>[0]
+            | undefined,
+    );
 
 /**
  * Every relay dropped the subscription, so no reply can arrive on it. Distinct from a timeout:
@@ -105,7 +114,7 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
     const solverPubkey = options.solverPubkey;
     const secretKey = options.secretKey ?? generateSecretKey();
     const pubkey = getPublicKey(secretKey);
-    const pool = options.pool ?? new SimplePool();
+    const pool = options.pool ?? newPool();
     const ownsPool = !options.pool;
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const conversationKey = nip44.v2.utils.getConversationKey(secretKey, solverPubkey);
@@ -238,7 +247,7 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
         if (authors.length === 0 || relays.length === 0) return [];
         const asked = new Set(authors);
         const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
-        const pool = options.pool ?? new SimplePool();
+        const pool = options.pool ?? newPool();
         const latest = new Map<string, Event>();
         let subscription: { close: () => void } | undefined;
         let timer: ReturnType<typeof setTimeout> | undefined;
