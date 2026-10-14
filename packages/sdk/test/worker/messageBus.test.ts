@@ -193,6 +193,54 @@ describe("MessageBus PING/PONG", () => {
         },
     );
 
+    it("rejects a constructor override key without a value", () => {
+        expect(
+            () =>
+                new MessageBus(new InMemoryWalletRepository(), new InMemoryContractRepository(), {
+                    messageHandlers: [],
+                    messageTimeoutOverrides: { TEST: undefined } as unknown as Record<
+                        string,
+                        number
+                    >,
+                }),
+        ).toThrow("messageTimeoutOverrides.TEST");
+    });
+
+    it("reports a page timeout key without a value without starting handlers", async () => {
+        const handler = new TestHandler();
+        const buildServices = vi.fn().mockResolvedValue({});
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [handler],
+                buildServices,
+            },
+        );
+        await bus.start();
+        const postMessage = vi.fn();
+        await messageHandler({
+            data: {
+                type: "INITIALIZE_MESSAGE_BUS",
+                id: "undefined-timeout",
+                tag: "INITIALIZE_MESSAGE_BUS",
+                config: { messageTimeouts: { TEST: undefined } },
+            },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+        expect(postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                error: expect.objectContaining({
+                    message: expect.stringContaining("messageTimeouts.TEST"),
+                }),
+            }),
+        );
+        expect(buildServices).not.toHaveBeenCalled();
+        expect(handler.start).not.toHaveBeenCalled();
+        await bus.stop();
+    });
+
     it("preserves zero as an unlimited bus timeout", async () => {
         vi.useFakeTimers();
         const handler = new TestHandler();

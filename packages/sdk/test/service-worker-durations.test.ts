@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SingleKey } from "../src/identity/singleKey";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
-import { ServiceWorkerReadonlyWallet } from "../src/wallet/serviceWorker/wallet";
+import {
+    DEFAULT_MESSAGE_TIMEOUTS,
+    ServiceWorkerReadonlyWallet,
+} from "../src/wallet/serviceWorker/wallet";
 
 describe("service-worker wallet durations", () => {
     const postMessage = vi.fn();
@@ -44,6 +47,21 @@ describe("service-worker wallet durations", () => {
             expect(postMessage).not.toHaveBeenCalled();
         },
     );
+
+    it("falls back to the default for a timeout key without a value", async () => {
+        const rejection = expect(
+            ServiceWorkerReadonlyWallet.create({
+                ...options(),
+                messageBusTimeoutMs: 0,
+                messageTimeouts: { GET_BALANCE: undefined },
+            }),
+        ).rejects.toThrow("MessageBus timed out");
+        await vi.advanceTimersByTimeAsync(0);
+        await rejection;
+        expect(postMessage.mock.calls[0][0].config.messageTimeouts.GET_BALANCE).toBe(
+            DEFAULT_MESSAGE_TIMEOUTS.GET_BALANCE,
+        );
+    });
 
     it("keeps zero as an immediate bootstrap timeout", async () => {
         const rejection = expect(

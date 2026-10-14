@@ -186,6 +186,16 @@ type Initialize = {
     };
 };
 
+/** A present key must carry a timeout: the bus would otherwise arm a timer of `undefined`. */
+function assertTimeoutMap(name: string, timeouts: Record<string, number> | undefined): void {
+    for (const [key, value] of Object.entries(timeouts ?? {})) {
+        if (value === undefined) {
+            throw new Error(`${name}.${key} must be a non-negative safe integer`);
+        }
+        assertTimerMs(`${name}.${key}`, value);
+    }
+}
+
 export class MessageBus {
     private handlers: Map<string, MessageHandler>;
     private tickIntervalMs: number;
@@ -233,9 +243,7 @@ export class MessageBus {
     ) {
         assertTimerMs("tickIntervalMs", tickIntervalMs);
         assertTimerMs("messageTimeoutMs", messageTimeoutMs);
-        for (const [key, value] of Object.entries(messageTimeoutOverrides)) {
-            assertTimerMs(`messageTimeoutOverrides.${key}`, value);
-        }
+        assertTimeoutMap("messageTimeoutOverrides", messageTimeoutOverrides);
         this.intentRepository = intentRepository;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
@@ -460,9 +468,7 @@ export class MessageBus {
     }
 
     private async doInit(config: Initialize["config"]) {
-        for (const [key, value] of Object.entries(config.messageTimeouts ?? {})) {
-            assertTimerMs(`messageTimeouts.${key}`, value);
-        }
+        assertTimeoutMap("messageTimeouts", config.messageTimeouts);
         // Cancel any tick scheduled by a previous init so it cannot fire while
         // handlers are stopped or rebuilt.
         if (this.tickTimeout !== null) {
