@@ -565,9 +565,9 @@ export class ArkadeTransactionBuilder {
     }
 
     /** Add an output — `(script, amount)` or a list of outputs. */
-    to(script: Uint8Array, amount: bigint): this;
+    to(script: Uint8Array, amount: bigint | number): this;
     to(outputs: TransactionOutput[]): this;
-    to(scriptOrOutputs: Uint8Array | TransactionOutput[], amount?: bigint): this {
+    to(scriptOrOutputs: Uint8Array | TransactionOutput[], amount?: bigint | number): this {
         if (Array.isArray(scriptOrOutputs)) {
             for (const [i, out] of scriptOrOutputs.entries()) {
                 // scure's `amount` is optional; a missing one would silently skew the balance math.
@@ -578,7 +578,7 @@ export class ArkadeTransactionBuilder {
             this.outputs.push(...scriptOrOutputs);
         } else {
             if (amount === undefined) throw new Error("to(script, amount): amount is required");
-            this.outputs.push({ script: scriptOrOutputs, amount });
+            this.outputs.push({ script: scriptOrOutputs, amount: BigInt(amount) });
         }
         return this;
     }

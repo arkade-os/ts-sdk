@@ -14,6 +14,9 @@ style and have not been backfilled.
 
 ### Added
 
+- **`ArkadeTransactionBuilder.to(script, amount)` accepts a `number`**, so a
+  coin's `value` passes straight through.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
