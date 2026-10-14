@@ -16,6 +16,7 @@ import {
     corridorOutcome,
     offerOutcome,
     readsChain,
+    readsEvm,
     recordOutcome,
     type CorridorKind,
     type Outcome,
@@ -33,7 +34,7 @@ const RFQ_STATES: RfqSwapState[] = [
     "failed",
 ];
 
-const KINDS: CorridorKind[] = ["lightning_send", "lightning_receive", "onchain_send"];
+const KINDS: CorridorKind[] = ["lightning_send", "lightning_receive", "onchain_send", "evm_send"];
 
 const ASSET_STATUSES: AssetSwapStatus[] = [
     "pending",
@@ -56,6 +57,7 @@ describe("the corridor translation", () => {
             lightning_send: "trader",
             lightning_receive: "solver",
             onchain_send: "trader",
+            evm_send: "trader",
         });
         // And the same declaration is what decides whether the L1 seam has to be
         // resolved at all — the reason a deliberate `onchain: { chain: null }`
@@ -64,6 +66,9 @@ describe("the corridor translation", () => {
         expect(readsChain("lightning_send")).toBe(false);
         expect(readsChain("lightning_receive")).toBe(false);
         expect(CORRIDOR_PASS.onchain_send.lockups).toHaveLength(2);
+        // No EVM seam is wired here yet, so the client leaves those records to the manager.
+        expect(readsEvm("evm_send")).toBe(true);
+        expect(readsEvm("onchain_send")).toBe(false);
     });
 
     it("is total over every state and every kind", () => {

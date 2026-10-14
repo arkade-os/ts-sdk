@@ -888,12 +888,12 @@ describe("the stream", () => {
 
 describe("configuration, not recovery", () => {
     it("names exactly the sites that describe configuration rather than a swap", () => {
-        // Five messages from three block sites: no claim callback, no L1 claim
-        // callback, and no refund callback or auto-actions off. Every other
+        // Six messages from four block sites: no claim callback, no L1 or EVM
+        // claim callback, and no refund callback or auto-actions off. Every other
         // block site says something about the SWAP — an exited lockup, an
         // underfunded one, a key this wallet does not hold — and stays
         // `needs_recovery` in every mode.
-        expect(RFQ_CONFIGURATION_REFUSALS).toHaveLength(5);
+        expect(RFQ_CONFIGURATION_REFUSALS).toHaveLength(6);
         for (const reason of RFQ_CONFIGURATION_REFUSALS) {
             expect(reason).toMatch(/wired|disabled/);
         }

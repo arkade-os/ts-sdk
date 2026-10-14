@@ -20,7 +20,28 @@ export {
     type CovclaimdInfo,
     type RevealParams,
 } from "./reveal";
-// The EVM corridors' RFQ wire: negotiation only, nothing here funds or claims.
+// The EVM send leg's execution; the receive leg has none yet.
+export {
+    assertEvmSendFundable,
+    claimEvmSend,
+    deriveEvmSend,
+    evmClaimCalldata,
+    evmClaimReadiness,
+    evmSendClaimer,
+    evmSendLock,
+    evmSendTerms,
+    evmSwapKey,
+    requestEvmSend,
+    type EvmChain,
+    type EvmClaimPolicy,
+    type EvmClaimWait,
+    type EvmLock,
+    type EvmSendClaim,
+    type EvmSendTerms,
+} from "./evmSend";
+export { evmSendProfile, type EvmSendProfile } from "./rfqCorridors";
+export type { EvmSendSwap } from "./swapManager";
+// The EVM corridors' RFQ wire.
 export {
     EVM_CHAIN,
     evmAmountFromWire,

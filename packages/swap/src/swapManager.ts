@@ -62,6 +62,13 @@ import {
     type RfqSwapRecord,
 } from "./rfqRecord";
 import { RefundNotLocallyPossibleError } from "./refundBlocked";
+import {
+    evmClaimReadiness,
+    type EvmChain,
+    type EvmClaimPolicy,
+    type EvmLock,
+    type EvmSendTerms,
+} from "./evmSend";
 import { LOCKUP_RETIRABLE } from "./coverage";
 import { RFQ_SWAP_ACTIVE_STATES, isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
 
@@ -170,6 +177,15 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     claimTxid?: string;
 }
 
+/** `arkade:BTC->ethereum:<token>`. Carries the solver's EVM lock the trader must claim. */
+export interface EvmSendSwap extends RfqSwapCommon {
+    kind: "evm_send";
+    lock: EvmLock;
+    terms: EvmSendTerms;
+    /** Our EVM claim's transaction hash. */
+    claimTxid?: string;
+}
+
 /**
  * `lightning:BTC->arkade:BTC`. The SOLVER funds the lockup and the TRADER claims it,
  * publishing `P` so the solver can settle the payer's held Lightning HTLC.
@@ -205,7 +221,7 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
  * **`onchain:BTC->arkade:BTC` is deliberately not a member**: monitoring only its lockup
  * half would silently let the trader's own L1 refund window pass.
  */
-export type RfqSwap = LightningSendSwap | OnchainSendSwap | LightningReceiveSwap;
+export type RfqSwap = LightningSendSwap | OnchainSendSwap | LightningReceiveSwap | EvmSendSwap;
 
 // ── The onchain state machine ───────────────────────────────────────────────
 
@@ -281,6 +297,8 @@ export type ArkadeRefundResult = { txid: string; amount: number } | null;
 export interface RfqSwapManagerCallbacks {
     /** Build and broadcast the L1 claim. See `claimOnchainFill`. */
     claimOnchain: (swap: OnchainSendSwap, utxo: ChainUtxo) => Promise<{ txid: string }>;
+    /** Send the EVM claim with `P` once the lock is buried. See `claimEvmSend`. */
+    claimEvm: (swap: EvmSendSwap) => Promise<{ txid: string }>;
     /**
      * Claim the solver-funded lockup on a receive leg, revealing `P`. Wire it to
      * `pushClaim` (the outputs are supplied, so `claimReceiveLockup`'s wait is redundant).
@@ -339,12 +357,14 @@ export interface RfqSwapManagerCallbacks {
  */
 export type AvailableRfqSwapManagerCallbacks = Omit<
     RfqSwapManagerCallbacks,
-    "claimOnchain" | "claimLockup" | "saveSwap"
+    "claimOnchain" | "claimLockup" | "claimEvm" | "saveSwap"
 > &
-    Partial<Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup" | "saveSwap">>;
+    Partial<
+        Pick<RfqSwapManagerCallbacks, "claimOnchain" | "claimLockup" | "claimEvm" | "saveSwap">
+    >;
 
 // The actions the manager executes on a caller's behalf.
-export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "refundArkade";
+export type RfqSwapActionName = "claimOnchain" | "claimLockup" | "claimEvm" | "refundArkade";
 
 /**
  * The `needs_counterparty` reasons that describe THIS PROCESS'S CONFIGURATION rather than
@@ -358,6 +378,7 @@ export const RFQ_CONFIGURATION_REFUSAL = {
     noCallbacksForClaim: "no callbacks are wired, so this wallet cannot claim the lockup",
     noClaimOnchainCallback:
         "no claimOnchain callback is wired, so this wallet cannot claim the L1 fill",
+    noClaimEvmCallback: "no claimEvm callback is wired, so this wallet cannot claim the EVM lock",
     autoActionsDisabled: "automatic actions are disabled, so this wallet will not push the refund",
     noCallbacksForRefund: "no callbacks are wired, so this wallet cannot push the refund",
 } as const;
@@ -494,6 +515,8 @@ export interface RfqSwapManagerDeps {
     indexer: LockupSpendIndexer;
     /** L1 access. Required to monitor onchain-send swaps. */
     chain?: ChainSource;
+    /** EVM access by chain id, and the claim margins. Required to monitor EVM-send swaps. */
+    evm?: { chain: (chainId: number) => EvmChain | undefined; policy: EvmClaimPolicy };
     /**
      * The CANONICAL sink for RFQ swap records, read back by
      * {@link RfqSwapManager.restoreFromRepository}. A first write needs the request-time
@@ -1175,6 +1198,9 @@ export class RfqSwapManager {
         if (swap.kind === "onchain_send" && swap.state !== "claimed") {
             if ((await this.driveOnchain(swap)) === "handled") return;
         }
+        if (swap.kind === "evm_send" && !swap.claimTxid) {
+            if ((await this.driveEvm(swap)) === "handled") return;
+        }
 
         // 3. The Arkade lockup. An exit is checked here, not at step 1: it says nothing about
         //    the L1 fill, which keeps being driven.
@@ -1421,6 +1447,48 @@ export class RfqSwapManager {
         return "continue";
     }
 
+    /** `handled` ends the pass; `continue` falls through to the refund gate. */
+    private async driveEvm(swap: EvmSendSwap): Promise<"handled" | "continue"> {
+        const chain = this.deps.evm?.chain(swap.terms.chainId);
+        if (!this.deps.evm || !chain) {
+            // As for a missing ChainSource: fail while the swap can still be re-added.
+            this.fail(
+                swap,
+                new Error(
+                    `evm-send swap monitored without a reader for chain ${swap.terms.chainId} — the lock cannot be seen or claimed`,
+                ),
+            );
+            return "handled";
+        }
+        let readiness: Awaited<ReturnType<typeof evmClaimReadiness>>;
+        try {
+            readiness = await evmClaimReadiness(chain, {
+                terms: swap.terms,
+                lock: swap.lock,
+                policy: this.deps.evm.policy,
+            });
+        } catch {
+            // A closed window leaves only the refund, and an outage must not strand it.
+            return "continue";
+        }
+        if (!readiness.ready) return "continue";
+        if (this.callbacks && !this.callbacks.claimEvm) {
+            this.block(swap, RFQ_CONFIGURATION_REFUSAL.noClaimEvmCallback);
+            return "handled";
+        }
+        this.setOnchainState(swap, "claimable");
+        if (!this.config.enableAutoActions || !this.callbacks?.claimEvm) return "handled";
+        try {
+            const { txid } = await this.callbacks.claimEvm(swap);
+            swap.claimTxid = txid;
+            this.setOnchainState(swap, "claimed");
+            this.emitAction(swap, "claimEvm");
+        } catch (error) {
+            this.emitFailed(swap, error);
+        }
+        return "handled";
+    }
+
     private async driveArkadeRefund(swap: RfqSwap): Promise<void> {
         const now = this.config.now();
 
@@ -1504,7 +1572,7 @@ export class RfqSwapManager {
      * re-asserted from chain every pass, so a blocked swap would flip forever. Only the
      * label defers; the claim itself always runs.
      */
-    private setOnchainState(swap: OnchainSendSwap, state: RfqSwapState): void {
+    private setOnchainState(swap: OnchainSendSwap | EvmSendSwap, state: RfqSwapState): void {
         if (swap.state === "needs_counterparty" && this.config.now() >= swap.refundLocktime) return;
         this.setState(swap, state);
     }
@@ -1688,7 +1756,7 @@ export interface RfqSwapOutcome {
 
 /** The trader's own claim on this swap, whichever leg it belongs to. */
 const traderClaimTxid = (swap: RfqSwap): string | undefined =>
-    swap.kind === "onchain_send" || swap.kind === "lightning_receive" ? swap.claimTxid : undefined;
+    swap.kind === "lightning_send" ? undefined : swap.claimTxid;
 
 // Keyed on the txid, not the label, which may read `needs_counterparty` after a real L1
 // payout. A receive's claim txid deliberately does NOT decide it: an Arkade submission can
@@ -1696,7 +1764,7 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined =>
 const isPayoutDecided = (swap: RfqSwap): boolean =>
     swap.state === "settled" ||
     swap.state === "refunded" ||
-    (swap.kind === "onchain_send" && swap.claimTxid !== undefined);
+    ((swap.kind === "onchain_send" || swap.kind === "evm_send") && swap.claimTxid !== undefined);
 
 const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
     // A lost receive's `claimTxid` names a submission the chain never took; omitted here,
@@ -1710,10 +1778,7 @@ const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
 
 const outcomeOfRecord = (stored: RfqSwapRecord): RfqSwapOutcome => {
     const record = normalizeRfqSwapRecord(stored);
-    const profileClaim =
-        record.kind === "onchain_send" || record.kind === "lightning_receive"
-            ? record.profile.claimTxid
-            : undefined;
+    const profileClaim = record.kind === "lightning_send" ? undefined : record.profile.claimTxid;
     const claimTxid = typeof profileClaim === "string" ? profileClaim : undefined;
     return {
         state: record.state,

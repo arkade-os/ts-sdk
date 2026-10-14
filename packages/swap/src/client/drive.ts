@@ -81,6 +81,7 @@ import {
     LOCKUP_OWNER,
     corridorOutcome,
     readsChain,
+    readsEvm,
     recordOutcome,
     type Outcome,
     type RawState,
@@ -553,7 +554,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const drivable = async (record: Pick<CorridorSwapRecord, "kind">): Promise<boolean> =>
-        !readsChain(record.kind) || (await resolveOnchain());
+        !readsEvm(record.kind) && (!readsChain(record.kind) || (await resolveOnchain()));
 
     // ── the money-moving half ────────────────────────────────────────────────
 
