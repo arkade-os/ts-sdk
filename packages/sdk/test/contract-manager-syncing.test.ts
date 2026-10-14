@@ -171,6 +171,43 @@ describe("ContractManager getSyncState().syncing", () => {
         await until(() => manager.getSyncState().syncing === false);
     });
 
+    it("starts no catch-up while the lazy boot is still syncing", async () => {
+        const contractRepository = new InMemoryContractRepository();
+        await contractRepository.saveContract(seeded());
+        const indexer: IndexerProvider = createMockIndexerProvider();
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        (indexer.getVtxos as any).mockImplementation(async () => {
+            await gate;
+            return { vtxos: [] };
+        });
+
+        const manager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository,
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig,
+            lazyInitialization: true,
+        }).then(track);
+        await until(() => (indexer.getVtxos as any).mock.calls.length > 0);
+        const bootCalls = (indexer.getVtxos as any).mock.calls.length;
+
+        // The boot reconcile already fetches this window; a catch-up would repeat it.
+        await manager.getStoredContractsWithVtxos();
+        expect((indexer.getVtxos as any).mock.calls.length).toBe(bootCalls);
+
+        release();
+        await manager.whenBooted();
+
+        // With boot done, the next stored read catches up as usual.
+        await manager.getStoredContractsWithVtxos();
+        expect((indexer.getVtxos as any).mock.calls.length).toBeGreaterThan(bootCalls);
+        await until(() => manager.getSyncState().syncing === false);
+    });
+
     it("stays syncing until the last overlapping sync settles", async () => {
         const { manager, indexer } = await setup();
 

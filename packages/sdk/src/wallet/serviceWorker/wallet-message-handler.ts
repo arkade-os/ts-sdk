@@ -2052,7 +2052,9 @@ export class WalletMessageHandler
         if (opts?.lazyBoarding) {
             const emitter = this.newEmitter("boarding");
             void (async () => {
-                await this.refreshBoardingCache();
+                // `emitter` gates every write: a `clear()` or re-init during the onchain fetch
+                // must not repopulate the wiped repository.
+                await this.refreshBoardingCache(emitter);
                 if (emitter.stale) return;
                 this.boardingLoaded = true;
                 const coins = (await this.readonlyWallet?.getStoredBoardingUtxos?.()) ?? [];
@@ -2063,7 +2065,7 @@ export class WalletMessageHandler
                         payload: { coins },
                     }),
                 );
-                await this.refreshHistoryCache();
+                await this.refreshHistoryCache(emitter);
             })().catch((error) => {
                 console.warn("[wallet] background refresh failed", error);
             });
@@ -2075,24 +2077,37 @@ export class WalletMessageHandler
         await this.refreshHistoryCache();
     }
 
-    private async refreshHistoryCache(): Promise<void> {
-        if (!this.readonlyWallet || !this.walletRepository) return;
-        const address = await this.readonlyWallet.getAddress();
+    /** @param gen - set by a background caller; each write is skipped once it goes stale. */
+    private async refreshHistoryCache(gen?: Generation): Promise<void> {
+        const wallet = this.readonlyWallet;
+        const repository = this.walletRepository;
+        if (!wallet || !repository) return;
+        const address = await wallet.getAddress();
         const txs = await this.buildTransactionHistoryFromCache();
-        if (txs) await this.walletRepository.saveTransactions(address, txs);
+        if (txs && !gen?.stale) await repository.saveTransactions(address, txs);
     }
 
-    private async refreshBoardingCache(): Promise<void> {
-        if (!this.readonlyWallet || !this.walletRepository) return;
-        const boardingAddresses = await this.readonlyWallet.getBoardingAddresses();
-        const fresh = await this.readonlyWallet.getBoardingUtxos();
+    /**
+     * @param gen - set by a background caller; each write here is skipped once it goes stale.
+     *   `getBoardingUtxos` saves the fetched rows itself, before control returns, so that one
+     *   write is outside this check.
+     */
+    private async refreshBoardingCache(gen?: Generation): Promise<void> {
+        const wallet = this.readonlyWallet;
+        const repository = this.walletRepository;
+        if (!wallet || !repository) return;
+        const boardingAddresses = await wallet.getBoardingAddresses();
+        if (gen?.stale) return;
+        const fresh = await wallet.getBoardingUtxos();
         const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
         for (const addr of boardingAddresses) {
-            const cached = await collectUtxos(this.walletRepository, addr);
+            if (gen?.stale) return;
+            const cached = await collectUtxos(repository, addr);
             const kept = cached.filter((u) => freshKeys.has(`${u.txid}:${u.vout}`));
             if (kept.length === cached.length) continue; // nothing stale
-            await this.walletRepository.deleteUtxos(addr);
-            if (kept.length > 0) await this.walletRepository.saveUtxos(addr, kept);
+            if (gen?.stale) return;
+            await repository.deleteUtxos(addr);
+            if (kept.length > 0) await repository.saveUtxos(addr, kept);
         }
     }
 

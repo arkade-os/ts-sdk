@@ -75,7 +75,12 @@ const healthyIndexer = () =>
 
 async function createWallet(
     indexerProvider: IndexerProvider,
-    opts?: { getInfo?: ArkProvider["getInfo"]; storage?: Storage; lazyInitialization?: boolean },
+    opts?: {
+        getInfo?: ArkProvider["getInfo"];
+        storage?: Storage;
+        lazyInitialization?: boolean;
+        getCoins?: OnchainProvider["getCoins"];
+    },
 ) {
     const identity = ReadonlySingleKey.fromPublicKey(
         await SingleKey.fromHex(privKeyHex).compressedPublicKey(),
@@ -88,7 +93,7 @@ async function createWallet(
         } as Partial<ArkProvider> as ArkProvider,
         indexerProvider,
         onchainProvider: {
-            getCoins: async () => [],
+            getCoins: opts?.getCoins ?? (async () => []),
             getTransactions: async () => [],
         } as unknown as OnchainProvider,
         storage: opts?.storage ?? freshStorage(),
@@ -144,6 +149,27 @@ describe("wallet offline-first reads (Scope 4)", () => {
         } finally {
             release();
             await (await wallet.getContractManager()).whenBooted();
+            await wallet.dispose();
+        }
+    });
+
+    it("getStoredBoardingUtxos drops a boarding coin the last fetch no longer returned", async () => {
+        const coin = {
+            txid: "aa".repeat(32),
+            vout: 0,
+            value: 5_000,
+            status: { confirmed: true, block_height: 1, block_hash: "bb", block_time: 1 },
+        };
+        let coins = [coin];
+        const wallet = await createWallet(healthyIndexer(), { getCoins: async () => coins });
+        try {
+            await wallet.getBoardingUtxos();
+            expect(await wallet.getStoredBoardingUtxos()).toHaveLength(1);
+
+            coins = []; // spent elsewhere: another device, or a unilateral exit
+            await wallet.getBoardingUtxos();
+            expect(await wallet.getStoredBoardingUtxos()).toEqual([]);
+        } finally {
             await wallet.dispose();
         }
     });

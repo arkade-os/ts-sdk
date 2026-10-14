@@ -1033,6 +1033,11 @@ export interface IReadonlyWallet {
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
 
+    /**
+     * Boarding inputs as last cached, with no onchain call: stale or empty until this wallet
+     * instance has fetched them (see `WalletBalance.boarding.loaded`). For display, never coin
+     * selection.
+     */
     getStoredBoardingUtxos?(): Promise<ExtendedCoin[]>;
 
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */

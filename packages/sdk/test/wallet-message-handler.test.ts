@@ -2544,6 +2544,44 @@ describe("WalletMessageHandler repo-backed reads", () => {
         releaseHistory();
     });
 
+    it("a lazy boarding refresh overtaken by clear() writes nothing", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const coin = (txid: string) =>
+            ({
+                txid,
+                vout: 0,
+                value: 1_000,
+                status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+            }) as any;
+        // A cached row the fetch no longer returns: an unchecked refresh would prune it.
+        await walletRepo.saveUtxos("boarding-address", [
+            coin("aa".repeat(32)),
+            coin("bb".repeat(32)),
+        ]);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
+            await gate;
+            return [coin("aa".repeat(32))];
+        });
+        const deleteUtxos = vi.spyOn(walletRepo, "deleteUtxos");
+        const saveTransactions = vi.spyOn(walletRepo, "saveTransactions");
+
+        await (updater as any).refreshCachedData({ lazyBoarding: true });
+        await until(() => rw.getBoardingUtxos.mock.calls.length > 0);
+        // What clear() does to the boarding generation, without wiping the fixture.
+        (updater as any).boardingEpoch++;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(deleteUtxos).not.toHaveBeenCalled();
+        expect(saveTransactions).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+    });
+
     it("INIT_WALLET with lazyBoarding resolves with both onchain legs parked", async () => {
         setupHandler();
         const rw = (updater as any).readonlyWallet;

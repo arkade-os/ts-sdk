@@ -1715,7 +1715,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // One write, made only once every fetch has succeeded, so a failure writes nothing.
+        // Writes start only once every fetch has succeeded, so a failure writes nothing. Each
+        // fetched address is replaced, not merged: `saveUtxos` never drops a row, and a coin
+        // spent elsewhere would otherwise linger for `getStoredBoardingUtxos` to report.
+        for (const address of addresses) {
+            await this.walletRepository.deleteUtxos(address);
+        }
         await this.walletRepository.saveUtxos(
             new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
         );

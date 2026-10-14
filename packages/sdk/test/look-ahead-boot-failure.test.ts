@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
     ContractManager,
+    ContractWatcher,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ProviderUnavailableError,
@@ -73,6 +74,54 @@ describe("look-ahead failure during startup", () => {
             await manager.dispose();
         },
     );
+
+    it("keeps a lazy boot's terminal failure degraded across later syncs", async () => {
+        const drain = vi
+            .spyOn(ContractManager.prototype as never, "scheduleLookAheadDrain" as never)
+            .mockRejectedValueOnce(new Error("schema violation"));
+        const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const manager = await makeManager(true);
+        await manager.whenBooted();
+        drain.mockRestore();
+        errors.mockRestore();
+        expect(manager.getSyncState().mode).toBe("degraded");
+
+        // A later sync succeeds, but it never covered the band.
+        await manager.getContractsWithVtxos();
+        const state = manager.getSyncState();
+        expect(state.mode).toBe("degraded");
+        expect(state.mode === "degraded" ? state.reason : "").toContain("look-ahead band");
+
+        // The next event retries the drain, which now succeeds.
+        await (manager as any).handleContractEvent({
+            type: "connection_reset",
+            timestamp: Date.now(),
+        });
+        expect(manager.getSyncState().mode).toBe("online");
+
+        await manager.dispose();
+    });
+
+    it("keeps a lazy boot's failed watcher start degraded across later syncs", async () => {
+        const start = vi
+            .spyOn(ContractWatcher.prototype, "startWatching")
+            .mockRejectedValueOnce(new Error("watcher broke"));
+        const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const manager = await makeManager(true);
+        await manager.whenBooted();
+        start.mockRestore();
+        errors.mockRestore();
+
+        // A later sync succeeds, but nothing restarts the watcher.
+        await manager.getContractsWithVtxos();
+        const state = manager.getSyncState();
+        expect(state.mode).toBe("degraded");
+        expect(state.mode === "degraded" ? state.reason : "").toContain("watcher broke");
+
+        await manager.dispose();
+    });
 
     it("still propagates a terminal failure", async () => {
         const drain = vi

@@ -295,8 +295,19 @@ export interface IContractManager extends Disposable {
     /** Latest provider-sync health. See {@link ContractSyncState}. */
     getSyncState(): ContractSyncState;
 
+    /**
+     * Contracts with their repository VTXOs, answered without waiting on the indexer. A sync
+     * older than `vtxoSyncMaxAgeMs` is requested in the background (skipped while the lazy boot
+     * runs); check {@link getSyncState} before trusting the result. For display, never coin
+     * selection.
+     */
     getStoredContractsWithVtxos?(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 
+    /**
+     * Settles when the `lazyInitialization` boot (look-ahead drain, reconcile, watcher start)
+     * finishes; immediately when there is none. Never rejects: a failed boot is reported through
+     * {@link getSyncState}.
+     */
     whenBooted?(): Promise<void>;
 
     /**
@@ -758,9 +769,18 @@ export class ContractManager implements IContractManager {
         const owedRefill = this.lookAheadRefillOwed
             ? "the look-ahead band is behind the allocation watermark, so a funded address inside it is not being watched yet"
             : undefined;
-        const reasons = [annotations, owedRefill].filter((r): r is string => r !== undefined);
+        const watcher =
+            this.watcherStartFailure === undefined
+                ? undefined
+                : `the contract watcher failed to start, so incoming funds are not being observed — ${this.watcherStartFailure}`;
+        const reasons = [annotations, owedRefill, watcher].filter(
+            (r): r is string => r !== undefined,
+        );
         return reasons.length === 0 ? undefined : reasons.join("; ");
     }
+
+    /** Why the lazy boot's watcher start failed; nothing retries it, so no sync may clear it. */
+    private watcherStartFailure?: string;
 
     /** Contracts a sync could not annotate, as `script → reason`. */
     private annotationFailures = new Map<string, string>();
@@ -855,21 +875,22 @@ export class ContractManager implements IContractManager {
 
     private async runBootSequence(): Promise<void> {
         this.syncsInFlight++;
+        this.watcherStartFailure = undefined;
         try {
-            let phaseFailed = false;
             try {
                 await this.scheduleLookAheadDrain();
             } catch (err) {
-                if (isRetryableProviderError(err)) this.lookAheadRefillOwed = true;
-                else phaseFailed = true;
-                this.reportBootFailure("look-ahead drain", err);
+                // Owed for any failure, as in `requestLookAheadDrain`: the debt keeps the state
+                // degraded across later syncs, and the next contract event retries the drain.
+                this.lookAheadRefillOwed = true;
+                this.reportBackgroundFailure("look-ahead drain", err);
             }
 
             try {
                 await this.reconcileWatched();
-                if (!phaseFailed) this.markSyncOnline();
+                this.markSyncOnline();
             } catch (err) {
-                this.reportBootFailure("boot sync", err);
+                this.reportBackgroundFailure("boot sync", err);
             }
 
             if (this.disposed) return;
@@ -882,7 +903,8 @@ export class ContractManager implements IContractManager {
                 if (this.disposed) stopWatching();
                 else this.stopWatcherFn = stopWatching;
             } catch (err) {
-                this.reportBootFailure("watcher start", err);
+                this.watcherStartFailure = err instanceof Error ? err.message : String(err);
+                this.reportBackgroundFailure("watcher start", err);
             }
         } finally {
             this.syncsInFlight--;
@@ -890,10 +912,10 @@ export class ContractManager implements IContractManager {
     }
 
     /** No throw: construction returned long ago, so the state is the channel. */
-    private reportBootFailure(stage: string, err: unknown): void {
+    private reportBackgroundFailure(stage: string, err: unknown): void {
         this.markSyncDegraded(err);
         if (!isRetryableProviderError(err)) {
-            console.error(`[contracts] ${stage} failed during boot`, err);
+            console.error(`[contracts] background ${stage} failed`, err);
         }
     }
 
@@ -1501,16 +1523,16 @@ export class ContractManager implements IContractManager {
     }
 
     private requestCatchUpSync(contracts: Contract[]): void {
-        if (this.disposed || this.catchUpSync || contracts.length === 0) return;
+        // The boot reconcile is already fetching the same cursor window; a parallel catch-up
+        // would repeat it (the full history, on a fresh restore) and could mark the state
+        // online before the look-ahead band is drained. The next read after boot catches up.
+        if (this.disposed || this.bootTask || this.catchUpSync || contracts.length === 0) return;
         const run: Promise<void> = (async () => {
-            this.syncsInFlight++;
             try {
-                await this.performContractSync({ contracts });
+                await this.syncContracts({ contracts });
                 this.markSyncOnline();
             } catch (err) {
-                this.reportBootFailure("catch-up sync", err);
-            } finally {
-                this.syncsInFlight--;
+                this.reportBackgroundFailure("catch-up sync", err);
             }
         })();
         this.catchUpSync = run;
