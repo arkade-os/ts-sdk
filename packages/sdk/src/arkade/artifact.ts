@@ -54,6 +54,7 @@ export interface ArtifactGroup {
 }
 
 export interface ContractArtifact {
+    formatVersion?: number;
     contractName: string;
     constructorInputs: ArtifactParameter[];
     structs?: ArtifactStruct[];
@@ -74,6 +75,24 @@ const NATIVE_STRUCTS: Record<string, [string, string][]> = {
         ["x", "int"],
         ["y", "int"],
     ],
+    ScriptPubKey: [
+        ["program", "bytes"],
+        ["version", "int"],
+    ],
+    AssetEntry: [
+        ["assetId", "AssetId"],
+        ["amount", "int"],
+    ],
+    AssetLookup: [
+        ["amount", "int"],
+        ["found", "bool"],
+    ],
+    G2Point: [
+        ["xC1", "int"],
+        ["xC0", "int"],
+        ["yC1", "int"],
+        ["yC0", "int"],
+    ],
 };
 
 const HASH_OPCODES = new Set(["OP_SHA256", "OP_HASH160", "OP_HASH256", "OP_RIPEMD160"]);
@@ -86,6 +105,7 @@ function isNamed(value: unknown): value is ArtifactParameter {
     return (
         isRecord(value) &&
         typeof value.name === "string" &&
+        value.name.length > 0 &&
         typeof value.type === "string" &&
         value.type.length > 0
     );
@@ -101,6 +121,7 @@ export function isContractArtifact(value: unknown): value is ContractArtifact {
         (group) =>
             isRecord(group) &&
             typeof group.name === "string" &&
+            group.name.length > 0 &&
             Array.isArray(group.leaves) &&
             group.leaves.length > 0,
     );
@@ -115,7 +136,7 @@ function claim(seen: Set<string>, name: string, kind: string): void {
     seen.add(name);
 }
 
-/** `pubkey` and `sig` are length-checked. `bytes20`, `bytes32`, and `asset` stay opaque hashes. */
+/** Source scalars share SDK types; fixed widths and bool constraints live on InputDef. */
 const SCALAR_TYPES: Record<string, ArkadeArgType> = {
     pubkey: "pubkey",
     signature: "sig",
@@ -124,8 +145,32 @@ const SCALAR_TYPES: Record<string, ArkadeArgType> = {
     bytes32: "hash",
     asset: "hash",
     int: "int",
+    AssetGroup: "int",
     bool: "int",
 };
+
+const ENCODINGS: Record<string, InputDef["encoding"]> = {
+    pubkey: "raw",
+    signature: "schnorr-64",
+    bytes: "raw",
+    bytes20: "raw-20",
+    bytes32: "raw-32",
+    asset: "raw-32",
+    int: "scriptnum",
+    bool: "scriptnum",
+    AssetGroup: "scriptnum",
+};
+
+function inputDef(name: string, type: string): InputDef {
+    return {
+        name,
+        type: argType(type),
+        ...(type === "bytes20" || type === "bytes32" || type === "asset"
+            ? { encoding: ENCODINGS[type] }
+            : {}),
+        ...(type === "bool" ? { boolean: true } : {}),
+    };
+}
 
 function argType(arkType: string): ArkadeArgType {
     if (!Object.hasOwn(SCALAR_TYPES, arkType)) fail(`unknown type '${arkType}'`);
@@ -136,7 +181,9 @@ function arrayParts(type: string): [string, number] {
     const open = type.indexOf("[");
     if (open < 0 || !type.endsWith("]")) return [type, 0];
     const length = Number(type.slice(open + 1, -1));
-    return Number.isInteger(length) && length > 0 ? [type.slice(0, open), length] : [type, 0];
+    return Number.isSafeInteger(length) && length > 0 && /^\d+$/.test(type.slice(open + 1, -1))
+        ? [type.slice(0, open), length]
+        : [type, 0];
 }
 
 function flatten(
@@ -146,11 +193,20 @@ function flatten(
 ): InputDef[] {
     if (!isNamed(param)) fail("parameter needs a name and a type");
 
+    const [element, length] = arrayParts(param.type);
+    if (length > 0) {
+        return Array.from({ length }, (_, index) =>
+            flatten({ name: `${param.name}.${index}`, type: element }, structs, stack),
+        ).flat();
+    }
+    if (param.type.includes("[") || param.type.includes("]")) {
+        fail(`invalid array type '${param.type}'`);
+    }
+
     if (Object.hasOwn(NATIVE_STRUCTS, param.type)) {
-        return NATIVE_STRUCTS[param.type].map(([field, type]) => ({
-            name: `${param.name}.${field}`,
-            type: argType(type),
-        }));
+        return NATIVE_STRUCTS[param.type].flatMap(([field, type]) =>
+            flatten({ name: `${param.name}.${field}`, type }, structs, stack),
+        );
     }
 
     const declared = structs.find((struct) => struct?.name === param.type);
@@ -164,23 +220,7 @@ function flatten(
         );
     }
 
-    const [element, length] = arrayParts(param.type);
-    if (length === 0) {
-        if (param.type.includes("[") || param.type.includes("]")) {
-            fail(`invalid array type '${param.type}'`);
-        }
-        return [{ name: param.name, type: argType(param.type) }];
-    }
-    if (
-        Object.hasOwn(NATIVE_STRUCTS, element) ||
-        structs.some((struct) => struct.name === element)
-    ) {
-        fail(`arrays of structs are not supported: '${param.type}'`);
-    }
-    return Array.from({ length }, (_, index) => ({
-        name: `${param.name}.${index}`,
-        type: argType(element),
-    }));
+    return [inputDef(param.name, param.type)];
 }
 
 /** Artifact opcodes are `OP_`-prefixed; @scure keeps that prefix only on OP_0..OP_16. */
@@ -235,6 +275,15 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     if (!Array.isArray(witness)) fail("leaf witness must be an array");
     return witness.filter((item) => {
         if (!isNamed(item)) fail("witness item needs a name and a type");
+        argType(item.type);
+        if (item.injected !== undefined && typeof item.injected !== "boolean")
+            fail(`witness '${item.name}': injected must be boolean`);
+        if (item.injected && item.type !== "signature")
+            fail(`witness '${item.name}': only infrastructure signatures can be injected`);
+        if (item.encoding !== undefined && item.encoding !== ENCODINGS[item.type])
+            fail(
+                `witness '${item.name}': encoding '${item.encoding}' does not match type '${item.type}'`,
+            );
         return !item.injected && item.type !== "signature";
     }) as ArtifactWitnessElement[];
 }
@@ -260,12 +309,16 @@ function parseLeaf(
     let index = 0;
 
     let condition: AsmToken[] | undefined;
-    if (asm.length >= 4 && HASH_OPCODES.has(asm[0]) && asm[2] === "OP_EQUAL") {
-        if (asm[3] !== "OP_VERIFY")
+    const hashIndex =
+        asm[0] === "OP_SIZE" && (asm[1] === "20" || asm[1] === "32") && asm[2] === "OP_EQUALVERIFY"
+            ? 3
+            : 0;
+    if (HASH_OPCODES.has(asm[hashIndex]) && asm[hashIndex + 2] === "OP_EQUAL") {
+        if (asm[hashIndex + 3] !== "OP_VERIFY")
             fail(`leaf '${leaf.name}': hash condition must end in OP_VERIFY`);
         // The SDK appends VERIFY when it builds the closure.
-        condition = asm.slice(0, 3).map((token) => asmToken(token, instantiations));
-        index = 4;
+        condition = asm.slice(0, hashIndex + 3).map((token) => asmToken(token, instantiations));
+        index = hashIndex + 4;
     }
 
     let csv: TapscriptSegment["csv"];
@@ -283,10 +336,14 @@ function parseLeaf(
 
     const signers: SignerRef[] = [];
     let emulator: string | undefined;
+    let emulatorIndex: number | undefined;
     while (index < asm.length) {
         const key = asm[index];
         const terminator = asm[index + 1];
         const last = terminator === "OP_CHECKSIG";
+        if (last !== (index + 2 === asm.length)) {
+            fail(`leaf '${leaf.name}': only the final signer must end in OP_CHECKSIG`);
+        }
         if (!last && terminator !== "OP_CHECKSIGVERIFY") {
             fail(`leaf '${leaf.name}': expected CHECKSIG after '${key}', found '${terminator}'`);
         }
@@ -301,8 +358,9 @@ function parseLeaf(
             signers.push({ tweak: `$${base}`, fn });
         } else if (inner.startsWith("EMULATOR_KEY:")) {
             if (!hasCovenant) fail(`leaf '${leaf.name}': ${key} needs a covenant`);
-            if (!last) fail(`leaf '${leaf.name}': ${key} must be the last signer`);
+            if (emulator !== undefined) fail(`leaf '${leaf.name}': duplicate emulator signer`);
             emulator = inner.slice("EMULATOR_KEY:".length);
+            emulatorIndex = signers.length;
         } else signers.push(`$${inner}`);
         index += 2;
     }
@@ -313,11 +371,13 @@ function parseLeaf(
             `leaf '${leaf.name}': covenant leaf must sign with the emulator or a tweaked constructor key`,
         );
     }
-    if (signers.length === 0) fail(`leaf '${leaf.name}': at least one named signer is required`);
+    if (signers.length === 0 && emulator === undefined)
+        fail(`leaf '${leaf.name}': at least one named signer is required`);
 
     return {
         signers,
         ...(emulator !== undefined ? { emulator } : hasCovenant ? { emulator: null } : {}),
+        ...(emulatorIndex !== undefined ? { emulatorIndex } : {}),
         ...(condition ? { asm: condition } : {}),
         ...(csv ? { csv } : {}),
         ...(cltv !== undefined ? { cltv } : {}),
@@ -332,12 +392,21 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
             "expected a complete arkadec artifact with contractName, constructorInputs, and non-empty functions",
         );
     }
+    if (artifact.formatVersion !== undefined && artifact.formatVersion !== 1) {
+        fail(`unsupported artifact format version ${artifact.formatVersion}; expected 1`);
+    }
 
     const structs = artifact.structs ?? [];
     const structNames = new Set<string>();
     for (const struct of structs) {
-        // Nameless entries are skipped. A parameter that needed that struct fails as an unknown type.
-        if (!isRecord(struct) || typeof struct.name !== "string") continue;
+        if (!isRecord(struct) || typeof struct.name !== "string" || !Array.isArray(struct.fields)) {
+            fail("struct needs a name and fields array");
+        }
+        const fields = new Set<string>();
+        for (const field of struct.fields) {
+            if (!isNamed(field)) fail(`struct '${struct.name}': field needs a name and type`);
+            claim(fields, field.name, "struct field");
+        }
         if (
             Object.hasOwn(SCALAR_TYPES, struct.name) ||
             Object.hasOwn(NATIVE_STRUCTS, struct.name)
@@ -348,12 +417,21 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     }
 
     const instantiations = new Map<string, string>();
-    const functions: Record<string, ArkadeFunction> = {};
+    const functions: Record<string, ArkadeFunction> = Object.create(null);
     const groups = new Set<string>();
     const leafNames = new Set<string>();
 
     for (const group of artifact.functions) {
         claim(groups, group.name, "spend group");
+        if (
+            group.arkade !== undefined &&
+            (!isRecord(group.arkade) ||
+                !Array.isArray(group.arkade.inputs) ||
+                !Array.isArray(group.arkade.asm) ||
+                !group.arkade.asm.every((t) => typeof t === "string"))
+        ) {
+            fail(`group '${group.name}': covenant needs inputs and string assembly arrays`);
+        }
         const covenantInputs = (group.arkade?.inputs ?? []).flatMap((input) =>
             flatten(input, structs),
         );
@@ -365,16 +443,62 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
               }
             : undefined;
 
-        for (const [index, leaf] of group.leaves.entries()) {
-            const name = index === 0 ? group.name : `${group.name}/${index}:${leaf.name}`;
+        const covenantNames = new Set<string>();
+        for (const input of covenantInputs) claim(covenantNames, input.name, "covenant input");
+        for (const leaf of group.leaves) {
+            if (
+                !isRecord(leaf) ||
+                typeof leaf.name !== "string" ||
+                leaf.name.length === 0 ||
+                !Array.isArray(leaf.asm) ||
+                leaf.asm.length === 0 ||
+                !leaf.asm.every((t) => typeof t === "string")
+            ) {
+                fail(`group '${group.name}': leaf needs a name and non-empty string assembly`);
+            }
+            const name = leaf.name;
             claim(leafNames, name, "function name");
             const extras = providedWitness(leaf.witness);
-            const tapscript = parseLeaf(leaf, group.arkade !== undefined, instantiations, extras);
+            for (const input of extras) {
+                if (leaf.asm.includes(`<${input.name}>`)) {
+                    fail(
+                        `leaf '${leaf.name}': call input '${input.name}' is a script operand; it must be a constructor binding to derive a fixed Taproot tree`,
+                    );
+                }
+            }
+            const witnessNames = new Set<string>();
+            for (const item of leaf.witness ?? []) claim(witnessNames, item.name, "leaf witness");
+            const scopedExtras = extras.map((item) => ({
+                ...item,
+                name: covenantNames.has(item.name) ? `tapscript:${item.name}` : item.name,
+            }));
+            const tapscript = parseLeaf(
+                leaf,
+                group.arkade !== undefined,
+                instantiations,
+                scopedExtras,
+            );
+            if (
+                tapscript.emulator !== undefined &&
+                tapscript.emulator !== null &&
+                tapscript.emulator !== group.name
+            ) {
+                fail(
+                    `leaf '${leaf.name}': emulator covenant '${tapscript.emulator}' must match group '${group.name}'`,
+                );
+            }
+            const signatures = (leaf.witness ?? [])
+                .filter((item) => item.type === "signature" && !item.injected)
+                .map((item) => inputDef(item.name, item.type));
+            if (signatures.length > 0) tapscript.signatures = signatures;
             const inputs: InputDef[] = [
                 ...covenantInputs,
-                ...extras.map((item) => ({ name: item.name, type: argType(item.type) })),
+                ...scopedExtras.map((item) => inputDef(item.name, item.type)),
             ];
+            const inputNames = new Set<string>();
+            for (const input of inputs) claim(inputNames, input.name, "function input");
             functions[name] = {
+                group: group.name,
                 ...(inputs.length > 0 ? { inputs } : {}),
                 tapscript,
                 ...(arkadeScript ? { arkadeScript } : {}),
@@ -385,7 +509,14 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     const params: InputDef[] = [
         ...artifact.constructorInputs.flatMap((input) => flatten(input, structs)),
         { name: "server", type: "pubkey" },
-        ...[...instantiations.keys()].map((name) => ({ name, type: "hash" as const })),
+        ...(Object.values(functions).some((fn) => fn.tapscript.csv?.value === "$SERVER_EXIT_DELAY")
+            ? [{ name: "SERVER_EXIT_DELAY", type: "int" as const }]
+            : []),
+        ...[...instantiations.keys()].map((name) => ({
+            name,
+            type: "hash" as const,
+            encoding: "raw-32" as const,
+        })),
     ];
     const paramNames = new Set<string>();
     for (const param of params) claim(paramNames, param.name, "program parameter");

@@ -39,6 +39,8 @@ style and have not been backfilled.
   by hand after `build()`. The caller's packet now joins those two in the one
   extension output; a type either of them already uses is refused at build.
 
+- **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Compiler-derived constructor and call values retain byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
@@ -165,6 +167,9 @@ style and have not been backfilled.
   solver at their CLTV; `awaitLockupFunding` was its wait. `client.recover()`
   and the drive finish both; to drive them by hand, call
   `pushRefundWithoutReceiver` or `pushClaim` until it reports nothing `left`.
+
+- **Arkade contracts use typed normalized Program v1 only.** Compiler imports use source function names: an Arkade function and its same-named Taproot leaf share `contract.functions.claim(...)`, while standalone Taproot functions use their own names, such as `contract.functions.unilateral()`. Leaf order is preserved and duplicate callable names are rejected. `InputRef` remains exported as an alias of `InputDef`; constructor parameters and call inputs require `{ name, type }` declarations, with integer and byte-width validation. Explicit version 0 programs and persisted contracts are rejected without automatic migration; omitted normalized JSON versions default to 1. Server bindings must match the connected server. CSV offchain spending and external or covenant-tweaked leaf signing through `send()` fail explicitly. `SignerRef` remains unchanged, and emulator placement uses optional `emulatorIndex` metadata. The swap package's bundled programs use version 1 with unchanged scripts and addresses.
+
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported

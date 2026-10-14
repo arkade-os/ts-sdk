@@ -43,11 +43,16 @@ const payTo = [
 
 function claimProgram(): arkade.Program {
     return {
-        version: 0,
-        params: ["receiver", "amount", "server"],
+        version: 1,
+        params: [
+            { name: "receiver", type: "pubkey" },
+            { name: "amount", type: "int" },
+            { name: "server", type: "pubkey" },
+            { name: "h", type: "hash" },
+        ],
         functions: {
             claim: {
-                inputs: ["preimage"],
+                inputs: [{ name: "preimage", type: "bytes" }],
                 tapscript: {
                     signers: ["$server"],
                     asm: ["HASH160", "$h", "EQUALVERIFY"],
@@ -165,8 +170,11 @@ describe("ArkadeContract — extended features", () => {
         });
         // A pure-tapscript path that requires the user's key.
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
                 move: {
                     tapscript: {
@@ -381,18 +389,20 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
-                exit: {
+                cooperative: {
                     tapscript: {
                         signers: ["$user", "$server"],
-                        csv: { type: "blocks", value: 20n },
                     },
                 },
             },
         });
-        await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
+        await c.functions.cooperative().from(COIN).to(p2tr(receiver), AMOUNT).send();
         expect(captured.via).toBe("ark");
         expect(arkProvider.submitTx).toHaveBeenCalled();
         expect(arkProvider.finalizeTx).toHaveBeenCalled();
@@ -424,19 +434,21 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
-                exit: {
+                cooperative: {
                     tapscript: {
                         signers: ["$user", "$server"],
-                        csv: { type: "blocks", value: 20n },
                     },
                 },
             },
         });
         const send = c.functions
-            .exit()
+            .cooperative()
             .from(COIN)
             .fund([fundingCoin(60_000)])
             .to(p2tr(receiver), AMOUNT)
@@ -475,8 +487,11 @@ describe("ArkadeContract — extended features", () => {
         expect(() =>
             ark.contract(
                 {
-                    version: 0,
-                    params: ["server"],
+                    version: 1,
+                    params: [
+                        { name: "server", type: "pubkey" },
+                        { name: "amount", type: "int" },
+                    ],
                     functions: {
                         bad: {
                             tapscript: {
@@ -502,8 +517,8 @@ describe("ArkadeContract — extended features", () => {
         expect(() =>
             ark.contract(
                 {
-                    version: 0,
-                    params: ["server"],
+                    version: 1,
+                    params: [{ name: "server", type: "pubkey" }],
                     functions: {
                         bad: {
                             tapscript: {
@@ -528,10 +543,15 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const artifact = {
-            params: ["receiver", "amount", "server"],
+            params: [
+                { name: "receiver", type: "pubkey" },
+                { name: "amount", type: "int" },
+                { name: "server", type: "pubkey" },
+                { name: "h", type: "hash" },
+            ],
             functions: {
                 claim: {
-                    inputs: ["preimage"],
+                    inputs: [{ name: "preimage", type: "bytes" }],
                     tapscript: {
                         signers: ["$server"],
                         asm: ["HASH160", "$h", "EQUALVERIFY"],
@@ -553,7 +573,7 @@ describe("ArkadeContract — extended features", () => {
                     },
                 },
             },
-        };
+        } as const;
         const program = arkade.parseArtifact(artifact);
         const fromArtifact = ark.contract(program, {
             receiver,
@@ -583,8 +603,13 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const prog: arkade.Program = {
-            version: 0,
-            params: ["receiver", "amount", "server", "user"],
+            version: 1,
+            params: [
+                { name: "receiver", type: "pubkey" },
+                { name: "amount", type: "int" },
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
                 spend: {
                     tapscript: { signers: ["$user", "$server"] },
@@ -617,18 +642,20 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
-                exit: {
+                cooperative: {
                     tapscript: {
                         signers: ["$user", "$server"],
-                        csv: { type: "blocks", value: 20n },
                     },
                 },
             },
         });
-        await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
+        await c.functions.cooperative().from(COIN).to(p2tr(receiver), AMOUNT).send();
         // exactly: sign(arkTx) once + sign(returned checkpoint) once. The old code
         // also pre-signed the checkpoint before submit → 3 calls.
         expect(sign.mock.calls.length).toBe(2);
@@ -783,8 +810,8 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest, // no emulator
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server"],
+            version: 1,
+            params: [{ name: "server", type: "pubkey" }],
             functions: {
                 exit: {
                     tapscript: { signers: ["$server"], csv: { type: "blocks", value: 20n } },

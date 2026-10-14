@@ -100,8 +100,15 @@ const DUST_SATS = 330n;
  * Output index 0 throughout, matching the sibling test's shape.
  */
 const assetCovenantHTLC = {
-    version: 0,
-    params: ["hash", "receiver", "amount", "assetTxid", "assetGidx", "server"],
+    version: 1,
+    params: [
+        { name: "hash", type: "hash" },
+        { name: "receiver", type: "pubkey" },
+        { name: "amount", type: "int" },
+        { name: "assetTxid", type: "hash" },
+        { name: "assetGidx", type: "int" },
+        { name: "server", type: "pubkey" },
+    ],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -162,7 +169,7 @@ const assetCovenantHTLC = {
             },
         },
     },
-};
+} satisfies arkade.Program;
 
 /**
  * The SAME contract shape, with the arkadeScript written to match
@@ -175,8 +182,14 @@ const assetCovenantHTLC = {
  * with `resolveAsm` rather than asserting it by eye.
  */
 const scriptV2Shaped = {
-    version: 0,
-    params: ["hash", "receiver", "assetTxid", "assetGidx", "server"],
+    version: 1,
+    params: [
+        { name: "hash", type: "hash" },
+        { name: "receiver", type: "pubkey" },
+        { name: "assetTxid", type: "hash" },
+        { name: "assetGidx", type: "int" },
+        { name: "server", type: "pubkey" },
+    ],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -219,7 +232,7 @@ const scriptV2Shaped = {
             },
         },
     },
-};
+} satisfies arkade.Program;
 
 describe("asset-denominated non-interactive covenant", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);

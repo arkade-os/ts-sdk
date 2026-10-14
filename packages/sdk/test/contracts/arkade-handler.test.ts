@@ -42,8 +42,11 @@ const payTo = [
 /** Multisig + CSV-exit program: the "default vtxo" shape expressed as a Program. */
 function multisigProgram() {
     return {
-        version: 0,
-        params: ["server", "user"],
+        version: 1,
+        params: [
+            { name: "server", type: "pubkey" },
+            { name: "user", type: "pubkey" },
+        ],
         functions: {
             cooperative: {
                 tapscript: { signers: ["$user", "$server"] },
@@ -61,8 +64,14 @@ function multisigProgram() {
 /** Covenant HTLC program (same shape as the PR's own tests). */
 function htlcProgram() {
     return {
-        version: 0,
-        params: ["hash", "receiver", "amount", "server", "user"],
+        version: 1,
+        params: [
+            { name: "hash", type: "hash" },
+            { name: "receiver", type: "pubkey" },
+            { name: "amount", type: "int" },
+            { name: "server", type: "pubkey" },
+            { name: "user", type: "pubkey" },
+        ],
         functions: {
             claim: {
                 inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -367,8 +376,12 @@ describe("ArkadeContractHandler", () => {
 
         it("skips condition paths whose witness needs call arguments", () => {
             const program = {
-                version: 0,
-                params: ["hash"],
+                version: 1,
+                params: [
+                    { name: "hash", type: "hash" },
+                    { name: "user", type: "pubkey" },
+                    { name: "server", type: "pubkey" },
+                ],
                 functions: {
                     claim: {
                         inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -392,8 +405,13 @@ describe("ArkadeContractHandler", () => {
         it("resolves literal condition witness into extraWitness", () => {
             const preimage = new Uint8Array(32).fill(0x42);
             const program = {
-                version: 0,
-                params: ["hash", "preimage"],
+                version: 1,
+                params: [
+                    { name: "hash", type: "hash" },
+                    { name: "preimage", type: "bytes" },
+                    { name: "user", type: "pubkey" },
+                    { name: "server", type: "pubkey" },
+                ],
                 functions: {
                     claim: {
                         tapscript: {
