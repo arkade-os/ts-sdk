@@ -79,5 +79,15 @@ export {
     type CallableFunctions,
     type ContractFunctions,
     type ArkadeConnectOptions,
+    type ArkadeConnectServiceOptions,
+    type ArkadeConnectProviderOptions,
+    type ArkadeContractEventType,
+    type ArkadeContractEvent,
+    type ArkadeContractSubscription,
     type ArkadeServerProvider,
 } from "./contract";
+export {
+    resolveArkadeService,
+    type ArkadeService,
+    type ResolvedArkadeService,
+} from "./service";
