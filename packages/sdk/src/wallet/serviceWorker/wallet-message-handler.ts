@@ -1,4 +1,3 @@
-import { collectUtxos } from "../../repositories/walletRepository";
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
@@ -2024,23 +2023,9 @@ export class WalletMessageHandler
             return;
         }
 
-        // Fetch boarding inputs across the full boarding-address set (current +
-        // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
-        // re-fetches each boarding address from the onchain provider and saves
-        // it, so a transient failure throws here before we touch the cache and
-        // the previous snapshot survives (offline-first). saveUtxos merges, so
-        // only once the fetch succeeds do we prune spent coins the merge would
-        // otherwise keep — per address, mirroring updateDbAfterSettle.
-        const boardingAddresses = await this.readonlyWallet.getBoardingAddresses();
-        const fresh = await this.readonlyWallet.getBoardingUtxos();
-        const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
-        for (const addr of boardingAddresses) {
-            const cached = await collectUtxos(this.walletRepository, addr);
-            const kept = cached.filter((u) => freshKeys.has(`${u.txid}:${u.vout}`));
-            if (kept.length === cached.length) continue; // nothing stale
-            await this.walletRepository.deleteUtxos(addr);
-            if (kept.length > 0) await this.walletRepository.saveUtxos(addr, kept);
-        }
+        // The wallet refreshes only fetched addresses, preserving cached boarding inputs
+        // at deprecated-signer addresses that normal boarding reads deliberately exclude.
+        await this.readonlyWallet.getBoardingUtxos();
 
         // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
