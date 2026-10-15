@@ -98,17 +98,9 @@ export const makeCachedFeedFetch = (
  * paths cannot drift into different answers. */
 export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
 
-/** How often a watcher re-reads; the cache above still decides when the network is asked. */
-export const MARKETS_WATCH_INTERVAL_MS = 5 * 60 * 1000;
-
-/** Whether a discovery result can replace the cache: a pinned card always "answers",
- * so on its own it would overwrite every registry market with the pins. */
+/** A pinned card always "answers", so only a registry answering may replace the cache. */
 export const registryAnswered = (sources: readonly SourceReport[]): boolean =>
     sources.some((source) => source.sourceType === "registry" && source.ok);
-
-/** A market set compared as a set: a re-ranking is no change. */
-export const marketSetDigest = (markets: readonly DiscoveredMarket[]): string =>
-    markets.map(stableStringify).sort().join("\n");
 
 /** Lazy, so `nostr-tools` stays an optional peer: `discover()` fetches only with a solver to ask. */
 const nostrCards: TransportCardFetcher = {
@@ -225,18 +217,13 @@ export const discoverMarkets = async (
     return markets;
 };
 
-export interface WatchMarketsOptions extends DiscoverMarketsOptions {
-    /** Defaults to {@link MARKETS_WATCH_INTERVAL_MS}. */
-    intervalMs?: number;
-}
-
 /**
  * {@link discoverMarkets} kept current for a long-lived view: `onMarkets` gets the first read,
- * then every later read that changes the market set (a solver added, a card changed, a solver
- * gone). Returns a stop function. Pass a `repository` so a failed read answers from the cache.
+ * then every read that changes the market set. Returns a stop function. Pass a `repository`
+ * so a failed read answers from the cache.
  */
 export const watchMarkets = (
-    options: WatchMarketsOptions,
+    options: DiscoverMarketsOptions & { intervalMs?: number },
     onMarkets: (markets: DiscoveredMarket[]) => void,
 ): (() => void) => {
     let digest: string | undefined;
@@ -255,7 +242,8 @@ export const watchMarkets = (
         } finally {
             reading = false;
         }
-        const next = marketSetDigest(markets);
+        // Compared as a set: a re-ranking is no change.
+        const next = markets.map(stableStringify).sort().join("\n");
         if (stopped || next === digest) return;
         digest = next;
         try {
@@ -265,7 +253,7 @@ export const watchMarkets = (
         }
     };
     void read();
-    const timer = setInterval(read, options.intervalMs ?? MARKETS_WATCH_INTERVAL_MS);
+    const timer = setInterval(read, options.intervalMs ?? 5 * 60 * 1000);
     (timer as { unref?: () => void }).unref?.();
     return () => {
         stopped = true;

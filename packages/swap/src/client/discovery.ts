@@ -57,11 +57,7 @@ export interface DiscoveryConfig {
     readonly registryUrl?: string | null;
     /** Locally pinned solver cards, merged with the registry's. */
     readonly localCards?: readonly LocalCardInput[];
-    /**
-     * Reads the cards listed solvers publish on their own transports, the only copy of a
-     * solver the registry lists without markets. Absent means Nostr (needs the optional
-     * `nostr-tools` peer); `null` reads registry cards only.
-     */
+    /** Reads listed solvers' own cards. Absent means Nostr (optional `nostr-tools` peer); `null` none. */
     readonly transportCards?: TransportCardFetcher | null;
     /**
      * Markets to resolve against without touching the network. Trusted like config: an
@@ -73,13 +69,6 @@ export interface DiscoveryConfig {
     readonly fetchImpl?: typeof fetch;
     /** Receives discovery warnings (stale index, skipped cards, …). */
     readonly logger?: (...args: unknown[]) => void;
-    /**
-     * Refetch every `watchIntervalMs` (default five minutes) while an `onMarketsChanged`
-     * listener is attached. Off by default: the snapshot then refreshes on use, once stale.
-     */
-    readonly watch?: boolean;
-    /** The poll interval; read only with `watch` on. Defaults to `MARKETS_WATCH_INTERVAL_MS`. */
-    readonly watchIntervalMs?: number;
 }
 
 /** A market set, and where it came from. */
@@ -176,8 +165,6 @@ export interface DiscoveryIndexInput {
     readonly config?: DiscoveryConfig;
     /** Backs the shared markets cache. Without one, every load hits the registry. */
     readonly repository?: AssetSwapRepository;
-    /** Called with every snapshot newly held; the caller decides what counts as a change. */
-    readonly onChange?: (snapshot: DiscoverySnapshot) => void;
 }
 
 /**
@@ -202,12 +189,6 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     };
 
     let held: DiscoverySnapshot | undefined;
-
-    const hold = (snapshot: DiscoverySnapshot): DiscoverySnapshot => {
-        held = snapshot;
-        input.onChange?.(snapshot);
-        return snapshot;
-    };
 
     const unavailable = (detail: string): never => {
         throw new DiscoverySnapshotUnavailable(input.network, detail);
@@ -250,7 +231,10 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         if (injected) return injected;
         if (held) return held;
         const cached = await fromCache();
-        if (cached) return hold(cached);
+        if (cached) {
+            held = cached;
+            return cached;
+        }
         return unavailable(whyUnavailable());
     };
 
@@ -279,10 +263,10 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         // market, unlike one that did not answer.
         if (registryAnswered(result.sources)) {
             const fetchedAt = Date.now();
-            const snapshot = hold({
+            held = {
                 markets: result.markets,
                 ref: { fetchedAt, live: true, source: "live", registry: url },
-            });
+            };
             if (input.repository) {
                 try {
                     await input.repository.saveCachedMarkets(indexed, url, {
@@ -293,11 +277,14 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
                     // Best effort: a lost cache write costs one refetch.
                 }
             }
-            return snapshot;
+            return held;
         }
 
         const cached = await fromCache();
-        if (cached) return hold(cached);
+        if (cached) {
+            held = cached;
+            return cached;
+        }
         return unavailable(whyUnavailable());
     };
 

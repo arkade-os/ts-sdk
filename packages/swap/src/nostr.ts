@@ -8,7 +8,11 @@
  * fails loudly at resolution, by design. A dynamic `import()` in the factory was rejected: it
  * would make construction async, and the subscription is opened eagerly.
  */
-import type { TransportCard, TransportCardFetcher } from "@arkade-os/solver-discovery";
+import {
+    SOLVER_CARD_KIND,
+    type TransportCard,
+    type TransportCardFetcher,
+} from "@arkade-os/solver-discovery";
 import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
 import { CloseOnceWebSocket } from "./closeOnceWebSocket";
 import { assertTimerMs } from "@arkade-os/sdk";
@@ -31,16 +35,6 @@ import {
  * records who negotiated with whom; the cost (no store-and-forward) is covered by timeout + retry.
  */
 export const RFQ_DIRECTED_KIND = 24859;
-
-/**
- * A solver's signed card, `d` tag = network, authored by its `discovery_pubkey`.
- * Addressable (30000–39999), not ephemeral: a card is standing state relays should retain. The
- * opposite retention to {@link RFQ_DIRECTED_KIND} is intentional, not a typo.
- */
-export const SOLVER_CARD_KIND = 38859;
-
-/** {@link SOLVER_CARD_KIND} under its old name: the kind now carries the signed solver card. */
-export const RFQ_AD_KIND = SOLVER_CARD_KIND;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CARD_FETCH_TIMEOUT_MS = 5_000;
@@ -240,12 +234,12 @@ export interface NostrCardFetcherOptions {
  */
 export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): TransportCardFetcher => ({
     async fetch(solvers, network) {
-        const authors = [...new Set(solvers.map((solver) => solver.discovery_pubkey))];
+        const asked = new Set(solvers.map((solver) => solver.discovery_pubkey));
+        const authors = [...asked];
         const relays = [
             ...new Set(solvers.flatMap((solver) => solver.transports?.nostr?.relays ?? [])),
         ];
         if (authors.length === 0 || relays.length === 0) return [];
-        const asked = new Set(authors);
         const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
         const pool = options.pool ?? newPool();
         const latest = new Map<string, Event>();

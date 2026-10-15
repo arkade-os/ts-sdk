@@ -8,7 +8,6 @@ import { describe, it, expect, vi } from "vitest";
 import { generateSecretKey, getPublicKey, nip44, SimplePool, type Event } from "nostr-tools";
 import { SwapRefusal } from "../src/rfq";
 import {
-    RFQ_AD_KIND,
     RFQ_DIRECTED_KIND,
     RelayUnavailable,
     TransportClosed,
@@ -73,17 +72,6 @@ describe("RFQ kinds", () => {
     it("keeps directed traffic inside the NIP-01 ephemeral range", () => {
         expect(RFQ_DIRECTED_KIND).toBeGreaterThanOrEqual(20_000);
         expect(RFQ_DIRECTED_KIND).toBeLessThan(30_000);
-    });
-
-    /**
-     * The ad is standing state rather than a message, so it belongs in the
-     * addressable range where a relay keeps the current version per solver.
-     * Asserted beside the one above so the contrast is on the record: these two
-     * kinds want OPPOSITE retention, and neither is a typo of the other.
-     */
-    it("keeps the solver ad addressable, not ephemeral", () => {
-        expect(RFQ_AD_KIND).toBeGreaterThanOrEqual(30_000);
-        expect(RFQ_AD_KIND).toBeLessThan(40_000);
     });
 
     it("subscribes on the directed kind, addressed to itself, from the solver", () => {

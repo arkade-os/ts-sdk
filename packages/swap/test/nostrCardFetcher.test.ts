@@ -6,8 +6,8 @@ import {
     SimplePool,
     type Event,
 } from "nostr-tools";
-import type { IndexSolver } from "@arkade-os/solver-discovery";
-import { RFQ_AD_KIND, SOLVER_CARD_KIND, nostrCardFetcher } from "../src/nostr";
+import { SOLVER_CARD_KIND, type IndexSolver } from "@arkade-os/solver-discovery";
+import { nostrCardFetcher } from "../src/nostr";
 
 interface Params {
     onevent: (event: Event) => void;
@@ -70,13 +70,6 @@ const listed = (pubkey: string, relays = ["wss://relay.example"]): IndexSolver =
 
 afterEach(() => {
     vi.restoreAllMocks();
-});
-
-describe("SOLVER_CARD_KIND", () => {
-    it("is the kind the RFQ ad used, still exported under the old name", () => {
-        expect(SOLVER_CARD_KIND).toBe(38859);
-        expect(RFQ_AD_KIND).toBe(SOLVER_CARD_KIND);
-    });
 });
 
 describe("nostrCardFetcher", () => {
@@ -151,7 +144,7 @@ describe("nostrCardFetcher", () => {
         expect((await pending).map((c) => c.card)).toEqual([JSON.parse(low.content)]);
     });
 
-    it("drops a card from a key it did not ask for, or for another network", async () => {
+    it("drops an unasked key, another network, a missing d tag and a bad signature, so none can shadow the real card", async () => {
         const a = solverKey();
         const stranger = solverKey();
         const relay = relayStub();
@@ -164,26 +157,13 @@ describe("nostrCardFetcher", () => {
             cardEvent(stranger.secret, 500),
             cardEvent(a.secret, 400, { d: "bitcoin" }),
             cardEvent(a.secret, 450, { d: null }),
+            { ...cardEvent(a.secret, 900), content: '{"name":"forged"}' },
         );
         relay.eose();
 
         expect(await pending).toEqual([
             { pubkey: a.pubkey, createdAt: 100, card: { name: "solver", at: 100 } },
         ]);
-    });
-
-    it("drops an event whose signature does not verify, before it can shadow the real card", async () => {
-        const a = solverKey();
-        const forged = { ...cardEvent(a.secret, 900), content: '{"name":"forged"}' };
-        const relay = relayStub();
-        const pending = nostrCardFetcher({ pool: relay.pool }).fetch(
-            [listed(a.pubkey)],
-            "mutinynet",
-        );
-        relay.deliver(cardEvent(a.secret, 100), forged);
-        relay.eose();
-
-        expect((await pending).map((c) => c.createdAt)).toEqual([100]);
     });
 
     it("skips a card it cannot parse, and the older card that one replaced", async () => {

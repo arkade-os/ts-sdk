@@ -65,9 +65,7 @@ export {
 export {
     discoverMarkets,
     type DiscoverMarketsOptions,
-    MARKETS_WATCH_INTERVAL_MS,
     watchMarkets,
-    type WatchMarketsOptions,
     findMarket,
     makeCachedFeedFetch,
     type PlanError,

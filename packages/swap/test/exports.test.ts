@@ -526,8 +526,6 @@ describe("the @deprecated pointers", () => {
         "discoverMarkets",
         "DiscoverMarketsOptions",
         "watchMarkets",
-        "WatchMarketsOptions",
-        "MARKETS_WATCH_INTERVAL_MS",
         "extractPreimage",
         "findMarket",
         "getAssetSwaps",
