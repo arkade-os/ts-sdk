@@ -635,6 +635,8 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    /** Watcher events still being handled. They write VTXO rows, so {@link dispose} waits for them. */
+    private readonly inFlightEvents = new Set<Promise<void>>();
     /** `undefined` while online; the failure reason once a sync degrades. */
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
@@ -798,9 +800,11 @@ export class ContractManager implements IContractManager {
         this.initialized = true;
 
         this.stopWatcherFn = await this.watcher.startWatching((event) => {
-            this.handleContractEvent(event).catch((error) => {
+            const handled = this.handleContractEvent(event).catch((error) => {
                 console.error("Error handling contract event:", error);
             });
+            this.inFlightEvents.add(handled);
+            void handled.finally(() => this.inFlightEvents.delete(handled));
         });
     }
 
@@ -1797,6 +1801,8 @@ export class ContractManager implements IContractManager {
     }
 
     private async handleContractEvent(event: ContractEvent) {
+        // Delivered before dispose but run after it: the repositories may already be closed.
+        if (this.disposed) return;
         // Any event proves the transport is back, so pay an owed band refill now.
         if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         // A retryable failure must degrade sync state here, not be swallowed by startWatching's
@@ -2099,8 +2105,13 @@ export class ContractManager implements IContractManager {
         return { vtxosByScript: result, promoted };
     }
 
-    /** Stop the watcher, clear callbacks, and mark the manager uninitialized. */
-    dispose(): void {
+    /**
+     * Stop the watcher, clear callbacks, and mark the manager uninitialized.
+     *
+     * Teardown is synchronous. The returned promise settles once watcher events already being
+     * handled finish, after which nothing more is written to the repositories.
+     */
+    dispose(): Promise<void> {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
         // not addContract or persist catch-up VTXOs after teardown.
         this.disposed = true;
@@ -2122,6 +2133,8 @@ export class ContractManager implements IContractManager {
         }
 
         this.initialized = false;
+
+        return Promise.all([...this.inFlightEvents]).then(() => undefined);
     }
 
     /**
@@ -2135,6 +2148,6 @@ export class ContractManager implements IContractManager {
      * ```
      */
     [Symbol.dispose](): void {
-        this.dispose();
+        void this.dispose();
     }
 }

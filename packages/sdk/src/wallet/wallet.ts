@@ -2111,7 +2111,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 ? await this._contractManagerInitializing.catch(() => undefined)
                 : undefined);
 
-        manager?.dispose();
+        await manager?.dispose();
         this._contractManager = undefined;
         this._contractManagerInitializing = undefined;
     }

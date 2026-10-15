@@ -373,6 +373,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`wallet.dispose()` waits for contract events still being handled.** It
+  stopped the contract watcher but returned while an event handler could still
+  be syncing, so that handler could write to storage the caller had already
+  closed. `ContractManager.dispose()` now returns a promise that settles once
+  in-flight events finish, `ReadonlyWallet.dispose()` awaits it, and an event
+  delivered after dispose is dropped.
 - **`@arkade-os/swap`: one dead relay no longer kills a Node 22 process.**
   nostr-tools 2.25 closes a socket from its `onerror`, and Node 22's
   WebSocket re-fires `error` synchronously from `close()` on a connecting
