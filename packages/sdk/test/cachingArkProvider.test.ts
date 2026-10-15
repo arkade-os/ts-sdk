@@ -48,6 +48,27 @@ afterEach(() => {
 });
 
 describe("CachingArkProvider", () => {
+    it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+        "rejects invalid TTL %s before subscribing",
+        (ttl) => {
+            const inner = new RestArkProvider("https://example.com");
+            const subscribe = vi.spyOn(inner, "onServerInfoChanged");
+            expect(() => new CachingArkProvider(inner, ttl)).toThrow(
+                "ttlMs must be a non-negative safe integer",
+            );
+            expect(subscribe).not.toHaveBeenCalled();
+        },
+    );
+
+    it("does not reuse cached responses with a zero TTL", async () => {
+        const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
+        const provider = new CachingArkProvider(fakeInner(getInfo) as unknown as ArkProvider, 0);
+        await provider.getInfo();
+        await provider.getInfo();
+        expect(getInfo).toHaveBeenCalledTimes(2);
+        provider.dispose();
+    });
+
     it("serves getInfo from cache within the TTL", async () => {
         const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
         const provider = new CachingArkProvider(

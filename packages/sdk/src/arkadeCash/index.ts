@@ -7,15 +7,17 @@ import { RelativeTimelock } from "../script/tapscript";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 
 /**
- * ArkadeCash is a bearer instrument for the Ark protocol.
+ * ArkadeCash is a bearer instrument for the Arkade.
  * It encodes a private key and contract parameters as a bech32m string,
  * enabling wallet-to-wallet transfers without address exchange.
  *
- * Format: arkadecash1... (bech32m encoded)
+ * Format: arkadecash1... / tarkadecash1... (bech32m encoded)
  * Payload: version (1 byte) + private key (32 bytes) + server pubkey (32 bytes) + csv timelock sequence (4 bytes)
  */
 export class ArkadeCash {
     static readonly DefaultHRP = "arkadecash";
+    /** The only prefixes minted or accepted: mainnet and test networks. */
+    static readonly HRPs: readonly string[] = ["arkadecash", "tarkadecash"];
     static readonly Version = 0;
     static readonly PayloadLength = 1 + 32 + 32 + 4; // 69 bytes
 
@@ -32,6 +34,11 @@ export class ArkadeCash {
         readonly csvTimelock: RelativeTimelock,
         readonly hrp: string = ArkadeCash.DefaultHRP,
     ) {
+        if (!ArkadeCash.HRPs.includes(hrp)) {
+            throw new Error(
+                `Invalid arkadeCash prefix: expected one of ${ArkadeCash.HRPs.join(", ")}, got ${hrp}`,
+            );
+        }
         if (privateKey.length !== 32) {
             throw new Error(
                 `Invalid private key length: expected 32 bytes, got ${privateKey.length}`,

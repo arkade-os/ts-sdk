@@ -1,4 +1,5 @@
 import { WalletRepository, WalletState } from "../repositories/walletRepository";
+import { withWebLock } from "./webLock";
 
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
@@ -10,18 +11,30 @@ export const OVERLAP_MS = 24 * 60 * 60 * 1000;
 const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
 
 /**
+ * Web Locks name serializing wallet-state read-modify-write across same-origin contexts:
+ * `saveWalletState` persists the whole blob, so tabs/workers sharing a store lose each other's
+ * writes without it. One fixed name over-serializes distinct wallets per origin; writes are rare.
+ */
+const WALLET_STATE_LOCK_NAME = "arkade-wallet-state";
+
+/**
  * Atomically read, mutate, and persist wallet state. Every wallet-state writer must go through
  * this to avoid lost updates between interleaved async operations.
+ *
+ * Serialized in-process per repo object and, where available, by a queueing cross-context Web
+ * Lock. `updater` must be synchronous and must not re-enter: the Web Lock is not reentrant.
  */
 export async function updateWalletState(
     repo: WalletRepository,
     updater: (state: WalletState) => WalletState,
 ): Promise<void> {
     const prev = walletStateLocks.get(repo) ?? Promise.resolve();
-    const op = prev.then(async () => {
-        const state = (await repo.getWalletState()) ?? {};
-        await repo.saveWalletState(updater(state));
-    });
+    const op = prev.then(() =>
+        withWebLock(WALLET_STATE_LOCK_NAME, async () => {
+            const state = (await repo.getWalletState()) ?? {};
+            await repo.saveWalletState(updater(state));
+        }),
+    );
     // Store a version that never rejects so the chain doesn't break.
     walletStateLocks.set(
         repo,
@@ -89,8 +102,8 @@ export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
  * Compute the `after` lower-bound for a delta sync query. No `before` bound, so fresh virtual
  * outputs are never excluded; the safety lag applies only to {@link cursorCutoff}.
  */
-export function computeSyncWindow(cursor: number): { after: number } {
-    const after = Math.max(0, cursor - OVERLAP_MS);
+export function computeSyncWindow(cursor: number, overlapMs = OVERLAP_MS): { after: number } {
+    const after = Math.max(0, cursor - overlapMs);
     return { after };
 }
 

@@ -150,10 +150,6 @@ function buildTestTx(): { txHex: string; scripts: Uint8Array[] } {
 const SPENDER_HASH = new Uint8Array(20).fill(0xcc);
 const SPENDER_SCRIPT = p2wpkhScript(SPENDER_HASH);
 
-function toScriptHash(script: Uint8Array): string {
-    return hex.encode(sha256(script).reverse());
-}
-
 // Build a tx that spends output `vout` of `parentTxid`.
 function buildSpendingTx(parentTxid: string, vout: number): string {
     const tx = new Transaction({
@@ -912,9 +908,8 @@ describe("ElectrumOnchainProvider", () => {
     });
 
     describe("getTxOutspends", () => {
-        const { txHex, scripts } = buildTestTx();
+        const { txHex } = buildTestTx();
         const parentTxid = hex.encode(sha256(sha256(hex.decode(txHex))).reverse());
-        const scriptHashes = scripts.map(toScriptHash);
 
         it("returns all-unspent when both outputs are in listunspent", async () => {
             // Step 1: fetchTransactions for creator tx

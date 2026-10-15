@@ -378,6 +378,7 @@ const RESTORED_CORRIDORS = {
     lightning_send: ["arkade", "lightning"],
     lightning_receive: ["lightning", "arkade"],
     onchain_send: ["arkade", "onchain"],
+    onchain_receive: ["onchain", "arkade"],
 } as const satisfies Record<CorridorSwapRecord["kind"], readonly [Corridor, Corridor]>;
 
 /**

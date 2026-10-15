@@ -3,7 +3,7 @@ import { hex } from "@scure/base";
 import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { DelegateContractHandler } from "../../src/contracts/handlers/delegate";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
-import { Contract, contractHandlers, DefaultVtxo, DelegateVtxo } from "../../src";
+import { Contract, contractHandlers, DefaultVtxo } from "../../src";
 import {
     createDefaultContractParams,
     createDelegateContractParams,

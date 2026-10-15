@@ -42,7 +42,7 @@ export type Outcome =
     | "cancelled"
     /** A send leg past `refundLocktime` with a refund push in flight. */
     | "refunding"
-    /** The trader's value came back. Send legs only, ever. */
+    /** The trader's value came back: a send leg, or `onchain_receive`'s L1 refund. */
     | "refunded"
     /** A receive leg the trader never claimed: the solver took the lockup back
      * and the incoming payment never arrived. */
@@ -87,6 +87,7 @@ export const CORRIDOR_PASS = {
     lightning_send: LIGHTNING_DRIVE.take,
     lightning_receive: LIGHTNING_DRIVE.give,
     onchain_send: ONCHAIN_DRIVE.take,
+    onchain_receive: ONCHAIN_DRIVE.give,
 } as const satisfies Record<CorridorKind, unknown>;
 
 /** Whose the arkade lockup is, per corridor kind (`lockups[0]` on every pass). */
@@ -94,6 +95,7 @@ export const LOCKUP_OWNER = {
     lightning_send: CORRIDOR_PASS.lightning_send.lockups[0].owner,
     lightning_receive: CORRIDOR_PASS.lightning_receive.lockups[0].owner,
     onchain_send: CORRIDOR_PASS.onchain_send.lockups[0].owner,
+    onchain_receive: CORRIDOR_PASS.onchain_receive.lockups[0].owner,
 } as const satisfies Record<CorridorKind, LockupOwner>;
 
 /** Whether this kind's drive pass reads L1, i.e. needs the onchain corridor's deps. */
@@ -134,8 +136,9 @@ const CORRIDOR_OUTCOME: Record<LockupOwner, Record<RfqSwapState, CorridorCell>> 
         needs_counterparty: at("needs_recovery"),
         // Matched by the hash, not our txid, so a claim that lands without us counts.
         settled: at("claimed"),
-        // The inversion: a receive lockup's non-claim leaves are all the solver's.
-        refunded: at("lapsed"),
+        // The inversion: a receive lockup's non-claim leaves are all the solver's. On
+        // `onchain_receive` the swap is `refunded` only once the trader's own L1 half is.
+        refunded: (kind) => (kind === "onchain_receive" ? "refunded" : "lapsed"),
         failed: at("failed"),
     },
 };

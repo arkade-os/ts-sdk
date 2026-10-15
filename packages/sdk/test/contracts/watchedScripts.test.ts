@@ -6,7 +6,6 @@ import {
     ContractEvent,
     ContractManager,
     ContractWatcher,
-    DelegateProvider,
     type IndexerProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -659,7 +658,6 @@ describe("watch-only scripts stay out of the wallet", () => {
 
         const wallet = await Wallet.create({
             identity: SingleKey.fromHex(mockPrivKeyHex),
-            arkServerUrl: "http://localhost:7070",
             arkProvider: createMockArkProvider(),
             indexerProvider: mockIndexer,
             onchainProvider: createMockOnchainProvider(),

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { InMemoryTaskQueue } from "../../../src/worker/expo/taskQueue";
 import { CONTRACT_POLL_TASK_TYPE } from "../../../src/worker/expo/processors";
+import { SingleKey } from "../../../src/identity/singleKey";
 
 const { walletCreateMock, runTasksMock } = vi.hoisted(() => ({
     walletCreateMock: vi.fn(),
@@ -64,6 +65,33 @@ class QueueWithConfig extends InMemoryTaskQueue {
 }
 
 describe("ExpoWallet", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid foreground interval %s before creating a wallet",
+        async (foregroundIntervalMs) => {
+            const { ExpoWallet } = await loadExpoWallet();
+            await expect(
+                ExpoWallet.setup({
+                    identity: SingleKey.fromHex("01".repeat(32)),
+                    background: { taskQueue: new InMemoryTaskQueue(), foregroundIntervalMs },
+                }),
+            ).rejects.toThrow("foregroundIntervalMs");
+            expect(walletCreateMock).not.toHaveBeenCalled();
+        },
+    );
+
+    it("keeps zero as disabled foreground polling", async () => {
+        vi.useFakeTimers();
+        walletCreateMock.mockResolvedValue(createWalletStub());
+        const { ExpoWallet } = await loadExpoWallet();
+        const wallet = await ExpoWallet.setup({
+            identity: SingleKey.fromHex("01".repeat(32)),
+            background: { taskQueue: new InMemoryTaskQueue(), foregroundIntervalMs: 0 },
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(runTasksMock).not.toHaveBeenCalled();
+        await wallet.dispose();
+    });
+
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();

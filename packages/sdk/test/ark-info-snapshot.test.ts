@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { hex } from "@scure/base";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import {
@@ -413,7 +413,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         const wallet = await createWallet(async () => makeArkInfo(), repos, {
             getVtxos,
             getVirtualTxs,
-        } as Partial<IndexerProvider>);
+        } as unknown as Partial<IndexerProvider>);
 
         const reader = await wallet.getArkadeReader();
         const { vtxos } = await reader.getVtxos({ scripts: ["5120aa"], spendableOnly: true });
@@ -538,7 +538,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         // only the timelock (1 block) is out of policy.
         const oneBlockCheckpoint = hex.encode(
             CSVMultisigTapscript.encode({
-                timelock: { type: "blocks", value: 1 },
+                timelock: { type: "blocks", value: 1n },
                 pubkeys: [hex.decode(serverKeyHex).slice(1)],
             }).script,
         );
@@ -564,7 +564,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         // response, caught even at first-contact self-consistency.
         const wrongPubkeyCheckpoint = hex.encode(
             CSVMultisigTapscript.encode({
-                timelock: { type: "seconds", value: 604_672 },
+                timelock: { type: "seconds", value: 604_672n },
                 pubkeys: [new Uint8Array(32).fill(0xab)],
             }).script,
         );

@@ -239,7 +239,7 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     }) as ArtifactWitnessElement[];
 }
 
-/** CSV operands are encoded BIP68 sequences; a `$param` is decoded after binding. */
+/** Every CSV operand is an encoded BIP68 sequence — a literal here, a `$param` when it is bound. */
 function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegment["csv"] {
     if (typeof operand === "string") return { type: "sequence", value: operand };
     const timelock = sequenceToCanonicalTimelock(operand);

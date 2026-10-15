@@ -37,3 +37,25 @@ export {
     verifyJointGraph,
     type JointGraph,
 } from "./jointGraph";
+// The EVM corridors' RFQ wire: negotiation only, nothing here funds or claims.
+export {
+    EVM_CHAIN,
+    evmAmountFromWire,
+    evmAmountToWire,
+    evmDirectionOf,
+    evmQuoteSats,
+    evmQuoteTokenAmount,
+    evmReceivePair,
+    evmReceiveRequest,
+    evmSendPair,
+    evmSendRequest,
+    evmTokenLeg,
+    evmTokenOf,
+    readEvmReceiveQuote,
+    readEvmSendQuote,
+    type EvmReceiveQuote,
+    type EvmReceiveQuoteProfile,
+    type EvmRfqQuote,
+    type EvmSendQuote,
+    type EvmSendQuoteProfile,
+} from "./evmRfq";

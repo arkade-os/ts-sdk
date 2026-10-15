@@ -14,6 +14,7 @@ import {
 import { isEventSourceError } from "../providers/utils";
 import { isEventSourceUnavailableError } from "../providers/eventSource";
 import { getVtxosForContract } from "./vtxoOwnership";
+import { assertTimerMs } from "../utils/time";
 
 /** Exponential reconnect backoff: `baseMs * 2^(attempt-1)`, capped at `maxMs`. */
 export function computeReconnectDelay(attempt: number, baseMs: number, maxMs: number): number {
@@ -145,6 +146,9 @@ export class ContractWatcher {
 
     /** @see ContractWatcherConfig */
     constructor(config: ContractWatcherConfig) {
+        assertTimerMs("failsafePollIntervalMs", config.failsafePollIntervalMs);
+        assertTimerMs("reconnectDelayMs", config.reconnectDelayMs);
+        assertTimerMs("maxReconnectDelayMs", config.maxReconnectDelayMs);
         this.config = {
             ...DEFAULT_CONTRACT_WATCHER_CONFIG,
             ...config,

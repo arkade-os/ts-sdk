@@ -156,6 +156,8 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
      * @see ContractWatcherConfig
      */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /** Delta-sync overlap in milliseconds, including boot; defaults to 24 hours. */
+    vtxoSyncOverlapMs?: number;
 }
 
 /**
@@ -232,7 +234,9 @@ export type StorageConfig = {
     /**
      * Optional intent-lifecycle repository. Opt-in: when present, the wallet
      * persists settlement intents and excludes intent-locked VTXOs from
-     * spendable balance. Absent ⇒ those code paths are no-ops.
+     * spendable balance. Absent ⇒ those code paths are no-ops. Only one wallet
+     * instance may settle against it: reconciliation deletes from the server any
+     * pending intent that instance is not settling itself.
      */
     intentRepository?: IntentRepository;
     /**
@@ -437,6 +441,9 @@ export interface SendParams {
 
     /** Require every input's known expiry to be at least this UNIX-seconds or block-height floor. */
     inputExpiryFloor?: InputExpiryFloor;
+
+    /** Maximum sats of unavoidable change this send may pay as an offchain fee. Defaults to any change below the operator's VTXO minimum; 0 disables it. */
+    maxChangeFee?: number;
 }
 
 /**

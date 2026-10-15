@@ -442,7 +442,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                     forfeitTapLeafScript: makeTapLeaf(),
                     intentTapLeafScript: makeTapLeaf(),
                     tapTree: new Uint8Array(32),
-                },
+                } as ExtendedVirtualCoin,
             ]);
 
             // Reopen at the current DB_VERSION: the repo above already

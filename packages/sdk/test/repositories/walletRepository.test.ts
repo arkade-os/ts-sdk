@@ -7,16 +7,11 @@ import { collectVtxos } from "../../src/repositories/walletRepository";
 import { collectUtxos } from "../../src/repositories/walletRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-    type ArkTransaction,
     type ExtendedCoin,
-    type ExtendedVirtualCoin,
     IndexedDBWalletRepository,
     InMemoryWalletRepository,
-    type TapLeafScript,
     TxType,
 } from "../../src";
-import { TaprootControlBlock } from "@scure/btc-signer";
-import { hex } from "@scure/base";
 import {
     createMockTransaction,
     createMockUtxo,
@@ -299,6 +294,33 @@ describe.each(walletRepositoryImplementations)("WalletRepository: $name", ({ fac
             const retrieved = await collectUtxos(repository, testAddress);
 
             expect(retrieved).toEqual([]);
+        });
+
+        it("should save UTXOs for several addresses in one call", async () => {
+            const otherAddress = "test-address-456";
+            const emptyAddress = "test-address-789";
+            await repository.saveUtxos(testAddress, [createMockUtxo("tx1", 0, 10000)]);
+
+            await repository.saveUtxos(
+                new Map<string, ExtendedCoin[]>([
+                    [
+                        testAddress,
+                        [createMockUtxo("tx1", 0, 15000), createMockUtxo("tx2", 1, 20000)],
+                    ],
+                    [otherAddress, [createMockUtxo("tx3", 0, 30000)]],
+                    [emptyAddress, []],
+                ]),
+            );
+
+            const mine = await collectUtxos(repository, testAddress);
+            expect(mine.map((u) => `${u.txid}:${u.value}`).sort()).toEqual([
+                "tx1:15000",
+                "tx2:20000",
+            ]);
+            expect((await collectUtxos(repository, otherAddress)).map((u) => u.txid)).toEqual([
+                "tx3",
+            ]);
+            expect(await collectUtxos(repository, emptyAddress)).toEqual([]);
         });
     });
 

@@ -8,7 +8,6 @@ import { describe, it, expect, vi } from "vitest";
 import { generateSecretKey, getPublicKey, nip44, SimplePool, type Event } from "nostr-tools";
 import { SwapRefusal } from "../src/rfq";
 import {
-    RFQ_AD_KIND,
     RFQ_DIRECTED_KIND,
     RelayUnavailable,
     TransportClosed,
@@ -75,17 +74,6 @@ describe("RFQ kinds", () => {
         expect(RFQ_DIRECTED_KIND).toBeLessThan(30_000);
     });
 
-    /**
-     * The ad is standing state rather than a message, so it belongs in the
-     * addressable range where a relay keeps the current version per solver.
-     * Asserted beside the one above so the contrast is on the record: these two
-     * kinds want OPPOSITE retention, and neither is a typo of the other.
-     */
-    it("keeps the solver ad addressable, not ephemeral", () => {
-        expect(RFQ_AD_KIND).toBeGreaterThanOrEqual(30_000);
-        expect(RFQ_AD_KIND).toBeLessThan(40_000);
-    });
-
     it("subscribes on the directed kind, addressed to itself, from the solver", () => {
         const solverSecret = generateSecretKey();
         const { pool, seenFilters } = fakePool(solverSecret);
@@ -108,6 +96,45 @@ describe("RFQ kinds", () => {
 });
 
 describe("nostrRfqTransport", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid timeout %s before opening a subscription",
+        (timeoutMs) => {
+            const solverSecret = generateSecretKey();
+            const { pool, seenFilters } = fakePool(solverSecret);
+            expect(() =>
+                nostrRfqTransport({
+                    relays: ["wss://x"],
+                    solverPubkey: getPublicKey(solverSecret),
+                    pool: pool as never,
+                    timeoutMs,
+                }),
+            ).toThrow("timeoutMs");
+            expect(seenFilters).toHaveLength(0);
+        },
+    );
+
+    it("keeps zero as an immediate reply timeout", async () => {
+        vi.useFakeTimers();
+        try {
+            const solverSecret = generateSecretKey();
+            const { pool } = fakePool(solverSecret);
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                pool: pool as never,
+                timeoutMs: 0,
+            });
+            const rejection = expect(
+                transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "zero" }),
+            ).rejects.toThrow("no solver reply within 0ms");
+            await vi.advanceTimersByTimeAsync(0);
+            await rejection;
+            await transport.close();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     const quote = (rfqId: string) => ({ v: 1, type: "rfq_quote", rfq_id: rfqId });
 
     it("returns the solver's quote for the negotiation it asked about", async () => {

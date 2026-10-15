@@ -33,8 +33,8 @@ import {
     ConditionMultisigTapscript,
     ConditionCSVMultisigTapscript,
     type ArkTapscript,
-    type TapscriptType,
     type RelativeTimelock,
+    type TapscriptType,
 } from "../script/tapscript";
 import { VtxoScript, type TapLeafScript } from "../script/base";
 import { sequenceToCanonicalTimelock } from "../utils/timelock";
@@ -121,7 +121,8 @@ export interface TapscriptSegment {
     /**
      * Relative timelock (CSV). The value is a literal or a `"$param"` reference
      * resolved against the constructor args (same convention as {@link SignerRef}).
-     * `sequence` accepts a canonical encoded BIP68 operand emitted by the compiler.
+     * `"blocks"` and `"seconds"` are counts; `"sequence"` is a raw BIP68
+     * sequence, which is what an `arkadec` CSV operand holds.
      * Combinable with `asm` (condition + CSV); mutually exclusive with `cltv`.
      */
     csv?: { type: "blocks" | "seconds" | "sequence"; value: bigint | string };
@@ -207,6 +208,26 @@ export function resolveTimelockValue(
     throw new Error(
         `invalid timelock value '${value}' — expected a bigint or a '$param' reference`,
     );
+}
+
+/**
+ * Resolve a CSV segment to a {@link RelativeTimelock}. A `"sequence"` kind holds
+ * the raw BIP68 sequence that `arkadec` and the delegatee push for a CSV
+ * operand, so it is decoded here instead of being read as a count.
+ */
+export function resolveCsvTimelock(
+    csv: NonNullable<TapscriptSegment["csv"]>,
+    args: Record<string, ArkadeParamValue>,
+): RelativeTimelock {
+    const value = resolveTimelockValue(csv.value, args);
+    if (csv.type !== "sequence") return { type: csv.type, value };
+    const timelock = sequenceToCanonicalTimelock(value);
+    if (!timelock) {
+        throw new Error(
+            `csv '${csv.value}' resolved to ${value}, which is not a canonical BIP68 sequence`,
+        );
+    }
+    return timelock;
 }
 
 /**
@@ -412,20 +433,6 @@ function resolveSigner(
         throw new Error(`signer ${ref} must be a pubkey (bytes)`);
     }
     return v;
-}
-
-/** @internal Decode compiler sequences while retaining hand-written timelock units. */
-export function resolveCsvTimelock(
-    csv: NonNullable<TapscriptSegment["csv"]>,
-    args: Record<string, ArkadeParamValue>,
-): RelativeTimelock {
-    const value = resolveTimelockValue(csv.value, args);
-    if (csv.type !== "sequence") return { type: csv.type, value };
-    const timelock = sequenceToCanonicalTimelock(value);
-    if (!timelock) {
-        throw new Error(`CSV value '${csv.value}' (${value}) is not a canonical BIP68 sequence`);
-    }
-    return timelock;
 }
 
 function encodeTapscriptSegment(
