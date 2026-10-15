@@ -1158,14 +1158,14 @@ describe("VtxoManager - Renewal", () => {
                     spentBy: "",
                     commitmentTxIds: [],
                     expiresAt: new Date(now + 40_000),
-                }) as ExtendedVirtualCoin;
+                }) as unknown as ExtendedVirtualCoin;
             const contractManager = {
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 getContracts: vi.fn().mockResolvedValue([{ script: "51delegated" }]),
             };
             const swept = { ...soon("swept", "51delegated"), isSwept: true } as ExtendedVirtualCoin;
             const vtxos = [soon("own", "51own"), soon("delegated", "51delegated"), swept];
-            const config = { enabled: true, thresholdMs: 100_000 };
+            const config = { vtxoThreshold: 100 };
 
             // no delegatee manager: delegation turned off still leaves them to the service, but a
             // swept one is the wallet's to recover
