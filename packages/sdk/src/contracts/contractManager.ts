@@ -461,8 +461,10 @@ export interface IContractManager extends Disposable {
     /** Whether the underlying watcher is currently active. */
     isWatching(): Promise<boolean>;
 
-    /** Release resources (stop watching, clear listeners). */
-    dispose(): void;
+    /**
+     * Release resources (stop watching, clear listeners) and wait for in-flight repository writes.
+     */
+    dispose(): Promise<void>;
 }
 
 /** Options for getting spendable paths. */
@@ -635,6 +637,8 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    /** Watcher events still being handled. They write VTXO rows, so {@link dispose} waits for them. */
+    private readonly inFlightEvents = new Set<Promise<void>>();
     /** `undefined` while online; the failure reason once a sync degrades. */
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
@@ -798,9 +802,11 @@ export class ContractManager implements IContractManager {
         this.initialized = true;
 
         this.stopWatcherFn = await this.watcher.startWatching((event) => {
-            this.handleContractEvent(event).catch((error) => {
+            const handled = this.handleContractEvent(event).catch((error) => {
                 console.error("Error handling contract event:", error);
             });
+            this.inFlightEvents.add(handled);
+            void handled.finally(() => this.inFlightEvents.delete(handled));
         });
     }
 
@@ -1797,6 +1803,8 @@ export class ContractManager implements IContractManager {
     }
 
     private async handleContractEvent(event: ContractEvent) {
+        // Delivered before dispose but run after it: the repositories may already be closed.
+        if (this.disposed) return;
         // Any event proves the transport is back, so pay an owed band refill now.
         if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         // A retryable failure must degrade sync state here, not be swallowed by startWatching's
@@ -2099,8 +2107,14 @@ export class ContractManager implements IContractManager {
         return { vtxosByScript: result, promoted };
     }
 
-    /** Stop the watcher, clear callbacks, and mark the manager uninitialized. */
-    dispose(): void {
+    /**
+     * Stop the watcher, clear callbacks, and mark the manager uninitialized.
+     *
+     * Teardown is synchronous. The returned promise settles once watcher events already being
+     * handled, and any look-ahead drain, finish; after that nothing more is written to the
+     * repositories.
+     */
+    dispose(): Promise<void> {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
         // not addContract or persist catch-up VTXOs after teardown.
         this.disposed = true;
@@ -2113,28 +2127,36 @@ export class ContractManager implements IContractManager {
 
         this.lookAheadEntries.clear();
         // Sweep again once the drain unwinds: its current iteration can register one last entry.
-        if (pendingDrain) {
-            void pendingDrain
-                .catch(() => {})
-                .then(() => {
-                    if (this.disposed) this.lookAheadEntries.clear();
-                });
-        }
+        const drainUnwound = pendingDrain
+            ?.catch(() => {})
+            .then(() => {
+                if (this.disposed) this.lookAheadEntries.clear();
+            });
 
         this.initialized = false;
+
+        return Promise.all([...this.inFlightEvents, drainUnwound]).then(() => undefined);
     }
 
     /**
-     * Symbol.dispose implementation for the `using` keyword.
+     * Symbol.dispose implementation for the `using` keyword. Teardown is immediate, but it does
+     * not wait for in-flight work; use `await using` for that.
+     */
+    [Symbol.dispose](): void {
+        void this.dispose();
+    }
+
+    /**
+     * Symbol.asyncDispose implementation for the `await using` keyword; waits like {@link dispose}.
      * @example
      * ```typescript
      * {
-     *   using manager = await wallet.getContractManager();
+     *   await using manager = await wallet.getContractManager();
      *   // ... use manager
-     * } // automatically disposed
+     * } // disposed, with in-flight events finished
      * ```
      */
-    [Symbol.dispose](): void {
-        this.dispose();
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
     }
 }
