@@ -77,9 +77,12 @@ describe.each([
         expect(handed()).toBeUndefined();
     });
 
+    // wrapped only to learn which solvers it got no card from
     it("hands it the caller's own fetcher", async () => {
-        const own: TransportCardFetcher = { fetch: async () => [] };
+        const own = { fetch: vi.fn<TransportCardFetcher["fetch"]>(async () => []) };
         await discoverWith({ transportCards: own });
-        expect(handed()).toBe(own);
+        const solver = { name: "solver", discovery_pubkey: PUBKEY };
+        expect(await handed()?.fetch([solver], "regtest")).toEqual([]);
+        expect(own.fetch).toHaveBeenCalledWith([solver], "regtest");
     });
 });

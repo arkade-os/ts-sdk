@@ -7,14 +7,11 @@
  * all, and a caller cannot tell which of the four it got.
  */
 import { describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
-import { schnorr } from "@noble/curves/secp256k1.js";
-import { sha256 } from "@noble/hashes/sha2.js";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { discoveryIndex, isUsableCard } from "../../src/client/discovery";
 import { DiscoverySnapshotUnavailable } from "../../src/client/errors";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
-import { indexOf, lightningCard, spotCard } from "./fixtures";
+import { indexOf, lightningCard, pointedSolver, spotCard } from "./fixtures";
 
 const REGISTRY = "https://registry.example/regtest.json";
 
@@ -264,42 +261,8 @@ describe("an injected snapshot", () => {
 });
 
 describe("a market resolved from a transport card", () => {
-    const canonical = (value: unknown): unknown =>
-        Array.isArray(value)
-            ? value.map(canonical)
-            : value !== null && typeof value === "object"
-              ? Object.fromEntries(
-                    Object.keys(value)
-                        .sort()
-                        .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
-                )
-              : value;
-
     it("survives the cache round trip, read back while the registry is down", async () => {
-        const secretKey = schnorr.utils.randomSecretKey();
-        const pubkey = hex.encode(schnorr.getPublicKey(secretKey));
-        const transports = { nostr: { relays: ["wss://relay.example"] } };
-        const {
-            solver: _solver,
-            source: _source,
-            sourceType: _type,
-            discovery_pubkey: _key,
-            transports: _transports,
-            ...market
-        } = lightningCard;
-        const unsigned = {
-            version: 0,
-            name: "pointed",
-            discovery_pubkey: pubkey,
-            transports,
-            markets: [market],
-        };
-        const digest = sha256(new TextEncoder().encode(JSON.stringify(canonical(unsigned))));
-        const card = { ...unsigned, sig: hex.encode(schnorr.sign(digest, secretKey)) };
-        const index = {
-            ...indexOf([]),
-            solvers: [{ name: "pointed", discovery_pubkey: pubkey, transports }],
-        };
+        const { card, index } = pointedSolver();
         const repository = new InMemoryAssetSwapRepository();
 
         const live = discoveryIndex({
@@ -308,9 +271,7 @@ describe("a market resolved from a transport card", () => {
                 registryUrl: REGISTRY,
                 fetchImpl: (async () =>
                     new Response(JSON.stringify(index))) as unknown as typeof fetch,
-                transportCards: {
-                    fetch: async () => [{ pubkey, createdAt: Math.floor(Date.now() / 1000), card }],
-                },
+                transportCards: { fetch: async () => [card()] },
             },
             repository,
         });
@@ -326,6 +287,54 @@ describe("a market resolved from a transport card", () => {
         const cached = await offline.load();
         expect(cached.ref.source).toBe("cache");
         expect(cached.markets.map((m) => m.solver)).toEqual(["pointed"]);
+    });
+
+    it("holds what arrived, leaves the cache alone, and asks again a minute later", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { card, index } = pointedSolver();
+            const repository = new InMemoryAssetSwapRepository();
+            const registry = async () => new Response(JSON.stringify(index));
+            await discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl: registry as unknown as typeof fetch,
+                    transportCards: { fetch: async () => [card()] },
+                },
+                repository,
+            }).load();
+            const before = await repository.getCachedMarkets("regtest", REGISTRY);
+
+            const fetchImpl = vi.fn(registry);
+            const relayDown = discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl: fetchImpl as unknown as typeof fetch,
+                    transportCards: {
+                        fetch: async () => {
+                            throw new Error("relay timed out");
+                        },
+                    },
+                },
+                repository,
+            });
+            const snapshot = await relayDown.load();
+            // live, so a cached card, whose key is unvalidated, never joins it
+            expect(snapshot.ref).toMatchObject({ live: true, source: "live" });
+            expect(snapshot.markets).toEqual([]);
+            expect(await repository.getCachedMarkets("regtest", REGISTRY)).toEqual(before);
+
+            vi.advanceTimersByTime(59_000);
+            await relayDown.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(1_000);
+            await relayDown.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

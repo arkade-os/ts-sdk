@@ -10,6 +10,7 @@ import {
     discover,
     isNetwork,
     marketLegKey,
+    marketPairKey,
     registryIndexUrl,
     sideLimits,
     stableStringify,
@@ -102,17 +103,105 @@ export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
 export const registryAnswered = (sources: readonly SourceReport[]): boolean =>
     sources.some((source) => source.sourceType === "registry" && source.ok);
 
+/** The optional `nostr-tools` peer is not installed: no card can arrive, so none is missing. */
+class CardTransportUnavailable extends Error {}
+
 /** Lazy, so `nostr-tools` stays an optional peer; one instance, so a card seen once fills a miss. */
 let nostrFetcher: TransportCardFetcher | undefined;
 const nostrCards: TransportCardFetcher = {
-    fetch: async (solvers, network) =>
-        (nostrFetcher ??= (await import("./nostr")).nostrCardFetcher()).fetch(solvers, network),
+    fetch: async (solvers, network) => {
+        if (!nostrFetcher) {
+            let nostr: typeof import("./nostr");
+            try {
+                nostr = await import("./nostr");
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                throw new CardTransportUnavailable(
+                    `the nostr-tools peer is not installed (${reason})`,
+                );
+            }
+            nostrFetcher ??= nostr.nostrCardFetcher();
+        }
+        return nostrFetcher.fetch(solvers, network);
+    },
 };
 
 /** A `transportCards` option resolved: omitted means the Nostr fetcher, `null` none. */
 export const transportCardsOf = (
     option: TransportCardFetcher | null | undefined,
 ): TransportCardFetcher | undefined => (option === undefined ? nostrCards : (option ?? undefined));
+
+/**
+ * How long a listed solver whose card did not arrive keeps its cached markets. A card older than
+ * solver-discovery's `MAX_CARD_AGE_SECONDS` (two hours, not exported from its root) is refused
+ * anyway, so past that the solver is taken as gone and the registry's answer replaces the cache.
+ */
+export const UNDELIVERED_CARRY_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * `fetcher`, also telling which listed solvers it got no card from: a fetch that failed, or one
+ * that answered without that solver's key. A card that arrived and discovery then refused still
+ * counts as delivered, as the solver's own transport answered. A solver listing no transport has
+ * no card to wait for.
+ */
+export const trackDelivery = (
+    fetcher: TransportCardFetcher | undefined,
+): { fetcher: TransportCardFetcher | undefined; undelivered: () => ReadonlySet<string> } => {
+    let undelivered: ReadonlySet<string> = new Set();
+    if (!fetcher) return { fetcher, undelivered: () => undelivered };
+    return {
+        fetcher: {
+            async fetch(solvers, network) {
+                const asked = solvers.filter(
+                    (solver) => Object.keys(solver.transports ?? {}).length > 0,
+                );
+                try {
+                    const cards = await fetcher.fetch(solvers, network);
+                    const got = new Set(
+                        Array.isArray(cards) ? cards.map((card) => card?.pubkey) : [],
+                    );
+                    undelivered = new Set(
+                        asked
+                            .filter((solver) => !got.has(solver.discovery_pubkey))
+                            .map((solver) => solver.name),
+                    );
+                    return cards;
+                } catch (error) {
+                    if (!(error instanceof CardTransportUnavailable))
+                        undelivered = new Set(asked.map((solver) => solver.name));
+                    throw error;
+                }
+            },
+        },
+        undelivered: () => undelivered,
+    };
+};
+
+/**
+ * The cached markets of listed solvers whose card did not arrive and that this answer otherwise
+ * lacks. While there are any, the answer must not replace the cache, or one slow relay would
+ * drop a solver for the cache's lifetime; past {@link UNDELIVERED_CARRY_MS} there are none.
+ */
+export const undeliveredCarry = (
+    fresh: readonly DiscoveredMarket[],
+    undelivered: ReadonlySet<string>,
+    cached: { markets: readonly DiscoveredMarket[]; fetchedAt: number } | undefined,
+): DiscoveredMarket[] => {
+    if (undelivered.size === 0 || !cached) return [];
+    if (Date.now() - cached.fetchedAt >= UNDELIVERED_CARRY_MS) return [];
+    const answered = new Set(fresh.map((market) => market.solver));
+    return cached.markets.filter(
+        (market) => undelivered.has(market.solver) && !answered.has(market.solver),
+    );
+};
+
+/** Ranked as `discover()` ranks: by corridor-qualified leg pair, then fee; stable. */
+const ranked = (markets: DiscoveredMarket[]): DiscoveredMarket[] =>
+    markets.sort((a, b) => {
+        const [ka, kb] = [marketPairKey(a), marketPairKey(b)];
+        if (ka !== kb) return ka < kb ? -1 : 1;
+        return a.fee_bps - b.fee_bps;
+    });
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
@@ -194,17 +283,22 @@ export const discoverMarkets = async (
     const cached = repository && (await readMarketsCache(repository, network, registryKey));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
+    const delivery = trackDelivery(transportCardsOf(options.transportCards));
     const { markets, sources, warnings } = await discover({
         registries,
         localCards,
         network,
         fetchImpl,
-        transportCards: transportCardsOf(options.transportCards),
+        transportCards: delivery.fetcher,
     });
     if (warnings.length) logger?.("solver discovery:", ...warnings);
     // A reachable registry is authoritative even when empty.
     const reachable = registryAnswered(sources);
     if (!reachable && cached) return cached.markets;
+    // Not over a solver whose card merely failed to arrive: it keeps its cached markets, and
+    // the cache keeps aging toward the next full answer.
+    const carried = reachable ? undeliveredCarry(markets, delivery.undelivered(), cached) : [];
+    if (carried.length > 0) return ranked([...markets, ...carried]);
     if (reachable && repository) {
         try {
             await repository.saveCachedMarkets(network, registryKey, {

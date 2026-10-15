@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { watchMarkets } from "../src/markets";
 import { btcChf, btcUsd } from "./fixtures";
+import { pointedSolver } from "./client/fixtures";
+import { InMemoryAssetSwapRepository } from "../src/repository";
 
 const REGISTRY_URL = "https://arkade-os.github.io/solver-registry/mutinynet.json";
 
@@ -69,6 +71,38 @@ describe("watchMarkets", () => {
             ).toThrow(/intervalMs/);
         }
         expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("does not report a solver gone when only its card failed to arrive", async () => {
+        vi.useFakeTimers();
+        const pointed = pointedSolver();
+        let relayUp = true;
+        const seen: string[][] = [];
+        const stop = watchMarkets(
+            {
+                network: "regtest",
+                registryUrl: "https://registry.example/regtest.json",
+                repository: new InMemoryAssetSwapRepository(),
+                useCache: false,
+                fetchImpl: (async () =>
+                    new Response(JSON.stringify(pointed.index))) as unknown as typeof fetch,
+                transportCards: {
+                    fetch: async () => {
+                        if (!relayUp) throw new Error("relay timed out");
+                        return [pointed.card()];
+                    },
+                },
+                intervalMs: 1000,
+            },
+            (markets) => seen.push(markets.map((m) => m.solver)),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        relayUp = false;
+        await vi.advanceTimersByTimeAsync(1000);
+        relayUp = true;
+        await vi.advanceTimersByTimeAsync(1000);
+        stop();
+        expect(seen).toEqual([["pointed"]]);
     });
 
     it("survives a listener that throws, and does not report it as a discovery failure", async () => {

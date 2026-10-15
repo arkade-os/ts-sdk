@@ -25,7 +25,13 @@ import {
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import type { NetworkName } from "@arkade-os/sdk";
-import { MARKETS_CACHE_TTL_MS, registryAnswered, transportCardsOf } from "../markets";
+import {
+    MARKETS_CACHE_TTL_MS,
+    registryAnswered,
+    trackDelivery,
+    transportCardsOf,
+    undeliveredCarry,
+} from "../markets";
 import type { AssetSwapRepository } from "../repository";
 import { marketAssetId } from "../marketShape";
 import { isIndexedNetwork } from "./aliases";
@@ -167,7 +173,10 @@ export interface DiscoveryIndexInput {
     readonly repository?: AssetSwapRepository;
 }
 
-/** How long pins answering for an unreachable registry hold before it is asked again. */
+/**
+ * How long a partial answer holds before the registry is asked again: pins answering for an
+ * unreachable registry, or a registry answer that missed a listed solver's card.
+ */
 const DEGRADED_RETRY_MS = 60_000;
 
 /**
@@ -254,12 +263,13 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
             return unavailable(whyUnavailable());
         }
 
+        const delivery = trackDelivery(transportCardsOf(config.transportCards));
         const result = await discover({
             registries: [url],
             localCards: [...(config.localCards ?? [])],
             network: indexed,
             fetchImpl: config.fetchImpl,
-            transportCards: transportCardsOf(config.transportCards),
+            transportCards: delivery.fetcher,
         });
         if (result.warnings.length) config.logger?.("solver discovery:", ...result.warnings);
 
@@ -267,12 +277,26 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         // market, unlike one that did not answer.
         if (registryAnswered(result.sources)) {
             const fetchedAt = Date.now();
+            // What arrived is held as is: a cached card's key is unvalidated, so the markets of a
+            // solver whose card did not arrive never join a live snapshot, and the read is retried
+            // soon instead.
             held = {
                 markets: result.markets,
                 ref: { fetchedAt, live: true, source: "live", registry: url },
             };
-            revalidateAt = fetchedAt + MARKETS_CACHE_TTL_MS;
-            if (input.repository) {
+            const undelivered = delivery.undelivered();
+            revalidateAt =
+                fetchedAt + (undelivered.size > 0 ? DEGRADED_RETRY_MS : MARKETS_CACHE_TTL_MS);
+            // Nor may it replace a cache that still holds such a solver's markets.
+            const keepsCache =
+                undelivered.size > 0 &&
+                input.repository !== undefined &&
+                undeliveredCarry(
+                    result.markets,
+                    undelivered,
+                    await readCache(input.repository, indexed, url),
+                ).length > 0;
+            if (input.repository && !keepsCache) {
                 try {
                     await input.repository.saveCachedMarkets(indexed, url, {
                         markets: result.markets,

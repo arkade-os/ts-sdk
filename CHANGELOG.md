@@ -361,7 +361,13 @@ style and have not been backfilled.
   default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
   `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
   with the newest card it has seen, still subject to the discovery client's
-  card-age limit. The markets cache lasts ten minutes, not an hour, and
+  card-age limit. A listed solver whose card still fails to arrive (a fresh
+  process whose relay is slow or dead, or a caller's own fetcher) no longer
+  drops out: for up to two hours such an answer leaves the cache alone,
+  `discoverMarkets` and `watchMarkets` keep serving the solver's cached
+  markets, and the client, which never mixes cached cards into a live
+  snapshot, asks again after a minute. A missing `nostr-tools` peer is not
+  a failed delivery. The markets cache lasts ten minutes, not an hour, and
   `watchMarkets` (`@arkade-os/swap/protocol`) keeps a long-lived view
   current. Needs `@arkade-os/solver-discovery` 0.3.0.
 
