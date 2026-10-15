@@ -245,17 +245,23 @@ export const watchMarkets = (
     const read = async (): Promise<void> => {
         if (reading) return;
         reading = true;
+        let markets: DiscoveredMarket[];
         try {
-            const markets = await discoverMarkets(options);
-            const next = marketSetDigest(markets);
-            if (stopped || next === digest) return;
-            digest = next;
-            onMarkets(markets);
+            markets = await discoverMarkets(options);
         } catch (error) {
             // a timer has nobody to throw to; the next tick reads again
             options.logger?.("solver discovery watch:", error);
+            return;
         } finally {
             reading = false;
+        }
+        const next = marketSetDigest(markets);
+        if (stopped || next === digest) return;
+        digest = next;
+        try {
+            onMarkets(markets);
+        } catch {
+            // A consumer's callback is not this watcher's correctness, nor a discovery failure.
         }
     };
     void read();

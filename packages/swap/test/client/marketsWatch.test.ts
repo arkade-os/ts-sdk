@@ -89,6 +89,42 @@ describe("onMarketsChanged", () => {
         await client[Symbol.asyncDispose]();
     });
 
+    it("stays quiet when only a market its listeners never see changes", async () => {
+        const timers = intervals();
+        const reg = registry([lightningCard]);
+        const client = await clientOf(reg, { watch: true });
+        const seen = vi.fn();
+        client.onMarketsChanged(seen);
+        await client.markets();
+
+        reg.list([lightningCard, { ...rivalLightningCard, discovery_pubkey: undefined }]);
+        await timers.tick();
+        expect(seen).not.toHaveBeenCalled();
+        await client[Symbol.asyncDispose]();
+    });
+
+    it("does not call a listener added during a notification until the next one", async () => {
+        const timers = intervals();
+        const reg = registry([lightningCard]);
+        const client = await clientOf(reg, { watch: true });
+        const late = vi.fn();
+        let added = false;
+        client.onMarketsChanged(() => {
+            if (!added) client.onMarketsChanged(late);
+            added = true;
+        });
+        await client.markets();
+
+        reg.list([lightningCard, spotCard]);
+        await timers.tick();
+        expect(late).not.toHaveBeenCalled();
+
+        reg.list([spotCard]);
+        await timers.tick();
+        expect(late).toHaveBeenCalledTimes(1);
+        await client[Symbol.asyncDispose]();
+    });
+
     it("reads the market set as a set: two tied solvers swapping places is no change", async () => {
         const twin = { ...rivalLightningCard, fee_bps: lightningCard.fee_bps };
         const timers = intervals();

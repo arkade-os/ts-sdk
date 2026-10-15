@@ -58,9 +58,10 @@ describe("watchMarkets", () => {
         expect(fetchImpl.mock.calls.length).toBe(reads);
     });
 
-    it("survives a listener that throws", async () => {
+    it("survives a listener that throws, and does not report it as a discovery failure", async () => {
         vi.useFakeTimers();
         const { served, fetchImpl } = servingIndex([btcUsd]);
+        const logger = vi.fn();
         let calls = 0;
         const stop = watchMarkets(
             {
@@ -69,6 +70,7 @@ describe("watchMarkets", () => {
                 fetchImpl,
                 transportCards: null,
                 intervalMs: 1000,
+                logger,
             },
             () => {
                 calls++;
@@ -79,6 +81,7 @@ describe("watchMarkets", () => {
         served.markets = [btcUsd, btcChf];
         await vi.advanceTimersByTimeAsync(1000);
         expect(calls).toBe(2);
+        expect(logger).not.toHaveBeenCalledWith("solver discovery watch:", expect.anything());
         stop();
     });
 });

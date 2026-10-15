@@ -273,7 +273,6 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
                         },
                         oneose: () => resolve(),
                         onclose: () => resolve(),
-                        maxWait: timeoutMs,
                     },
                 );
             });

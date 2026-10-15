@@ -23,7 +23,7 @@ import {
     type DiscoveryIndex,
     type DiscoverySnapshot,
 } from "./discovery";
-import { MARKETS_WATCH_INTERVAL_MS } from "../markets";
+import { MARKETS_WATCH_INTERVAL_MS, marketSetDigest } from "../markets";
 import { ClientDisposed, MissingCorridorDep, NotCancellable, UnsupportedRoute } from "./errors";
 import { acceptQuote, type QuotePreparation } from "./accept";
 import { cancelSwap, type CancelOutcome } from "./cancel";
@@ -275,9 +275,16 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             cardMarketOf(card, snapshot.ref, marketKeyOf(card), marketBackendOf(card)),
         );
 
+    // Digest of what a listener sees, so a market the policy drops never reads as a change.
+    let announced: string | undefined;
     const announce = (snapshot: DiscoverySnapshot): void => {
+        const digest = marketSetDigest(usableMarkets(snapshot, config.policy));
+        const baseline = announced === undefined;
+        if (digest === announced) return;
+        announced = digest;
+        if (baseline) return;
         const markets = marketsOf(snapshot);
-        for (const listener of marketListeners) {
+        for (const listener of [...marketListeners]) {
             try {
                 listener(markets);
             } catch {

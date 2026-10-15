@@ -25,12 +25,7 @@ import {
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import type { NetworkName } from "@arkade-os/sdk";
-import {
-    MARKETS_CACHE_TTL_MS,
-    marketSetDigest,
-    registryAnswered,
-    transportCardsOf,
-} from "../markets";
+import { MARKETS_CACHE_TTL_MS, registryAnswered, transportCardsOf } from "../markets";
 import type { AssetSwapRepository } from "../repository";
 import { marketAssetId } from "../marketShape";
 import { isIndexedNetwork } from "./aliases";
@@ -83,6 +78,7 @@ export interface DiscoveryConfig {
      * listener is attached. Off by default: the snapshot then refreshes on use, once stale.
      */
     readonly watch?: boolean;
+    /** The poll interval; read only with `watch` on. Defaults to `MARKETS_WATCH_INTERVAL_MS`. */
     readonly watchIntervalMs?: number;
 }
 
@@ -180,7 +176,7 @@ export interface DiscoveryIndexInput {
     readonly config?: DiscoveryConfig;
     /** Backs the shared markets cache. Without one, every load hits the registry. */
     readonly repository?: AssetSwapRepository;
-    /** Called when a newly held snapshot's market set differs from the one held before it. */
+    /** Called with every snapshot newly held; the caller decides what counts as a change. */
     readonly onChange?: (snapshot: DiscoverySnapshot) => void;
 }
 
@@ -206,14 +202,10 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     };
 
     let held: DiscoverySnapshot | undefined;
-    let digest: string | undefined;
 
-    /** The first snapshot held is the baseline; any later one is compared as a set. */
     const hold = (snapshot: DiscoverySnapshot): DiscoverySnapshot => {
-        const previous = digest;
         held = snapshot;
-        digest = marketSetDigest(snapshot.markets);
-        if (previous !== undefined && digest !== previous) input.onChange?.(snapshot);
+        input.onChange?.(snapshot);
         return snapshot;
     };
 
