@@ -155,12 +155,25 @@ describe("Wallet.send inputExpiryFloor", () => {
         const send = wallet.send(params(wallet, { kind, value }, [input]));
         if (accepted) {
             await expect(send).resolves.toBe("sent");
-            expect(submit.mock.calls[0][0]).toEqual([input]);
+            expect(submit.mock.calls[0][0]).toEqual([normalizeVtxo(input)]);
         } else {
             await expect(send).rejects.toThrow("input expiry floor");
             expect(submit).not.toHaveBeenCalled();
         }
     });
+
+    it.each(["2100-01-01T00:00:00.000Z", 4_102_444_800_000])(
+        "normalizes explicit JSON expiry %s before checking and submitting",
+        async (expiresAt) => {
+            const { wallet, submit } = await makeWallet();
+            const input = coin(wallet, 1, { expiresAt } as never);
+            await expect(
+                wallet.send(params(wallet, { kind: "time", value: 4_102_444_800n }, [input])),
+            ).resolves.toBe("sent");
+            expect(submit.mock.calls[0][0]).toEqual([normalizeVtxo(input)]);
+            expect(input.expiresAt).toBe(expiresAt);
+        },
+    );
 
     it.each([
         {},

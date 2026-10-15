@@ -5057,6 +5057,7 @@ export class Wallet
             throw new Error("send({ maxChangeFee }): expected a non-negative safe integer");
         }
         if (selectedVtxos) {
+            if (inputExpiryFloor) selectedVtxos = selectedVtxos.map(normalizeVtxo);
             if (
                 inputExpiryFloor &&
                 selectedVtxos.some((coin) => !meetsInputExpiryFloor(coin, inputExpiryFloor))

@@ -35,6 +35,16 @@ style and have not been backfilled.
 
 ### Changed
 
+- **Public offchain submissions share the wallet transaction lock.**
+  `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
+  submissions. The lock is non-reentrant: do not call it from a settlement
+  callback while that settlement still holds the lock.
+- **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
+  optional third argument reports `preparing` after lock acquisition and
+  `registration_attempt` before intent registration, allowing backend callers
+  to retain reservations once registration may have been attempted. `IWallet`
+  and `ServiceWorkerWallet` retain their two-argument settlement API.
+
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
   fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
@@ -377,6 +387,17 @@ style and have not been backfilled.
   0.3.0.
 
 ### Bug Fixes
+
+- **Selected send inputs normalize their expiry before checking a funding floor.**
+  JSON date strings and millisecond timestamps now receive the same expiry check
+  as `Date` values, and those normalized inputs reach transaction construction.
+- **Retry deadlines stay local to the funding attempt.** A tighter deadline on
+  a retry no longer overwrites the durable bound of an earlier ambiguous send.
+  Failed non-submission proof writes preserve the original authenticated send
+  deadline error and leave the contract watched until the proof is durable.
+- **Asset-payment comparisons ignore object key order.** Equivalent restored
+  terms and recipients no longer conflict with their verified quote. Malformed
+  stored payment terms are isolated from healthy swaps during listing and restore.
 
 - **`wallet.dispose()` waits for contract events still being handled.** It
   stopped the contract watcher but returned while an event handler could still
