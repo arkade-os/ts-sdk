@@ -1,0 +1,37 @@
+{
+    "boarding": {
+        "address": "bcrt1ped3unfc6wp6zl4u0kwegvmvww625rfhr7tdq3p0c9nt2e7g8229s29ejsz",
+        "pkScript": "5120cb63c9a71a70742fd78fb3b2866d8e769541a6e3f2da0885f82cd6acf907528b",
+        "tapscripts": [
+            "20c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+            "03020040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac",
+            "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad206df68bd706206b91a7a43417d16cad7f1df92e918007bd786cc7da4946fff6adac"
+        ],
+        "variables": {
+            "boarding_exit_delay": "020040",
+            "exit_delay": "010040",
+            "max_fee": "f401",
+            "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+            "renewal_window": "805101"
+        }
+    },
+    "delegatePubkey": "022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+    "emulatorPubkey": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+    "renewal": {
+        "address": "tark1qpumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtes6masep0aflpzsdadkj7dacd22g5d7envvs6yfdu20cvuu9td3ccafvh3p",
+        "pkScript": "51206b7d8642fea7e1141bd6da5e6f70d529146fb336321a225bc53f0ce70ab6c718",
+        "tapscripts": [
+            "20c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+            "03010040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac",
+            "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20ab744b363a090f77c273d74d4430a5c96971cdee82232f9f8ce48fcc853ce6efac"
+        ],
+        "variables": {
+            "exit_delay": "010040",
+            "max_fee": "f401",
+            "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+            "renewal_window": "805101"
+        }
+    },
+    "serverPubkey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+}

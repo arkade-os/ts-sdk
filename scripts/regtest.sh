@@ -5,6 +5,9 @@
 # .env.regtest override (packages/<pkg>/.env.regtest). This script wires the
 # right override file into the regtest Node CLI via --env.
 #
+# `sdk-delegatee` is a second profile of the sdk package: the delegatee daemon
+# renews coins by wall-clock time, so its stack runs seconds-typed timelocks.
+#
 # `swap-rfq` is a second PROFILE of the swap package, not a fourth package: same
 # sources and same setup waiter, but `.env.regtest.rfq` and the RFQ e2e files
 # only. It exists because the two swap corridors need opposite arkd timelock
@@ -17,7 +20,7 @@
 # the block stack, so a new seconds-typed suite that forgets the prefix fails on
 # a server it cannot quote against — name it `rfq*`.
 #
-# Usage: scripts/regtest.sh <sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
+# Usage: scripts/regtest.sh <sdk|sdk-delegatee|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
 #   up     – clean + start with the package's .env.regtest
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
@@ -38,7 +41,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REGTEST_DIR="$ROOT_DIR/regtest"
 
 usage() {
-  echo "Usage: $0 <sdk|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
+  echo "Usage: $0 <sdk|sdk-delegatee|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]" >&2
   exit 1
 }
 
@@ -59,6 +62,7 @@ TEST_FILES=("$@")
 case "$PKG" in
   sdk|swap) PKG_DIR="$PKG"; ENV_SUFFIX="" ;;
   swap-rfq) PKG_DIR="swap"; ENV_SUFFIX=".rfq" ;;
+  sdk-delegatee) PKG_DIR="sdk"; ENV_SUFFIX=".delegatee" ;;
   *) usage ;;
 esac
 
@@ -100,9 +104,11 @@ cmd_setup() {
 
 cmd_test() {
   case "$PKG" in
-    sdk)
+    sdk|sdk-delegatee)
       if [ "${#TEST_FILES[@]}" -gt 0 ]; then
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run "${TEST_FILES[@]}"
+      elif [ "$PKG" = "sdk-delegatee" ]; then
+        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run test/e2e/delegatee.test.ts
       else
         ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" run test:integration
       fi

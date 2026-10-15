@@ -1,0 +1,403 @@
+{
+    "renewal.json": {
+        "format": "delegateed-template/v1",
+        "type": "intent",
+        "variables": {
+            "owner": "pubkey",
+            "exit_delay": "int",
+            "renewal_window": "int",
+            "max_fee": "int"
+        },
+        "inputs": [
+            {
+                "name": "funds",
+                "schedule": {
+                    "before_expiry_seconds": "<renewal_window>"
+                },
+                "contract": {
+                    "definition": {
+                        "artifact": "439eec3d9d81f26a67dde2fc62070792324cd9daf5c478806d5b265cf00e27c0"
+                    },
+                    "arguments": {
+                        "owner": "<owner>",
+                        "exitDelay": "<exit_delay>",
+                        "renewalWindow": "<renewal_window>",
+                        "maxFee": "<max_fee>"
+                    }
+                },
+                "spend": {
+                    "function": "renew",
+                    "leaf": "renew"
+                }
+            }
+        ],
+        "outputs": [
+            {
+                "name": "renewed",
+                "index": 0,
+                "value": {
+                    "from": "funds"
+                },
+                "locking": {
+                    "from": "funds"
+                },
+                "assets": [
+                    {
+                        "from": "funds"
+                    }
+                ]
+            }
+        ],
+        "fees": {
+            "from": "funds",
+            "max": "<max_fee>"
+        },
+        "packets": {
+            "output_index": 1
+        }
+    },
+    "boarding.json": {
+        "format": "delegateed-template/v1",
+        "type": "intent",
+        "variables": {
+            "owner": "pubkey",
+            "boarding_exit_delay": "int",
+            "exit_delay": "int",
+            "renewal_window": "int",
+            "max_fee": "int"
+        },
+        "inputs": [
+            {
+                "name": "deposit",
+                "type": "onchain",
+                "schedule": {
+                    "min_confirmations": 1
+                },
+                "contract": {
+                    "definition": {
+                        "contractName": "DelegatedBoarding",
+                        "constructorInputs": [
+                            {
+                                "name": "owner",
+                                "type": "pubkey"
+                            },
+                            {
+                                "name": "boardingExitDelay",
+                                "type": "int"
+                            },
+                            {
+                                "name": "renewalProgram",
+                                "type": "bytes32"
+                            },
+                            {
+                                "name": "maxFee",
+                                "type": "int"
+                            }
+                        ],
+                        "structs": [],
+                        "functions": [
+                            {
+                                "name": "forfeit",
+                                "leaves": [
+                                    {
+                                        "name": "forfeit",
+                                        "asm": [
+                                            "<owner>",
+                                            "OP_CHECKSIGVERIFY",
+                                            "<SERVER_KEY>",
+                                            "OP_CHECKSIG"
+                                        ],
+                                        "witness": [
+                                            {
+                                                "name": "ownerSig",
+                                                "type": "signature",
+                                                "encoding": "schnorr-64"
+                                            },
+                                            {
+                                                "name": "serverSig",
+                                                "type": "signature",
+                                                "encoding": "schnorr-64",
+                                                "injected": true
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "exit",
+                                "leaves": [
+                                    {
+                                        "name": "exit",
+                                        "asm": [
+                                            "<boardingExitDelay>",
+                                            "OP_CHECKSEQUENCEVERIFY",
+                                            "OP_DROP",
+                                            "<owner>",
+                                            "OP_CHECKSIG"
+                                        ],
+                                        "witness": [
+                                            {
+                                                "name": "ownerSig",
+                                                "type": "signature",
+                                                "encoding": "schnorr-64"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "board",
+                                "arkade": {
+                                    "inputs": [],
+                                    "asm": [
+                                        "0x74797065",
+                                        "OP_INSPECTINTENTMESSAGE",
+                                        "OP_VERIFY",
+                                        "0x7265676973746572",
+                                        "OP_EQUALVERIFY",
+                                        "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                                        "OP_INSPECTINTENTMESSAGE",
+                                        "OP_VERIFY",
+                                        "0x5b5d",
+                                        "OP_EQUALVERIFY",
+                                        "0x636f7369676e6572735f7075626c69635f6b6579732e30",
+                                        "OP_INSPECTINTENTMESSAGE",
+                                        "OP_VERIFY",
+                                        "<DELEGATE_KEY>",
+                                        "OP_EQUALVERIFY",
+                                        "0x636f7369676e6572735f7075626c69635f6b6579732e31",
+                                        "OP_INSPECTINTENTMESSAGE",
+                                        "OP_NOT",
+                                        "OP_VERIFY",
+                                        "OP_DROP",
+                                        "OP_PUSHCURRENTINPUTINDEX",
+                                        "OP_1SUB",
+                                        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                                        "1",
+                                        "OP_EQUALVERIFY",
+                                        "<renewalProgram>",
+                                        "OP_EQUALVERIFY",
+                                        "OP_PUSHCURRENTINPUTINDEX",
+                                        "OP_1SUB",
+                                        "OP_INSPECTOUTPUTVALUE",
+                                        "<maxFee>",
+                                        "OP_ADD",
+                                        "OP_PUSHCURRENTINPUTINDEX",
+                                        "OP_INSPECTINPUTVALUE",
+                                        "OP_GREATERTHANOREQUAL"
+                                    ]
+                                },
+                                "leaves": [
+                                    {
+                                        "name": "board",
+                                        "asm": [
+                                            "<SERVER_KEY>",
+                                            "OP_CHECKSIGVERIFY",
+                                            "<EMULATOR_KEY:board>",
+                                            "OP_CHECKSIG"
+                                        ],
+                                        "witness": [
+                                            {
+                                                "name": "serverSig",
+                                                "type": "signature",
+                                                "encoding": "schnorr-64",
+                                                "injected": true
+                                            },
+                                            {
+                                                "name": "emulatorSig",
+                                                "type": "signature",
+                                                "encoding": "schnorr-64",
+                                                "injected": true
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "arguments": {
+                        "owner": "<owner>",
+                        "boardingExitDelay": "<boarding_exit_delay>",
+                        "renewalProgram": {
+                            "program": "funds"
+                        },
+                        "maxFee": "<max_fee>"
+                    }
+                },
+                "spend": {
+                    "function": "board",
+                    "leaf": "board"
+                }
+            }
+        ],
+        "outputs": [
+            {
+                "name": "funds",
+                "index": 0,
+                "value": {
+                    "from": "deposit"
+                },
+                "locking": {
+                    "contract": {
+                        "definition": {
+                            "artifact": "439eec3d9d81f26a67dde2fc62070792324cd9daf5c478806d5b265cf00e27c0"
+                        },
+                        "arguments": {
+                            "owner": "<owner>",
+                            "exitDelay": "<exit_delay>",
+                            "renewalWindow": "<renewal_window>",
+                            "maxFee": "<max_fee>"
+                        }
+                    }
+                }
+            }
+        ],
+        "fees": {
+            "from": "deposit",
+            "max": "<max_fee>"
+        },
+        "packets": {
+            "output_index": 1
+        }
+    },
+    "delegated_vtxo.json": {
+        "contractName": "DelegatedVtxo",
+        "constructorInputs": [
+            {
+                "name": "owner",
+                "type": "pubkey"
+            },
+            {
+                "name": "exitDelay",
+                "type": "int"
+            },
+            {
+                "name": "renewalWindow",
+                "type": "int"
+            },
+            {
+                "name": "maxFee",
+                "type": "int"
+            }
+        ],
+        "structs": [],
+        "functions": [
+            {
+                "name": "forfeit",
+                "leaves": [
+                    {
+                        "name": "forfeit",
+                        "asm": ["<owner>", "OP_CHECKSIGVERIFY", "<SERVER_KEY>", "OP_CHECKSIG"],
+                        "witness": [
+                            {
+                                "name": "ownerSig",
+                                "type": "signature",
+                                "encoding": "schnorr-64"
+                            },
+                            {
+                                "name": "serverSig",
+                                "type": "signature",
+                                "encoding": "schnorr-64",
+                                "injected": true
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "name": "exit",
+                "leaves": [
+                    {
+                        "name": "exit",
+                        "asm": [
+                            "<exitDelay>",
+                            "OP_CHECKSEQUENCEVERIFY",
+                            "OP_DROP",
+                            "<owner>",
+                            "OP_CHECKSIG"
+                        ],
+                        "witness": [
+                            {
+                                "name": "ownerSig",
+                                "type": "signature",
+                                "encoding": "schnorr-64"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "name": "renew",
+                "arkade": {
+                    "inputs": [],
+                    "asm": [
+                        "OP_PUSHEXPIRY",
+                        "<renewalWindow>",
+                        "OP_SUB",
+                        "OP_CHECKTIME",
+                        "OP_VERIFY",
+                        "0x74797065",
+                        "OP_INSPECTINTENTMESSAGE",
+                        "OP_VERIFY",
+                        "0x7265676973746572",
+                        "OP_EQUALVERIFY",
+                        "0x6f6e636861696e5f6f75747075745f696e6465786573",
+                        "OP_INSPECTINTENTMESSAGE",
+                        "OP_VERIFY",
+                        "0x5b5d",
+                        "OP_EQUALVERIFY",
+                        "0x636f7369676e6572735f7075626c69635f6b6579732e30",
+                        "OP_INSPECTINTENTMESSAGE",
+                        "OP_VERIFY",
+                        "<DELEGATE_KEY>",
+                        "OP_EQUALVERIFY",
+                        "0x636f7369676e6572735f7075626c69635f6b6579732e31",
+                        "OP_INSPECTINTENTMESSAGE",
+                        "OP_NOT",
+                        "OP_VERIFY",
+                        "OP_DROP",
+                        "OP_PUSHCURRENTINPUTINDEX",
+                        "OP_1SUB",
+                        "OP_INSPECTOUTPUTVALUE",
+                        "<maxFee>",
+                        "OP_ADD",
+                        "OP_PUSHCURRENTINPUTINDEX",
+                        "OP_INSPECTINPUTVALUE",
+                        "OP_GREATERTHANOREQUAL",
+                        "OP_VERIFY",
+                        "OP_PUSHCURRENTINPUTINDEX",
+                        "OP_1SUB",
+                        "5",
+                        "0",
+                        "OP_TUNNEL"
+                    ]
+                },
+                "leaves": [
+                    {
+                        "name": "renew",
+                        "asm": [
+                            "<SERVER_KEY>",
+                            "OP_CHECKSIGVERIFY",
+                            "<EMULATOR_KEY:renew>",
+                            "OP_CHECKSIG"
+                        ],
+                        "witness": [
+                            {
+                                "name": "serverSig",
+                                "type": "signature",
+                                "encoding": "schnorr-64",
+                                "injected": true
+                            },
+                            {
+                                "name": "emulatorSig",
+                                "type": "signature",
+                                "encoding": "schnorr-64",
+                                "injected": true
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

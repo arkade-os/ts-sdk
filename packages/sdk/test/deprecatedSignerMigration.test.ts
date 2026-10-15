@@ -1037,6 +1037,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),
