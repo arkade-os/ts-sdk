@@ -55,7 +55,9 @@ style and have not been backfilled.
 
 - **`IContractManager.dispose()` returns a promise.** Implementations must
   return `Promise<void>`; callers can await teardown, including in-flight
-  event handling and repository writes.
+  event handling and repository writes. `IContractManager` also extends
+  `AsyncDisposable`, so implementations must add `[Symbol.asyncDispose]` and
+  callers holding only the interface can `await using` it.
 
 - **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
   the ad it named; kind 38859 now carries the signed solver card, exported

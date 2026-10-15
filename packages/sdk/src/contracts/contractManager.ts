@@ -257,7 +257,7 @@ export type ContractSyncState =
     | { mode: "online"; lastSyncedAt?: number }
     | { mode: "degraded"; reason: string; lastSyncedAt?: number };
 
-export interface IContractManager extends Disposable {
+export interface IContractManager extends Disposable, AsyncDisposable {
     /**
      * Create and register a new contract, keyed by its script. Implementations may validate that
      * a handler exists for `params.type` and that `params.script` matches the derived script.
@@ -463,6 +463,8 @@ export interface IContractManager extends Disposable {
 
     /**
      * Release resources (stop watching, clear listeners) and wait for in-flight repository writes.
+     * `[Symbol.asyncDispose]` waits the same way, so prefer `await using` over `using`, whose
+     * `[Symbol.dispose]` tears down without waiting.
      */
     dispose(): Promise<void>;
 }
@@ -2135,6 +2137,7 @@ export class ContractManager implements IContractManager {
 
         this.initialized = false;
 
+        // `drainUnwound` is undefined when no drain was pending; Promise.all treats it as resolved.
         return Promise.all([...this.inFlightEvents, drainUnwound]).then(() => undefined);
     }
 

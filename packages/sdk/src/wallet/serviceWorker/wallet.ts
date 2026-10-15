@@ -1696,6 +1696,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 // no-op
                 return;
             },
+
+            async [Symbol.asyncDispose](): Promise<void> {
+                // The worker owns this manager's lifecycle.
+            },
         };
 
         return manager;
