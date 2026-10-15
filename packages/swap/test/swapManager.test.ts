@@ -1684,7 +1684,57 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(swap.claimTxid).toBe("dd".repeat(32));
     });
 
-    it("leaves a claim the chain still knows alone, however the fill is listed", async () => {
+    it("replaces a claim the backend still lists, once the bump interval passes", async () => {
+        let now = SAFE_NOW;
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [FILL],
+                mtp: SAFE_NOW,
+                status: { ["ef".repeat(32)]: false },
+            }),
+            now: () => now,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(s.claims).toHaveLength(0);
+
+        now = SAFE_NOW + ONCHAIN_CLAIM_BUMP_SECONDS;
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].options).toEqual({ bump: true });
+        expect(swap.claimBroadcastAt).toBe(now);
+    });
+
+    it("settles on whichever version of the claim confirmed, not the last broadcast", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: "dd".repeat(32),
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: true },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.claimTxid).toBe(claim.txid);
+        expect(swap.state).toBe("settled");
+        expect(s.claims).toHaveLength(0);
+    });
+
+    it("leaves a claim the chain still knows alone inside the interval", async () => {
         const s = spies();
         const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
         const m = manager({

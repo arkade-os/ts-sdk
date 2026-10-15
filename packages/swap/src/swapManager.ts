@@ -1655,13 +1655,15 @@ export class RfqSwapManager {
             this.touch(swap);
         }
 
-        // A claim of ours is out, yet the fill is unspent again — re-publish it, but only
-        // once the chain has forgotten it: a backend listing its own mempool-spent outputs
-        // must not have us broadcast every pass. Past the claim window too, where `P` is
-        // public and this races the solver's refund rather than gambling the preimage.
+        // A claim of ours is out, yet the fill is unspent: it is not in this backend's
+        // mempool, whatever `getTxStatus` answers, and the `claimed` phase that would bump
+        // it never comes. Past the claim window too, where `P` is already public.
         if (swap.claimTxid && (phase.phase === "claimable" || phase.phase === "refundable")) {
-            if (await this.claimVanished(swap.claimTxid)) {
-                await this.pushOnchainClaim(swap, phase.utxo, false);
+            const due =
+                this.reportsConfirmations &&
+                this.config.now() - (swap.claimBroadcastAt ?? 0) >= ONCHAIN_CLAIM_BUMP_SECONDS;
+            if (due || (await this.claimVanished(swap.claimTxid))) {
+                await this.pushOnchainClaim(swap, phase.utxo, due);
             }
             return "continue";
         }
@@ -1701,8 +1703,9 @@ export class RfqSwapManager {
         }
 
         if (action === "claimed" && phase.phase === "claimed") {
-            // Only the trader holds P, so this claim is ours, perhaps from a previous process.
-            if (!swap.claimTxid) {
+            // Only the trader holds P, so the spend is one of OUR versions — after a bump,
+            // not necessarily the last. Rate and clock stay the last broadcast's.
+            if (swap.claimTxid !== phase.txid) {
                 swap.claimTxid = phase.txid;
                 this.touch(swap);
             }
