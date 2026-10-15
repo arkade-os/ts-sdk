@@ -1,4 +1,5 @@
 import { Transaction } from "./utils/transaction";
+export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
@@ -188,6 +189,8 @@ import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     SettlementConfig,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
@@ -1010,6 +1013,8 @@ export type {
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,

@@ -14,6 +14,7 @@ import {
     createMockIndexerProvider,
     TEST_DEFAULT_ARK_ADDRESS,
     TEST_DEFAULT_SCRIPT,
+    TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
 const baseMessage = (id: string = "1") => ({
     id,
@@ -1601,6 +1602,8 @@ describe("WalletMessageHandler handleMessage", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1744,6 +1747,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["boarding-address"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -2498,6 +2503,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
         }
     };
 
+    /** One current-signer boarding group, as `getBoardingUtxosForSigners` returns it. */
+    const boardingGroup = (coins: any[]) => ({
+        tapscript: { onchainAddress: () => "boarding-address" },
+        coins,
+    });
+
     it("lazyBoarding hands both onchain legs to the background", async () => {
         setupHandler();
         (updater as any).lazyBoardingInit = true;
@@ -2517,9 +2528,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
             releaseHistory = resolve;
         });
         rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
-        rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
             await gate;
-            return [boardUtxo];
+            return [boardingGroup([boardUtxo])];
         });
         rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
             await historyGate;
@@ -2563,15 +2574,15 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
-        rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
             await gate;
-            return [coin("aa".repeat(32))];
+            return [boardingGroup([coin("aa".repeat(32))])];
         });
         const deleteUtxos = vi.spyOn(walletRepo, "deleteUtxos");
         const saveTransactions = vi.spyOn(walletRepo, "saveTransactions");
 
         await (updater as any).refreshCachedData({ lazyBoarding: true });
-        await until(() => rw.getBoardingUtxos.mock.calls.length > 0);
+        await until(() => rw.getBoardingUtxosForSigners.mock.calls.length > 0);
         // What clear() does to the boarding generation, without wiping the fixture.
         (updater as any).boardingEpoch++;
         release();
@@ -2600,9 +2611,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
             releaseHistory = resolve;
         });
         rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
-        rw.getBoardingUtxos = vi.fn().mockImplementation(async () => {
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
             await boardingGate;
-            return [boardUtxo];
+            return [boardingGroup([boardUtxo])];
         });
         rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
             await historyGate;
@@ -2819,6 +2830,8 @@ describe("WalletMessageHandler event-push generations", () => {
         }),
         notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+        getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
         dispose: vi.fn().mockResolvedValue(undefined),
         clear: vi.fn().mockResolvedValue(undefined),
         ...overrides,

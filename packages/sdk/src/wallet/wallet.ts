@@ -1715,15 +1715,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Writes start only once every fetch has succeeded, so a failure writes nothing. Each
-        // fetched address is replaced, not merged: `saveUtxos` never drops a row, and a coin
-        // spent elsewhere would otherwise linger for `getStoredBoardingUtxos` to report.
-        for (const address of addresses) {
-            await this.walletRepository.deleteUtxos(address);
-        }
+        // Writes start only once every fetch has succeeded, so a failure writes nothing.
         await this.walletRepository.saveUtxos(
             new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
         );
+        // `saveUtxos` merges, so prune rows the fetch no longer returns: a coin spent elsewhere
+        // would otherwise linger for `getStoredBoardingUtxos` to report. Pruning only after the
+        // save leaves the previous snapshot intact if that save fails.
+        for (const [i, group] of groups.entries()) {
+            const fresh = new Set(group.coins.map((coin) => `${coin.txid}:${coin.vout}`));
+            const cached = await collectUtxos(this.walletRepository, addresses[i]);
+            const kept = cached.filter((coin) => fresh.has(`${coin.txid}:${coin.vout}`));
+            if (kept.length === cached.length) continue;
+            await this.walletRepository.deleteUtxos(addresses[i]);
+            if (kept.length > 0) await this.walletRepository.saveUtxos(addresses[i], kept);
+        }
         return groups;
     }
 
@@ -2174,7 +2180,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 ? await this._contractManagerInitializing.catch(() => undefined)
                 : undefined);
 
-        manager?.dispose();
+        await manager?.dispose();
         this._contractManager = undefined;
         this._contractManagerInitializing = undefined;
     }

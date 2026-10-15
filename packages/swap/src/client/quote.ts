@@ -52,16 +52,20 @@ export interface SnapshotRef {
     /** Unix ms the markets were read from their sources. */
     readonly fetchedAt: number;
     /**
-     * The registry answered in this read (cards are not replayed from local storage).
+     * The cards came from this read or from config, never replayed from local storage, so they
+     * may supply the key an addressed RFQ's responder is checked against.
      *
      * `false` is marked, not refused: a stale snapshot still prices a feed-priced quote. It cannot
-     * supply the key an addressed RFQ's responder is checked against, because cached cards are
-     * only partly revalidated (`isMarketShaped`).
+     * pin a responder, because cached cards are only partly revalidated (`isMarketShaped`).
      */
     readonly live: boolean;
-    /** How the markets were obtained. */
-    readonly source: "live" | "cache" | "injected";
-    /** The registry URL behind it, or `undefined` for an injected snapshot. */
+    /**
+     * How the markets were obtained: `live` from the registry, `cache` from local storage,
+     * `injected` from `DiscoveryConfig.snapshot`, `local` from pinned cards alone while the
+     * registry was unreachable and nothing was cached.
+     */
+    readonly source: "live" | "cache" | "injected" | "local";
+    /** The registry URL behind it; `undefined` for an injected or local snapshot. */
     readonly registry?: string;
 }
 

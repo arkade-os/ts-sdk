@@ -80,6 +80,19 @@ async function run(
 }
 
 describe("Executor", () => {
+    it("validates poll delays while preserving immediate polling", () => {
+        const provider = scriptedProvider().provider;
+        expect(() => new Executor(pkgOf([]), provider, { pollIntervalMs: 0 })).not.toThrow();
+        expect(
+            () => new Executor(pkgOf([]), provider, { pollIntervalMs: 2 ** 31 - 1 }),
+        ).not.toThrow();
+        for (const value of [-1, 0.5, NaN, Infinity, 2 ** 31]) {
+            expect(() => new Executor(pkgOf([]), provider, { pollIntervalMs: value })).toThrow(
+                "pollIntervalMs",
+            );
+        }
+    });
+
     it("drives package + sweep to completion, relaying hex verbatim", async () => {
         const script = scriptedProvider();
         script.register("parent1-hex", P1);

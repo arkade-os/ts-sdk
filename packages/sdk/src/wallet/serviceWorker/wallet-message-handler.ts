@@ -1,3 +1,4 @@
+import { hex } from "@scure/base";
 import { collectUtxos } from "../../repositories/walletRepository";
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import {
@@ -70,7 +71,7 @@ import type {
     MigrationVtxoRef,
     RenewVtxosOptions,
 } from "../vtxo-manager";
-import type { SignerStatus } from "../signerRotation";
+import { type SignerStatus, toXOnlySignerHex } from "../signerRotation";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
@@ -2089,25 +2090,32 @@ export class WalletMessageHandler
 
     /**
      * @param gen - set by a background caller; each write here is skipped once it goes stale.
-     *   `getBoardingUtxos` saves the fetched rows itself, before control returns, so that one
-     *   write is outside this check.
+     *   The fetch saves the fetched rows itself, before control returns, so that one write is
+     *   outside this check.
      */
     private async refreshBoardingCache(gen?: Generation): Promise<void> {
         const wallet = this.readonlyWallet;
         const repository = this.walletRepository;
         if (!wallet || !repository) return;
-        const boardingAddresses = await wallet.getBoardingAddresses();
-        if (gen?.stale) return;
-        const fresh = await wallet.getBoardingUtxos();
-        const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
-        for (const addr of boardingAddresses) {
+        // Fetch only current-signer boarding inputs, as getBoardingUtxos does. Keep the
+        // groups so cleanup covers exactly the fetched addresses, including empty ones.
+        const currentSigner = toXOnlySignerHex(
+            hex.encode(wallet.boardingTapscript.options.serverPubKey),
+        );
+        const groups = await wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
+
+        // If fetching or its save fails, leave the previous snapshot intact. saveUtxos
+        // merges, so prune stale rows afterward.
+        for (const { tapscript, coins } of groups) {
             if (gen?.stale) return;
-            const cached = await collectUtxos(repository, addr);
-            const kept = cached.filter((u) => freshKeys.has(`${u.txid}:${u.vout}`));
-            if (kept.length === cached.length) continue; // nothing stale
+            const address = tapscript.onchainAddress(wallet.network);
+            const freshKeys = new Set(coins.map((coin) => `${coin.txid}:${coin.vout}`));
+            const cached = await collectUtxos(repository, address);
+            const kept = cached.filter((coin) => freshKeys.has(`${coin.txid}:${coin.vout}`));
+            if (kept.length === cached.length) continue;
             if (gen?.stale) return;
-            await repository.deleteUtxos(addr);
-            if (kept.length > 0) await repository.saveUtxos(addr, kept);
+            await repository.deleteUtxos(address);
+            if (kept.length > 0) await repository.saveUtxos(address, kept);
         }
     }
 

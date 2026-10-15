@@ -26,7 +26,25 @@ style and have not been backfilled.
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
 
+- **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
+  takes a plan that returns piece amounts against the already-priced subtotal,
+  per-piece output fee, per-output ceiling and dust floor. A plan that claims
+  too much, breaks the ceiling, leaves dust or more unclaimed, or splits
+  asset-bearing inputs is refused rather than reshaped. Automatic renewal still
+  settles into one output, and `split` is refused on the service-worker wallet.
+
 ### Changed
+
+- **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
+  cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
+  fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+  Timer-backed settings additionally reject delays above 2,147,483,647 milliseconds
+  (the portable timer limit). Zero still disables optional timers or schedules an
+  immediate timeout/poll, depending on the existing API; reconnect caps still clamp
+  the base delay rather than requiring a particular ordering. A `messageTimeouts` key
+  set to `undefined` now falls back to its default instead of reaching the worker,
+  where it armed a timer of `undefined` and timed every such message out at once; the
+  message bus rejects such keys outright.
 
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
@@ -40,6 +58,17 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`IContractManager.dispose()` returns a promise.** Implementations must
+  return `Promise<void>`; callers can await teardown, including in-flight
+  event handling and repository writes.
+
+- **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
+  the ad it named; kind 38859 now carries the signed solver card, exported
+  as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.
+- **`@arkade-os/swap`: `SnapshotRef.source` gains `"local"`.** It marks a
+  snapshot answered by pinned cards alone, while the registry is unreachable
+  and nothing is cached; such a snapshot carries no `registry`. Code with an
+  exhaustive `switch` on `source` must handle it.
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported
@@ -354,9 +383,46 @@ style and have not been backfilled.
   listed under Breaking Changes above. The shape is exported as
   `ArkadeServerProvider`, so a caller building a derivation-only client
   has a name to import. (#734)
+- **`@arkade-os/swap`: markets come from the cards solvers publish.** A
+  registry can list a solver by key alone; its markets come from the signed
+  card it publishes over Nostr (kind 38859, `d` = network).
+  `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
+  default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
+  `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
+  with the newest card it has seen, still subject to the discovery client's
+  card-age limit. A listed solver whose card still fails to arrive (a fresh
+  process whose relay is slow or dead, or a caller's own fetcher) no longer
+  drops out: for up to two hours such an answer leaves the cache alone,
+  `discoverMarkets` and `watchMarkets` keep serving the solver's cached
+  markets, and the client never mixes cached cards into a live snapshot.
+  Both ask the registry again after a minute, not on every call. A missing
+  `nostr-tools` peer is not a failed delivery. The markets cache lasts ten
+  minutes, not an hour, and `watchMarkets` (`@arkade-os/swap/protocol`)
+  keeps a long-lived view current. Needs `@arkade-os/solver-discovery`
+  0.3.0.
 
 ### Bug Fixes
 
+- **`wallet.dispose()` waits for contract events still being handled.** It
+  stopped the contract watcher but returned while an event handler could still
+  be syncing, so that handler could write to storage the caller had already
+  closed. `ContractManager.dispose()` now returns a promise that settles once
+  in-flight events and any look-ahead drain finish, `ReadonlyWallet.dispose()`
+  awaits it, and an event delivered after dispose is dropped. `ContractManager`
+  also supports `await using`.
+- **`@arkade-os/swap`: one dead relay no longer kills a Node 22 process.**
+  nostr-tools 2.25 closes a socket from its `onerror`, and Node 22's
+  WebSocket re-fires `error` synchronously from `close()` on a connecting
+  socket; the recursion overflowed the stack. Both relay pools now use a
+  socket whose `close()` runs once.
+- **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
+  registry.** A local card always counts as answering, so a registry outage
+  replaced the cached markets with the pins alone. Only a registry answering
+  now replaces the cache. With nothing cached, the client still answers from
+  the pins, as a `source: "local"` snapshot that asks the registry again
+  after a minute rather than standing for the ten-minute TTL. `resolve()`
+  answers from them too, without the network, so a payment rail still offers
+  a pinned solver; 0.1.0-rc.24 left it out.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

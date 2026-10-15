@@ -266,6 +266,52 @@ describe("HD look-ahead band composition", () => {
         expect(indexer.getVtxosCalls).toHaveLength(fetchesBeforeDispose);
         expect(await collectContracts(contractRepository, {})).toEqual([]);
     });
+
+    it("settles dispose() only once a drain in flight has unwound", async () => {
+        const provider = await makeHdProviderForTest();
+        let current = -1;
+        let release: (() => void) | undefined;
+        const manager = await ContractManager.create({
+            indexerProvider: makeMockIndexer(new Set()),
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig: { failsafePollIntervalMs: 100_000, reconnectDelayMs: 100_000 },
+            lookAhead: {
+                size,
+                currentWatermark: async () => {
+                    if (current >= 0 && !release) {
+                        await new Promise<void>((resolve) => {
+                            release = resolve;
+                        });
+                    }
+                    return current;
+                },
+                materialize: (index) => provider.materializeDescriptorAt(index),
+                candidateDeps: () => ({
+                    network: { hrp: "tark" },
+                    serverPubKey: SERVER_A,
+                    csvTimelocks: [TL_A],
+                }),
+                advanceWatermark: async (index) => {
+                    current = index;
+                },
+            },
+        });
+
+        await manager.advanceSigningDescriptorWatermark(5);
+        expect(release).toBeDefined();
+
+        let disposed = false;
+        const disposing = manager.dispose().then(() => {
+            disposed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(disposed).toBe(false);
+
+        release!();
+        await disposing;
+        expect(disposed).toBe(true);
+    });
 });
 
 describe("Wallet HD look-ahead", () => {
