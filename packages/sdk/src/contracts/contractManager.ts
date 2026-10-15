@@ -461,8 +461,10 @@ export interface IContractManager extends Disposable {
     /** Whether the underlying watcher is currently active. */
     isWatching(): Promise<boolean>;
 
-    /** Release resources (stop watching, clear listeners). */
-    dispose(): void;
+    /**
+     * Release resources (stop watching, clear listeners) and wait for in-flight repository writes.
+     */
+    dispose(): Promise<void>;
 }
 
 /** Options for getting spendable paths. */

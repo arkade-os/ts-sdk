@@ -53,6 +53,10 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`IContractManager.dispose()` returns a promise.** Implementations must
+  return `Promise<void>`; callers can await teardown, including in-flight
+  event handling and repository writes.
+
 - **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
   the ad it named; kind 38859 now carries the signed solver card, exported
   as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.

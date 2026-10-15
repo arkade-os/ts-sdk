@@ -1688,8 +1688,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            dispose(): void {
-                return;
+            async dispose(): Promise<void> {
+                // The worker owns this manager's lifecycle.
             },
 
             [Symbol.dispose](): void {
