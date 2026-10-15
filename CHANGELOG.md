@@ -35,16 +35,6 @@ style and have not been backfilled.
 
 ### Changed
 
-- **Public offchain submissions share the wallet transaction lock.**
-  `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
-  submissions. The lock is non-reentrant: do not call it from a settlement
-  callback while that settlement still holds the lock.
-- **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
-  optional third argument reports `preparing` after lock acquisition and
-  `registration_attempt` before intent registration, allowing backend callers
-  to retain reservations once registration may have been attempted. `IWallet`
-  and `ServiceWorkerWallet` retain their two-argument settlement API.
-
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
   fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
@@ -62,6 +52,11 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- **Public offchain submissions share the wallet transaction lock.**
+  `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
+  submissions. The lock is non-reentrant: do not call it from a settlement
+  callback while that settlement still holds the lock.
 
 - **`IContractManager.dispose()` returns a promise.** Implementations must
   return `Promise<void>`; callers can await teardown, including in-flight
@@ -240,6 +235,12 @@ style and have not been backfilled.
   `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
 
 ### Features
+
+- **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
+  optional third argument reports `preparing` after lock acquisition and
+  `registration_attempt` before intent registration, allowing backend callers
+  to retain reservations once registration may have been attempted. `IWallet`
+  and `ServiceWorkerWallet` retain their two-argument settlement API.
 
 - **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
   Every delta sync re-read the 24 hours before the sync cursor, so a
