@@ -102,10 +102,11 @@ export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
 export const registryAnswered = (sources: readonly SourceReport[]): boolean =>
     sources.some((source) => source.sourceType === "registry" && source.ok);
 
-/** Lazy, so `nostr-tools` stays an optional peer: `discover()` fetches only with a solver to ask. */
+/** Lazy, so `nostr-tools` stays an optional peer; one instance, so a card seen once fills a miss. */
+let nostrFetcher: TransportCardFetcher | undefined;
 const nostrCards: TransportCardFetcher = {
     fetch: async (solvers, network) =>
-        (await import("./nostr")).nostrCardFetcher().fetch(solvers, network),
+        (nostrFetcher ??= (await import("./nostr")).nostrCardFetcher()).fetch(solvers, network),
 };
 
 /** A `transportCards` option resolved: omitted means the Nostr fetcher, `null` none. */
@@ -227,6 +228,7 @@ export const watchMarkets = (
     onMarkets: (markets: DiscoveredMarket[]) => void,
 ): (() => void) => {
     assertTimerMs("intervalMs", options.intervalMs);
+    if (options.intervalMs === 0) throw new Error("intervalMs must be positive");
     let digest: string | undefined;
     let reading = false;
     let stopped = false;

@@ -183,20 +183,31 @@ describe("an unreachable registry with a cache behind it", () => {
         expect(snapshot.markets).toHaveLength(1);
     });
 
-    it("answers with the pins when the registry is down and nothing is cached", async () => {
+    it("answers with the pins, as their own source, when the registry is down and nothing is cached", async () => {
         const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
+        let up = false;
+        const fetchImpl = vi.fn(async () => {
+            if (!up) throw new Error("registry unreachable");
+            return new Response(JSON.stringify(indexOf([lightningCard])));
+        }) as unknown as typeof fetch;
         const index = discoveryIndex({
             network: "regtest",
             config: {
                 registryUrl: REGISTRY,
-                fetchImpl: failing(),
+                fetchImpl,
                 localCards: [
                     { card: { version: 0, name: "pinned", markets: [market] }, network: "regtest" },
                 ],
                 transportCards: null,
             },
         });
-        expect((await index.load()).markets.map((m) => m.solver)).toEqual(["pinned"]);
+        const pinsOnly = await index.load();
+        expect(pinsOnly.markets.map((m) => m.solver)).toEqual(["pinned"]);
+        expect(pinsOnly.ref).toMatchObject({ live: true, source: "local" });
+        expect(pinsOnly.ref.registry).toBeUndefined();
+
+        up = true;
+        expect((await index.load()).ref.source).toBe("live");
     });
 
     it("is what `peek()` reads, without touching the network at all", async () => {

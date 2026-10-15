@@ -241,7 +241,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     const load = async (opts: { refresh?: boolean } = {}): Promise<DiscoverySnapshot> => {
         if (injected) return injected;
         const fresh =
-            held?.ref.live === true && Date.now() - held.ref.fetchedAt < MARKETS_CACHE_TTL_MS;
+            held?.ref.source === "live" && Date.now() - held.ref.fetchedAt < MARKETS_CACHE_TTL_MS;
         if (fresh && !opts.refresh) return held as DiscoverySnapshot;
 
         const { network: indexed, registry: url } = sources();
@@ -285,11 +285,11 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
             held = cached;
             return cached;
         }
-        // Nothing cached to prefer: the pins still answer, without replacing any cache.
+        // Nothing cached to prefer: the pins answer as trusted config, never as fresh registry data.
         if (result.markets.length > 0) {
             held = {
                 markets: result.markets,
-                ref: { fetchedAt: Date.now(), live: true, source: "live", registry: url },
+                ref: { fetchedAt: Date.now(), live: true, source: "local" },
             };
             return held;
         }

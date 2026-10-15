@@ -355,9 +355,11 @@ style and have not been backfilled.
   card it publishes over Nostr (kind 38859, `d` = network).
   `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
   default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
-  `nostr-tools` peer); `null` opts out. The markets cache lasts ten minutes,
-  not an hour, and `watchMarkets` (`@arkade-os/swap/protocol`) keeps a
-  long-lived view current. Needs `@arkade-os/solver-discovery` 0.3.0.
+  `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
+  with the newest card it has seen, still subject to the discovery client's
+  card-age limit. The markets cache lasts ten minutes, not an hour, and
+  `watchMarkets` (`@arkade-os/swap/protocol`) keeps a long-lived view
+  current. Needs `@arkade-os/solver-discovery` 0.3.0.
 
 ### Bug Fixes
 
@@ -369,7 +371,9 @@ style and have not been backfilled.
 - **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
   registry.** A local card always counts as answering, so a registry outage
   replaced the cached markets with the pins alone. Only a registry answering
-  now replaces the cache.
+  now replaces the cache; with nothing cached, the pins answer as
+  `SnapshotRef.source: "local"`, which is not served as fresh, so the next
+  read retries the registry.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

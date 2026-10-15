@@ -223,8 +223,28 @@ describe("nostrCardFetcher", () => {
         expect(await pending).toEqual([]);
     });
 
-    it("refuses a timeout a timer cannot hold", () => {
-        expect(() => nostrCardFetcher({ timeoutMs: 2 ** 31 })).toThrow(/timeoutMs/);
+    it("refuses a timeout that is zero or one a timer cannot hold", () => {
+        for (const timeoutMs of [0, 2 ** 31]) {
+            expect(() => nostrCardFetcher({ timeoutMs })).toThrow(/timeoutMs/);
+        }
+    });
+
+    it("answers a missed delivery with the newest card it saw, for that network only", async () => {
+        const a = solverKey();
+        const relay = relayStub();
+        const fetcher = nostrCardFetcher({ pool: relay.pool });
+        const first = fetcher.fetch([listed(a.pubkey)], "mutinynet");
+        relay.deliver(cardEvent(a.secret, 100));
+        relay.eose();
+        await first;
+
+        const missed = fetcher.fetch([listed(a.pubkey)], "mutinynet");
+        relay.reqs[1].params.oneose?.();
+        expect((await missed).map((c) => c.createdAt)).toEqual([100]);
+
+        const elsewhere = fetcher.fetch([listed(a.pubkey)], "bitcoin");
+        relay.reqs[2].params.oneose?.();
+        expect(await elsewhere).toEqual([]);
     });
 
     it("opens nothing when there is no one, or nowhere, to ask", async () => {

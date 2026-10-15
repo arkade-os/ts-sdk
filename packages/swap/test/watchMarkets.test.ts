@@ -58,14 +58,16 @@ describe("watchMarkets", () => {
         expect(fetchImpl.mock.calls.length).toBe(reads);
     });
 
-    it("refuses an interval a timer cannot hold, before reading anything", () => {
+    it("refuses an interval that is zero or one a timer cannot hold, before reading anything", () => {
         const { fetchImpl } = servingIndex([btcUsd]);
-        expect(() =>
-            watchMarkets(
-                { network: "mutinynet", registryUrl: REGISTRY_URL, fetchImpl, intervalMs: 2 ** 31 },
-                () => {},
-            ),
-        ).toThrow(/intervalMs/);
+        for (const intervalMs of [0, 2 ** 31]) {
+            expect(() =>
+                watchMarkets(
+                    { network: "mutinynet", registryUrl: REGISTRY_URL, fetchImpl, intervalMs },
+                    () => {},
+                ),
+            ).toThrow(/intervalMs/);
+        }
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 

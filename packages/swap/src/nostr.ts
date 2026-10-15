@@ -232,8 +232,16 @@ export interface NostrCardFetcherOptions {
  * closed on EOSE or `timeoutMs`, keeping each author's latest event. It authenticates delivery
  * (the event signature) only; the discovery client validates the card itself.
  */
+/** NIP-01 replaceable order: the later `created_at`, a same-second tie to the lower id. */
+const isNewer = (event: Event, held: Event | undefined): boolean =>
+    !held ||
+    event.created_at > held.created_at ||
+    (event.created_at === held.created_at && event.id < held.id);
+
 export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): TransportCardFetcher => {
     assertTimerMs("timeoutMs", options.timeoutMs);
+    if (options.timeoutMs === 0) throw new Error("timeoutMs must be positive");
+    const seen = new Map<string, Event>();
     return {
         async fetch(solvers, network) {
             const asked = new Set(solvers.map((solver) => solver.discovery_pubkey));
@@ -262,12 +270,8 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
                                 if (!verifyEvent(event)) return;
                                 if (event.tags.find((tag) => tag[0] === "d")?.[1] !== network)
                                     return;
-                                const held = latest.get(event.pubkey);
-                                const newer =
-                                    !held ||
-                                    event.created_at > held.created_at ||
-                                    (event.created_at === held.created_at && event.id < held.id);
-                                if (newer) latest.set(event.pubkey, event);
+                                if (isNewer(event, latest.get(event.pubkey)))
+                                    latest.set(event.pubkey, event);
                             },
                             oneose: () => resolve(),
                             onclose: () => resolve(),
@@ -278,6 +282,14 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
                 clearTimeout(timer);
                 if (options.pool) subscription?.close();
                 else pool.close(relays);
+            }
+            // A card seen before fills a missed delivery; the discovery client's age check bounds it.
+            for (const author of authors) {
+                const key = `${network}:${author}`;
+                const event = latest.get(author);
+                if (event && isNewer(event, seen.get(key))) seen.set(key, event);
+                const best = seen.get(key);
+                if (best) latest.set(author, best);
             }
             const cards: TransportCard[] = [];
             for (const event of latest.values()) {
