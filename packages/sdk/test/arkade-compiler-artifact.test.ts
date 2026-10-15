@@ -7,6 +7,8 @@ import { programFromArtifact, type ContractArtifact } from "../src/arkade/artifa
 import {
     ArkadeProgramScript,
     parseArtifact,
+    deserializeArkadeContractParams,
+    serializeArkadeContractParams,
     stringifyArtifact,
     type ArkadeParamValue,
 } from "../src/arkade/program";
@@ -38,13 +40,7 @@ const ARGS: Record<string, ArkadeParamValue> = {
 
 const collab = (name: string, prefix: string[] = []) => ({
     name,
-    asm: [
-        ...prefix,
-        "<SERVER_KEY>",
-        "OP_CHECKSIGVERIFY",
-        `<EMULATOR_KEY:${name.split("/")[0]}>`,
-        "OP_CHECKSIG",
-    ],
+    asm: [...prefix, "<SERVER_KEY>", "OP_CHECKSIGVERIFY", `<EMULATOR_KEY:${name}>`, "OP_CHECKSIG"],
 });
 
 function assemble(tokens: string[], extra: Record<string, Uint8Array> = {}): Uint8Array {
@@ -75,6 +71,48 @@ const demo = (extra: Record<string, unknown> = {}): ContractArtifact =>
     }) as ContractArtifact;
 
 describe("reading an arkadec artifact", () => {
+    it.each([
+        ["pubkey", key(4)],
+        ["signature", new Uint8Array(64)],
+        ["bytes", new Uint8Array(3)],
+        ["bytes20", new Uint8Array(20)],
+        ["bytes32", key(5)],
+        ["asset", key(6)],
+        ["int", 42n],
+        ["bool", 1n],
+        ["AssetGroup", 2n],
+    ] as const)(
+        "preserves native %s declarations through import and persistence",
+        (type, value) => {
+            const program = programFromArtifact(
+                demo({
+                    formatVersion: 1,
+                    constructorInputs: [{ name: "value", type }],
+                    functions: [
+                        {
+                            name: "spend",
+                            arkade: { inputs: [{ name: "input", type }], asm: ["OP_1"] },
+                            leaves: [collab("spend")],
+                        },
+                    ],
+                }),
+            );
+            expect(program.params![0]).toEqual({ name: "value", type });
+            expect(program.functions.spend.inputs).toEqual([{ name: "input", type }]);
+            const keys = { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY };
+            const args = { value, server: SERVER_KEY };
+            const script = new ArkadeProgramScript(program, args, keys);
+            const restored = deserializeArkadeContractParams(
+                serializeArkadeContractParams({ program, args, ...keys }),
+            );
+            expect(restored.program).toEqual(program);
+            expect(restored.args).toEqual(args);
+            expect(new ArkadeProgramScript(restored.program, restored.args, keys).pkScript).toEqual(
+                script.pkScript,
+            );
+        },
+    );
+
     it("parseArtifact points at the reader for the array shape", () => {
         expect(() => parseArtifact(artifact as never)).toThrow(/programFromArtifact/);
     });
@@ -390,11 +428,11 @@ describe("reading an arkadec artifact", () => {
             { name: "policy.threshold", type: "int" },
             { name: "point.x", type: "int" },
             { name: "point.y", type: "int" },
-            { name: "votes.0", type: "int", boolean: true },
-            { name: "votes.1", type: "int", boolean: true },
+            { name: "votes.0", type: "bool" },
+            { name: "votes.1", type: "bool" },
             { name: "exit", type: "int" },
             { name: "server", type: "pubkey" },
-            { name: "contract_SingleSig_policy_owner_exit", type: "hash", encoding: "raw-32" },
+            { name: "contract_SingleSig_policy_owner_exit", type: "bytes32" },
         ]);
         expect(program.functions.spend.arkadeScript?.witness).toEqual([
             "request.threshold",
@@ -870,7 +908,7 @@ describe("reading an arkadec artifact", () => {
         );
         expect(program.functions.spend.inputs).toBeUndefined();
         expect(program.functions.spend.tapscript.signatures).toEqual([
-            { name: "userSig", type: "sig" },
+            { name: "userSig", type: "signature" },
         ]);
         expect(parseArtifact(JSON.parse(stringifyArtifact(program)))).toEqual(program);
     });

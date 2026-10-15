@@ -66,7 +66,7 @@ function htlcProgram() {
     return {
         version: 1,
         params: [
-            { name: "hash", type: "hash" },
+            { name: "hash", type: "bytes20" },
             { name: "receiver", type: "pubkey" },
             { name: "amount", type: "int" },
             { name: "server", type: "pubkey" },
@@ -378,7 +378,7 @@ describe("ArkadeContractHandler", () => {
             const program = {
                 version: 1,
                 params: [
-                    { name: "hash", type: "hash" },
+                    { name: "hash", type: "bytes20" },
                     { name: "user", type: "pubkey" },
                     { name: "server", type: "pubkey" },
                 ],
@@ -407,7 +407,7 @@ describe("ArkadeContractHandler", () => {
             const program = {
                 version: 1,
                 params: [
-                    { name: "hash", type: "hash" },
+                    { name: "hash", type: "bytes20" },
                     { name: "preimage", type: "bytes" },
                     { name: "user", type: "pubkey" },
                     { name: "server", type: "pubkey" },

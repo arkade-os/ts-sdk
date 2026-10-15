@@ -18,7 +18,7 @@ const CONTRACT_AMOUNT = 10_000n;
 const nonInteractiveHTLC = {
     version: 1,
     params: [
-        { name: "hash", type: "hash" },
+        { name: "hash", type: "bytes20" },
         { name: "funder", type: "pubkey" },
         { name: "receiver", type: "pubkey" },
         { name: "amount", type: "int" },

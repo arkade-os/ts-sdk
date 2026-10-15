@@ -45,7 +45,7 @@ import { computeArkadeScriptPublicKey } from "./tweak";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
-// --- Program model (mirrors the compiler artifact) -------------------------
+// --- Normalized Program model ---------------------------------------------
 
 /** A token in an `asm` array: an opcode name, a number/bigint push, raw bytes, or a `$param` placeholder. */
 export type AsmToken = string | number | bigint | Uint8Array;
@@ -56,12 +56,21 @@ export type ArkadeParamValue = Uint8Array | bigint | number;
 /** A function call argument (function input). */
 export type ArkadeArgValue = Uint8Array | bigint | number;
 
-/**
- * The declared type of a function input, used to derive the static TS type of
- * the corresponding `functions.<name>(...)` argument. Byte-like types map to
- * `Uint8Array`; `int` maps to `bigint | number`.
- */
-export type ArkadeArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
+/** Native scalar types and their compiler witness encodings. */
+export const ARKADE_TYPE_ENCODINGS = {
+    pubkey: "raw",
+    signature: "schnorr-64",
+    bytes: "raw",
+    bytes20: "raw-20",
+    bytes32: "raw-32",
+    asset: "raw-32",
+    int: "scriptnum",
+    bool: "scriptnum",
+    AssetGroup: "scriptnum",
+} as const;
+
+/** A native Arkade scalar type for a constructor parameter or call input. */
+export type ArkadeArgType = keyof typeof ARKADE_TYPE_ENCODINGS;
 
 /**
  * Maps an {@link ArkadeArgType} to its TypeScript argument type.
@@ -70,19 +79,19 @@ export type ArkadeArgType = "bytes" | "pubkey" | "sig" | "hash" | "int";
 export interface ArkadeValueType {
     bytes: Uint8Array;
     pubkey: Uint8Array;
-    sig: Uint8Array;
-    hash: Uint8Array;
+    signature: Uint8Array;
+    bytes20: Uint8Array;
+    bytes32: Uint8Array;
+    asset: Uint8Array;
     int: bigint | number;
+    bool: bigint | number;
+    AssetGroup: bigint | number;
 }
 
 /** A typed function input or constructor param: a name plus its {@link ArkadeArgType}. */
 export interface InputDef {
     name: string;
     type: ArkadeArgType;
-    /** Compiler wire encoding; omitted for unconstrained hand-written inputs. */
-    encoding?: "raw" | "raw-20" | "raw-32" | "schnorr-64" | "scriptnum";
-    /** Numeric boolean constrained to 0 or 1. */
-    boolean?: boolean;
 }
 
 /** A typed function input or constructor parameter. */
@@ -228,8 +237,8 @@ export function resolveCsvTimelock(
  * pass everything else (opcode names, numbers, raw byte pushes) through to the
  * Arkade script encoder. The SDK does not interpret opcodes — this is pure
  * substitution + encoding. To embed a signer key (server, user, or any
- * other), pass it as a `$param` in the constructor args; there is no
- * `<SERVER_KEY>`/`<COSIGNER_KEY>` token.
+ * other), pass it as a `$param` in the constructor args. Compiler `<...>`
+ * placeholders are normalized by {@link programFromArtifact} before this step.
  */
 export function resolveAsm(asm: AsmToken[], bind: Record<string, ArkadeParamValue>): Uint8Array {
     const tokens = asm.map((t) => {
@@ -322,21 +331,30 @@ function collectParamRefs(program: Program): Set<string> {
     return refs;
 }
 
-/** Byte lengths enforced for typed values (x-only pubkey, BIP340 signature). */
-const TYPED_BYTE_LENGTHS: Partial<Record<ArkadeArgType, number>> = { pubkey: 32, sig: 64 };
+/** The SDK restricts pubkeys to 32-byte x-only keys, including constructor values. */
+const TYPED_BYTE_LENGTHS: Partial<Record<ArkadeArgType, number>> = {
+    pubkey: 32,
+    signature: 64,
+    bytes20: 20,
+    bytes32: 32,
+    asset: 32,
+};
 
 /** Validate a bound value against its typed declaration; errors name the parameter. */
 export function validateParamValue(def: InputDef, value: ArkadeParamValue): void {
-    if (def.type === "int") {
+    if (typeof def.type !== "string" || !Object.hasOwn(ARKADE_TYPE_ENCODINGS, def.type)) {
+        throw new Error(`program parameter '${def.name}': unknown type '${def.type}'`);
+    }
+    if (ARKADE_TYPE_ENCODINGS[def.type] === "scriptnum") {
         if (typeof value !== "bigint" && typeof value !== "number") {
-            throw new Error(`program parameter '${def.name}' expects an int, got bytes`);
+            throw new Error(`program parameter '${def.name}' expects ${def.type}, got bytes`);
         }
         if (typeof value === "number" && !Number.isSafeInteger(value)) {
             throw new Error(
                 `program parameter '${def.name}' expects a safe integer; use bigint for larger values`,
             );
         }
-        if (def.boolean && value !== 0 && value !== 1 && value !== 0n && value !== 1n) {
+        if (def.type === "bool" && value !== 0 && value !== 1 && value !== 0n && value !== 1n) {
             throw new Error(`program parameter '${def.name}' expects a boolean encoded as 0 or 1`);
         }
         return;
@@ -346,14 +364,7 @@ export function validateParamValue(def: InputDef, value: ArkadeParamValue): void
             `program parameter '${def.name}' expects ${def.type} bytes, got ${typeof value}`,
         );
     }
-    const length =
-        def.encoding === "raw-20"
-            ? 20
-            : def.encoding === "raw-32"
-              ? 32
-              : def.encoding === "schnorr-64"
-                ? 64
-                : TYPED_BYTE_LENGTHS[def.type];
+    const length = TYPED_BYTE_LENGTHS[def.type];
     if (length !== undefined && value.length !== length) {
         throw new Error(
             `program parameter '${def.name}' expects a ${length}-byte ${def.type}, got ${value.length} bytes`,
@@ -666,7 +677,8 @@ export function parseArtifact(artifact: {
                 !def ||
                 typeof def.name !== "string" ||
                 def.name.length === 0 ||
-                !["bytes", "pubkey", "sig", "hash", "int"].includes(def.type)
+                typeof def.type !== "string" ||
+                !Object.hasOwn(ARKADE_TYPE_ENCODINGS, def.type)
             ) {
                 throw new Error(
                     "parseArtifact: parameters, inputs and signatures require typed { name, type } declarations",
@@ -713,7 +725,7 @@ export function parseArtifact(artifact: {
 }
 
 /**
- * Serialize a {@link Program} to compiler-artifact JSON — the inverse of
+ * Serialize a {@link Program} to normalized Program JSON — the inverse of
  * {@link parseArtifact}: bytes become `0x`-hex strings; bigint tokens become
  * plain numbers (or, above `Number.MAX_SAFE_INTEGER`, `0x`-hex of their
  * minimal script-num bytes, which the script encoder pushes identically);
@@ -800,11 +812,11 @@ function serializeArgValue(v: ArkadeParamValue): string | number {
  * bytes-like param whose serialized value lacks the `0x` prefix is an error.
  */
 function parseTypedArgValue(name: string, type: ArkadeArgType, v: unknown): ArkadeParamValue {
-    if (type === "int") {
+    if (ARKADE_TYPE_ENCODINGS[type] === "scriptnum") {
         if (typeof v === "number") return v;
         if (typeof v === "string") return BigInt(v);
         throw new Error(
-            `arkade contract params: '${name}' expects an int, got ${JSON.stringify(v)}`,
+            `arkade contract params: '${name}' expects ${type}, got ${JSON.stringify(v)}`,
         );
     }
     if (typeof v === "string" && v.startsWith("0x")) return hex.decode(v.slice(2));

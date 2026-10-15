@@ -9,7 +9,7 @@ import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
 } from "../src";
-import { validateTapscript } from "../src/arkade/program";
+import { validateParamValue, validateTapscript } from "../src/arkade/program";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
@@ -20,6 +20,57 @@ function xOnly(): Uint8Array {
 const server = xOnly();
 const user = xOnly();
 const keys = { serverKey: server };
+
+describe("Native scalar validation", () => {
+    it.each([
+        ["pubkey", 32],
+        ["signature", 64],
+        ["bytes20", 20],
+        ["bytes32", 32],
+        ["asset", 32],
+    ] as const)("enforces the native %s width without extra metadata", (type, length) => {
+        const def = { name: "value", type };
+        expect(() => validateParamValue(def, new Uint8Array(length))).not.toThrow();
+        for (const size of [length - 1, length + 1]) {
+            expect(() => validateParamValue(def, new Uint8Array(size))).toThrow(/byte/);
+        }
+        expect(() => validateParamValue(def, 1n)).toThrow(/bytes/);
+    });
+
+    it.each(["int", "bool", "AssetGroup"] as const)("validates numeric %s values", (type) => {
+        const def = { name: "value", type };
+        for (const value of [0, 1, 0n, 1n]) {
+            expect(() => validateParamValue(def, value)).not.toThrow();
+        }
+        for (const value of [0.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, new Uint8Array()]) {
+            expect(() => validateParamValue(def, value)).toThrow();
+        }
+        if (type === "bool") {
+            for (const value of [-1, 2, -1n, 2n]) {
+                expect(() => validateParamValue(def, value)).toThrow(/0 or 1/);
+            }
+        }
+    });
+
+    it("allows arbitrary byte lengths for bytes", () => {
+        for (const length of [0, 20, 32, 64, 65]) {
+            expect(() =>
+                validateParamValue({ name: "value", type: "bytes" }, new Uint8Array(length)),
+            ).not.toThrow();
+        }
+    });
+
+    it.each([["hash"], ["sig"], ["toString"], [["bytes"]], [{}], [null]])(
+        "rejects non-native type %j",
+        (type) => {
+            const def = { name: "value", type };
+            expect(() => validateParamValue(def as never, user)).toThrow(/unknown type/);
+            expect(() => arkade.parseArtifact({ params: [def] as never, functions: {} })).toThrow(
+                /typed.*declarations/,
+            );
+        },
+    );
+});
 
 describe("Program timelocks — literal and $param values", () => {
     it("round-trips encoded CSV sequences and preserves seconds-based leaves", () => {
@@ -141,7 +192,7 @@ describe("Program timelocks — literal and $param values", () => {
         };
         expect(
             () => new arkade.ArkadeProgramScript(program, { user, exit: new Uint8Array(4) }, keys),
-        ).toThrow(/parameter 'exit' expects an int/);
+        ).toThrow(/parameter 'exit' expects int/);
     });
 
     it("encodes asm + csv as a ConditionCSVMultisig leaf (byte-identical)", () => {
@@ -376,7 +427,7 @@ describe("Typed program params — authoritative when present", () => {
                     { user, exit: new Uint8Array(4) },
                     keys,
                 ),
-        ).toThrow(/parameter 'exit' expects an int/);
+        ).toThrow(/parameter 'exit' expects int/);
     });
 
     it("rejects bare parameter and input declarations", () => {
@@ -611,7 +662,7 @@ describe("Program name & full-feature artifact round-trip", () => {
             params: [
                 { name: "user", type: "pubkey" },
                 { name: "server", type: "pubkey" },
-                { name: "hash", type: "hash" },
+                { name: "hash", type: "bytes20" },
                 { name: "amount", type: "int" },
                 { name: "exit", type: "int" },
             ],

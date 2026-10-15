@@ -2,8 +2,8 @@
  * Arkade Contract — artifact-driven, high-level covenant API.
  *
  * A contract is a {@link Program}: named functions, each split into a `tapscript` segment
- * enforced on-chain and an `arkadeScript` segment emulated by the co-signing service. The shape
- * mirrors the compiler artifact, so hand-written programs and compiler output share one resolver.
+ * enforced on-chain and an `arkadeScript` segment emulated by the co-signing service. Compiler
+ * artifacts are normalized into this model, sharing the resolver with hand-written programs.
  * The SDK never interprets scripts; it resolves `$param` placeholders and signers, builds the
  * taproot tree (co-signer key tweaked by the arkade-script hash) and assembles the spend.
  *
@@ -26,7 +26,7 @@
  *     version: 1,
  *     name: "htlc", // metadata only — round-tripped, never compiled
  *     params: [
- *         { name: "hash", type: "hash" },
+ *         { name: "hash", type: "bytes20" },
  *         { name: "receiver", type: "pubkey" },
  *         { name: "amount", type: "int" },
  *         { name: "server", type: "pubkey" },

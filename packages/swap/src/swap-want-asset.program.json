@@ -4,7 +4,7 @@
   "params": [
     { "name": "makerWP", "type": "pubkey" },
     { "name": "wantAmount", "type": "int" },
-    { "name": "wantAssetTxid", "type": "hash", "encoding": "raw-32" },
+    { "name": "wantAssetTxid", "type": "bytes32" },
     { "name": "wantAssetGroupIndex", "type": "int" },
     { "name": "server", "type": "pubkey" },
     { "name": "user", "type": "pubkey" }
