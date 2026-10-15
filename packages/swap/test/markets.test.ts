@@ -534,6 +534,37 @@ describe("discoverMarkets with a listed solver whose card did not arrive", () =>
         expect(await read(pointed.index, relayDown)).toEqual([]);
         expect((await cache())?.markets).toEqual([]);
     });
+
+    it("asks the registry once a minute while it carries the solver, not on every call", async () => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const entry = (await cache())!;
+        await repository.saveCachedMarkets("regtest", REGISTRY, {
+            ...entry,
+            fetchedAt: Date.now() - MARKETS_CACHE_TTL_MS,
+        });
+        const fetchImpl = jsonFetch([pointed.index]);
+        const call = async () =>
+            (
+                await discoverMarkets({
+                    network: "regtest",
+                    registryUrl: REGISTRY,
+                    repository,
+                    fetchImpl,
+                    transportCards: relaySilent,
+                })
+            ).map((m) => m.solver);
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            for (let i = 0; i < 3; i++) expect(await call()).toEqual(["pointed"]);
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.setSystemTime(Date.now() + 60_000);
+            expect(await call()).toEqual(["pointed"]);
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("validatePlan", () => {

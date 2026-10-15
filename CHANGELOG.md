@@ -365,11 +365,12 @@ style and have not been backfilled.
   process whose relay is slow or dead, or a caller's own fetcher) no longer
   drops out: for up to two hours such an answer leaves the cache alone,
   `discoverMarkets` and `watchMarkets` keep serving the solver's cached
-  markets, and the client, which never mixes cached cards into a live
-  snapshot, asks again after a minute meanwhile. A missing `nostr-tools`
-  peer is not a failed delivery. The markets cache lasts ten minutes, not an
-  hour, and `watchMarkets` (`@arkade-os/swap/protocol`) keeps a long-lived
-  view current. Needs `@arkade-os/solver-discovery` 0.3.0.
+  markets, and the client never mixes cached cards into a live snapshot.
+  Both ask the registry again after a minute, not on every call. A missing
+  `nostr-tools` peer is not a failed delivery. The markets cache lasts ten
+  minutes, not an hour, and `watchMarkets` (`@arkade-os/swap/protocol`)
+  keeps a long-lived view current. Needs `@arkade-os/solver-discovery`
+  0.3.0.
 
 ### Bug Fixes
 
