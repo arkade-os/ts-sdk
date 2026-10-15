@@ -149,6 +149,21 @@ describe("delegated default addresses", () => {
         expect(await wallet.getAddress()).toBe(renewal.contract.address);
     });
 
+    it("skips a newer malformed delegatee row for the older valid one", async () => {
+        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await wallet.contractRepository.saveContract({
+            ...renewal.contract,
+            script: "51",
+            params: { ...renewal.contract.params, exitDelay: "garbage" },
+            createdAt: renewal.contract.createdAt + 1,
+        });
+
+        expect(await wallet.getAddress()).toBe(renewal.contract.address);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
     it("reports the funds of its delegatee contracts to incoming-funds subscribers", async () => {
         const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
         let emit: (event: unknown) => void = () => {};

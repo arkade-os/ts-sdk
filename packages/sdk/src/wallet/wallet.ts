@@ -854,24 +854,34 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * contract repository, so it follows registrations made through any wallet front-end.
      */
     protected async syncDelegatedDefaults(): Promise<void> {
-        let rows: Contract[] = [];
+        let renewal: DefaultVtxo.Script | undefined;
+        let boarding: string | undefined;
         if (this.delegateeProvider) {
             const owner = hex.encode(await this.identity.xOnlyPublicKey());
             const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
-            rows = (await collectContracts(this.contractRepository, { type: ["delegatee"] }))
-                .filter(
-                    (c) =>
-                        c.params.owner?.slice(2).toLowerCase() === owner &&
-                        toXOnlySignerHex(c.params.serverPubKey ?? "") === server,
-                )
-                .sort((a, b) => b.createdAt - a.createdAt);
+            const rows = (
+                await collectContracts(this.contractRepository, { type: ["delegatee"] })
+            ).sort((a, b) => b.createdAt - a.createdAt);
+            for (const c of rows) {
+                const { template } = c.params;
+                if (template === "renewal" ? renewal : template === "boarding" ? boarding : true)
+                    continue;
+                try {
+                    if (
+                        c.params.owner?.slice(2).toLowerCase() !== owner ||
+                        toXOnlySignerHex(c.params.serverPubKey) !== server
+                    )
+                        continue;
+                    const script = DelegateeContractHandler.createScript(c.params);
+                    if (template === "renewal") renewal = script;
+                    else boarding = script.onchainAddress(this.network);
+                } catch (e) {
+                    console.warn("Skipping malformed delegatee contract", c.script, e);
+                }
+            }
         }
-        const renewal = rows.find((c) => c.params.template === "renewal");
-        const boarding = rows.find((c) => c.params.template === "boarding");
-        this._delegatedTapscript = renewal && DelegateeContractHandler.createScript(renewal.params);
-        this._delegatedBoardingAddress =
-            boarding &&
-            DelegateeContractHandler.createScript(boarding.params).onchainAddress(this.network);
+        this._delegatedTapscript = renewal;
+        this._delegatedBoardingAddress = boarding;
     }
 
     /** Current active server signer (x-only, 32 bytes); changes only on server-signer rotation. */
