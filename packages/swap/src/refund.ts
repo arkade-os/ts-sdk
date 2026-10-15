@@ -23,6 +23,7 @@ import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
+    assertTimerMs,
     ConditionWitness,
     type ArkTxInput,
     type IContractManager,
@@ -547,6 +548,7 @@ export async function refundIfUnresolved(
     },
 ): Promise<RefundOutcome> {
     const pollMs = input.pollMs ?? 5_000;
+    assertTimerMs("pollMs", pollMs);
     const now = input.now ?? (() => Math.floor(Date.now() / 1000));
     const attemptDeadline = input.attemptDeadline ?? input.refundLocktime + REFUND_MTP_LAG_SECONDS;
 

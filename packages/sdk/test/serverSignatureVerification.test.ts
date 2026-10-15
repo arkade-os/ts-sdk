@@ -204,7 +204,7 @@ describe("signAndSubmitOffchainTx one-shot", () => {
         });
         await submit(p, { serverPubkey: SERVER_PUBKEY }, inputs(), true);
 
-        const [finalized] = p.finalizeTx.mock.calls[0][1];
+        const [finalized] = (p.finalizeTx.mock.calls[0] as unknown[])[1] as string[];
         expect(userSigners(finalized)).toEqual(
             [hex.encode(key(11)), hex.encode(SERVER_PUBKEY)].sort(),
         );

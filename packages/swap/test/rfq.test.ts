@@ -13,7 +13,6 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 
 import {
     AddressMismatch,
-    ARKADE_BTC,
     LIGHTNING_SEND_PAIR,
     MAX_PAIR_LENGTH,
     SOLO_REFUND_HEADROOM_SECONDS,
@@ -767,6 +766,19 @@ describe("httpTransport", () => {
 });
 
 describe("relayTransport", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid timeout %s before opening a socket",
+        (timeoutMs) => {
+            expect(() =>
+                relayTransport("ws://relay", {
+                    solverPubkey: "ab".repeat(32),
+                    clientPubkey: "cd".repeat(32),
+                    timeoutMs,
+                }),
+            ).toThrow("timeoutMs");
+        },
+    );
+
     /** A scripted solver on the other side of a fake socket: subscribes are
      * acknowledged silently; each published rfq_request gets the scripted
      * reply, addressed back like a relay would deliver it. */
@@ -944,7 +956,7 @@ describe("assertFundable — the max-fee gate", () => {
     it("refuses to pretend it can gate a cross-asset pair", () => {
         expect(() =>
             fundable(
-                { pair: "arkade:BTC->ethereum:0xa0b86991", from_amount: 100_000, to_amount: 42 },
+                { pair: "arkade:BTC->custom:USD", from_amount: 100_000, to_amount: 42 },
                 { bps: 100 },
             ),
         ).toThrow(/cross-asset|different assets/i);
@@ -963,7 +975,7 @@ describe("assertFundable — the max-fee gate", () => {
  */
 describe("assertFundable — the max-fee gate, cross-asset", () => {
     const now = 1_800_000_000;
-    const CROSS = "arkade:BTC->ethereum:0xa0b86991";
+    const CROSS = "arkade:BTC->custom:USD";
     const gate = (
         over: Partial<RfqQuote>,
         maxFee?: { bps?: number; sats?: number; referenceRate?: number },

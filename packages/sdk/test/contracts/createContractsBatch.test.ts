@@ -10,7 +10,6 @@ import {
 } from "../../src";
 import type { ContractRepository } from "../../src/repositories";
 import {
-    createDefaultContractParams,
     createMockIndexerProvider,
     TEST_DELEGATE_PUB_KEY,
     TEST_PUB_KEY,

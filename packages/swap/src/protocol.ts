@@ -65,6 +65,7 @@ export {
 export {
     discoverMarkets,
     type DiscoverMarketsOptions,
+    watchMarkets,
     findMarket,
     makeCachedFeedFetch,
     type PlanError,
@@ -211,6 +212,8 @@ export {
 export {
     type LightningReceiveProfile,
     type LightningSendProfile,
+    onchainReceiveProfile,
+    type OnchainReceiveProfile,
     onchainSendProfile,
     type OnchainSendProfile,
 } from "./rfqCorridors";
@@ -253,8 +256,13 @@ export {
     type LightningReceiveSwap,
     type LightningSendSwap,
     nextOnchainAction,
+    nextOnchainReceiveAction,
+    type OnchainReceiveAction,
+    OnchainReceiveNeedsChainSource,
+    type OnchainReceiveSwap,
     type OnchainSendAction,
     type OnchainSendSwap,
+    type ReceiveLockupSwap,
     type RfqRestoreFailure,
     type RfqRestoreOptions,
     type RfqRestoreResult,

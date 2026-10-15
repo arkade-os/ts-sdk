@@ -147,9 +147,11 @@ describe("ServiceWorkerWallet contract watch state", () => {
         const proxy = await createBridgedWallet(manager).getContractManager();
         const save = vi.spyOn(repository, "saveContract");
 
-        await expect(proxy.setContractWatchState("deadbeef", "retained")).rejects.toThrow(
-            "Failed to update contract watch state",
-        );
+        const rejection = proxy.setContractWatchState("deadbeef", "retained");
+        await expect(rejection).rejects.toThrow("Failed to update contract watch state");
+        await expect(rejection).rejects.toMatchObject({
+            cause: expect.objectContaining({ message: expect.stringContaining("deadbeef") }),
+        });
         expect(save).not.toHaveBeenCalled();
     });
 

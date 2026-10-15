@@ -441,8 +441,10 @@ describe("ArkadeContract — extended features", () => {
         await send;
 
         const txids = (cps: string[]) => cps.map((c) => Transaction.fromPSBT(base64.decode(c)).id);
-        const submitted = txids(arkProvider.submitTx.mock.calls[0][1] as string[]);
-        expect(txids(arkProvider.finalizeTx.mock.calls[0][1])).toEqual([...submitted].reverse());
+        const submitted = txids((arkProvider.submitTx.mock.calls[0] as unknown[])[1] as string[]);
+        expect(txids((arkProvider.finalizeTx.mock.calls[0] as unknown[])[1] as string[])).toEqual(
+            [...submitted].reverse(),
+        );
     });
 
     it("arkd path rejects a checkpoint it did not submit", async () => {

@@ -28,6 +28,7 @@ import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
     ArkAddress,
+    assertTimerMs,
     VHTLC,
     asset,
     networkFromArkadeInfo,
@@ -64,6 +65,8 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
+// Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
+import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer } from "./offer";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
@@ -539,9 +542,10 @@ const matchQuotedLockup = (
  *
  * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
  * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
- * where the headroom check is over-strict but never unsafe. */
+ * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: their
+ * contract, finality and deadline checks are not implemented yet. */
 export const assertFundable = (input: {
-    quote: RfqQuote;
+    quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
     now: number;
     onchain?: {
@@ -568,6 +572,12 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    if (input.quote.pair.split("->").some((leg) => leg.startsWith("ethereum:"))) {
+        fail(
+            "evm_funding_unavailable",
+            "EVM funding is unavailable until local contract, finality, and deadline verification is implemented",
+        );
+    }
     // `valid_until` feeds the expiry gate AND the v2 TTL floor; absent or NaN it deletes both.
     if (input.quote.valid_until === undefined) {
         fail("quote_malformed", "quote carries no valid_until");
@@ -791,6 +801,7 @@ export const relayTransport = (
     },
 ): RfqTransport => {
     const timeoutMs = options.timeoutMs ?? 30_000;
+    assertTimerMs("timeoutMs", timeoutMs);
     const Ctor =
         options.WebSocketCtor ?? (WebSocket as unknown as new (url: string) => RelaySocket);
     const pending = new Map<string, (payload: unknown) => void>();
@@ -2288,6 +2299,8 @@ export function deriveOnchainReceive(input: {
     script: InstanceType<typeof VHTLC.ScriptV2>;
     /** The L1 HTLC the trader funds, derived locally — fund only this. */
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was derived from; a restore rebuilds it from these. */
+    htlcParams: OnchainHtlcParams;
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
@@ -2316,15 +2329,13 @@ export function deriveOnchainReceive(input: {
         solverRefundPkScriptHex,
     ).matched;
 
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash: input.paymentHash,
-            claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
-            refundKey: input.refundPubkey,
-            refundLocktime: htlcLocktime,
-        },
-        input.l1Network,
-    );
+    const htlcParams: OnchainHtlcParams = {
+        paymentHash: input.paymentHash,
+        claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
+        refundKey: input.refundPubkey,
+        refundLocktime: htlcLocktime,
+    };
+    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
     if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
 
     return {
@@ -2332,6 +2343,7 @@ export function deriveOnchainReceive(input: {
         swapPkScript: script.pkScript,
         script,
         htlc,
+        htlcParams,
         refundLocktime,
         htlcLocktime,
         minConfirmations,

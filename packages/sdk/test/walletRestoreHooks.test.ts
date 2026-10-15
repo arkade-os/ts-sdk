@@ -69,7 +69,7 @@ describe("wallet restore hooks", () => {
     it("uses a stable snapshot for each run", async () => {
         const wallet = {} as IWallet;
         const calls: string[] = [];
-        let unregisterSecond = () => undefined;
+        let unregisterSecond: () => void = () => undefined;
         registerWalletRestoreHook(wallet, {
             id: "first",
             restore: async () => {

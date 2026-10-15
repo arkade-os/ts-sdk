@@ -171,7 +171,11 @@ describe("AssetInput", () => {
                 it(v.name, () => {
                     const inputs: AssetInput[] = v.inputs.map((inp) => {
                         if (inp.type === "intent") {
-                            return AssetInput.createIntent(inp.txid!, inp.vin, inp.amount);
+                            return AssetInput.createIntent(
+                                (inp as { txid?: string }).txid!,
+                                inp.vin,
+                                inp.amount,
+                            );
                         }
                         return AssetInput.create(inp.vin, inp.amount);
                     });

@@ -180,7 +180,11 @@ section("public subpaths: Node package-name resolution");
 const tmp = mkdtempSync(join(tmpdir(), "smoke-dist-"));
 const consumer = join(tmp, "consumer");
 mkdirSync(join(consumer, "node_modules", "@arkade-os"), { recursive: true });
-symlinkSync(repoRoot, join(consumer, "node_modules", "@arkade-os", "sdk"), "dir");
+symlinkSync(
+    repoRoot,
+    join(consumer, "node_modules", "@arkade-os", "sdk"),
+    process.platform === "win32" ? "junction" : "dir",
+);
 writeFileSync(
     join(consumer, "package.json"),
     JSON.stringify({ name: "smoke-consumer", type: "module", private: true }),

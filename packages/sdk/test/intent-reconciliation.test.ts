@@ -1,9 +1,14 @@
 import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi } from "vitest";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import { reconcileIntents, type IntentReconcilerIndexer } from "../src/wallet/intentReconciliation";
+import {
+    reconcileIntents,
+    releaseIntents,
+    type IntentReconcilerIndexer,
+} from "../src/wallet/intentReconciliation";
 import type { ArkIntent, ArkIntentState } from "../src/repositories/intentRepository";
 import type { VirtualCoin } from "../src/wallet";
+import { ArkError } from "../src/providers/errors";
 
 const intent = (over: Partial<ArkIntent>): ArkIntent => ({
     intentTxId: "i1",
@@ -266,5 +271,186 @@ describe("reconcileIntents", () => {
         expect(done.state).toBe("waiting_for_batch");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
+    });
+});
+
+describe("reconcileIntents: releasing stale intents from the server", () => {
+    const deleteMessage = { type: "delete", expire_at: 0 } as const;
+    const stale = (over: Partial<ArkIntent> = {}) =>
+        intent({ deleteProofMessage: JSON.stringify(deleteMessage), ...over });
+    const unspent = () => indexerReturning([coin("v", 0, { isSpent: false })]);
+    const noMatch = () =>
+        new ArkError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
+
+    it("deletes a submitted intent left by a dead process and cancels it", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+        });
+
+        expect(deleteIntent).toHaveBeenCalledWith({ proof: "dp", message: deleteMessage });
+        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        expect(done.state).toBe("cancelled");
+        expect(done.cancellationReason).toMatch(/released from the server/i);
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
+    });
+
+    it("cancels when the server no longer holds the intent", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+        });
+
+        expect(await stateOf(repo)).toBe("cancelled");
+    });
+
+    it("keeps the intent locked when the delete fails for another reason", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const deleteIntent = vi.fn().mockRejectedValue(new Error("network down"));
+
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+        });
+
+        expect(await stateOf(repo)).toBe("waiting_for_batch");
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
+    });
+
+    it("keeps the intent locked on INVALID_INTENT_PROOF with another message", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const deleteIntent = vi
+            .fn()
+            .mockRejectedValue(new ArkError(23, "invalid intent proof", "INVALID_INTENT_PROOF"));
+
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+        });
+
+        expect(await stateOf(repo)).toBe("waiting_for_batch");
+    });
+
+    it("does not delete an intent whose batch already succeeded", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), stale());
+        const deleteIntent = vi.fn();
+        const indexerProvider = indexerReturning([
+            coin("v", 0, { isSpent: true, settledBy: "ctx" }),
+        ]);
+
+        await reconcileIntents({ intentRepository: repo, indexerProvider, deleteIntent });
+
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(await stateOf(repo)).toBe("batch_succeeded");
+    });
+
+    it.each<ArkIntentState>(["waiting_to_submit", "waiting_for_batch", "batch_in_progress"])(
+        "leaves a %s intent with an in-flight input to its live settle",
+        async (state) => {
+            const repo = await seed(new InMemoryIntentRepository(), stale({ state }));
+            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+
+            await reconcileIntents({
+                intentRepository: repo,
+                indexerProvider: unspent(),
+                deleteIntent,
+                isOutpointInFlight: (o) => o.txid === "v" && o.vout === 0,
+            });
+
+            expect(deleteIntent).not.toHaveBeenCalled();
+            expect(await stateOf(repo)).toBe(state);
+        },
+    );
+
+    it("does not delete a stale intent sharing an input with a live settle", async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            stale({
+                intentVtxos: [
+                    { txid: "v", vout: 0 },
+                    { txid: "w", vout: 0 },
+                ],
+            }),
+        );
+        const deleteIntent = vi.fn();
+
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: indexerReturning([coin("v", 0), coin("w", 0)]),
+            deleteIntent,
+            isOutpointInFlight: (o) => o.txid === "w",
+        });
+
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(await stateOf(repo)).toBe("waiting_for_batch");
+    });
+});
+
+describe("releaseIntents", () => {
+    const pending = (over: Partial<ArkIntent> = {}) =>
+        intent({ deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }), ...over });
+
+    it("is true when every non-terminal intent is deleted, skipping terminal ones", async () => {
+        const repo = new InMemoryIntentRepository();
+        await repo.saveIntent(pending());
+        await repo.saveIntent(pending({ intentTxId: "done", state: "batch_succeeded" }));
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+
+        expect(await releaseIntents({ intentRepository: repo, deleteIntent })).toBe(true);
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it("is true when the server no longer holds the intent", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), pending());
+        const deleteIntent = vi
+            .fn()
+            .mockRejectedValue(
+                new ArkError(
+                    23,
+                    "no matching intents found for intent proof",
+                    "INVALID_INTENT_PROOF",
+                ),
+            );
+
+        expect(await releaseIntents({ intentRepository: repo, deleteIntent })).toBe(true);
+    });
+
+    it("is false when a delete fails", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), pending());
+        const deleteIntent = vi.fn().mockRejectedValue(new Error("network down"));
+
+        expect(await releaseIntents({ intentRepository: repo, deleteIntent })).toBe(false);
+    });
+
+    it("is false for an intent a live settle owns", async () => {
+        const repo = await seed(new InMemoryIntentRepository(), pending());
+        const deleteIntent = vi.fn();
+
+        expect(
+            await releaseIntents({
+                intentRepository: repo,
+                deleteIntent,
+                isOutpointInFlight: () => true,
+            }),
+        ).toBe(false);
+        expect(deleteIntent).not.toHaveBeenCalled();
+    });
+
+    it("without deleteIntent, is true only when nothing is pending", async () => {
+        const empty = await seed(new InMemoryIntentRepository(), pending({ state: "cancelled" }));
+        expect(await releaseIntents({ intentRepository: empty })).toBe(true);
+
+        const held = await seed(new InMemoryIntentRepository(), pending());
+        expect(await releaseIntents({ intentRepository: held })).toBe(false);
     });
 });

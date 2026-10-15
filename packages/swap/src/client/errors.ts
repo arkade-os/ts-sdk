@@ -49,8 +49,7 @@ export class AmbiguousDestination extends Error {
 }
 
 /**
- * The corridor pair is not in the implemented route union — `onchain -> arkade`
- * included, until the manager owns the trader's L1 refund path end to end.
+ * The corridor pair is not in the implemented route union.
  *
  * Boundary: route resolution, before RFQ disclosure, artifact creation, persistence or funding.
  * Also the alias layer (a rail no corridor serves), and `quote()` when no discovered market

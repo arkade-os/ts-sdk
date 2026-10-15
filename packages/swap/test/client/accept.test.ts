@@ -10,7 +10,7 @@ import { collectSwapRecords } from "../../src/repository";
  * persist and before funding, after funding and before the txid, after the txid.
  *
  * Every route is run through them: spot, lightning send and onchain send fund,
- * and lightning receive funds nothing and so runs the first rows only.
+ * and the two receives fund nothing and so run the first rows only.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
@@ -77,18 +77,20 @@ const setup = async (
     return { client, repository, wallet };
 };
 
-/** The four routes, each as the input that resolves to it. */
+/** The five routes, each as the input that resolves to it. */
 const ROUTES = {
     spot: (): QuoteInput => ({ give: "BTC", take: "USD", amount: 100_000n, amountOn: "give" }),
     lightningSend: (): QuoteInput => ({ to: invoiceFor(PAYMENT_HASH, CLOCK) }),
     lightningReceive: (): QuoteInput => ({ via: "lightning", amount: 5_000n, amountOn: "give" }),
     onchainSend: (): QuoteInput => ({ to: BCRT1, amount: 100_000n, amountOn: "give" }),
+    onchainReceive: (): QuoteInput => ({ via: "onchain", amount: 100_000n, amountOn: "give" }),
 } as const;
 
 type RouteName = keyof typeof ROUTES;
 /** The three that spend from this wallet. */
 const FUNDING_ROUTES: RouteName[] = ["spot", "lightningSend", "onchainSend"];
-const ALL_ROUTES: RouteName[] = [...FUNDING_ROUTES, "lightningReceive"];
+const RECEIVE_ROUTES: RouteName[] = ["lightningReceive", "onchainReceive"];
+const ALL_ROUTES: RouteName[] = [...FUNDING_ROUTES, ...RECEIVE_ROUTES];
 
 const quoteFor = (h: Harness, route: RouteName): Promise<Quote> => h.client.quote(ROUTES[route]());
 
@@ -173,6 +175,30 @@ describe("accept() — the ordering", () => {
         const profile = (stored as CorridorSwapRecord).profile;
         expect(profile.signer).toMatchObject({ signingDescriptor: expect.any(String) });
         expect(profile.hashlock).toMatchObject({ paymentHash: expect.any(String) });
+    });
+
+    it("funds nothing on an onchain receive, and persists the HTLC and its refund", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "onchainReceive");
+        const swap = await h.client.accept(quote);
+
+        // The trader funds the HTLC from outside this wallet.
+        expect(h.wallet.sent).toHaveLength(0);
+        expect(swap.artifact).toMatchObject({ kind: "deposit", corridor: "onchain" });
+        const stored = (await h.repository.getSwapRecord(quote.id)) as CorridorSwapRecord;
+        expect(stored.kind).toBe("onchain_receive");
+        const htlcAddress = (swap.artifact as { address: string }).address;
+        expect(stored.artifact).toMatchObject({ kind: "deposit", address: htlcAddress });
+        // Everything the L1 refund needs is durable before anyone can fund the HTLC: the keys
+        // that rebuild it, the descriptor that signs the refund, and where the refund pays.
+        expect(stored.profile).toMatchObject({
+            htlcAddress,
+            refundKey: expect.any(String),
+            refundDescriptor: expect.any(String),
+            refundPkScript: expect.any(String),
+            claimKey: expect.any(String),
+            expectedAmount: 99_000,
+        });
     });
 
     it("writes the funding txid after the money moves", async () => {
@@ -273,7 +299,7 @@ describe("accept() — idempotency by quote id", () => {
         const second = await h.client.accept(quote);
 
         expect(second).toEqual(first);
-        expect(h.wallet.sent).toHaveLength(route === "lightningReceive" ? 0 : 1);
+        expect(h.wallet.sent).toHaveLength(RECEIVE_ROUTES.includes(route) ? 0 : 1);
         expect(await collectSwapRecords(h.repository)).toHaveLength(1);
         // One covenant row, because `createContract` is first-writer-wins and
         // the second accept never reaches a second derivation.
