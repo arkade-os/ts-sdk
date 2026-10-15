@@ -46,7 +46,7 @@ function claimProgram(): arkade.Program {
             { name: "receiver", type: "pubkey" },
             { name: "amount", type: "int" },
             { name: "server", type: "pubkey" },
-            { name: "h", type: "hash" },
+            { name: "h", type: "bytes20" },
         ],
         functions: {
             claim: {
@@ -518,7 +518,7 @@ describe("ArkadeContract — extended features", () => {
                 { name: "receiver", type: "pubkey" },
                 { name: "amount", type: "int" },
                 { name: "server", type: "pubkey" },
-                { name: "h", type: "hash" },
+                { name: "h", type: "bytes20" },
             ],
             functions: {
                 claim: {

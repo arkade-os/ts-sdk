@@ -102,10 +102,10 @@ const DUST_SATS = 330n;
 const assetCovenantHTLC = {
     version: 1,
     params: [
-        { name: "hash", type: "hash" },
+        { name: "hash", type: "bytes20" },
         { name: "receiver", type: "pubkey" },
         { name: "amount", type: "int" },
-        { name: "assetTxid", type: "hash" },
+        { name: "assetTxid", type: "bytes32" },
         { name: "assetGidx", type: "int" },
         { name: "server", type: "pubkey" },
     ],
@@ -184,9 +184,9 @@ const assetCovenantHTLC = {
 const scriptV2Shaped = {
     version: 1,
     params: [
-        { name: "hash", type: "hash" },
+        { name: "hash", type: "bytes20" },
         { name: "receiver", type: "pubkey" },
-        { name: "assetTxid", type: "hash" },
+        { name: "assetTxid", type: "bytes32" },
         { name: "assetGidx", type: "int" },
         { name: "server", type: "pubkey" },
     ],

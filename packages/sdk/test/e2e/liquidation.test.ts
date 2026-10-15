@@ -50,12 +50,12 @@ const liquidationProgram = {
     version: 1,
     params: [
         { name: "server", type: "pubkey" },
-        { name: "price", type: "hash" },
+        { name: "price", type: "bytes32" },
         { name: "oracle", type: "pubkey" },
     ],
     functions: {
         liquidate: {
-            inputs: [{ name: "signature", type: "sig" }],
+            inputs: [{ name: "signature", type: "signature" }],
             tapscript: { signers: ["$server"] },
             arkadeScript: {
                 asm: [

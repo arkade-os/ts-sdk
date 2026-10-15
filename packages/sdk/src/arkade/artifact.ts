@@ -9,6 +9,7 @@ import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
+    ARKADE_TYPE_ENCODINGS,
     type ArkadeArgType,
     type ArkadeFunction,
     type AsmToken,
@@ -136,45 +137,13 @@ function claim(seen: Set<string>, name: string, kind: string): void {
     seen.add(name);
 }
 
-/** Source scalars share SDK types; fixed widths and bool constraints live on InputDef. */
-const SCALAR_TYPES: Record<string, ArkadeArgType> = {
-    pubkey: "pubkey",
-    signature: "sig",
-    bytes: "bytes",
-    bytes20: "hash",
-    bytes32: "hash",
-    asset: "hash",
-    int: "int",
-    AssetGroup: "int",
-    bool: "int",
-};
-
-const ENCODINGS: Record<string, InputDef["encoding"]> = {
-    pubkey: "raw",
-    signature: "schnorr-64",
-    bytes: "raw",
-    bytes20: "raw-20",
-    bytes32: "raw-32",
-    asset: "raw-32",
-    int: "scriptnum",
-    bool: "scriptnum",
-    AssetGroup: "scriptnum",
-};
-
 function inputDef(name: string, type: string): InputDef {
-    return {
-        name,
-        type: argType(type),
-        ...(type === "bytes20" || type === "bytes32" || type === "asset"
-            ? { encoding: ENCODINGS[type] }
-            : {}),
-        ...(type === "bool" ? { boolean: true } : {}),
-    };
+    return { name, type: argType(type) };
 }
 
 function argType(arkType: string): ArkadeArgType {
-    if (!Object.hasOwn(SCALAR_TYPES, arkType)) fail(`unknown type '${arkType}'`);
-    return SCALAR_TYPES[arkType];
+    if (!Object.hasOwn(ARKADE_TYPE_ENCODINGS, arkType)) fail(`unknown type '${arkType}'`);
+    return arkType as ArkadeArgType;
 }
 
 function arrayParts(type: string): [string, number] {
@@ -275,12 +244,12 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     if (!Array.isArray(witness)) fail("leaf witness must be an array");
     return witness.filter((item) => {
         if (!isNamed(item)) fail("witness item needs a name and a type");
-        argType(item.type);
+        const type = argType(item.type);
         if (item.injected !== undefined && typeof item.injected !== "boolean")
             fail(`witness '${item.name}': injected must be boolean`);
         if (item.injected && item.type !== "signature")
             fail(`witness '${item.name}': only infrastructure signatures can be injected`);
-        if (item.encoding !== undefined && item.encoding !== ENCODINGS[item.type])
+        if (item.encoding !== undefined && item.encoding !== ARKADE_TYPE_ENCODINGS[type])
             fail(
                 `witness '${item.name}': encoding '${item.encoding}' does not match type '${item.type}'`,
             );
@@ -408,7 +377,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
             claim(fields, field.name, "struct field");
         }
         if (
-            Object.hasOwn(SCALAR_TYPES, struct.name) ||
+            Object.hasOwn(ARKADE_TYPE_ENCODINGS, struct.name) ||
             Object.hasOwn(NATIVE_STRUCTS, struct.name)
         ) {
             fail(`struct name '${struct.name}' shadows a built-in type`);
@@ -514,8 +483,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
             : []),
         ...[...instantiations.keys()].map((name) => ({
             name,
-            type: "hash" as const,
-            encoding: "raw-32" as const,
+            type: "bytes32" as const,
         })),
     ];
     const paramNames = new Set<string>();
