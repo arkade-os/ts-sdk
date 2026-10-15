@@ -1,10 +1,10 @@
 {
-  "version": 0,
+  "version": 1,
   "name": "banco-btc-to-asset",
   "params": [
     { "name": "makerWP", "type": "pubkey" },
     { "name": "wantAmount", "type": "int" },
-    { "name": "wantAssetTxid", "type": "hash" },
+    { "name": "wantAssetTxid", "type": "bytes32" },
     { "name": "wantAssetGroupIndex", "type": "int" },
     { "name": "server", "type": "pubkey" },
     { "name": "user", "type": "pubkey" }

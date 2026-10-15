@@ -4,10 +4,12 @@ import { ScriptNum } from "@scure/btc-signer";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     arkade,
+    MultisigTapscript,
     CSVMultisigTapscript,
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
 } from "../src";
+import { validateParamValue, validateTapscript } from "../src/arkade/program";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
@@ -19,10 +21,65 @@ const server = xOnly();
 const user = xOnly();
 const keys = { serverKey: server };
 
+describe("Native scalar validation", () => {
+    it.each([
+        ["pubkey", 32],
+        ["signature", 64],
+        ["bytes20", 20],
+        ["bytes32", 32],
+        ["asset", 32],
+    ] as const)("enforces the native %s width without extra metadata", (type, length) => {
+        const def = { name: "value", type };
+        expect(() => validateParamValue(def, new Uint8Array(length))).not.toThrow();
+        for (const size of [length - 1, length + 1]) {
+            expect(() => validateParamValue(def, new Uint8Array(size))).toThrow(/byte/);
+        }
+        expect(() => validateParamValue(def, 1n)).toThrow(/bytes/);
+    });
+
+    it.each(["int", "bool", "AssetGroup"] as const)("validates numeric %s values", (type) => {
+        const def = { name: "value", type };
+        for (const value of [0, 1, 0n, 1n]) {
+            expect(() => validateParamValue(def, value)).not.toThrow();
+        }
+        for (const value of [0.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, new Uint8Array()]) {
+            expect(() => validateParamValue(def, value)).toThrow();
+        }
+        if (type === "bool") {
+            for (const value of [-1, 2, -1n, 2n]) {
+                expect(() => validateParamValue(def, value)).toThrow(/0 or 1/);
+            }
+        }
+    });
+
+    it("allows arbitrary byte lengths for bytes", () => {
+        for (const length of [0, 20, 32, 64, 65]) {
+            expect(() =>
+                validateParamValue({ name: "value", type: "bytes" }, new Uint8Array(length)),
+            ).not.toThrow();
+        }
+    });
+
+    it.each([["hash"], ["sig"], ["toString"], [["bytes"]], [{}], [null]])(
+        "rejects non-native type %j",
+        (type) => {
+            const def = { name: "value", type };
+            expect(() => validateParamValue(def as never, user)).toThrow(/unknown type/);
+            expect(() => arkade.parseArtifact({ params: [def] as never, functions: {} })).toThrow(
+                /typed.*declarations/,
+            );
+        },
+    );
+});
+
 describe("Program timelocks — literal and $param values", () => {
     it('resolves a "$param" csv value to a leaf byte-identical to the literal', () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+            ],
             functions: {
                 exit: {
                     tapscript: { signers: ["$user"], csv: { type: "blocks", value: "$exit" } },
@@ -39,7 +96,12 @@ describe("Program timelocks — literal and $param values", () => {
 
     it('resolves a "$param" cltv value to a leaf byte-identical to the literal', () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "server", type: "pubkey" },
+                { name: "expiry", type: "int" },
+            ],
             functions: {
                 refund: {
                     tapscript: { signers: ["$user", "$server"], cltv: "$expiry" },
@@ -60,7 +122,8 @@ describe("Program timelocks — literal and $param values", () => {
 
     it("rejects a non-$param string timelock value", () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [{ name: "user", type: "pubkey" }],
             functions: {
                 exit: {
                     tapscript: { signers: ["$user"], csv: { type: "blocks", value: "144" } },
@@ -74,7 +137,11 @@ describe("Program timelocks — literal and $param values", () => {
 
     it('rejects a "$param" timelock bound to bytes', () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+            ],
             functions: {
                 exit: {
                     tapscript: { signers: ["$user"], csv: { type: "blocks", value: "$exit" } },
@@ -83,14 +150,18 @@ describe("Program timelocks — literal and $param values", () => {
         };
         expect(
             () => new arkade.ArkadeProgramScript(program, { user, exit: new Uint8Array(4) }, keys),
-        ).toThrow(/timelock value '\$exit' must resolve to a number/i);
+        ).toThrow(/parameter 'exit' expects int/);
     });
 
     it("encodes asm + csv as a ConditionCSVMultisig leaf (byte-identical)", () => {
         const hash = new Uint8Array(20).fill(7);
         const condition: arkade.AsmToken[] = ["HASH160", hash, "EQUAL"];
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+            ],
             functions: {
                 reclaim: {
                     tapscript: {
@@ -112,7 +183,8 @@ describe("Program timelocks — literal and $param values", () => {
 
     it("rejects asm + cltv (arkd has no condition+CLTV closure)", () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [{ name: "user", type: "pubkey" }],
             functions: {
                 bad: {
                     tapscript: {
@@ -130,7 +202,8 @@ describe("Program timelocks — literal and $param values", () => {
 
     it("still rejects csv + cltv", () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [{ name: "user", type: "pubkey" }],
             functions: {
                 bad: {
                     tapscript: {
@@ -148,7 +221,12 @@ describe("Program timelocks — literal and $param values", () => {
 
     it('round-trips a "$param" csv reference and a literal cltv through the artifact JSON', () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+                { name: "server", type: "pubkey" },
+            ],
             functions: {
                 exit: {
                     tapscript: { signers: ["$user"], csv: { type: "blocks", value: "$exit" } },
@@ -166,7 +244,11 @@ describe("Program timelocks — literal and $param values", () => {
 
     it('round-trips a "sequence" csv and still decodes it to the seconds leaf', () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+            ],
             functions: {
                 exit: {
                     tapscript: { signers: ["$user"], csv: { type: "sequence", value: "$exit" } },
@@ -187,7 +269,7 @@ describe("Program timelocks — literal and $param values", () => {
 describe("Typed program params — authoritative when present", () => {
     function typedProgram(): arkade.Program {
         return {
-            version: 0,
+            version: 1,
             params: [
                 { name: "user", type: "pubkey" },
                 { name: "exit", type: "int" },
@@ -199,6 +281,34 @@ describe("Typed program params — authoritative when present", () => {
             },
         };
     }
+
+    it("rejects unsafe numeric integers", () => {
+        expect(() =>
+            arkade.validateProgram(typedProgram(), { user, exit: Number.MAX_SAFE_INTEGER + 1 }),
+        ).toThrow(/safe integer/);
+    });
+
+    it("defaults omitted JSON versions to v1 and rejects explicit v0", () => {
+        const artifact = { functions: { spend: { tapscript: { signers: [user] } } } };
+        const program = arkade.parseArtifact(artifact);
+        expect(program.version).toBe(1);
+        expect(Object.getPrototypeOf(program.functions)).toBe(null);
+        expect(JSON.parse(arkade.stringifyArtifact(program)).version).toBe(1);
+        expect(() => arkade.parseArtifact({ ...artifact, version: 0 })).toThrow(
+            /unsupported program version 0/,
+        );
+        expect(() => new arkade.ArkadeProgramScript({ ...program, version: 0 }, {}, keys)).toThrow(
+            /unsupported program version 0/,
+        );
+        const stored = arkade.serializeArkadeContractParams({
+            program: { ...program, version: 0 },
+            args: {},
+            serverKey: server,
+        });
+        expect(() => arkade.deserializeArkadeContractParams(stored)).toThrow(
+            /unsupported program version 0/,
+        );
+    });
 
     it("compiles when every declared param is bound with the right type", () => {
         const script = new arkade.ArkadeProgramScript(typedProgram(), { user, exit: 144n }, keys);
@@ -221,6 +331,28 @@ describe("Typed program params — authoritative when present", () => {
         expect(() => new arkade.ArkadeProgramScript(typedProgram(), { user }, keys)).toThrow(
             /parameter 'exit' is declared but not bound/,
         );
+    });
+
+    it("rejects inherited constructor bindings", () => {
+        expect(
+            () =>
+                new arkade.ArkadeProgramScript(
+                    typedProgram(),
+                    Object.create({ user, exit: 144n }),
+                    keys,
+                ),
+        ).toThrow(/not bound/);
+    });
+
+    it("rejects undeclared arguments before constructing a contract", () => {
+        expect(
+            () =>
+                new arkade.ArkadeProgramScript(
+                    typedProgram(),
+                    { user, exit: 144n, unknown: 1n },
+                    keys,
+                ),
+        ).toThrow(/undeclared argument 'unknown'/);
     });
 
     it.each([null, 42, true, { role: "oracle" }])(
@@ -253,37 +385,25 @@ describe("Typed program params — authoritative when present", () => {
                     { user, exit: new Uint8Array(4) },
                     keys,
                 ),
-        ).toThrow(/parameter 'exit' expects an int/);
+        ).toThrow(/parameter 'exit' expects int/);
     });
 
-    it("keeps bare-string params advisory (undeclared references still compile)", () => {
-        // Legacy hand-written form: `$h` is referenced but not declared — no
-        // authority checks apply because no entry is typed.
-        const program: arkade.Program = {
-            version: 0,
-            params: ["user"],
-            functions: {
-                lock: {
-                    tapscript: {
-                        signers: ["$user"],
-                        asm: ["HASH160", "$h", "EQUALVERIFY"],
-                        witness: ["preimage"],
-                    },
-                },
-            },
-        };
-        const script = new arkade.ArkadeProgramScript(
-            program,
-            { user, h: new Uint8Array(20) },
-            keys,
+    it("rejects bare parameter and input declarations", () => {
+        const functions = { spend: { tapscript: { signers: [user] } } };
+        expect(() => arkade.parseArtifact({ params: ["user"] as never, functions })).toThrow(
+            /typed.*declarations/,
         );
-        expect(script.compiled).toHaveLength(1);
+        expect(() =>
+            arkade.parseArtifact({
+                functions: { spend: { ...functions.spend, inputs: ["preimage"] } },
+            }),
+        ).toThrow(/typed.*declarations/);
     });
 });
 
 describe("Type-directed persistence", () => {
-    const baseProgram = (params: arkade.Program["params"]): arkade.Program => ({
-        version: 0,
+    const baseProgram = (params: readonly arkade.InputRef[]): arkade.Program => ({
+        version: 1,
         params,
         functions: {
             exit: { tapscript: { signers: ["$user"], csv: { type: "blocks", value: "$exit" } } },
@@ -325,26 +445,101 @@ describe("Type-directed persistence", () => {
         );
     });
 
-    it("keeps the 0x/BigInt heuristic for untyped params", () => {
-        const program = baseProgram(["user", "exit"]);
+    it("round-trips a constructor parameter named __proto__", () => {
+        const program = baseProgram([
+            { name: "user", type: "pubkey" },
+            { name: "exit", type: "int" },
+            { name: "__proto__", type: "bytes" },
+        ]);
+        program.functions.exit.tapscript.asm = ["$__proto__", "DROP", 1];
+        const args = { user, exit: 144n, ["__proto__"]: new Uint8Array([1, 2, 3]) };
+        const stored = arkade.serializeArkadeContractParams({ program, args, serverKey: server });
+        const recovered = arkade.deserializeArkadeContractParams(stored);
+        expect(Object.hasOwn(JSON.parse(stored.args), "__proto__")).toBe(true);
+        expect(Object.hasOwn(recovered.args, "__proto__")).toBe(true);
+        expect(recovered.args.__proto__).toEqual(args.__proto__);
+        expect(
+            new arkade.ArkadeProgramScript(recovered.program, recovered.args, keys).pkScript,
+        ).toEqual(new arkade.ArkadeProgramScript(program, args, keys).pkScript);
+    });
+
+    it("rejects undeclared persisted arguments", () => {
         const stored = arkade.serializeArkadeContractParams({
-            program,
-            args: { user, exit: 144n },
+            program: baseProgram([
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+            ]),
+            args: { user, exit: 144n, unknown: 1n },
             serverKey: server,
         });
-        const typed = arkade.deserializeArkadeContractParams(stored);
-        expect(typed.args.exit).toBe(144n);
-        expect(typed.args.user).toEqual(user);
+        expect(() => arkade.deserializeArkadeContractParams(stored)).toThrow(
+            /undeclared argument 'unknown'/,
+        );
     });
 });
 
-describe("parseArtifact — signer validation", () => {
+describe("parseArtifact — structural validation", () => {
+    it.each([[null], [42], [true], ["spend"], [[]]])("rejects function entry %j", (fn) => {
+        expect(() => arkade.parseArtifact({ functions: { spend: fn } })).toThrow(
+            /parseArtifact: function 'spend' must be an object/,
+        );
+    });
+
+    it.each([[null], [42], [true], ["spend"], [[]]])("rejects tapscript %j", (tapscript) => {
+        expect(() => arkade.parseArtifact({ functions: { spend: { tapscript } } })).toThrow(
+            /parseArtifact: function 'spend' tapscript must be an object/,
+        );
+    });
+
+    it.each(["params", "inputs", "signatures"] as const)(
+        "validates %s as an array of typed declarations",
+        (field) => {
+            for (const value of [null, "input", { name: "input", type: "bytes" }, ["input"]]) {
+                const artifact = {
+                    ...(field === "params" ? { params: value } : {}),
+                    functions: {
+                        spend: {
+                            ...(field === "inputs" ? { inputs: value } : {}),
+                            tapscript: {
+                                signers: [user],
+                                ...(field === "signatures" ? { signatures: value } : {}),
+                            },
+                        },
+                    },
+                };
+                expect(() => arkade.parseArtifact(artifact as never)).toThrow(
+                    /parseArtifact: .*typed.*declarations/,
+                );
+            }
+        },
+    );
+
+    it.each([-1, 0.5, NaN, Infinity, "0", null])(
+        "rejects emulator position %s at import and restore",
+        (emulatorIndex) => {
+            const artifact = {
+                version: 1,
+                functions: { spend: { tapscript: { signers: [user], emulatorIndex } } },
+            };
+            expect(() => arkade.parseArtifact(artifact)).toThrow(
+                /parseArtifact: function 'spend' has an invalid emulator position/,
+            );
+            expect(() =>
+                arkade.deserializeArkadeContractParams({
+                    program: JSON.stringify(artifact),
+                    args: "{}",
+                    serverKey: hex.encode(server),
+                }),
+            ).toThrow(/parseArtifact: function 'spend' has an invalid emulator position/);
+        },
+    );
+
     it.each([null, 42, true, { role: "oracle" }])(
         "rejects signer %j before compilation",
         (signer) => {
             expect(() =>
                 arkade.parseArtifact({
-                    version: 0,
+                    version: 1,
                     functions: { exit: { tapscript: { signers: [signer] } } },
                 }),
             ).toThrow(/tweaked signer needs string `tweak` and `fn`/);
@@ -354,7 +549,7 @@ describe("parseArtifact — signer validation", () => {
     it("round-trips a valid TweakedSigner", () => {
         const tweaked = { tweak: "$insurer", fn: "claim" };
         const program = arkade.parseArtifact({
-            version: 0,
+            version: 1,
             functions: { exit: { tapscript: { signers: [tweaked] } } },
         });
         expect(program.functions.exit.tapscript.signers[0]).toEqual(tweaked);
@@ -365,10 +560,47 @@ describe("parseArtifact — signer validation", () => {
     });
 });
 
+describe("Tapscript signer validation", () => {
+    it("rejects an empty signer list even with emulator metadata", () => {
+        expect(() => validateTapscript({ signers: [], emulatorIndex: 0 })).toThrow(
+            /at least one signer/,
+        );
+        expect(
+            () =>
+                new arkade.ArkadeProgramScript(
+                    {
+                        version: 1,
+                        functions: { spend: { tapscript: { signers: [], emulatorIndex: 0 } } },
+                    },
+                    {},
+                    keys,
+                ),
+        ).toThrow(/without an emulator/);
+    });
+
+    it("validates the resolved emulator signer when its position is omitted", () => {
+        const program: arkade.Program = {
+            version: 1,
+            functions: {
+                spend: { tapscript: { signers: [] }, arkadeScript: { asm: [1] } },
+            },
+        };
+        const script = new arkade.ArkadeProgramScript(program, {}, { ...keys, emulatorKey: user });
+        expect(script.compiled[0].leafScript).toEqual(
+            MultisigTapscript.encode({
+                pubkeys: [
+                    arkade.computeArkadeScriptPublicKey(user, script.compiled[0].arkadeScript!),
+                ],
+            }).script,
+        );
+    });
+});
+
 describe("Program name & full-feature artifact round-trip", () => {
     it("name is metadata only — it never changes the compiled tree", () => {
         const base: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [{ name: "user", type: "pubkey" }],
             functions: {
                 exit: { tapscript: { signers: ["$user"], csv: { type: "blocks", value: 144n } } },
             },
@@ -383,12 +615,12 @@ describe("Program name & full-feature artifact round-trip", () => {
         const hash = new Uint8Array(20).fill(7);
         const HUGE = 2n ** 60n; // above Number.MAX_SAFE_INTEGER
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
             name: "vault",
             params: [
                 { name: "user", type: "pubkey" },
                 { name: "server", type: "pubkey" },
-                { name: "hash", type: "hash" },
+                { name: "hash", type: "bytes20" },
                 { name: "amount", type: "int" },
                 { name: "exit", type: "int" },
             ],

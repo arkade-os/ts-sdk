@@ -2,8 +2,8 @@
  * Arkade Contract — artifact-driven, high-level covenant API.
  *
  * A contract is a {@link Program}: named functions, each split into a `tapscript` segment
- * enforced on-chain and an `arkadeScript` segment emulated by the co-signing service. The shape
- * mirrors the compiler artifact, so hand-written programs and compiler output share one resolver.
+ * enforced on-chain and an `arkadeScript` segment emulated by the co-signing service. Compiler
+ * artifacts are normalized into this model, sharing the resolver with hand-written programs.
  * The SDK never interprets scripts; it resolves `$param` placeholders and signers, builds the
  * taproot tree (co-signer key tweaked by the arkade-script hash) and assembles the spend.
  *
@@ -15,7 +15,7 @@
  * "bytes" }]` → `functions.claim(preimage: Uint8Array)`). For a program stored in a variable use
  * `satisfies Program`; a `: Program` annotation widens the literal type away. Typed `params`
  * descriptors `{ name, type }` make the list authoritative (every param bound, every `$name`
- * declared, values type-checked); bare name strings are documentation only.
+ * declared, values type-checked).
  *
  * A covenant spend needs an `indexer` as well as an `emulator`: the co-signer resolves each
  * input's prevout from the previous ark tx the PSBT carries. Pure tapscript spends need neither.
@@ -23,10 +23,10 @@
  * @example
  * ```typescript
  * const htlcProgram = {
- *     version: 0,
+ *     version: 1,
  *     name: "htlc", // metadata only — round-tripped, never compiled
  *     params: [
- *         { name: "hash", type: "hash" },
+ *         { name: "hash", type: "bytes20" },
  *         { name: "receiver", type: "pubkey" },
  *         { name: "amount", type: "int" },
  *         { name: "server", type: "pubkey" },
@@ -66,6 +66,8 @@ import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
+import { timelockToSequence } from "../utils/timelock";
+import { toTimelock } from "../wallet/timelockPolicy";
 import {
     assertSubmittedArkTxid,
     buildOffchainTx,
@@ -92,16 +94,15 @@ import type { Contract } from "../contracts/types";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
-    inputName,
     serializeArkadeContractParams,
     witnessRefToBytes,
+    validateParamValue,
     type ArkadeArgValue,
     type ArkadeFunction,
     type ArkadeParamValue,
     type ArkadeValueType,
     type CompiledProgramFunction,
     type InputDef,
-    type InputRef,
     type Program,
     type ProgramKeys,
     type WitnessRef,
@@ -135,15 +136,14 @@ export {
 
 // --- Static typing of contract functions -----------------------------------
 
-/** The TS type of a single call argument, derived from its {@link InputRef}. */
-type ArgTsType<R> = R extends InputDef ? ArkadeValueType[R["type"]] : ArkadeArgValue;
-
 /** The argument tuple of a function, derived from its declared `inputs`. */
-type ArgsTuple<I extends readonly InputRef[]> = { [K in keyof I]: ArgTsType<I[K]> };
+type ArgsTuple<I extends readonly InputDef[]> = {
+    [K in keyof I]: ArkadeValueType[I[K]["type"]];
+};
 
 /** The call signature arguments for one function (nullary when `inputs` is absent). */
 type FnArgs<F extends ArkadeFunction> = F extends {
-    inputs: infer I extends readonly InputRef[];
+    inputs: infer I extends readonly InputDef[];
 }
     ? ArgsTuple<I>
     : [];
@@ -262,6 +262,8 @@ export class Arkade {
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
     readonly serverKey: Uint8Array;
+    /** Bare protocol delay (blocks below 512, seconds otherwise), resolved only when needed. */
+    readonly serverExitDelay?: bigint;
     /**
      * The co-signer key covenants are built against (33-byte compressed), present only when an
      * emulator is configured. Resolved from the network or `emulatorPubkey`, never the emulator's
@@ -282,6 +284,7 @@ export class Arkade {
         emulator: EmulatorProvider | undefined;
         network: Network;
         serverKey: Uint8Array;
+        serverExitDelay?: bigint;
         emulatorKey: Uint8Array | undefined;
         checkpoint: CSVMultisigTapscript.Type;
         indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
@@ -293,6 +296,7 @@ export class Arkade {
         this.emulator = fields.emulator;
         this.network = fields.network;
         this.serverKey = fields.serverKey;
+        this.serverExitDelay = fields.serverExitDelay;
         this.emulatorKey = fields.emulatorKey;
         this.checkpoint = fields.checkpoint;
         this.indexer = fields.indexer;
@@ -332,6 +336,7 @@ export class Arkade {
             emulator: opts.emulator,
             network,
             serverKey,
+            serverExitDelay: info.unilateralExitDelay,
             emulatorKey,
             checkpoint,
             indexer: opts.indexer,
@@ -345,19 +350,43 @@ export class Arkade {
      * Instantiate a contract from a program and its constructor arguments. `const` inference keeps
      * the program's literal type, so `functions` is strongly typed.
      *
-     * Unbound declared `server`/`user` params default to the client's server key / identity key;
-     * explicit args win.
+     * Declared `server`/`user` params default to the client's keys. Compiler
+     * artifacts reserve the server key and exit delay to the connected server.
      */
     contract<const P extends Program>(
         program: P,
         args: Record<string, ArkadeParamValue> = {},
     ): ArkadeContract<P> {
-        const declared = (program.params ?? []).map(inputName);
+        const declared = (program.params ?? []).map((p) => p.name);
         if (declared.includes("server") && args.server === undefined) {
             args = { ...args, server: this.serverKey };
         }
         if (declared.includes("user") && args.user === undefined && this.userKey) {
             args = { ...args, user: this.userKey };
+        }
+        if (declared.includes("SERVER_EXIT_DELAY")) {
+            const delay = this.serverExitDelay;
+            if (delay === undefined || delay < 0n)
+                throw new Error(
+                    "compiler artifact: server must provide a non-negative unilateral exit delay",
+                );
+            const typed = toTimelock(delay);
+            if (typed.type === "seconds" && delay % 512n !== 0n) {
+                throw new Error(
+                    `compiler artifact: server exit delay ${delay}s must be a multiple of 512 seconds`,
+                );
+            }
+            const sequence = BigInt(timelockToSequence(typed));
+            if (
+                args.SERVER_EXIT_DELAY !== undefined &&
+                args.SERVER_EXIT_DELAY !== sequence &&
+                args.SERVER_EXIT_DELAY !== Number(sequence)
+            ) {
+                throw new Error(
+                    "compiler artifact: reserved SERVER_EXIT_DELAY must match the connected server",
+                );
+            }
+            args = { ...args, SERVER_EXIT_DELAY: sequence };
         }
         return new ArkadeContract(this, program, args);
     }
@@ -429,7 +458,7 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Callable spending paths: `functions.<name>(...args)` (see {@link ContractFunctions}). */
     get functions(): ContractFunctions<P> {
-        const out: CallableFunctions = {};
+        const out: CallableFunctions = Object.create(null);
         for (const fn of this.compiled) {
             out[fn.name] = (...callArgs: ArkadeArgValue[]) =>
                 new ArkadeTransactionBuilder(this, fn, bindInputs(fn, callArgs));
@@ -585,6 +614,11 @@ export class ArkadeTransactionBuilder {
 
     /** Assemble the unsigned ark transaction and its checkpoints. */
     async build(): Promise<{ arkTx: Transaction; checkpoints: Transaction[] }> {
+        if (this.fn.def.tapscript.csv) {
+            throw new Error(
+                `${this.fn.name}: CSV leaves require an aged onchain output; the offchain builder creates fresh checkpoints — use the wallet's unilateral exit flow`,
+            );
+        }
         if (this.outputs.length === 0) {
             throw new Error("ArkadeTransactionBuilder: at least one output is required");
         }
@@ -677,6 +711,26 @@ export class ArkadeTransactionBuilder {
 
     /** Build, submit and return the finalized transaction. */
     async send(): Promise<ArkadeSpendResult> {
+        if (
+            this.fn.def.tapscript.signers.some(
+                (signer) => typeof signer === "object" && "tweak" in signer,
+            )
+        ) {
+            throw new Error(
+                `${this.fn.name}: covenant-tweaked leaf signing is not supported by Identity; use a signer that supports the covenant tweak with build()`,
+            );
+        }
+        const { serverKey } = this.contract.keys;
+        const userKey = this.contract.client.userKey;
+        if (
+            this.fn.signerKeys.some(
+                (key) => !equalBytes(key, serverKey) && (!userKey || !equalBytes(key, userKey)),
+            )
+        ) {
+            throw new Error(
+                `${this.fn.name}: external leaf signatures are required; use build() and sign the PSBT with all required signers`,
+            );
+        }
         const { arkTx, checkpoints } = await this.build();
         const client = this.contract.client;
 
@@ -805,12 +859,19 @@ function bindInputs(
     fn: CompiledProgramFunction,
     callArgs: ArkadeArgValue[],
 ): Record<string, ArkadeArgValue> {
-    const names = (fn.def.inputs ?? []).map(inputName);
-    if (callArgs.length !== names.length) {
-        throw new Error(`${fn.name}: expected ${names.length} argument(s), got ${callArgs.length}`);
+    const inputs = fn.def.inputs ?? [];
+    if (callArgs.length !== inputs.length) {
+        throw new Error(
+            `${fn.name}: expected ${inputs.length} argument(s), got ${callArgs.length}`,
+        );
     }
-    const bound: Record<string, ArkadeArgValue> = {};
-    names.forEach((n, i) => (bound[n] = callArgs[i]));
+    const bound: Record<string, ArkadeArgValue> = Object.create(null);
+    inputs.forEach((def, i) => {
+        if (Object.hasOwn(bound, def.name))
+            throw new Error(`${fn.name}: duplicate input '${def.name}'`);
+        validateParamValue(def, callArgs[i]);
+        bound[def.name] = callArgs[i];
+    });
     return bound;
 }
 

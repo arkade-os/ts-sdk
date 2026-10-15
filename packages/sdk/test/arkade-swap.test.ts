@@ -40,8 +40,13 @@ const EXIT_BLOCKS = 144n;
  */
 function swapProgram(): arkade.Program {
     return {
-        version: 0,
-        params: ["payout", "makerKey", "wantAmount", "server"],
+        version: 1,
+        params: [
+            { name: "payout", type: "pubkey" },
+            { name: "makerKey", type: "pubkey" },
+            { name: "wantAmount", type: "int" },
+            { name: "server", type: "pubkey" },
+        ],
         functions: {
             fulfill: {
                 tapscript: { signers: ["$server"] },
