@@ -384,7 +384,9 @@ style and have not been backfilled.
   replaced the cached markets with the pins alone. Only a registry answering
   now replaces the cache. With nothing cached, the client still answers from
   the pins, as a `source: "local"` snapshot that asks the registry again
-  after a minute rather than standing for the ten-minute TTL.
+  after a minute rather than standing for the ten-minute TTL. `resolve()`
+  answers from them too, without the network, so a payment rail still offers
+  a pinned solver; 0.1.0-rc.24 left it out.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

@@ -87,7 +87,7 @@ export interface DiscoverySnapshot {
 export interface DiscoveryIndex {
     /**
      * The snapshot in hand, without touching the network — an injected one, one
-     * this client already loaded, or the repository's cache.
+     * this client already loaded, the repository's cache, or the pinned cards alone.
      *
      * @throws {DiscoverySnapshotUnavailable} when there is none.
      */
@@ -243,6 +243,18 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         if (cached) {
             held = cached;
             return cached;
+        }
+        // Pins are config, in hand offline; not held, so the next `load()` still asks the registry.
+        const { network: indexed, registry: url } = sources();
+        if (indexed && url && config.localCards?.length) {
+            const { markets } = await discover({
+                registries: [],
+                localCards: [...config.localCards],
+                network: indexed,
+            });
+            if (markets.length > 0) {
+                return { markets, ref: { fetchedAt: Date.now(), live: true, source: "local" } };
+            }
         }
         return unavailable(whyUnavailable());
     };
