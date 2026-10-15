@@ -160,6 +160,7 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import { arkadeServiceUrl, resolveArkadeService } from "../arkade/service";
 import type {
     ContractManagerConfig,
     ContractSyncState,
@@ -253,6 +254,25 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
 export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
+}
+
+/**
+ * Fold `mode`/`settlement` into `walletMode`/`settlementConfig`, throwing when both spellings of
+ * one field are set (which one wins would be a guess).
+ */
+function normalizeWalletConfigSpellings(config: WalletConfig): WalletConfig {
+    if (config.mode !== undefined && config.walletMode !== undefined) {
+        throw new Error("Pass either `mode` or `walletMode`, not both");
+    }
+    if (config.settlement !== undefined && config.settlementConfig !== undefined) {
+        throw new Error("Pass either `settlement` or `settlementConfig`, not both");
+    }
+    const { mode, settlement, ...rest } = config;
+    return {
+        ...rest,
+        ...(mode !== undefined ? { walletMode: mode } : {}),
+        ...(settlement !== undefined ? { settlementConfig: settlement } : {}),
+    };
 }
 
 /**
@@ -956,9 +976,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Shared setup for ReadonlyWallet.create() and Wallet.create(). */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
-        const arkProvider = config.arkProvider || new RestArkProvider();
+        if (
+            config.service &&
+            (config.arkProvider || config.indexerProvider || config.onchainProvider)
+        ) {
+            throw new Error(
+                "Pass either `service` or `arkProvider`/`indexerProvider`/`onchainProvider`, not both",
+            );
+        }
+        const arkProvider =
+            config.arkProvider ||
+            new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
-        if (!indexerProvider) {
+        if (!indexerProvider && !config.service) {
             const derived = extractArkProviderUrl(arkProvider);
             // Refuse to pair a caller's own ark provider with the public default: the wallet would
             // read its VTXOs from a server that has never seen them, and report phantom coins and
@@ -987,6 +1017,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             lastOnlineAt: serverInfoLastOnlineAt,
         } = await resolveArkInfo(arkProvider, walletRepository);
 
+        // `info` reused, so `getInfo` is fetched once and the network gate also applies to a cached
+        // snapshot (the same server's last answer). The emulator it resolves is unused here.
+        const resolvedService = config.service
+            ? await resolveArkadeService(config.service, { arkProvider, info })
+            : undefined;
+        indexerProvider ??= resolvedService!.indexerProvider;
+
         const network = networkFromArkadeInfo(info);
 
         // Identity/server network mismatch means wrong derivation path → wrong keys → fund loss.
@@ -1011,7 +1048,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         const onchainProvider =
-            config.onchainProvider || new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
+            config.onchainProvider ||
+            resolvedService?.onchainProvider ||
+            new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
 
         if (config.exitTimelock) {
             const { value, type } = config.exitTimelock;
@@ -3166,7 +3205,8 @@ export class Wallet
     static create<T extends Wallet>(this: { prototype: T }, config: WalletConfig): Promise<T>;
     static create(config: WalletConfig): Promise<Wallet>;
     static async create(config: WalletConfig): Promise<Wallet> {
-        // Programmer error, not an operational one — surface it before any I/O.
+        // Programmer errors, not operational ones — surface them before any I/O.
+        config = normalizeWalletConfigSpellings(config);
         if (
             config.lookAheadWindow !== undefined &&
             (!Number.isInteger(config.lookAheadWindow) || config.lookAheadWindow <= 0)
