@@ -399,6 +399,8 @@ style and have not been backfilled.
 - **Asset-payment comparisons ignore object key order.** Equivalent restored
   terms and recipients no longer conflict with their verified quote. Malformed
   stored payment terms are isolated from healthy swaps during listing and restore.
+  A funded offer whose fate changes during restore remains stored and watched;
+  its malformed public projection cannot poison readiness or other updates.
 
 - **`wallet.dispose()` waits for contract events still being handled.** It
   stopped the contract watcher but returned while an event handler could still

@@ -402,7 +402,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const updateFor = (id: QuoteId): SwapUpdate | undefined => {
         const record = records.get(id);
-        if (record === undefined) return undefined;
+        if (record === undefined || !readableRecord(record)) return undefined;
         const current = live.get(id);
         const outcome = outcomeOfEntry(record, current);
         return {

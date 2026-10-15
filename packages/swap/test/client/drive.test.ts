@@ -983,6 +983,45 @@ describe("the onchain seam", () => {
 });
 
 describe("the offer half", () => {
+    it("isolates malformed payment terms after a funded offer's restored fate changes", async () => {
+        const funding = offerFunding();
+        const record = offerRecord({
+            fundingTxid: funding.txid,
+            assetPayment: { receiveAddress: OFFER_ADDRESS, validUntil: 0 },
+        });
+        const h = await build({
+            ready: false,
+            mode: "manual",
+            records: [
+                record,
+                signable(),
+                offerRecord({
+                    id: "settled-twin",
+                    status: "fulfilled",
+                    fundingTxid: "bb".repeat(32),
+                }),
+            ],
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            txs: [funding],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            contracts: fakeContracts([]),
+        });
+        try {
+            await expect(h.drive.ready).resolves.toBeUndefined();
+            await h.drive.idle();
+            expect(h.drive.swap("q1")).toBeDefined();
+            expect(h.drive.swap("settled-twin")?.outcome).toBe("filled");
+            expect(h.drive.swap(record.id)).toBeUndefined();
+            const stored = (await h.repository.getSwapRecord(record.id)) as OfferSwapRecord;
+            expect(stored.status).toBe("recoverable");
+            expect(stored.assetPayment).toEqual(record.assetPayment);
+            expect(h.contracts.watchStates).not.toContainEqual([OFFER_SCRIPT, "retained"]);
+            expect(h.seen.every((update) => update.swap.id !== `offer:${record.id}`)).toBe(true);
+        } finally {
+            await h.drive.dispose();
+        }
+    });
+
     it("reaches needs_recovery for a swept deposit through the construction restore", async () => {
         // The only writer of `recoverable` is `restoreAssetSwaps`, which has no
         // call site in this package, and the watcher cannot stand in for it:
