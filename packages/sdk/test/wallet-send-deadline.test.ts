@@ -411,6 +411,37 @@ describe("Wallet.send validUntil", () => {
         await wallet.dispose();
     });
 
+    it("queues public offchain submissions behind the existing transaction lock", async () => {
+        const { wallet } = await makeWallet();
+        const entered = deferred();
+        const release = deferred();
+        const blocker = (wallet as any)._withTxLock(async () => {
+            entered.resolve();
+            await release.promise;
+        });
+        const build = vi
+            .spyOn(wallet as any, "_buildAndSubmitOffchainTx")
+            .mockResolvedValue({ arkTxid: "sent", signedCheckpointTxs: [] });
+        let pending: ReturnType<Wallet["buildAndSubmitOffchainTx"]> | undefined;
+        try {
+            await entered.promise;
+            const selected = coin(wallet);
+            pending = wallet.buildAndSubmitOffchainTx([selected], []);
+            await Promise.resolve();
+            expect(build).not.toHaveBeenCalled();
+            release.resolve();
+            await blocker;
+            await expect(pending).resolves.toEqual({ arkTxid: "sent", signedCheckpointTxs: [] });
+            expect(build).toHaveBeenCalledWith([selected], [], wallet.serverUnrollScript, {
+                validUntil: undefined,
+            });
+        } finally {
+            release.resolve();
+            await Promise.allSettled([blocker, ...(pending ? [pending] : [])]);
+            await wallet.dispose();
+        }
+    });
+
     it("captures the deadline before a caller mutates queued send parameters", async () => {
         const { wallet } = await makeWallet();
         vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);

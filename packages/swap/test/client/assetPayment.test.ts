@@ -204,6 +204,29 @@ describe("native asset payment quote", () => {
         await restarted.accept(quote, { validUntil: CLOCK.validUntil + 100 });
         expect(send.mock.calls[1][0]).toMatchObject({ validUntil: CLOCK.validUntil - 60 });
     });
+    it("keeps a retry's tighter deadline local after an ambiguous first send", async () => {
+        const { client, repository, wallet } = await setup(carrierAnswer);
+        const quote = await client.quote({ ...buy(), assetPayment: { carrier: purchase } });
+        const original = CLOCK.validUntil - 30;
+        const tighter = original - 20;
+        const send = vi
+            .spyOn(wallet, "send")
+            .mockRejectedValueOnce(new Error("ambiguous"))
+            .mockRejectedValueOnce(new SendDeadlineExceededError(tighter))
+            .mockResolvedValue("b".repeat(64));
+        await expect(client.accept(quote)).rejects.toThrow("ambiguous");
+        await expect(client.accept(quote, { validUntil: tighter })).rejects.toBeInstanceOf(
+            SendDeadlineExceededError,
+        );
+        const saved = await repository.getSwapRecord(quote.id);
+        expect(saved?.assetPayment?.validUntil).toBe(original);
+        expect(saved?.fundingNotSubmitted).toBeUndefined();
+        await client.accept(quote);
+        expect(
+            send.mock.calls.map(([request]) => (request as { validUntil: number }).validUntil),
+        ).toEqual([original, tighter, original]);
+    });
+
     it("snapshots receiver terms before awaits and durably forwards the floor after restart", async () => {
         const { client, repository, wallet, transport } = await setup(recycleAnswer);
         const choice = await recycled(wallet);
@@ -364,6 +387,54 @@ describe("native asset payment quote", () => {
             expect(await repository.getSwapRecord(quote.id)).toBeUndefined();
         },
     );
+    it("accepts equivalent asset terms and recipients with reordered object keys", async () => {
+        const { client, wallet } = await setup(recycleAnswer);
+        const quote = await client.quote({
+            ...buy(),
+            assetPayment: { carrier: await recycled(wallet) },
+        });
+        const terms = quote.assetPayment!;
+        const reordered = {
+            ...quote,
+            assetPayment: {
+                validUntil: terms.validUntil,
+                inputExpiryFloor: {
+                    value: terms.inputExpiryFloor!.value,
+                    kind: terms.inputExpiryFloor!.kind,
+                },
+                carrier: Object.fromEntries(
+                    Object.entries(terms.carrier!).reverse(),
+                ) as typeof terms.carrier,
+                receiveAddress: terms.receiveAddress,
+            },
+            route: {
+                ...quote.route,
+                take: {
+                    ...quote.route.take,
+                    instrument: { address: external, kind: "address" as const },
+                },
+            } as typeof quote.route,
+        };
+        vi.spyOn(wallet, "send")
+            .mockRejectedValueOnce(new Error("ambiguous"))
+            .mockResolvedValue("b".repeat(64));
+        await expect(client.accept(reordered)).rejects.toThrow("ambiguous");
+        await expect(client.accept(quote)).resolves.toBeDefined();
+    });
+
+    it("lists healthy swaps when another stored asset payment is malformed", async () => {
+        const { client, repository } = await setup(carrierAnswer);
+        const quote = await client.quote({ ...buy(), assetPayment: { carrier: purchase } });
+        const swap = await client.accept(quote);
+        const row = (await repository.getSwapRecord(quote.id))!;
+        await repository.saveSwapRecord({
+            ...row,
+            id: "malformed",
+            assetPayment: { ...row.assetPayment!, validUntil: 0 },
+        });
+        await expect(client.swaps()).resolves.toEqual([swap]);
+    });
+
     it("refuses altered metadata on a stored ambiguous liability", async () => {
         const { client, wallet, repository } = await setup(recycleAnswer);
         const quote = await client.quote({

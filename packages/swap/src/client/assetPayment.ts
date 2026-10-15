@@ -1,4 +1,5 @@
 import { asset, type InputExpiryFloor } from "@arkade-os/sdk";
+import { stableStringify } from "@arkade-os/solver-discovery";
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
 const MAX_SATS = 2_100_000_000_000_000n;
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -414,7 +415,7 @@ export const storedFundingBounds = (
 export const assetPaymentFacts = (terms: RecordedAssetPayment | undefined): string | undefined => {
     if (terms === undefined) return undefined;
     const { validUntil, ...facts } = terms;
-    return JSON.stringify(facts);
+    return stableStringify(facts);
 };
 
 export const assetPaymentOf = (

@@ -1015,18 +1015,43 @@ describe("unsent funding coverage", () => {
         const h = await setup();
         const quote = await quoteFor(h, "spot");
         const save = h.repository.saveSwapRecord.bind(h.repository);
+        const failure = new Error("proof write failed");
+        const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
         vi.spyOn(h.repository, "saveSwapRecord").mockImplementation(async (record) => {
-            if (record.fundingNotSubmitted) throw new Error("proof write failed");
+            if (record.fundingNotSubmitted) throw failure;
             await save(record);
         });
-        vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(new SendDeadlineExceededError(NOW + 1));
-        await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toThrow(
-            "proof write failed",
-        );
+        const deadline = new SendDeadlineExceededError(NOW + 1);
+        vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(deadline);
+        await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBe(deadline);
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining(quote.id), failure);
         const row = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
         expect(row.status).toBe("pending");
         expect(row.fundingNotSubmitted).toBeUndefined();
         expect(h.wallet.watched).not.toContainEqual([row.swapPkScript, "retained"]);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("preserves the deadline error and durable proof when retirement fails", async () => {
+        const h = await setup();
+        const quote = await quoteFor(h, "spot");
+        const manager = await h.wallet.wallet.getContractManager();
+        const failure = new Error("watch state write failed");
+        const setWatch = manager.setContractWatchState.bind(manager);
+        vi.spyOn(manager, "setContractWatchState").mockImplementation(async (script, state) => {
+            if (state === "retained") throw failure;
+            await setWatch(script, state);
+        });
+        vi.spyOn(h.wallet.wallet, "getContractManager").mockResolvedValue(manager);
+        const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const deadline = new SendDeadlineExceededError(NOW + 1);
+        vi.spyOn(h.wallet.wallet, "send").mockRejectedValue(deadline);
+        await expect(h.client.accept(quote, { validUntil: NOW + 1 })).rejects.toBe(deadline);
+        const row = (await h.repository.getSwapRecord(quote.id)) as OfferSwapRecord;
+        expect(row.fundingNotSubmitted).toEqual({ reason: "send_deadline", validUntil: NOW + 1 });
+        expect(row.status).toBe("cancelled");
+        expect(h.wallet.watched).not.toContainEqual([row.swapPkScript, "retained"]);
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining(row.swapPkScript), failure);
         await h.client[Symbol.asyncDispose]();
     });
 

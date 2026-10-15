@@ -25,6 +25,7 @@ import {
     type SettlementEvent,
 } from "@arkade-os/sdk";
 import { fundingWasNotSubmitted } from "./record";
+import { assetPaymentOf } from "./assetPayment";
 import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
@@ -222,6 +223,13 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined =>
  */
 export const readableRecord = (record: SwapRecord): boolean => {
     if (typeof record?.id !== "string" || record.route?.give === undefined) return false;
+    if (record.assetPayment !== undefined) {
+        try {
+            assetPaymentOf(record.assetPayment, record.expiresAt);
+        } catch {
+            return false;
+        }
+    }
     if (record.family === "rfq") {
         return typeof record.rfqId === "string" && typeof record.lockupAddress === "string";
     }

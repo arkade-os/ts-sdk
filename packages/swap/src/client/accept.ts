@@ -29,6 +29,7 @@
  * the return, so this call waits on no pass and no network read.
  */
 import { hex } from "@scure/base";
+import { stableStringify } from "@arkade-os/solver-discovery";
 import {
     asset,
     getAllNormalizedVtxos,
@@ -480,12 +481,12 @@ const registeredAssetRecord = async (
     preparation: AssetRfqPreparation,
 ): Promise<OfferSwapRecord> => {
     if (
-        JSON.stringify(
+        stableStringify(
             input.quote.assetPayment === undefined
                 ? undefined
                 : recordAssetPayment(input.quote.assetPayment),
         ) !==
-        JSON.stringify(
+        stableStringify(
             preparation.assetPayment === undefined
                 ? undefined
                 : recordAssetPayment(preparation.assetPayment),
@@ -494,8 +495,8 @@ const registeredAssetRecord = async (
         throw new Error("asset payment differs from verified quote preparation");
     if (
         preparation.assetPaymentRecipient !== undefined &&
-        JSON.stringify(input.quote.route.take.instrument) !==
-            JSON.stringify(preparation.assetPaymentRecipient)
+        stableStringify(input.quote.route.take.instrument) !==
+            stableStringify(preparation.assetPaymentRecipient)
     )
         throw new Error("asset payment recipient differs from verified quote preparation");
     await registerDerivedOffer(input.wallet, preparation.offer, { coverageId: input.quote.id });
@@ -558,6 +559,7 @@ const fundAndStamp = async (
             : Math.min(input.validUntil, bounds.validUntil ?? record.expiresAt);
     const validUntil = cap === undefined ? undefined : Math.min(cap, record.expiresAt);
     if (
+        input.firstFundingAttempt &&
         record.assetPayment !== undefined &&
         validUntil !== undefined &&
         validUntil < record.assetPayment.validUntil
@@ -582,9 +584,16 @@ const fundAndStamp = async (
                 fundingNotSubmitted: { reason: "send_deadline" as const, validUntil },
                 updatedAt: Math.floor(Date.now() / 1000),
             } as SwapRecord;
-            await repository.saveSwapRecord(stopped);
-            input.drive?.ingest(stopped);
-            await retireUnsubmittedFunding(input.wallet, repository, stopped);
+            try {
+                await repository.saveSwapRecord(stopped);
+                input.drive?.ingest(stopped);
+                await retireUnsubmittedFunding(input.wallet, repository, stopped);
+            } catch (cause) {
+                console.warn(
+                    `[swap] could not finish unsent funding cleanup for ${record.id}`,
+                    cause,
+                );
+            }
         }
         throw error;
     }

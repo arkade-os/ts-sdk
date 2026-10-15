@@ -613,6 +613,11 @@ describe("the lifecycle", () => {
     it("resolves ready through a corrupt record, and drives the rest", async () => {
         const repository = memoryRepository();
         await repository.saveSwapRecord({ id: "junk" } as unknown as SwapRecord);
+        await repository.saveSwapRecord({
+            ...signable(),
+            id: "bad-terms",
+            assetPayment: { validUntil: 0 },
+        } as unknown as SwapRecord);
         await repository.saveSwapRecord(signable({ fundingTxid: "aa".repeat(32) }));
         const contracts = fakeContracts([SEND_LOCKUP]);
         const { wallet } = fakeWallet({ contracts });
@@ -633,6 +638,7 @@ describe("the lifecycle", () => {
         // nothing else.
         expect(drive.swap("q1")).toBeDefined();
         expect(drive.swap("junk")).toBeUndefined();
+        expect(drive.swap("bad-terms")).toBeUndefined();
         await drive.dispose();
     });
 
