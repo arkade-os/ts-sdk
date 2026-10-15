@@ -61,6 +61,8 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- Removed the deprecated `receivePkScriptFor` helper from `@arkade-os/swap/protocol`.
+
 - **Public offchain submissions share the wallet transaction lock.**
   `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
   submissions. The lock is non-reentrant: do not call it from a settlement

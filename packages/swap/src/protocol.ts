@@ -81,7 +81,6 @@ export {
     fillOffer,
     type FillFunding,
     type FillOutpoint,
-    receivePkScriptFor,
     offerVtxoScript,
     NoSpendableDepositError,
     type Offer,

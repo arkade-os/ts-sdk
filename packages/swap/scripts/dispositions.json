@@ -297,8 +297,7 @@
         "watchOfferSwaps",
         "WatchOfferSwapsParams",
         "FillOutpoint",
-        "offerVtxoScript",
-        "receivePkScriptFor"
+        "offerVtxoScript"
     ],
     "I": [
         "assertFundable",
@@ -331,6 +330,7 @@
         "LightningReceiveQuote",
         "LightningSendQuote",
         "OnchainSendQuote",
+        "receivePkScriptFor",
         "SpotQuote",
         "SwapClientDeps",
         "SwapQuote",

@@ -682,23 +682,6 @@ export function resolveReceivePkScript(
     return address.pkScript;
 }
 
-/** @deprecated Low-level offer validation; no replacement. Import from @arkade-os/swap/protocol. */
-export async function receivePkScriptFor(
-    arkServerUrl: string,
-    receiveAddress: string,
-    walletAddress: string,
-): Promise<Uint8Array> {
-    const info = await new RestArkProvider(arkServerUrl).getInfo();
-    const network = networkFromArkadeInfo(info);
-    const serverPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    return resolveReceivePkScript(
-        receiveAddress,
-        ArkAddress.decode(walletAddress).pkScript,
-        network.hrp,
-        serverPubKey,
-    );
-}
-
 /** Derive and encode an offer. Writes nothing, locally or remotely. */
 export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise<DerivedOffer> {
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
