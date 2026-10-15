@@ -245,6 +245,44 @@ describe("an unreachable registry with a cache behind it", () => {
         expect(snapshot.ref.source).toBe("cache");
         expect(fetchImpl).not.toHaveBeenCalled();
     });
+
+    it("lets `peek()` answer with the pins when nothing is held or cached, still offline", async () => {
+        const {
+            solver: _s,
+            source: _src,
+            sourceType: _t,
+            discovery_pubkey,
+            transports,
+            ...market
+        } = lightningCard;
+        const fetchImpl = failing();
+        const transportCards = { fetch: vi.fn(async () => []) };
+        const index = discoveryIndex({
+            network: "regtest",
+            config: {
+                registryUrl: REGISTRY,
+                fetchImpl,
+                transportCards,
+                localCards: [
+                    {
+                        card: {
+                            version: 0,
+                            name: "pinned",
+                            discovery_pubkey,
+                            transports,
+                            markets: [market],
+                        },
+                        network: "regtest",
+                    },
+                ],
+            },
+        });
+        const snapshot = await index.peek();
+        expect(snapshot.markets.map((m) => m.solver)).toEqual(["pinned"]);
+        expect(snapshot.ref).toMatchObject({ live: true, source: "local" });
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(transportCards.fetch).not.toHaveBeenCalled();
+    });
 });
 
 describe("an injected snapshot", () => {
