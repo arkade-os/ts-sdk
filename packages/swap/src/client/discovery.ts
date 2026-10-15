@@ -26,6 +26,7 @@ import {
 } from "@arkade-os/solver-discovery";
 import type { NetworkName } from "@arkade-os/sdk";
 import {
+    DEGRADED_RETRY_MS,
     MARKETS_CACHE_TTL_MS,
     registryAnswered,
     trackDelivery,
@@ -172,13 +173,6 @@ export interface DiscoveryIndexInput {
     /** Backs the shared markets cache. Without one, every load hits the registry. */
     readonly repository?: AssetSwapRepository;
 }
-
-/**
- * How long a partial answer holds before the registry is asked again: pins answering for an
- * unreachable registry, or a registry answer that missed the card of a solver the cache still
- * holds.
- */
-const DEGRADED_RETRY_MS = 60_000;
 
 /**
  * One client's view of the market index.

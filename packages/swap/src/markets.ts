@@ -9,6 +9,7 @@ import {
     bestMarket,
     discover,
     isNetwork,
+    MAX_CARD_AGE_SECONDS,
     marketLegKey,
     marketPairKey,
     registryIndexUrl,
@@ -133,10 +134,23 @@ export const transportCardsOf = (
 
 /**
  * How long a listed solver whose card did not arrive keeps its cached markets. A card older than
- * solver-discovery's `MAX_CARD_AGE_SECONDS` (two hours, not exported from its root) is refused
- * anyway, so past that the solver is taken as gone and the registry's answer replaces the cache.
+ * this is refused anyway, so past it the solver is taken as gone and the registry's answer
+ * replaces the cache.
  */
-export const UNDELIVERED_CARRY_MS = 2 * 60 * 60 * 1000;
+export const UNDELIVERED_CARRY_MS = MAX_CARD_AGE_SECONDS * 1000;
+
+/**
+ * How long a partial answer holds before the registry is asked again: pins answering for an
+ * unreachable registry, or a registry answer that missed the card of a solver the cache still
+ * holds.
+ */
+export const DEGRADED_RETRY_MS = 60_000;
+
+/** Carried answers per cache, so a solver whose card keeps missing costs one registry read a minute. */
+const carriedHolds = new WeakMap<
+    AssetSwapRepository,
+    Map<string, { until: number; markets: DiscoveredMarket[] }>
+>();
 
 /**
  * `fetcher`, also telling which listed solvers it got no card from: a fetch that failed, or one
@@ -283,6 +297,9 @@ export const discoverMarkets = async (
     const cached = repository && (await readMarketsCache(repository, network, registryKey));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
+    const holdKey = `${network} ${registryKey}`;
+    const hold = repository && carriedHolds.get(repository)?.get(holdKey);
+    if (useCache && hold && Date.now() < hold.until) return hold.markets;
     const delivery = trackDelivery(transportCardsOf(options.transportCards));
     const { markets, sources, warnings } = await discover({
         registries,
@@ -298,7 +315,13 @@ export const discoverMarkets = async (
     // Not over a solver whose card merely failed to arrive: it keeps its cached markets, and
     // the cache keeps aging toward the next full answer.
     const carried = reachable ? undeliveredCarry(markets, delivery.undelivered(), cached) : [];
-    if (carried.length > 0) return ranked([...markets, ...carried]);
+    if (carried.length > 0 && repository) {
+        const merged = ranked([...markets, ...carried]);
+        const holds = carriedHolds.get(repository) ?? new Map();
+        holds.set(holdKey, { until: Date.now() + DEGRADED_RETRY_MS, markets: merged });
+        carriedHolds.set(repository, holds);
+        return merged;
+    }
     if (reachable && repository) {
         try {
             await repository.saveCachedMarkets(network, registryKey, {
