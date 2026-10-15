@@ -526,6 +526,7 @@ export class ArkadeTransactionBuilder {
     private readonly outputs: TransactionOutput[] = [];
     private readonly fundingCoins: ArkTxInput[] = [];
     private readonly assetSpecs: AssetSpec[] = [];
+    private readonly extraPackets: ExtensionPacket[] = [];
     private coin?: Utxo;
     private changeScript?: Uint8Array;
 
@@ -555,6 +556,12 @@ export class ArkadeTransactionBuilder {
     /** Transfer an asset group: which inputs supply it and which outputs receive it. */
     withAsset(spec: AssetSpec): this {
         this.assetSpecs.push(spec);
+        return this;
+    }
+
+    /** Add an extension packet; reusing the asset or emulator packet's type fails at build. */
+    withPacket(packet: ExtensionPacket): this {
+        this.extraPackets.push(packet);
         return this;
     }
 
@@ -654,7 +661,7 @@ export class ArkadeTransactionBuilder {
             setArkPsbtField(checkpoints[0], 0, ConditionWitness, condition);
         }
 
-        // Asset packet (type 0) then emulator packet (type 1), in one OP_RETURN extension.
+        // Asset (type 0), emulator (type 1), then caller packets, in one OP_RETURN extension.
         const packets: ExtensionPacket[] = [];
         if (this.assetSpecs.length > 0) {
             packets.push(this.buildAssetPacket());
@@ -668,6 +675,7 @@ export class ArkadeTransactionBuilder {
                 ]) as ExtensionPacket,
             );
         }
+        packets.push(...this.extraPackets);
         if (packets.length > 0) {
             attachExtension(arkTx, packets);
         }
