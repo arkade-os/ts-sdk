@@ -175,7 +175,8 @@ export interface DiscoveryIndexInput {
 
 /**
  * How long a partial answer holds before the registry is asked again: pins answering for an
- * unreachable registry, or a registry answer that missed a listed solver's card.
+ * unreachable registry, or a registry answer that missed the card of a solver the cache still
+ * holds.
  */
 const DEGRADED_RETRY_MS = 60_000;
 
@@ -278,16 +279,13 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         if (registryAnswered(result.sources)) {
             const fetchedAt = Date.now();
             // What arrived is held as is: a cached card's key is unvalidated, so the markets of a
-            // solver whose card did not arrive never join a live snapshot, and the read is retried
-            // soon instead.
+            // solver whose card did not arrive never join a live snapshot.
             held = {
                 markets: result.markets,
                 ref: { fetchedAt, live: true, source: "live", registry: url },
             };
-            const undelivered = delivery.undelivered();
-            revalidateAt =
-                fetchedAt + (undelivered.size > 0 ? DEGRADED_RETRY_MS : MARKETS_CACHE_TTL_MS);
             // Nor may it replace a cache that still holds such a solver's markets.
+            const undelivered = delivery.undelivered();
             const keepsCache =
                 undelivered.size > 0 &&
                 input.repository !== undefined &&
@@ -296,6 +294,9 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
                     undelivered,
                     await readCache(input.repository, indexed, url),
                 ).length > 0;
+            // Retried soon only while the cache is kept for it, so within the carry window: a
+            // solver whose card never arrives otherwise waits out the TTL like any other gap.
+            revalidateAt = fetchedAt + (keepsCache ? DEGRADED_RETRY_MS : MARKETS_CACHE_TTL_MS);
             if (input.repository && !keepsCache) {
                 try {
                     await input.repository.saveCachedMarkets(indexed, url, {

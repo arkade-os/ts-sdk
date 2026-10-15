@@ -289,6 +289,33 @@ describe("a market resolved from a transport card", () => {
         expect(cached.markets.map((m) => m.solver)).toEqual(["pointed"]);
     });
 
+    // retrying every minute would cost each quote() a card timeout for as long as it stays down
+    it("lets a solver whose card never arrived, and is not cached, wait for the TTL", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { index } = pointedSolver();
+            const fetchImpl = vi.fn(async () => new Response(JSON.stringify(index)));
+            const discovery = discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl: fetchImpl as unknown as typeof fetch,
+                    transportCards: { fetch: async () => [] },
+                },
+                repository: new InMemoryAssetSwapRepository(),
+            });
+            await discovery.load();
+            vi.advanceTimersByTime(9 * 60_000);
+            await discovery.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(60_000);
+            await discovery.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("holds what arrived, leaves the cache alone, and asks again a minute later", async () => {
         vi.useFakeTimers({ toFake: ["Date"] });
         try {

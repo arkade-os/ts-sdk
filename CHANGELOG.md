@@ -366,10 +366,10 @@ style and have not been backfilled.
   drops out: for up to two hours such an answer leaves the cache alone,
   `discoverMarkets` and `watchMarkets` keep serving the solver's cached
   markets, and the client, which never mixes cached cards into a live
-  snapshot, asks again after a minute. A missing `nostr-tools` peer is not
-  a failed delivery. The markets cache lasts ten minutes, not an hour, and
-  `watchMarkets` (`@arkade-os/swap/protocol`) keeps a long-lived view
-  current. Needs `@arkade-os/solver-discovery` 0.3.0.
+  snapshot, asks again after a minute meanwhile. A missing `nostr-tools`
+  peer is not a failed delivery. The markets cache lasts ten minutes, not an
+  hour, and `watchMarkets` (`@arkade-os/swap/protocol`) keeps a long-lived
+  view current. Needs `@arkade-os/solver-discovery` 0.3.0.
 
 ### Bug Fixes
 
