@@ -285,6 +285,14 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
             held = cached;
             return cached;
         }
+        // Nothing cached to prefer: the pins still answer, without replacing any cache.
+        if (result.markets.length > 0) {
+            held = {
+                markets: result.markets,
+                ref: { fetchedAt: Date.now(), live: true, source: "live", registry: url },
+            };
+            return held;
+        }
         return unavailable(whyUnavailable());
     };
 

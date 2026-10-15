@@ -223,6 +223,10 @@ describe("nostrCardFetcher", () => {
         expect(await pending).toEqual([]);
     });
 
+    it("refuses a timeout a timer cannot hold", () => {
+        expect(() => nostrCardFetcher({ timeoutMs: 2 ** 31 })).toThrow(/timeoutMs/);
+    });
+
     it("opens nothing when there is no one, or nowhere, to ask", async () => {
         const subscribeMany = vi
             .spyOn(SimplePool.prototype, "subscribeMany")

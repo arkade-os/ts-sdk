@@ -183,6 +183,22 @@ describe("an unreachable registry with a cache behind it", () => {
         expect(snapshot.markets).toHaveLength(1);
     });
 
+    it("answers with the pins when the registry is down and nothing is cached", async () => {
+        const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
+        const index = discoveryIndex({
+            network: "regtest",
+            config: {
+                registryUrl: REGISTRY,
+                fetchImpl: failing(),
+                localCards: [
+                    { card: { version: 0, name: "pinned", markets: [market] }, network: "regtest" },
+                ],
+                transportCards: null,
+            },
+        });
+        expect((await index.load()).markets.map((m) => m.solver)).toEqual(["pinned"]);
+    });
+
     it("is what `peek()` reads, without touching the network at all", async () => {
         const fetchImpl = failing();
         const index = discoveryIndex({

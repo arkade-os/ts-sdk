@@ -232,58 +232,63 @@ export interface NostrCardFetcherOptions {
  * closed on EOSE or `timeoutMs`, keeping each author's latest event. It authenticates delivery
  * (the event signature) only; the discovery client validates the card itself.
  */
-export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): TransportCardFetcher => ({
-    async fetch(solvers, network) {
-        const asked = new Set(solvers.map((solver) => solver.discovery_pubkey));
-        const authors = [...asked];
-        const relays = [
-            ...new Set(solvers.flatMap((solver) => solver.transports?.nostr?.relays ?? [])),
-        ];
-        if (authors.length === 0 || relays.length === 0) return [];
-        const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
-        const pool = options.pool ?? newPool();
-        const latest = new Map<string, Event>();
-        let subscription: { close: () => void } | undefined;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-            await new Promise<void>((resolve) => {
-                timer = setTimeout(resolve, timeoutMs);
-                subscription = pool.subscribeMany(
-                    relays,
-                    { kinds: [SOLVER_CARD_KIND], authors, "#d": [network] },
-                    {
-                        // Relays are untrusted: re-check the filter and the signature, so a stray
-                        // or forged later event cannot shadow the real card.
-                        onevent(event: Event) {
-                            if (event.kind !== SOLVER_CARD_KIND || !asked.has(event.pubkey)) return;
-                            if (!verifyEvent(event)) return;
-                            if (event.tags.find((tag) => tag[0] === "d")?.[1] !== network) return;
-                            const held = latest.get(event.pubkey);
-                            const newer =
-                                !held ||
-                                event.created_at > held.created_at ||
-                                (event.created_at === held.created_at && event.id < held.id);
-                            if (newer) latest.set(event.pubkey, event);
-                        },
-                        oneose: () => resolve(),
-                        onclose: () => resolve(),
-                    },
-                );
-            });
-        } finally {
-            clearTimeout(timer);
-            if (options.pool) subscription?.close();
-            else pool.close(relays);
-        }
-        const cards: TransportCard[] = [];
-        for (const event of latest.values()) {
+export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): TransportCardFetcher => {
+    assertTimerMs("timeoutMs", options.timeoutMs);
+    return {
+        async fetch(solvers, network) {
+            const asked = new Set(solvers.map((solver) => solver.discovery_pubkey));
+            const authors = [...asked];
+            const relays = [
+                ...new Set(solvers.flatMap((solver) => solver.transports?.nostr?.relays ?? [])),
+            ];
+            if (authors.length === 0 || relays.length === 0) return [];
+            const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
+            const pool = options.pool ?? newPool();
+            const latest = new Map<string, Event>();
+            let subscription: { close: () => void } | undefined;
+            let timer: ReturnType<typeof setTimeout> | undefined;
             try {
-                const card: unknown = JSON.parse(event.content);
-                cards.push({ pubkey: event.pubkey, createdAt: event.created_at, card });
-            } catch {
-                // Not an older card instead: the newest event is the solver's current statement.
+                await new Promise<void>((resolve) => {
+                    timer = setTimeout(resolve, timeoutMs);
+                    subscription = pool.subscribeMany(
+                        relays,
+                        { kinds: [SOLVER_CARD_KIND], authors, "#d": [network] },
+                        {
+                            // Relays are untrusted: re-check the filter and the signature, so a stray
+                            // or forged later event cannot shadow the real card.
+                            onevent(event: Event) {
+                                if (event.kind !== SOLVER_CARD_KIND || !asked.has(event.pubkey))
+                                    return;
+                                if (!verifyEvent(event)) return;
+                                if (event.tags.find((tag) => tag[0] === "d")?.[1] !== network)
+                                    return;
+                                const held = latest.get(event.pubkey);
+                                const newer =
+                                    !held ||
+                                    event.created_at > held.created_at ||
+                                    (event.created_at === held.created_at && event.id < held.id);
+                                if (newer) latest.set(event.pubkey, event);
+                            },
+                            oneose: () => resolve(),
+                            onclose: () => resolve(),
+                        },
+                    );
+                });
+            } finally {
+                clearTimeout(timer);
+                if (options.pool) subscription?.close();
+                else pool.close(relays);
             }
-        }
-        return cards;
-    },
-});
+            const cards: TransportCard[] = [];
+            for (const event of latest.values()) {
+                try {
+                    const card: unknown = JSON.parse(event.content);
+                    cards.push({ pubkey: event.pubkey, createdAt: event.created_at, card });
+                } catch {
+                    // Not an older card instead: the newest event is the solver's current statement.
+                }
+            }
+            return cards;
+        },
+    };
+};

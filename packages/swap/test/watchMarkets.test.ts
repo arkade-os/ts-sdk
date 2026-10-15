@@ -58,6 +58,17 @@ describe("watchMarkets", () => {
         expect(fetchImpl.mock.calls.length).toBe(reads);
     });
 
+    it("refuses an interval a timer cannot hold, before reading anything", () => {
+        const { fetchImpl } = servingIndex([btcUsd]);
+        expect(() =>
+            watchMarkets(
+                { network: "mutinynet", registryUrl: REGISTRY_URL, fetchImpl, intervalMs: 2 ** 31 },
+                () => {},
+            ),
+        ).toThrow(/intervalMs/);
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
     it("survives a listener that throws, and does not report it as a discovery failure", async () => {
         vi.useFakeTimers();
         const { served, fetchImpl } = servingIndex([btcUsd]);

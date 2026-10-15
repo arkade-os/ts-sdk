@@ -21,7 +21,7 @@ import {
     type SourceReport,
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
-import { assertNonNegativeMs, isSubdust } from "@arkade-os/sdk";
+import { assertNonNegativeMs, assertTimerMs, isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
 import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
@@ -226,6 +226,7 @@ export const watchMarkets = (
     options: DiscoverMarketsOptions & { intervalMs?: number },
     onMarkets: (markets: DiscoveredMarket[]) => void,
 ): (() => void) => {
+    assertTimerMs("intervalMs", options.intervalMs);
     let digest: string | undefined;
     let reading = false;
     let stopped = false;
