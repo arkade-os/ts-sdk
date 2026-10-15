@@ -1,7 +1,10 @@
 # Changelog
 
-All notable changes to `@arkade-os/sdk` are documented here. Format
-conventions and section ordering are defined in [`CLAUDE.md`](CLAUDE.md).
+All notable changes to `@arkade-os/sdk` are documented here. Entries land
+under `## [Unreleased]` in the same commit as the change, grouped in this
+order (omit empty sections): `### Breaking Changes`, `### Features`,
+`### Bug Fixes`, `### Performance`, `### Internal`. See
+[`AGENTS.md`](AGENTS.md#changelog) for the mechanism.
 
 This file covers the **0.4.x** line. Pre-0.4 release history (0.3.x and
 earlier) lives in `git log` — those entries were not written in this
@@ -9,7 +12,39 @@ style and have not been backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
+
+- **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
+  decoding, and compiler artifact import recognize the emulator's variable
+  assignment opcode.
+
+- **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
+  takes a plan that returns piece amounts against the already-priced subtotal,
+  per-piece output fee, per-output ceiling and dust floor. A plan that claims
+  too much, breaks the ceiling, leaves dust or more unclaimed, or splits
+  asset-bearing inputs is refused rather than reshaped. Automatic renewal still
+  settles into one output, and `split` is refused on the service-worker wallet.
+
 ### Changed
+
+- **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
+  cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
+  fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+  Timer-backed settings additionally reject delays above 2,147,483,647 milliseconds
+  (the portable timer limit). Zero still disables optional timers or schedules an
+  immediate timeout/poll, depending on the existing API; reconnect caps still clamp
+  the base delay rather than requiring a particular ordering. A `messageTimeouts` key
+  set to `undefined` now falls back to its default instead of reaching the worker,
+  where it armed a timer of `undefined` and timed every such message out at once; the
+  message bus rejects such keys outright.
 
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
@@ -17,6 +52,23 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
+  the ad it named; kind 38859 now carries the signed solver card, exported
+  as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.
+- **`@arkade-os/swap`: `SnapshotRef.source` gains `"local"`.** It marks a
+  snapshot answered by pinned cards alone, while the registry is unreachable
+  and nothing is cached; such a snapshot carries no `registry`. Code with an
+  exhaustive `switch` on `source` must handle it.
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
   contract, intent, or wallet repositories and swap repositories must implement
@@ -35,6 +87,15 @@ style and have not been backfilled.
   stored. Both upgrades are one-way: an older SDK, a 0.5.0 release
   candidate at v5 included, cannot reopen the upgraded database and fails
   with `VersionError`.
+
+- **`IndexedDBIntentRepository` and `IndexedDBVirtualTxRepository` move to
+  their own database, `arkade-batches`.** They defaulted to the wallet's
+  database name while running their own schema version on it, so beside the
+  wallet and contract repositories one of the opens failed, or the intent
+  stores were never created. Their stores now live only in `arkade-batches`,
+  or in the database a custom `dbName` creates. Nothing an earlier SDK
+  stored is migrated, under the wallet's name or a custom one: a database
+  it created cannot be reopened and fails with `VersionError`.
 
 - **`@arkade-os/boltz-swap` is removed from the repo and will not be
   published on the 0.5 line.** The package's Boltz-routed rails are
@@ -158,8 +219,33 @@ style and have not been backfilled.
   and still fund and reconcile as BTC. `BTC_ASSET_PART` is deprecated (it
   is mainnet's part only); use `btcAssetPart(network)`, or `isBtcAsset`
   (and `isBtcAssetLenient` for stored ids) to recognize BTC.
+- **`Wallet.create` and `ReadonlyWallet.create` need their class as
+  `this`.** Both now build the class they are called on, so a reference
+  taken off the class and called on its own, as in
+  `const { create } = Wallet`, throws `this is not a constructor`. Call
+  `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
 
 ### Features
+
+- **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
+  Every delta sync re-read the 24 hours before the sync cursor, so a
+  sync seconds after a full one still paged a day of VTXO history from
+  the indexer. `ContractManagerConfig.vtxoSyncOverlapMs` or the wallet's
+  `vtxoSyncOverlapMs` config now sets that overlap, including at boot;
+  `setVtxoSyncOverlap` changes it later. The default stays 24 hours.
+  The indexer filters on each VTXO's last
+  update in arkd's clock while the cursor is this host's, so the overlap
+  must cover how far this host's clock can run ahead of arkd's: lower it
+  only on an NTP-synced host.
+
+- **`Wallet.create` and `ReadonlyWallet.create` build the class they are
+  called on.** A subclass that inherits either factory now gets an instance
+  of itself, typed as itself, where it used to get a plain `Wallet` or
+  `ReadonlyWallet`; its constructor receives the base constructor's
+  arguments. An override of `create` that delegates to `super.create()` now
+  constructs the subclass too; one that does not call it is unchanged, and
+  so are calls on `Wallet` and `ReadonlyWallet` themselves. The one calling
+  pattern that stops working is listed under Breaking Changes.
 
 - **`@arkade-os/swap/node`: the Node storage default.**
   `nodeSwapRepository({ network })` opens a file-backed SQLite database
@@ -268,9 +354,39 @@ style and have not been backfilled.
   listed under Breaking Changes above. The shape is exported as
   `ArkadeServerProvider`, so a caller building a derivation-only client
   has a name to import. (#734)
+- **`@arkade-os/swap`: markets come from the cards solvers publish.** A
+  registry can list a solver by key alone; its markets come from the signed
+  card it publishes over Nostr (kind 38859, `d` = network).
+  `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
+  default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
+  `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
+  with the newest card it has seen, still subject to the discovery client's
+  card-age limit. A listed solver whose card still fails to arrive (a fresh
+  process whose relay is slow or dead, or a caller's own fetcher) no longer
+  drops out: for up to two hours such an answer leaves the cache alone,
+  `discoverMarkets` and `watchMarkets` keep serving the solver's cached
+  markets, and the client never mixes cached cards into a live snapshot.
+  Both ask the registry again after a minute, not on every call. A missing
+  `nostr-tools` peer is not a failed delivery. The markets cache lasts ten
+  minutes, not an hour, and `watchMarkets` (`@arkade-os/swap/protocol`)
+  keeps a long-lived view current. Needs `@arkade-os/solver-discovery`
+  0.3.0.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: one dead relay no longer kills a Node 22 process.**
+  nostr-tools 2.25 closes a socket from its `onerror`, and Node 22's
+  WebSocket re-fires `error` synchronously from `close()` on a connecting
+  socket; the recursion overflowed the stack. Both relay pools now use a
+  socket whose `close()` runs once.
+- **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
+  registry.** A local card always counts as answering, so a registry outage
+  replaced the cached markets with the pins alone. Only a registry answering
+  now replaces the cache. With nothing cached, the client still answers from
+  the pins, as a `source: "local"` snapshot that asks the registry again
+  after a minute rather than standing for the ten-minute TTL. `resolve()`
+  answers from them too, without the network, so a payment rail still offers
+  a pinned solver; 0.1.0-rc.24 left it out.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,
@@ -314,8 +430,24 @@ style and have not been backfilled.
   `Expected Number blocks <= 65535`. Literals are now decoded: `4194314`
   reads as 5,120 seconds and builds the artifact's own script bytes. A
   literal that does not round-trip through BIP68, such as `70000`, is
-  refused when the artifact is read. `$param` operands are still bound
-  as block counts. (#1012)
+  refused when the artifact is read. (#1012)
+
+- **`programFromArtifact` binds a `$param` CSV operand as a BIP68
+  sequence, not a block count.** The compiler emits a bare `<param>`
+  placeholder for a CSV operand and both it and the delegatee push the
+  parameter's raw value, which is the sequence. The reader tagged such
+  an operand `blocks`, so a seconds-domain exit delay could not be
+  built at all (`exitDelay = 4194472` threw `Expected Number blocks <=
+  65535`), and any delay a third party derived from the same artifact
+  pushed different bytes — a different address. An artifact CSV operand
+  now carries a new `sequence` kind in the Program format, decoded when
+  the parameter is bound with the same canonical check the literal path
+  uses; a value with the disable flag set or bits outside the value and
+  type fields is refused and names the parameter. A blocks-domain
+  sequence equals its block count, so every value that built before
+  builds the same bytes. Hand-written `blocks`/`seconds` programs are
+  unchanged. `ArtifactWitnessElement` also accepts the `encoding` field
+  `arkadec` tags signature witness items with.
 
 - **The missing-`EventSource` warning no longer promises polling.**
   `ContractWatcher` warned it was "falling back to polling", but for the
@@ -324,6 +456,15 @@ style and have not been backfilled.
   see new and spent VTXOs only when the wallet syncs, on a read or
   `refreshVtxos()`. Watch-only scripts are still polled against the
   indexer. The warning now says both.
+
+- **`vtxoSyncMaxAgeMs` is validated however it is set.** Only the
+  per-read `maxSyncAgeMs` was checked; `setVtxoSyncMaxAge` and the
+  `ContractManager.create` config accepted any number, and `Infinity`
+  silently stopped every read from syncing. Both now reject a value that
+  is not a non-negative safe integer, as the per-read option does. The
+  manager keeps its own copy of the config, so mutating the object passed
+  to `create` no longer reconfigures it, and `setVtxoSyncMaxAge` no longer
+  writes into the caller's object.
 
 ### Performance
 

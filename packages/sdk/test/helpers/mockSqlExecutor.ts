@@ -159,11 +159,16 @@ export function createMockSQLExecutor(): SQLExecutor {
             if (/^INSERT\s+OR\s+REPLACE/i.test(trimmed)) {
                 const { table, columns } = parseInsertOrReplace(trimmed);
                 const t = getTable(table);
-                const row: Record<string, unknown> = {};
-                columns.forEach((col, i) => {
-                    row[col] = params?.[i] ?? null;
-                });
-                t.rows.set(rowKey(t.primaryKey, row), row);
+                const values = params ?? [];
+                // Multi-row VALUES binds one full column set per tuple.
+                const rowCount = Math.max(1, Math.ceil(values.length / columns.length));
+                for (let r = 0; r < rowCount; r++) {
+                    const row: Record<string, unknown> = {};
+                    columns.forEach((col, i) => {
+                        row[col] = values[r * columns.length + i] ?? null;
+                    });
+                    t.rows.set(rowKey(t.primaryKey, row), row);
+                }
                 return;
             }
 

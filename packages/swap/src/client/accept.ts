@@ -21,8 +21,9 @@
  * inert until funded, so a crash between the two leaves nothing at stake.
  *
  * **A funding route is one whose give instrument is the wallet's** — the instrument, never the
- * asset: a `lightning -> arkade` receive gives BTC via a third party's invoice, and branching on
- * the asset would refuse an empty-wallet receive.
+ * asset: a `lightning -> arkade` receive gives BTC via a third party's invoice (`onchain -> arkade`
+ * via an L1 deposit made outside this wallet), and branching on the asset would refuse an
+ * empty-wallet receive.
  *
  * **Arming** via {@link AcceptInput.drive} happens after the record is durable and runs BEHIND
  * the return, so this call waits on no pass and no network read.
@@ -31,7 +32,7 @@ import { hex } from "@scure/base";
 import { asset, getAllNormalizedVtxos, type IWallet } from "@arkade-os/sdk";
 import { createOffer, OFFER_PACKET_TYPE, registerDerivedOffer } from "../offer";
 import { registerLockupContract } from "../lockupContract";
-import { onchainSendProfile } from "../rfqCorridors";
+import { onchainReceiveProfile, onchainSendProfile } from "../rfqCorridors";
 import { rfqSecretsProfile } from "../rfqProfileParts";
 import { BTC_ASSET_ID } from "../store";
 import type { AssetSwapRepository } from "../repository";
@@ -271,6 +272,7 @@ const KIND_OF = {
     "arkade->lightning": "lightning_send",
     "lightning->arkade": "lightning_receive",
     "arkade->onchain": "onchain_send",
+    "onchain->arkade": "onchain_receive",
 } as const satisfies Record<CorridorRfqPreparation["route"], CorridorSwapRecord["kind"]>;
 
 /**
@@ -301,6 +303,20 @@ const profileOf = (
                     minConfirmations: preparation.minConfirmations,
                     expectedAmount: toSafeNumber(preparation.expectedAmount, "expectedAmount"),
                     payoutPkScript: preparation.payoutPkScript,
+                }),
+            };
+        case "onchain->arkade":
+            return {
+                ...secrets,
+                expectedAmount: toSafeNumber(preparation.expectedAmount, "expectedAmount"),
+                payoutAddress: preparation.payoutAddress,
+                ...onchainReceiveProfile({
+                    htlc: preparation.htlc,
+                    htlcParams: preparation.htlcParams,
+                    l1Network: preparation.l1Network,
+                    minConfirmations: preparation.minConfirmations,
+                    refundPkScript: preparation.refundPkScript,
+                    refundDescriptor: preparation.refundKey.descriptor,
                 }),
             };
     }
@@ -504,7 +520,7 @@ const fund = async (input: FundingInput, record: SwapRecord): Promise<string> =>
             extensions: [offerExtensionOf(record)],
         });
     }
-    if (record.kind === "lightning_receive") {
+    if (record.kind === "lightning_receive" || record.kind === "onchain_receive") {
         // Unreachable (callers gate on `fundsFromWallet`); keeps the union exhaustive.
         throw new Error(`receive swap ${record.id} funds nothing from this wallet`);
     }

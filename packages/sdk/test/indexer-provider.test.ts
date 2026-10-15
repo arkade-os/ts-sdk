@@ -160,9 +160,9 @@ describe("RestIndexerProvider", () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
             await expect(
-                // @ts-expect-error scripts and outpoints are mutually exclusive
                 provider.getVtxos({
                     scripts: ["script-a"],
+                    // @ts-expect-error scripts and outpoints are mutually exclusive
                     outpoints: [{ txid: "txid-1", vout: 0 }],
                 }),
             ).rejects.toThrow("scripts and outpoints are mutually exclusive options");
@@ -261,8 +261,8 @@ describe("RestIndexerProvider", () => {
             // Nothing is left to ask for, so there is no cursor to hand back.
             expect(result.page).toBeUndefined();
 
-            const pages = mockFetch.mock.calls.map((call: [string]) =>
-                new URL(call[0]).searchParams.get("page.index"),
+            const pages = mockFetch.mock.calls.map((call: unknown[]) =>
+                new URL(call[0] as string).searchParams.get("page.index"),
             );
             expect(pages).toEqual(["0", "2"]);
         });

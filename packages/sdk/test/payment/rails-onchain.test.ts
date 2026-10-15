@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import { ArkAddress } from "../../src";
 import { onchainRail } from "../../src/payment/rails/onchain";
 import { Ramps } from "../../src/wallet/ramps";
@@ -18,7 +18,7 @@ const rail = (feeInfo: Record<string, any> = fees) =>
     onchainRail({ feeInfo: async () => feeInfo as any });
 
 describe("onchainRail (collaborative exit)", () => {
-    let offboard: ReturnType<typeof vi.spyOn>;
+    let offboard: MockInstance<(...args: any[]) => any>;
 
     beforeEach(() => {
         offboard = vi.spyOn(Ramps.prototype, "offboardExact").mockResolvedValue("txEXIT");

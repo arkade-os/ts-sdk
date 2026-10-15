@@ -137,7 +137,6 @@ describe("filling an offer (regtest)", () => {
             return vtxos.some((v) => v.txid === fundingTxid);
         });
 
-        const makerBefore = (await maker.getBalance()).available;
         const coins = await taker.getVtxos();
         const fillTxid = await fillOffer(taker, OPERATOR_URL, offer.offerHex, {
             fund: coins.map((c) => ({

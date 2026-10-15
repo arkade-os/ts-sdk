@@ -7,7 +7,7 @@
  * Sealing to the key THIS base URL serves removes the mismatch by construction.
  */
 import { base64, hex } from "@scure/base";
-import { ArkAddress, type VHTLC } from "@arkade-os/sdk";
+import { ArkAddress, assertTimerMs, type VHTLC } from "@arkade-os/sdk";
 
 import { sealClaimPacket } from "./claimPacket";
 import { assertPreimageMatches } from "./onchainHtlc";
@@ -99,6 +99,7 @@ export const covclaimdClient = (
     const url = baseUrl.replace(/\/+$/, "");
     const fetchImpl = options.fetchImpl ?? fetch;
     const timeoutMs = options.timeoutMs ?? 30_000;
+    assertTimerMs("timeoutMs", timeoutMs);
 
     const send = async (what: string, path: string, init: RequestInit): Promise<Response> => {
         let response: Response;

@@ -13,6 +13,7 @@ import {
     type StoredVtxo,
     compareScriptVtxoCursors,
     unspentScriptVtxos,
+    utxoEntries,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -238,15 +239,23 @@ export class IndexedDBWalletRepository implements WalletRepository {
         });
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
+        const entries = utxoEntries(addressOrBatch, utxos);
+        if (entries.every(([, list]) => list.length === 0)) return;
         try {
             const db = await this.getDB();
             const transaction = db.transaction([STORE_UTXOS], "readwrite");
             const store = transaction.objectStore(STORE_UTXOS);
-            for (const utxo of utxos) store.put({ address, ...serializeUtxo(utxo) });
+            for (const [address, list] of entries) {
+                for (const utxo of list) store.put({ address, ...serializeUtxo(utxo) });
+            }
             await awaitTransaction(transaction);
         } catch (error) {
-            console.error(`Failed to save UTXOs for address ${address}:`, error);
+            const addresses = entries.map(([address]) => address).join(", ");
+            console.error(`Failed to save UTXOs for address ${addresses}:`, error);
             throw error;
         }
     }

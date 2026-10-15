@@ -26,7 +26,7 @@ export type ObservationSeam =
 export type CorridorCovenant =
     /** The Arkade-side VHTLC every corridor route has exactly one of. */
     | "arkade_lockup"
-    /** The L1 HTLC, which only `arkade -> onchain` adds. */
+    /** The L1 HTLC, which the onchain corridor adds in either direction. */
     | "onchain_htlc";
 
 /** Whose covenant it is. Ownership inverts the deadline: a TRADER lockup's deadline is a moment to
@@ -37,7 +37,7 @@ export type LockupOwner = "trader" | "solver";
 export type CorridorDeadline =
     /** `RfqSwapCommon.refundLocktime`, on every kind. */
     | "refund_locktime"
-    /** `OnchainSendSwap.htlc.refundLocktime`, on `arkade -> onchain` alone. */
+    /** The L1 HTLC's `htlc.refundLocktime`, on the onchain corridor alone. */
     | "htlc_refund_locktime";
 
 /** One covenant a pass reads, with its owner and the deadline it runs against. */
@@ -61,10 +61,8 @@ export interface CorridorPass {
 }
 
 /**
- * A corridor's drive facts, per side. Partial on purpose: `onchain` has no `give` entry because
- * `onchain -> arkade` is outside the `Route` union (covering only its Arkade half would silently let
- * the trader's L1 refund window pass); `arkade` has neither, since `arkade -> arkade` is an offer
- * covenant with no lockup. The arkade leg's lockup is declared by the counter-corridor's entry.
+ * A corridor's drive facts, per side. Partial on purpose: `arkade` has neither, since
+ * `arkade -> arkade` is an offer covenant with no lockup. The arkade leg's lockup is declared by the counter-corridor's entry.
  */
 export type CorridorDrive = Partial<Record<RouteSide, CorridorPass>>;
 

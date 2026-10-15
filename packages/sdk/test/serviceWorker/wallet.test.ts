@@ -27,6 +27,21 @@ type MessageHandler = (event: { data: any }) => void;
 
 const STUB_XONLY_PUBLIC_KEY = new Uint8Array(32).fill(0xab);
 
+it("forwards an offchain change fee cap through the worker request", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ payload: { txid: "txid" } });
+    const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
+
+    await (ServiceWorkerWallet.prototype.send as any).call(proxy, {
+        recipients: [{ address: "ark1example", amount: 505 }],
+        maxChangeFee: 111,
+    });
+
+    expect(sendMessage.mock.calls[0][0].payload).toEqual({
+        recipients: [{ address: "ark1example", amount: 505 }],
+        maxChangeFee: 111,
+    });
+});
+
 // Errors cross the harness through the REAL structured-clone algorithm, so
 // its fidelity is the platform's problem, not a hand-maintained simulation's.
 // A stub that copied `name` verbatim once certified a fix the browser would
@@ -431,7 +446,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("ProviderUnavailableError");
     });
 
@@ -451,7 +466,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("Error");
         expect((err.cause as Error).message).toBe("no cached snapshot");
     });
@@ -1032,6 +1047,25 @@ describe("ServiceWorkerWallet", () => {
         await expect(wallet.restore()).rejects.toThrow("boom");
     });
 
+    // `split.plan` is a function and the options object is posted to the worker.
+    it("refuses renewVtxos with a split rather than failing to clone it", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getVtxoManager();
+
+        await expect(
+            manager.renewVtxos(undefined, { split: { maxOutputs: 4, plan: () => [1000n] } }),
+        ).rejects.toThrow("split is not supported over the service worker");
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "RENEW_VTXOS" }),
+        );
+    });
+
     it("runs local hooks after worker recovery", async () => {
         const events: string[] = [];
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
@@ -1070,7 +1104,7 @@ describe("ServiceWorkerWallet", () => {
         });
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
         const wallet = createSWWallet(serviceWorker as any, messageTag);
-        let releaseHook = () => undefined;
+        let releaseHook: () => void = () => undefined;
         const hookGate = new Promise<void>((resolve) => {
             releaseHook = resolve;
         });

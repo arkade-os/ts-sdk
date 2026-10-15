@@ -5,7 +5,7 @@
 
 import { hex } from "@scure/base";
 
-import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
+import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ARKADE_OPS } from "./script";
 import {
     SUPPORTED_PROGRAM_VERSION,
@@ -32,6 +32,7 @@ export interface ArtifactStruct {
 export interface ArtifactWitnessElement {
     name: string;
     type: string;
+    encoding?: string;
     injected?: boolean;
 }
 
@@ -238,12 +239,11 @@ function providedWitness(witness: ArtifactWitnessElement[] | undefined): Artifac
     }) as ArtifactWitnessElement[];
 }
 
-/** A literal CSV operand is an encoded BIP68 sequence; a `$param` is bound later as blocks. */
+/** Every CSV operand is an encoded BIP68 sequence — a literal here, a `$param` when it is bound. */
 function csvTimelock(leafName: string, operand: bigint | string): TapscriptSegment["csv"] {
-    if (typeof operand === "string") return { type: "blocks", value: operand };
-    const timelock =
-        operand >= 0n && operand < 0x80000000n ? sequenceToTimelock(Number(operand)) : undefined;
-    if (!timelock || BigInt(timelockToSequence(timelock)) !== operand) {
+    if (typeof operand === "string") return { type: "sequence", value: operand };
+    const timelock = sequenceToCanonicalTimelock(operand);
+    if (!timelock) {
         fail(`leaf '${leafName}': CSV literal ${operand} is not a canonical BIP68 sequence`);
     }
     return timelock;
