@@ -2109,7 +2109,8 @@ export class ContractManager implements IContractManager {
      * Stop the watcher, clear callbacks, and mark the manager uninitialized.
      *
      * Teardown is synchronous. The returned promise settles once watcher events already being
-     * handled finish, after which nothing more is written to the repositories.
+     * handled, and any look-ahead drain, finish; after that nothing more is written to the
+     * repositories.
      */
     dispose(): Promise<void> {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
@@ -2124,30 +2125,36 @@ export class ContractManager implements IContractManager {
 
         this.lookAheadEntries.clear();
         // Sweep again once the drain unwinds: its current iteration can register one last entry.
-        if (pendingDrain) {
-            void pendingDrain
-                .catch(() => {})
-                .then(() => {
-                    if (this.disposed) this.lookAheadEntries.clear();
-                });
-        }
+        const drainUnwound = pendingDrain
+            ?.catch(() => {})
+            .then(() => {
+                if (this.disposed) this.lookAheadEntries.clear();
+            });
 
         this.initialized = false;
 
-        return Promise.all([...this.inFlightEvents]).then(() => undefined);
+        return Promise.all([...this.inFlightEvents, drainUnwound]).then(() => undefined);
     }
 
     /**
-     * Symbol.dispose implementation for the `using` keyword.
-     * @example
-     * ```typescript
-     * {
-     *   using manager = await wallet.getContractManager();
-     *   // ... use manager
-     * } // automatically disposed
-     * ```
+     * Symbol.dispose implementation for the `using` keyword. Teardown is immediate, but it does
+     * not wait for in-flight work; use `await using` for that.
      */
     [Symbol.dispose](): void {
         void this.dispose();
+    }
+
+    /**
+     * Symbol.asyncDispose implementation for the `await using` keyword; waits like {@link dispose}.
+     * @example
+     * ```typescript
+     * {
+     *   await using manager = await wallet.getContractManager();
+     *   // ... use manager
+     * } // disposed, with in-flight events finished
+     * ```
+     */
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
     }
 }
