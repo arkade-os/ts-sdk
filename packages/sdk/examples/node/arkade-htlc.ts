@@ -112,7 +112,7 @@ async function main() {
     const { txid } = await htlc.functions
         .claim(preimage)
         .from(coin)
-        .to(bobPkScript, coin.value)
+        .to(bobPkScript, BigInt(coin.value))
         .send();
     console.log("Claimed in tx", txid);
 

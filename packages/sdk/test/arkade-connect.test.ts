@@ -347,19 +347,6 @@ describe("ArkadeContract.getVtxos", () => {
     });
 });
 
-describe("ArkadeTransactionBuilder.to", () => {
-    it("accepts a number amount (a coin's value)", async () => {
-        const ark = await connectWith();
-        const c = ark.contract(multisigProgram());
-        const { arkTx } = await c.functions
-            .cooperative()
-            .from({ txid: "11".repeat(32), vout: 0, value: 5000 })
-            .to(c.pkScript, 5000)
-            .build();
-        expect(arkTx.getOutput(0).amount).toBe(5000n);
-    });
-});
-
 describe("Wallet.create spellings", () => {
     const walletInfo = () => ({
         ...info("mutinynet"),
