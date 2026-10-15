@@ -126,8 +126,12 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
         tx.addOutput(output);
     }
 
-    // add the anchor output
-    tx.addOutput(P2A);
+    // Any fee goes to the anchor: a tx with ephemeral dust must itself pay zero fee.
+    const fee =
+        inputs.reduce((sum, input) => sum + BigInt(input.value), 0n) -
+        outputs.reduce((sum, output) => sum + (output.amount ?? 0n), 0n);
+    if (fee < 0n) throw new Error("outputs exceed inputs");
+    tx.addOutput({ ...P2A, amount: fee });
 
     return tx;
 }

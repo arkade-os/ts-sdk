@@ -2,7 +2,7 @@
  * A route is two endpoints, each an asset on a corridor, plus the instrument that settles it.
  *
  * Two invariants live in the types: an {@link Endpoint}'s corridor and asset cannot disagree, and
- * `onchain -> arkade` is not in {@link Route}, so a resolved misroute is a compile error (before
+ * only the implemented pairs are in {@link Route}, so a resolved misroute is a compile error (before
  * resolution it is `UnsupportedRoute`, thrown ahead of RFQ disclosure, persistence and funding).
  */
 import type { AssetId, AssetPart } from "./assetId";
@@ -67,17 +67,13 @@ export type Endpoint<C extends CorridorId = CorridorId> = C extends CorridorId
 /** Shorthand for one corridor's endpoint, as the route union spells it. */
 export type Ep<C extends CorridorId> = Endpoint<C>;
 
-/**
- * The implemented routes, as a closed union.
- *
- * `onchain -> arkade` is deliberately absent until the manager owns the
- * trader's L1 refund path end to end.
- */
+/** The implemented routes, as a closed union. */
 export type Route =
     | { give: Ep<"arkade">; take: Ep<"arkade"> }
     | { give: Ep<"arkade">; take: Ep<"lightning"> }
     | { give: Ep<"lightning">; take: Ep<"arkade"> }
-    | { give: Ep<"arkade">; take: Ep<"onchain"> };
+    | { give: Ep<"arkade">; take: Ep<"onchain"> }
+    | { give: Ep<"onchain">; take: Ep<"arkade"> };
 
 /**
  * The one thing a counterparty must see, when a route has one.

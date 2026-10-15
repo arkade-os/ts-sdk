@@ -6,7 +6,6 @@ import { getNetwork } from "../src/networks";
 import { ChainTxType } from "../src/providers/indexer";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { DefaultVtxo } from "../src/script/default";
-import { CHILD_OUTPUT_DUST } from "../src/wallet/exit/estimate";
 import { timelockToSequence } from "../src/utils/timelock";
 import { P2A } from "../src/utils/anchor";
 import { Transaction } from "../src/utils/transaction";

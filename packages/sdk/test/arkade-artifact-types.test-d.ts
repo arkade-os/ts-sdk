@@ -1,6 +1,8 @@
 import { expectTypeOf, it } from "vitest";
+
 import type { ArtifactWitnessElement, ContractArtifact } from "../src/arkade/artifact";
 
+// arkadec v0.1.0-test tags every signature witness item with an encoding.
 const artifact = {
     contractName: "T",
     constructorInputs: [{ name: "owner", type: "pubkey" }],
@@ -25,7 +27,7 @@ const artifact = {
     ],
 } satisfies ContractArtifact;
 
-it("types an arkadec signature witness with its encoding", () => {
+it("reads an arkadec witness item that carries its encoding", () => {
     expectTypeOf<ArtifactWitnessElement["encoding"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf(artifact).toExtend<ContractArtifact>();
 });

@@ -1,4 +1,5 @@
 import { hex } from "@scure/base";
+import { assertTimerMs } from "../../utils/time";
 import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
@@ -164,6 +165,7 @@ export class ExpoWallet
      * by the consumer.
      */
     static async setup(config: ExpoWalletConfig): Promise<ExpoWallet> {
+        assertTimerMs("foregroundIntervalMs", config.background.foregroundIntervalMs);
         warnOnRemovedBackgroundFields(config.background);
 
         const wallet = await Wallet.create(config);

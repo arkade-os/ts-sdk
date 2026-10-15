@@ -88,6 +88,44 @@ describe("requestOrigin", () => {
 });
 
 describe("OriginRateGate", () => {
+    it("sleeps a long cooldown in portable timer-sized chunks", async () => {
+        vi.useFakeTimers();
+        try {
+            const maxTimerMs = 2 ** 31 - 1;
+            const gate = new OriginRateGate({
+                defaultCooldownMs: maxTimerMs + 50,
+                maxCooldownMs: maxTimerMs + 50,
+                jitterMs: 0,
+            });
+            gate.reportRateLimited("https://a.example/x");
+            const fn = vi.fn().mockResolvedValue("ready");
+            const timer = vi.spyOn(globalThis, "setTimeout");
+            const pending = gate.run("https://a.example/x", fn);
+            await Promise.resolve();
+            expect(timer).toHaveBeenLastCalledWith(expect.any(Function), maxTimerMs);
+            await vi.advanceTimersByTimeAsync(maxTimerMs);
+            expect(fn).not.toHaveBeenCalled();
+            expect(timer).toHaveBeenLastCalledWith(expect.any(Function), 50);
+            await vi.advanceTimersByTimeAsync(50);
+            await expect(pending).resolves.toBe("ready");
+            timer.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it.each(["defaultCooldownMs", "maxCooldownMs", "jitterMs"] as const)(
+        "validates %s while accepting zero",
+        (key) => {
+            expect(() => new OriginRateGate({ [key]: 0 })).not.toThrow();
+            for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+                expect(() => new OriginRateGate({ [key]: value })).toThrow(
+                    `${key} must be a non-negative safe integer`,
+                );
+            }
+        },
+    );
+
     it("caps concurrency per origin", async () => {
         const gate = new OriginRateGate({ maxConcurrent: 2 });
         let inFlight = 0;

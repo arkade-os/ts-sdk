@@ -1,3 +1,4 @@
+import { hex } from "@scure/base";
 import { collectUtxos } from "../../repositories/walletRepository";
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
 import {
@@ -15,6 +16,7 @@ import type {
     PathSelection,
     WatchedScript,
 } from "../../contracts";
+import { isRecoveryOnlyContract } from "../../contracts";
 import type {
     ContractSyncState,
     CreateContractParams,
@@ -72,7 +74,7 @@ import type {
     MigrationVtxoRef,
     RenewVtxosOptions,
 } from "../vtxo-manager";
-import type { SignerStatus } from "../signerRotation";
+import { type SignerStatus, toXOnlySignerHex } from "../signerRotation";
 import { MessageHandler, RequestEnvelope, ResponseEnvelope } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
@@ -399,11 +401,20 @@ export type RequestUpdateContract = RequestEnvelope & {
     payload: {
         script: string;
         updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        /**
+         * Set only by the proxy's `setContractWatchState`, so the worker keeps its
+         * unchanged-state no-op. A worker predating the flag ignores it and writes.
+         */
+        watchStateOnly?: boolean;
     };
 };
 export type ResponseUpdateContract = ResponseEnvelope & {
     type: "CONTRACT_UPDATED";
     payload: { contract: Contract };
+};
+/** Answers a `watchStateOnly` update; carries no row, so nothing is re-read. */
+export type ResponseContractWatchStateSet = ResponseEnvelope & {
+    type: "CONTRACT_WATCH_STATE_SET";
 };
 
 export type RequestDeleteContract = RequestEnvelope & {
@@ -557,6 +568,8 @@ export type RequestSend = RequestEnvelope & {
         recipients: [Recipient, ...Recipient[]];
         /** @see SendParams.selectedVtxos */
         selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
     };
 };
 export type RequestSendWithDeadline = RequestEnvelope & {
@@ -564,6 +577,8 @@ export type RequestSendWithDeadline = RequestEnvelope & {
     payload: {
         recipients: [Recipient, ...Recipient[]];
         selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
         validUntil: number;
     };
 };
@@ -572,6 +587,8 @@ export type RequestSendWithInputExpiryFloor = RequestEnvelope & {
     payload: {
         recipients: [Recipient, ...Recipient[]];
         selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
         inputExpiryFloor: InputExpiryFloor;
         validUntil?: number;
     };
@@ -961,6 +978,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetWatchedScripts
         | ResponseAnnotateVtxos
         | ResponseUpdateContract
+        | ResponseContractWatchStateSet
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
@@ -1455,10 +1473,12 @@ export class WalletMessageHandler
                 }
                 case "UPDATE_CONTRACT": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const contract = await manager.updateContract(
-                        message.payload.script,
-                        message.payload.updates,
-                    );
+                    const { script, updates, watchStateOnly } = message.payload;
+                    if (watchStateOnly && updates.watch) {
+                        await manager.setContractWatchState(script, updates.watch);
+                        return this.tagged({ id, type: "CONTRACT_WATCH_STATE_SET" });
+                    }
+                    const contract = await manager.updateContract(script, updates);
                     return this.tagged({
                         id,
                         type: "CONTRACT_UPDATED",
@@ -1602,13 +1622,14 @@ export class WalletMessageHandler
                 }
                 case "SEND": {
                     const wallet = this.requireWallet();
-                    const { recipients, selectedVtxos } = (message as RequestSend).payload;
+                    const { recipients, selectedVtxos, maxChangeFee } = (message as RequestSend)
+                        .payload;
                     // Object form only when the client asked for it: the
                     // variadic form is what every existing client sends, and
                     // routing it through `{ recipients }` regardless would put
                     // a behaviour change behind a protocol field nobody set.
-                    const txid = await (selectedVtxos
-                        ? wallet.send({ recipients, selectedVtxos })
+                    const txid = await (selectedVtxos || maxChangeFee !== undefined
+                        ? wallet.send({ recipients, selectedVtxos, maxChangeFee })
                         : wallet.send(...recipients));
                     return this.tagged({
                         id,
@@ -1622,6 +1643,7 @@ export class WalletMessageHandler
                     const {
                         recipients,
                         selectedVtxos,
+                        maxChangeFee,
                         validUntil: wireDeadline,
                     } = (message as RequestSendWithDeadline | RequestSendWithInputExpiryFloor)
                         .payload;
@@ -1641,6 +1663,7 @@ export class WalletMessageHandler
                         const txid = await wallet.send({
                             recipients,
                             ...(selectedVtxos ? { selectedVtxos } : {}),
+                            ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
                             validUntil,
                             ...(inputExpiryFloor ? { inputExpiryFloor } : {}),
                         });
@@ -2079,22 +2102,25 @@ export class WalletMessageHandler
             return;
         }
 
-        // Fetch boarding inputs across the full boarding-address set (current +
-        // historical rotated; plan §6-IV.2). Fetch FIRST: getBoardingUtxos
-        // re-fetches each boarding address from the onchain provider and saves
-        // it, so a transient failure throws here before we touch the cache and
-        // the previous snapshot survives (offline-first). saveUtxos merges, so
-        // only once the fetch succeeds do we prune spent coins the merge would
-        // otherwise keep — per address, mirroring updateDbAfterSettle.
-        const boardingAddresses = await this.readonlyWallet.getBoardingAddresses();
-        const fresh = await this.readonlyWallet.getBoardingUtxos();
-        const freshKeys = new Set(fresh.map((u) => `${u.txid}:${u.vout}`));
-        for (const addr of boardingAddresses) {
-            const cached = await collectUtxos(this.walletRepository, addr);
-            const kept = cached.filter((u) => freshKeys.has(`${u.txid}:${u.vout}`));
-            if (kept.length === cached.length) continue; // nothing stale
-            await this.walletRepository.deleteUtxos(addr);
-            if (kept.length > 0) await this.walletRepository.saveUtxos(addr, kept);
+        // Fetch only current-signer boarding inputs, as getBoardingUtxos does. Keep the
+        // groups so cleanup covers exactly the fetched addresses, including empty ones.
+        const wallet = this.readonlyWallet;
+        const repository = this.walletRepository;
+        const currentSigner = toXOnlySignerHex(
+            hex.encode(wallet.boardingTapscript.options.serverPubKey),
+        );
+        const groups = await wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
+
+        // The fetch saves before returning: if fetching or that save fails, leave the
+        // previous snapshot intact. saveUtxos merges, so prune stale rows afterward.
+        for (const { tapscript, coins } of groups) {
+            const address = tapscript.onchainAddress(wallet.network);
+            const freshKeys = new Set(coins.map((coin) => `${coin.txid}:${coin.vout}`));
+            const cached = await collectUtxos(repository, address);
+            const kept = cached.filter((coin) => freshKeys.has(`${coin.txid}:${coin.vout}`));
+            if (kept.length === cached.length) continue;
+            await repository.deleteUtxos(address);
+            if (kept.length > 0) await repository.saveUtxos(address, kept);
         }
 
         // Build transaction history from cached virtual outputs (no indexer call)
@@ -2239,9 +2265,18 @@ export class WalletMessageHandler
     /**
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
+     *
+     * Recovery-only contracts (imported by `claimCash` for server-swept
+     * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
+     * they are settled in their own isolated intent and must stay out of the
+     * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
+     * The transaction-history caller opts back in via `includeRecoveryOnly` to
+     * match the non-worker `getTransactionHistory`, which reads contracts
+     * directly and does include them.
      */
     private async getVtxosFromRepo(options?: {
         unspentOnly?: boolean;
+        includeRecoveryOnly?: boolean;
     }): Promise<NormalizedExtendedVirtualCoin[]> {
         return (await this.repoSnapshot(options)).vtxos;
     }
@@ -2258,8 +2293,13 @@ export class WalletMessageHandler
      * VTXOs with no matching row in the gate, and `gatedContracts` lists only
      * what it knows is closed — so the coins of a just-registered escrowed
      * contract would count as available until the next poll.
+     *
+     * Recovery-only contracts are skipped unless `includeRecoveryOnly` (see
+     * {@link getVtxosFromRepo}).
      */
-    private async repoSnapshot(options?: { unspentOnly?: boolean }): Promise<{
+    private async repoSnapshot(
+        options: { unspentOnly?: boolean; includeRecoveryOnly?: boolean } = {},
+    ): Promise<{
         // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
         // and the gate and signer classification only read `contract`/`vtxos`.
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
@@ -2290,6 +2330,7 @@ export class WalletMessageHandler
         const contracts = await manager.getContracts();
         const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
         for (const contract of contracts) {
+            if (!options.includeRecoveryOnly && isRecoveryOnlyContract(contract)) continue;
             snapshot.push({
                 contract,
                 vtxos: addVtxos(
@@ -2342,7 +2383,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) return null;
 
         const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
-            this.repoSnapshot(),
+            this.repoSnapshot({ includeRecoveryOnly: true }),
             this.readonlyWallet.getBoardingTxs(),
         ]);
 

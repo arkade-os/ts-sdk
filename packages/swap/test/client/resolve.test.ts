@@ -170,11 +170,20 @@ describe("the corridor pair", () => {
         });
     });
 
-    it("refuses onchain -> arkade, and says why it is missing", async () => {
+    it("resolves onchain -> arkade, leaving the give leg's instrument to the quote", async () => {
         const { client } = await withCards();
-        await expect(
-            client.resolve({ via: "onchain", amount: 100_000n, amountOn: "give" }),
-        ).rejects.toThrow(/L1 refund path/);
+        const resolution = await client.resolve({
+            via: "onchain",
+            amount: 100_000n,
+            amountOn: "give",
+        });
+        expect(resolution.give).toMatchObject({ corridor: "onchain" });
+        // The HTLC address is the solver's to bind, so only the quote can mint it.
+        expect(resolution.give.instrument).toBeUndefined();
+        expect(resolution.take).toMatchObject({
+            corridor: "arkade",
+            instrument: { kind: "wallet" },
+        });
     });
 
     it("refuses `via: arkade`, which names the wallet's own side", async () => {

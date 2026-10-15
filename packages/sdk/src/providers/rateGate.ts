@@ -17,6 +17,8 @@
  *   application level, so a certain missed round beats a possible `429`.
  */
 
+import { assertNonNegativeMs, MAX_TIMER_MS } from "../utils/time";
+
 /** Per-origin in-flight cap on the wait+report path (the browser per-host cap). */
 const DEFAULT_MAX_CONCURRENT = 6;
 
@@ -45,7 +47,8 @@ interface OriginState {
     queue: (() => void)[];
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, Math.min(ms, MAX_TIMER_MS)));
 
 /**
  * Parse a `Retry-After` header into milliseconds, in either spec encoding
@@ -99,6 +102,9 @@ export class OriginRateGate {
     private readonly jitterMs: number;
 
     constructor(options?: RateGateOptions) {
+        assertNonNegativeMs("defaultCooldownMs", options?.defaultCooldownMs);
+        assertNonNegativeMs("maxCooldownMs", options?.maxCooldownMs);
+        assertNonNegativeMs("jitterMs", options?.jitterMs);
         this.maxConcurrent = options?.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
         this.defaultCooldownMs = options?.defaultCooldownMs ?? DEFAULT_COOLDOWN_MS;
         this.maxCooldownMs = options?.maxCooldownMs ?? MAX_COOLDOWN_MS;

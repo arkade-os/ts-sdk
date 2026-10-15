@@ -78,6 +78,9 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
         async getVtxos() {
             return { vtxos: [] as any[] };
         },
+        async getVirtualTxs() {
+            return { txs: [] as string[] };
+        },
     };
     const emulator: EmulatorProvider = {
         async getInfo(): Promise<EmulatorInfo> {

@@ -11,6 +11,7 @@ import {
     type ScriptVtxoCursor,
     type StoredVtxo,
     type ScriptVtxoPageOptions,
+    utxoEntries,
 } from "../walletRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import {
@@ -211,10 +212,17 @@ export class RealmWalletRepository implements WalletRepository {
         return { items: result.items.map((row) => row.item), nextCursor: result.nextCursor };
     }
 
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+    async saveUtxos(
+        addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+        utxos?: ExtendedCoin[],
+    ): Promise<void> {
         await this.ensureInit();
+        const rows = utxoEntries(addressOrBatch, utxos).flatMap(([address, list]) =>
+            list.map((utxo) => ({ address, utxo })),
+        );
+        if (rows.length === 0) return;
         this.realm.write(() => {
-            for (const utxo of utxos) {
+            for (const { address, utxo } of rows) {
                 const s = serializeUtxo(utxo);
                 this.realm.create(
                     "ArkUtxo",

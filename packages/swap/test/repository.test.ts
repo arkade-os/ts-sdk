@@ -148,16 +148,22 @@ describe.each(backends)("AssetSwapRepository (%s)", (_, create) => {
             await repository.saveSwap(swap(id));
             await repository.saveSwapRecord(swapRecord(id));
         }
-        const pages = [
-            [repository.getAssetSwapsPage.bind(repository), (row: AssetSwap) => row.id],
-            [repository.getSwapRecordsPage.bind(repository), (row: CorridorSwapRecord) => row.id],
-        ] as const;
+        type Page = { items: { id: string }[]; nextCursor?: string };
+        const pages: Array<
+            [
+                (opts: { limit: number; after?: string }) => Promise<Page>,
+                (row: { id: string }) => string,
+            ]
+        > = [
+            [repository.getAssetSwapsPage.bind(repository), (row) => row.id],
+            [repository.getSwapRecordsPage.bind(repository), (row) => row.id],
+        ];
         for (const [read, idOf] of pages) {
             const first = await read({ limit: 2 });
-            expect(first.items.map(idOf as (row: never) => string)).toEqual(["B", "a"]);
+            expect(first.items.map(idOf)).toEqual(["B", "a"]);
             expect(first.nextCursor).toBe("a");
             const second = await read({ limit: 2, after: first.nextCursor });
-            expect(second.items.map(idOf as (row: never) => string)).toEqual(["b"]);
+            expect(second.items.map(idOf)).toEqual(["b"]);
             expect(second.nextCursor).toBeUndefined();
             await expect(read({ limit: 0 })).rejects.toThrow(RangeError);
         }
@@ -724,7 +730,7 @@ describe("IndexedDB migrations", () => {
             const open = indexedDB.open(dbName);
             open.onsuccess = () => {
                 const db = open.result;
-                resolve([...db.transaction("rfqSwaps").objectStore("rfqSwaps").indexNames]);
+                resolve(Array.from(db.transaction("rfqSwaps").objectStore("rfqSwaps").indexNames));
                 db.close();
             };
             open.onerror = () => reject(open.error);

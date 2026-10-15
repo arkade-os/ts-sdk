@@ -263,6 +263,52 @@ describe("HD look-ahead band composition", () => {
         expect(indexer.getVtxosCalls).toHaveLength(fetchesBeforeDispose);
         expect(await collectContracts(contractRepository, {})).toEqual([]);
     });
+
+    it("settles dispose() only once a drain in flight has unwound", async () => {
+        const provider = await makeHdProviderForTest();
+        let current = -1;
+        let release: (() => void) | undefined;
+        const manager = await ContractManager.create({
+            indexerProvider: makeMockIndexer(new Set()),
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: new InMemoryWalletRepository(),
+            watcherConfig: { failsafePollIntervalMs: 100_000, reconnectDelayMs: 100_000 },
+            lookAhead: {
+                size,
+                currentWatermark: async () => {
+                    if (current >= 0 && !release) {
+                        await new Promise<void>((resolve) => {
+                            release = resolve;
+                        });
+                    }
+                    return current;
+                },
+                materialize: (index) => provider.materializeDescriptorAt(index),
+                candidateDeps: () => ({
+                    network: { hrp: "tark" },
+                    serverPubKey: SERVER_A,
+                    csvTimelocks: [TL_A],
+                }),
+                advanceWatermark: async (index) => {
+                    current = index;
+                },
+            },
+        });
+
+        await manager.advanceSigningDescriptorWatermark(5);
+        expect(release).toBeDefined();
+
+        let disposed = false;
+        const disposing = manager.dispose().then(() => {
+            disposed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(disposed).toBe(false);
+
+        release!();
+        await disposing;
+        expect(disposed).toBe(true);
+    });
 });
 
 describe("Wallet HD look-ahead", () => {
@@ -298,6 +344,32 @@ describe("Wallet HD look-ahead", () => {
             expect(rows).toHaveLength(1);
             expect(rows[0].type).toBe("default");
             expect(rows[0].metadata?.source).not.toBe(WALLET_RECEIVE_SOURCE);
+            expect((await wallet.getBalance()).total).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("survives an HD provider handed in keyring-wrapped as walletMode", async () => {
+        const probe = await makeHdWalletForTest();
+        const issued = defaultScriptHex(
+            probe.hdProvider.materializeDescriptorAt(1),
+            probe.wallet.offchainTapscript.options.serverPubKey,
+            probe.wallet.offchainTapscript.options.csvTimelock!,
+        );
+        await probe.wallet.dispose();
+
+        // The keyring forwards duck-typed capabilities but not its base's
+        // class, so an `instanceof HDDescriptorProvider` that skips the
+        // unwrap silently drops the band and the payment never lands.
+        const { wallet, contractRepository } = await makeHdWalletForTest(
+            new Set([issued]),
+            new Set(),
+            { wrapInKeyring: true },
+        );
+        try {
+            const rows = await collectContracts(contractRepository, { script: [issued] });
+            expect(rows).toHaveLength(1);
             expect((await wallet.getBalance()).total).toBeGreaterThan(0);
         } finally {
             await wallet.dispose();

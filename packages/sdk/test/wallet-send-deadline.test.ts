@@ -45,7 +45,6 @@ async function makeWallet() {
     const walletRepository = new InMemoryWalletRepository();
     const wallet = await Wallet.create({
         identity: signer,
-        arkServerUrl: "http://localhost:7070",
         storage: {
             walletRepository,
             contractRepository: new InMemoryContractRepository(),
@@ -61,7 +60,6 @@ function coin(wallet: Wallet): ExtendedVirtualCoin {
         vout: 0,
         value: 50_000,
         status: { confirmed: true },
-        virtualStatus: { state: "settled" },
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
@@ -76,7 +74,11 @@ function coin(wallet: Wallet): ExtendedVirtualCoin {
     };
 }
 
-function sendParams(wallet: Wallet, validUntil: unknown, selectedVtxos = [{} as never]) {
+function sendParams(
+    wallet: Wallet,
+    validUntil: unknown,
+    selectedVtxos: ExtendedVirtualCoin[] = [{} as never],
+) {
     return {
         recipients: [{ address: wallet.arkAddress.encode(), amount: 2000 }],
         selectedVtxos,
@@ -312,11 +314,14 @@ describe("Wallet.send validUntil", () => {
         const { wallet } = await makeWallet();
         const send = vi.spyOn(wallet, "send");
         const { page, worker, handler } = deadlinePage(wallet);
-        vi.spyOn(handler, "handleMessage").mockImplementation(async (request) => ({
-            id: request.id,
-            tag: request.tag,
-            error: new Error(`Unsupported message type: ${request.type}`),
-        }));
+        vi.spyOn(handler, "handleMessage").mockImplementation(
+            async (request) =>
+                ({
+                    id: request.id,
+                    tag: request.tag,
+                    error: new Error(`Unsupported message type: ${request.type}`),
+                }) as never,
+        );
         try {
             const error = await page
                 .send(sendParams(wallet, 1_700_000_001, [coin(wallet)]))
