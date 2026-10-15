@@ -25,11 +25,9 @@
             "arkade": {
                 "inputs": [],
                 "asm": [
-                    "<wantAmount>",
-                    "<makerWP>",
                     "0",
                     "OP_INSPECTOUTPUTVALUE",
-                    "OP_ROT",
+                    "<wantAmount>",
                     "OP_GREATERTHANOREQUAL",
                     "OP_VERIFY",
                     "0",
@@ -40,7 +38,7 @@
                     "0",
                     "OP_INSPECTOUTPUTSCRIPTPUBKEY",
                     "OP_DROP",
-                    "OP_SWAP",
+                    "<makerWP>",
                     "OP_EQUAL"
                 ]
             },
@@ -133,5 +131,5 @@
             "optimize": true
         }
     },
-    "fingerprint": "sha256:5182cac3cbf96e0d9450bb8ce0c4a68f55cbb6b432232799aa0d8d86650943cd"
+    "fingerprint": "sha256:dfb2de25218f256ee2b39669f1942ebe680c1309952c1f548687f41daaf43646"
 }

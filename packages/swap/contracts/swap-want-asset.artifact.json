@@ -29,18 +29,12 @@
             "arkade": {
                 "inputs": [],
                 "asm": [
-                    "<wantAssetGroupIndex>",
-                    "<wantAssetTxid>",
-                    "<wantAmount>",
-                    "<makerWP>",
                     "0",
-                    "OP_3",
-                    "OP_ROLL",
-                    "OP_4",
-                    "OP_ROLL",
+                    "<wantAssetTxid>",
+                    "<wantAssetGroupIndex>",
                     "OP_INSPECTOUTASSETLOOKUP",
                     "OP_VERIFY",
-                    "OP_ROT",
+                    "<wantAmount>",
                     "OP_GREATERTHANOREQUAL",
                     "OP_VERIFY",
                     "0",
@@ -51,7 +45,7 @@
                     "0",
                     "OP_INSPECTOUTPUTSCRIPTPUBKEY",
                     "OP_DROP",
-                    "OP_SWAP",
+                    "<makerWP>",
                     "OP_EQUAL"
                 ]
             },
@@ -122,5 +116,5 @@
             "optimize": true
         }
     },
-    "fingerprint": "sha256:68af9b210e4f95b2b39582802f76e1a7ba5387474cd4d0559c54e0132b85dc10"
+    "fingerprint": "sha256:cf1107cd913be5f131ce15fd78aba2a69cc5ba9714c6181f6616d2b7faab6d2d"
 }

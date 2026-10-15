@@ -4,9 +4,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const COMPILER_REVISION = "7dbd2ac2da2cd78589b497a6b68a425d84180e8b";
+export const COMPILER_REVISION = "58f9895ac0acd0faf84d3eda4ed4b9957c97c8d7";
 export const ENGINE_REVISION = "ce7fc1eafe3f406cd1eb2670f23912922fd0db97";
-const manualBaseline = "a3ddefb00ba0a5411acc4d8c5c4b60b89058e739";
+const manualBaseline = "57512284f5e2c4c6c37737c03cd1775cf5c2d639";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const scratch = resolve(root, ".tmp/compiler-comparison");
 const args = process.argv.slice(2);

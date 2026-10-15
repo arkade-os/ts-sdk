@@ -1,11 +1,11 @@
 {
     "compiler": {
         "repository": "https://github.com/arkade-os/compiler",
-        "revision": "7dbd2ac2da2cd78589b497a6b68a425d84180e8b",
+        "revision": "58f9895ac0acd0faf84d3eda4ed4b9957c97c8d7",
         "locked": true
     },
     "engineRevision": "ce7fc1eafe3f406cd1eb2670f23912922fd0db97",
-    "manualBaseline": "a3ddefb00ba0a5411acc4d8c5c4b60b89058e739",
+    "manualBaseline": "57512284f5e2c4c6c37737c03cd1775cf5c2d639",
     "manualInputs": [
         {
             "path": "packages/sdk/src/script/vhtlc.ts",
@@ -25,7 +25,7 @@
         },
         {
             "path": "packages/sdk/src/arkade/program.ts",
-            "sha256": "09f285b6785fe00daa6a2c70454b2d25ca0232753588dacb3a22f9680437e7ef"
+            "sha256": "dacd094bd0f96f44d467f22b74d4365afa90f8f945a6f6d4289caa0287894f4f"
         },
         {
             "path": "packages/sdk/src/arkade/script.ts",
@@ -33,7 +33,7 @@
         },
         {
             "path": "packages/sdk/src/arkade/opcodes.ts",
-            "sha256": "533ed889fa414eadefdb766a14151a4d789d3ce273321a1d4104ee18637ff620"
+            "sha256": "f69993b2f1f3c57bb2fc3f020f6c42ec32d5b9a7edc12f951274c864b2a856b6"
         },
         {
             "path": "packages/sdk/src/arkade/tweak.ts",
@@ -41,7 +41,7 @@
         },
         {
             "path": "packages/sdk/src/utils/timelock.ts",
-            "sha256": "8924f61280f4b521307b2208b86fb7432acf962ba4bbbfd8b5e395357b805e68"
+            "sha256": "2dc8b41fb8e41f66074c66344cfb7cde019ea11c3e8ce2cdce95972d1483ed89"
         },
         {
             "path": "packages/swap/src/offer.ts",
@@ -63,56 +63,56 @@
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v1.ark",
             "sourceSha256": "2f1c74689b01a5ba19796700d5b05ef953f9b437a1c52e597e9f8e0a60c7acdb",
             "artifact": "packages/sdk/contracts/vhtlc/payout-asset-v1.artifact.json",
-            "artifactSha256": "c4bf87e100691bed0fb6b0038d75f616faaf7d611dd06044d8d124ee15d26453",
+            "artifactSha256": "4c4a74c3d9c5006011e7cc732c86db9b2bf66ece6648f4369bdce66b7b0715f7",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v1.ark",
             "sourceSha256": "2f1c74689b01a5ba19796700d5b05ef953f9b437a1c52e597e9f8e0a60c7acdb",
             "artifact": "packages/sdk/contracts/vhtlc/payout-asset-v1.unoptimized.artifact.json",
-            "artifactSha256": "91a5521688ad67b26b2718cc2f27f34271c5e128d756f8b35742dfdf21c76f3c",
+            "artifactSha256": "16a379a72c6f4c32c8d27260d0d10cd668698f33b227bf39bfd40dfa92edade0",
             "optimize": false
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.ark",
             "sourceSha256": "802a7d0842aa1b9ec0d567098271238a0c56d52acdf0d27fdb8fb9344e1dcf16",
             "artifact": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.artifact.json",
-            "artifactSha256": "bb6f24eb2bf7cc0f31420eea2b9b638a1dd731ec9dcaf963705497d847c5cb39",
+            "artifactSha256": "e860494e315d3b6e694ef26918daafd679e769a9b9240d46f1b66967930c1021",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.ark",
             "sourceSha256": "802a7d0842aa1b9ec0d567098271238a0c56d52acdf0d27fdb8fb9344e1dcf16",
             "artifact": "packages/sdk/contracts/vhtlc/payout-asset-v2-candidate.unoptimized.artifact.json",
-            "artifactSha256": "df2b8528053cc9f8f7a2516afe5b5c14f83b48f92003b6b9d4ccd9aa6ff240a2",
+            "artifactSha256": "24d650e6bd61902ecd99554db287dce0a519c1cdd455be221de2b779c8dea2b1",
             "optimize": false
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v1.ark",
             "sourceSha256": "3fd135cec943f65946c0b64f84e3e4b4bb391ad9b556893f60d84dd4d0e78db2",
             "artifact": "packages/sdk/contracts/vhtlc/payout-btc-v1.artifact.json",
-            "artifactSha256": "428a17be7ec6c5187d99b4ad9314d708bc434870ffb24db30f66b2b406aa1397",
+            "artifactSha256": "08580fc12b7117c126e6b50e937a8ce5c8fd5a1cfe8aa371ac6f9394930ab392",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v1.ark",
             "sourceSha256": "3fd135cec943f65946c0b64f84e3e4b4bb391ad9b556893f60d84dd4d0e78db2",
             "artifact": "packages/sdk/contracts/vhtlc/payout-btc-v1.unoptimized.artifact.json",
-            "artifactSha256": "e28843c8f81b8c89c921166a3940e6a2241f4e52ec1b32d5799aa6ab6f8d07a5",
+            "artifactSha256": "60b1325e7b2216bde8a2db6485689b0569d03a83c18a20cb36ef3e1cdf96e320",
             "optimize": false
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.ark",
             "sourceSha256": "6cd579e90aaf8584ae9fd2713cb97355fc36ca5d95c238ab60bc0302df7c156a",
             "artifact": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.artifact.json",
-            "artifactSha256": "1f9e0ad0a8d009407c77b8dce1db1c77ca2dcc90ab8f4899b8d0c4141219fb07",
+            "artifactSha256": "ac902845aa6eea565304c9b007ba6cb49507141b9e619f1e79c14262e85864d7",
             "optimize": true
         },
         {
             "source": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.ark",
             "sourceSha256": "6cd579e90aaf8584ae9fd2713cb97355fc36ca5d95c238ab60bc0302df7c156a",
             "artifact": "packages/sdk/contracts/vhtlc/payout-btc-v2-candidate.unoptimized.artifact.json",
-            "artifactSha256": "1f1e343d96dd5047f9c22cb509cfed4c94a94bc33aad36da3fef375481935f20",
+            "artifactSha256": "385c36b94d6cdcb71805999dc93dd6a57871f9b1594dcdee2e7d09027dc53b06",
             "optimize": false
         },
         {
@@ -147,56 +147,56 @@
             "source": "packages/swap/contracts/swap-want-asset-with-exit.ark",
             "sourceSha256": "10d718b983de568a8cab1e01ddeafdca66168563c8fa4edcf30d6505a724c240",
             "artifact": "packages/swap/contracts/swap-want-asset-with-exit.artifact.json",
-            "artifactSha256": "f58722acf8e50acd405ae4aa53945dd3b4038c5160a71664f09a16e723b7e2a5",
+            "artifactSha256": "53977eadbfcf66e4fd5c4efe91f5211f24e59dcecf8122e2e51fb28b5b29b393",
             "optimize": true
         },
         {
             "source": "packages/swap/contracts/swap-want-asset-with-exit.ark",
             "sourceSha256": "10d718b983de568a8cab1e01ddeafdca66168563c8fa4edcf30d6505a724c240",
             "artifact": "packages/swap/contracts/swap-want-asset-with-exit.unoptimized.artifact.json",
-            "artifactSha256": "ad346aa7aea3f62222faa06babc749beab4bd6a81bf0398492e46627691a53dc",
+            "artifactSha256": "2212dc018dbbf3d947b5631792e26b1c31ac158a767dcdad2d37535a57b068b3",
             "optimize": false
         },
         {
             "source": "packages/swap/contracts/swap-want-asset.ark",
             "sourceSha256": "cd0f4fe4e891376e03b55cba827949e282de585684d2724f9adfbdf43b08ec9a",
             "artifact": "packages/swap/contracts/swap-want-asset.artifact.json",
-            "artifactSha256": "0c01a17acb1d69ecf452062ba462a7d71072b11e011cb32c438815331967a6e2",
+            "artifactSha256": "51a428221c003b597905280dc6ad651e40913f40bba6fa34259d53c2a5e52839",
             "optimize": true
         },
         {
             "source": "packages/swap/contracts/swap-want-asset.ark",
             "sourceSha256": "cd0f4fe4e891376e03b55cba827949e282de585684d2724f9adfbdf43b08ec9a",
             "artifact": "packages/swap/contracts/swap-want-asset.unoptimized.artifact.json",
-            "artifactSha256": "2662b51fd210117cc74d9561c5ab1acf31940c2112322972ebb841fb6e241208",
+            "artifactSha256": "33a17842a91ef9e96e741846fd915a9ac549222ef3de3b6e6302d416263d0677",
             "optimize": false
         },
         {
             "source": "packages/swap/contracts/swap-want-btc-with-exit.ark",
             "sourceSha256": "6f6b2c332fe9f4942d7a7ff9ce1f295fcce32753c4ccf2eb6fec4657b2a0e5b5",
             "artifact": "packages/swap/contracts/swap-want-btc-with-exit.artifact.json",
-            "artifactSha256": "32edeefea281aa7c72620d01b2eaf4c0ac689a0814e2f6a1ebbe524d3e7848fd",
+            "artifactSha256": "fc0c55e9d6583a996fa8727855b68103b414f83153cfe42d71846749610992ea",
             "optimize": true
         },
         {
             "source": "packages/swap/contracts/swap-want-btc-with-exit.ark",
             "sourceSha256": "6f6b2c332fe9f4942d7a7ff9ce1f295fcce32753c4ccf2eb6fec4657b2a0e5b5",
             "artifact": "packages/swap/contracts/swap-want-btc-with-exit.unoptimized.artifact.json",
-            "artifactSha256": "ce6efe291aa0236278794bac26bcc7aaaa88ef326237b5c3a70ab02995852827",
+            "artifactSha256": "18fb4ec0b76305ae3f1d3c8aebe85754a1254e0ce9b1e7a5aeae99b3a4ad83db",
             "optimize": false
         },
         {
             "source": "packages/swap/contracts/swap-want-btc.ark",
             "sourceSha256": "0ad98e5fcd7f6c0077cba6e431ceceaa36b365c58839e12b881d1106bc1fe51a",
             "artifact": "packages/swap/contracts/swap-want-btc.artifact.json",
-            "artifactSha256": "ce87529803a301f11cf0c539c8fcba78a387ae321a71d9113826d01f4708cdae",
+            "artifactSha256": "27e370bad6ea763867056de3736bad7fa35b75ac4c63bce54d100116006ed3b2",
             "optimize": true
         },
         {
             "source": "packages/swap/contracts/swap-want-btc.ark",
             "sourceSha256": "0ad98e5fcd7f6c0077cba6e431ceceaa36b365c58839e12b881d1106bc1fe51a",
             "artifact": "packages/swap/contracts/swap-want-btc.unoptimized.artifact.json",
-            "artifactSha256": "78c5fbd07fe31f99147cd0e45c69b8b13a42fa8caa01f4f3b5fedf65a43b51ec",
+            "artifactSha256": "7bcc12ad8d437240f1fb858100c9974db5a14e0764038e860d4fa6aa3ca3d8c4",
             "optimize": false
         }
     ]

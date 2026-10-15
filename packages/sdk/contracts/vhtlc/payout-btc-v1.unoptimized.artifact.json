@@ -29,7 +29,6 @@
             "arkade": {
                 "inputs": [],
                 "asm": [
-                    "<receiverProgram>",
                     "OP_PUSHCURRENTINPUTINDEX",
                     "OP_INSPECTOUTPUTSCRIPTPUBKEY",
                     "OP_NIP",
@@ -39,8 +38,7 @@
                     "OP_PUSHCURRENTINPUTINDEX",
                     "OP_INSPECTOUTPUTSCRIPTPUBKEY",
                     "OP_DROP",
-                    "OP_1",
-                    "OP_ROLL",
+                    "<receiverProgram>",
                     "OP_EQUAL",
                     "OP_VERIFY",
                     "OP_PUSHCURRENTINPUTINDEX",
@@ -92,7 +90,6 @@
             "arkade": {
                 "inputs": [],
                 "asm": [
-                    "<senderProgram>",
                     "OP_PUSHCURRENTINPUTINDEX",
                     "OP_INSPECTOUTPUTSCRIPTPUBKEY",
                     "OP_NIP",
@@ -102,8 +99,7 @@
                     "OP_PUSHCURRENTINPUTINDEX",
                     "OP_INSPECTOUTPUTSCRIPTPUBKEY",
                     "OP_DROP",
-                    "OP_1",
-                    "OP_ROLL",
+                    "<senderProgram>",
                     "OP_EQUAL",
                     "OP_VERIFY",
                     "OP_PUSHCURRENTINPUTINDEX",
@@ -188,5 +184,5 @@
             "optimize": false
         }
     },
-    "fingerprint": "sha256:1722327b96a37b3ceb68c51c4dcfe4e81ae9a7eb09e719e35ca3ce35ab888858"
+    "fingerprint": "sha256:944558a93e91db218dec7fcbdd036840d48a2937d523a0387d9ea83fae2aeac2"
 }
