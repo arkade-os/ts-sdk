@@ -807,6 +807,7 @@ export class ContractManager implements IContractManager {
             });
             this.inFlightEvents.add(handled);
             void handled.finally(() => this.inFlightEvents.delete(handled));
+            return handled;
         });
     }
 

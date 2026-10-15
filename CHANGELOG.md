@@ -386,6 +386,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **The failsafe poll no longer reports a just-spent coin as received
+  (#1083).** The stream updates the watcher at once, but the repository only
+  once the event's sync lands; a poll in that gap read the stale rows and
+  emitted the transaction inverted (the spent coin received, the new one
+  spent), then re-emitted both on the next tick. The poll now skips a contract
+  while a handler for its events is still running or settled during the read.
+  `ContractWatcher.startWatching` accepts a callback that returns a promise
+  for this, and `ContractManager` returns its handler's.
 - **`wallet.dispose()` waits for contract events still being handled.** It
   stopped the contract watcher but returned while an event handler could still
   be syncing, so that handler could write to storage the caller had already
