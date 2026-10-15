@@ -4,7 +4,7 @@
         "revision": "58f9895ac0acd0faf84d3eda4ed4b9957c97c8d7",
         "locked": true
     },
-    "manualBaseline": "57512284f5e2c4c6c37737c03cd1775cf5c2d639",
+    "manualBaseline": "a40748d0a08d00366c4aa0eb5046248987ac1b44",
     "measurement": "Script bytes and opcode counts, not complete transaction weight or semantic equivalence",
     "groups": [
         {

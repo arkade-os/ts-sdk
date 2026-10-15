@@ -9,6 +9,7 @@ import {
     SingleKey,
     VtxoScript,
     Extension,
+    UnknownPacket,
     Transaction,
     networks,
     getArkPsbtFields,
@@ -692,6 +693,58 @@ describe("ArkadeContract — extended features", () => {
         expect(ap!.groups[0].outputs[0].amount).toBe(330n);
         expect(ap!.groups[0].inputs[0].amount).toBe(330n);
         expect(ext!.getEmulatorPacket()).not.toBeNull(); // both packets in one extension
+    });
+
+    it("attaches a caller's packet alongside the emulator packet", async () => {
+        const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [COIN]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        const terms = new Uint8Array(40).fill(7);
+
+        await c.functions
+            .claim(new Uint8Array(32).fill(0x42))
+            .from(COIN)
+            .to(p2tr(receiver), AMOUNT)
+            .withPacket(new UnknownPacket(77, terms))
+            .send();
+
+        const ext = Extension.fromTx(Transaction.fromPSBT(base64.decode(captured.arkTx!)));
+        const packet = ext.getPackets().find((p) => p.type() === 77);
+        expect(packet?.serialize()).toEqual(terms);
+        expect(ext.getEmulatorPacket()).not.toBeNull();
+    });
+
+    it("refuses a caller's packet that reuses the emulator packet's type", async () => {
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+
+        await expect(
+            c.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(COIN)
+                .to(p2tr(receiver), AMOUNT)
+                .withPacket(new UnknownPacket(1, new Uint8Array(1)))
+                .build(),
+        ).rejects.toThrow("duplicate packet type 1");
     });
 
     it("builds a pure-tapscript contract without an emulator", async () => {

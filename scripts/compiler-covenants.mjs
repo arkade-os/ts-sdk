@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 export const COMPILER_REVISION = "58f9895ac0acd0faf84d3eda4ed4b9957c97c8d7";
 export const ENGINE_REVISION = "ce7fc1eafe3f406cd1eb2670f23912922fd0db97";
-const manualBaseline = "57512284f5e2c4c6c37737c03cd1775cf5c2d639";
+const manualBaseline = "a40748d0a08d00366c4aa0eb5046248987ac1b44";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const scratch = resolve(root, ".tmp/compiler-comparison");
 const args = process.argv.slice(2);

@@ -14,6 +14,14 @@ style and have not been backfilled.
 
 ### Added
 
+- **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
+  A covenant can read state the transaction carries — `tx.packet(type)` in the
+  spend itself, `tx.inputs[i].packet(type)` when the output is spent later —
+  but the builder only ever wrote the asset and emulator packets, so a
+  contract keeping its terms in a packet had to rebuild the extension output
+  by hand after `build()`. The caller's packet now joins those two in the one
+  extension output; a type either of them already uses is refused at build.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
@@ -52,6 +60,8 @@ style and have not been backfilled.
   exclusions, and the separate spendability-gated accessor are unchanged.
 
 ### Breaking Changes
+
+- Removed the deprecated `receivePkScriptFor` helper from `@arkade-os/swap/protocol`.
 
 - **Public offchain submissions share the wallet transaction lock.**
   `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
