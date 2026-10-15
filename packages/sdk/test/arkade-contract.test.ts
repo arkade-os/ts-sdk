@@ -399,6 +399,19 @@ describe("arkade.Arkade / ArkadeContract", () => {
         );
     });
 
+    it("checks inherited exit delays and persists the server value as an own binding", async () => {
+        const ark = await compilerClient(144n);
+        const args = Object.assign(Object.create({ SERVER_EXIT_DELAY: 10n }), {
+            server,
+            user: receiver,
+        });
+        expect(() => ark.contract(compilerExit(), args)).toThrow(/reserved SERVER_EXIT_DELAY/);
+        Object.getPrototypeOf(args).SERVER_EXIT_DELAY = 144n;
+        const contract = ark.contract(compilerExit(), args);
+        expect(Object.hasOwn(contract.args, "SERVER_EXIT_DELAY")).toBe(true);
+        expect(contract.args.SERVER_EXIT_DELAY).toBe(144n);
+    });
+
     it("refuses CSV offchain spends before querying coins", async () => {
         const ark = await compilerClient(144n);
         await expect(ark.contract(compilerExit()).functions.unilateral().build()).rejects.toThrow(

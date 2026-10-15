@@ -4,10 +4,12 @@ import { ScriptNum } from "@scure/btc-signer";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     arkade,
+    MultisigTapscript,
     CSVMultisigTapscript,
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
 } from "../src";
+import { validateTapscript } from "../src/arkade/program";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
@@ -425,7 +427,62 @@ describe("Type-directed persistence", () => {
     });
 });
 
-describe("parseArtifact — signer validation", () => {
+describe("parseArtifact — structural validation", () => {
+    it.each([[null], [42], [true], ["spend"], [[]]])("rejects function entry %j", (fn) => {
+        expect(() => arkade.parseArtifact({ functions: { spend: fn } })).toThrow(
+            /parseArtifact: function 'spend' must be an object/,
+        );
+    });
+
+    it.each([[null], [42], [true], ["spend"], [[]]])("rejects tapscript %j", (tapscript) => {
+        expect(() => arkade.parseArtifact({ functions: { spend: { tapscript } } })).toThrow(
+            /parseArtifact: function 'spend' tapscript must be an object/,
+        );
+    });
+
+    it.each(["params", "inputs", "signatures"] as const)(
+        "validates %s as an array of typed declarations",
+        (field) => {
+            for (const value of [null, "input", { name: "input", type: "bytes" }, ["input"]]) {
+                const artifact = {
+                    ...(field === "params" ? { params: value } : {}),
+                    functions: {
+                        spend: {
+                            ...(field === "inputs" ? { inputs: value } : {}),
+                            tapscript: {
+                                signers: [user],
+                                ...(field === "signatures" ? { signatures: value } : {}),
+                            },
+                        },
+                    },
+                };
+                expect(() => arkade.parseArtifact(artifact as never)).toThrow(
+                    /parseArtifact: .*typed.*declarations/,
+                );
+            }
+        },
+    );
+
+    it.each([-1, 0.5, NaN, Infinity, "0", null])(
+        "rejects emulator position %s at import and restore",
+        (emulatorIndex) => {
+            const artifact = {
+                version: 1,
+                functions: { spend: { tapscript: { signers: [user], emulatorIndex } } },
+            };
+            expect(() => arkade.parseArtifact(artifact)).toThrow(
+                /parseArtifact: function 'spend' has an invalid emulator position/,
+            );
+            expect(() =>
+                arkade.deserializeArkadeContractParams({
+                    program: JSON.stringify(artifact),
+                    args: "{}",
+                    serverKey: hex.encode(server),
+                }),
+            ).toThrow(/parseArtifact: function 'spend' has an invalid emulator position/);
+        },
+    );
+
     it.each([null, 42, true, { role: "oracle" }])(
         "rejects signer %j before compilation",
         (signer) => {
@@ -449,6 +506,42 @@ describe("parseArtifact — signer validation", () => {
             arkade.parseArtifact(JSON.parse(arkade.stringifyArtifact(program))).functions.exit
                 .tapscript.signers[0],
         ).toEqual(tweaked);
+    });
+});
+
+describe("Tapscript signer validation", () => {
+    it("rejects an empty signer list even with emulator metadata", () => {
+        expect(() => validateTapscript({ signers: [], emulatorIndex: 0 })).toThrow(
+            /at least one signer/,
+        );
+        expect(
+            () =>
+                new arkade.ArkadeProgramScript(
+                    {
+                        version: 1,
+                        functions: { spend: { tapscript: { signers: [], emulatorIndex: 0 } } },
+                    },
+                    {},
+                    keys,
+                ),
+        ).toThrow(/without an emulator/);
+    });
+
+    it("validates the resolved emulator signer when its position is omitted", () => {
+        const program: arkade.Program = {
+            version: 1,
+            functions: {
+                spend: { tapscript: { signers: [] }, arkadeScript: { asm: [1] } },
+            },
+        };
+        const script = new arkade.ArkadeProgramScript(program, {}, { ...keys, emulatorKey: user });
+        expect(script.compiled[0].leafScript).toEqual(
+            MultisigTapscript.encode({
+                pubkeys: [
+                    arkade.computeArkadeScriptPublicKey(user, script.compiled[0].arkadeScript!),
+                ],
+            }).script,
+        );
     });
 });
 
