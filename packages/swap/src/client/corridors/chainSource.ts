@@ -110,6 +110,19 @@ export const chainSourceOver = (
         async getMtp(): Promise<number> {
             return (await backend.tip()).mtp;
         },
+
+        async getTxStatus(txid: string): Promise<{ confirmed: boolean } | null> {
+            try {
+                return { confirmed: (await backend.provider.getTxStatus(txid)).confirmed };
+            } catch {
+                // The provider throws on the 404 an unknown txid answers with.
+                return null;
+            }
+        },
+
+        getFeeRate(): Promise<number | undefined> {
+            return backend.provider.getFeeRate();
+        },
     };
 };
 

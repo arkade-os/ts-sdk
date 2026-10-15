@@ -74,5 +74,17 @@ export const chainSourceFrom = (
         async getMtp(): Promise<number> {
             return (await provider.getChainTip()).time;
         },
+
+        async getTxStatus(txid: string): Promise<{ confirmed: boolean } | null> {
+            try {
+                return { confirmed: (await provider.getTxStatus(txid)).confirmed };
+            } catch {
+                return null;
+            }
+        },
+
+        getFeeRate(): Promise<number | undefined> {
+            return provider.getFeeRate();
+        },
     };
 };

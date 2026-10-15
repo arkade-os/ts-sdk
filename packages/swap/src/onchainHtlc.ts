@@ -29,6 +29,8 @@ export const ONCHAIN_ORDER_MARGIN_SECONDS = 2 * 60 * 60;
  * swap die and take the covenant refund — claiming into the counterparty's
  * live refund window risks losing the race AND publishing P. */
 export const ONCHAIN_CLAIM_MARGIN_SECONDS = 90 * 60;
+/** How long an unconfirmed claim is left alone before it is replaced at a higher fee. */
+export const ONCHAIN_CLAIM_BUMP_SECONDS = 20 * 60;
 /** Bounds on the confirmation depth a quote may demand. */
 export const MAX_MIN_CONFIRMATIONS = 6;
 /**
@@ -388,6 +390,37 @@ export interface ChainSource {
     broadcast(txHex: string): Promise<string>;
     /** Current median-time-past, unix seconds — gates refund broadcasting. */
     getMtp(): Promise<number>;
+    /** Whether `txid` is confirmed, `null` when the chain does not know it at all.
+     * **Optional, and an `arkade -> onchain` payout turns on it**: without it a mempool
+     * claim reads as a mined one, so such a swap still settles on the solver's Arkade
+     * claim alone — which its refund, replacing the claim, turns into a loss of both. */
+    getTxStatus?(txid: string): Promise<{ confirmed: boolean } | null>;
+    /** Current fee estimate, sat/vB. Optional. */
+    getFeeRate?(): Promise<number | undefined>;
+}
+
+/** The sat/vB the next claim is built at: the agreed rate for a first one, the last rate
+ * again for a re-publication, BIP125's floor over it for a `bump` — but never under a
+ * live estimate, since a risen mempool minimum is what drops a claim in the first place,
+ * and never past what leaves {@link ONCHAIN_DUST_SATS} at the payout. */
+export function nextClaimFeeRate(input: {
+    configuredSatVb: number;
+    utxoAmount: bigint;
+    estimateSatVb?: number;
+    lastSatVb?: number;
+    bump?: boolean;
+}): number {
+    const last = input.lastSatVb;
+    const estimate = Number.isFinite(input.estimateSatVb) ? (input.estimateSatVb as number) : 0;
+    const wanted =
+        last === undefined
+            ? Math.max(input.configuredSatVb, estimate)
+            : input.bump
+              ? Math.max(Math.ceil(last * 1.5), last + 1, estimate)
+              : Math.max(last, estimate);
+    // The PINNED vsize, which is rounded up, so the ceiling errs toward clearing dust.
+    const affordable = Number((input.utxoAmount - ONCHAIN_DUST_SATS) / BigInt(ONCHAIN_CLAIM_VSIZE));
+    return Math.max(last ?? input.configuredSatVb, Math.min(wanted, affordable));
 }
 
 /** Read P out of a claim spend's witness: the 32-byte item whose sha256 is the
@@ -448,10 +481,13 @@ export async function claimOnchainFill(
         sign: (sighash: Uint8Array) => Promise<Uint8Array>;
         /** Injected for tests; defaults to wall clock. */
         now?: number;
+        /** Re-publish a claim whose `P` is already public: the margin gate protects the
+         * preimage, and the refund leaf opening is when a replacement matters most. */
+        republish?: boolean;
     },
 ): Promise<{ txid: string; payoutAmount: bigint }> {
     const now = input.now ?? Math.floor(Date.now() / 1000);
-    if (input.htlc.refundLocktime - now < ONCHAIN_CLAIM_MARGIN_SECONDS) {
+    if (!input.republish && input.htlc.refundLocktime - now < ONCHAIN_CLAIM_MARGIN_SECONDS) {
         throw gateError(
             "claim_window_closed",
             "refund leaf opens too soon to claim safely — take the covenant refund instead",
