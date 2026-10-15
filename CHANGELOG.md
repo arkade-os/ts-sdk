@@ -56,6 +56,10 @@ style and have not been backfilled.
 - **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
   the ad it named; kind 38859 now carries the signed solver card, exported
   as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.
+- **`@arkade-os/swap`: `SnapshotRef.source` gains `"local"`.** It marks a
+  snapshot answered by pinned cards alone, while the registry is unreachable
+  and nothing is cached; such a snapshot carries no `registry`. Code with an
+  exhaustive `switch` on `source` must handle it.
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported
