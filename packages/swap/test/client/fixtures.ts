@@ -21,7 +21,13 @@ import {
     getNetwork,
     type IWallet,
 } from "@arkade-os/sdk";
-import { planOffer, type DiscoveredMarket, type NetworkIndex } from "@arkade-os/solver-discovery";
+import {
+    planOffer,
+    type DiscoveredMarket,
+    type IndexSolver,
+    type NetworkIndex,
+    type TransportCard,
+} from "@arkade-os/solver-discovery";
 import { offerContract } from "../../src/offer";
 import {
     LIGHTNING_RECEIVE_PAIR,
@@ -235,6 +241,47 @@ export const indexOf = (markets: DiscoveredMarket[]): NetworkIndex => ({
     commit: "0".repeat(40),
     markets: markets.map(({ source, sourceType, ...market }) => market),
 });
+
+const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+        ? value.map(canonical)
+        : value !== null && typeof value === "object"
+          ? Object.fromEntries(
+                Object.keys(value)
+                    .sort()
+                    .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
+            )
+          : value;
+
+/**
+ * A solver the registry lists by key alone, and the signed card it publishes on its own
+ * transport: its {@link lightningCard} market is reachable only if that card arrives.
+ */
+export const pointedSolver = (
+    name = "pointed",
+): { solver: IndexSolver; card: () => TransportCard; index: NetworkIndex } => {
+    const secretKey = schnorr.utils.randomSecretKey();
+    const pubkey = hex.encode(schnorr.getPublicKey(secretKey));
+    const transports = { nostr: { relays: ["wss://relay.example"] } };
+    const {
+        solver: _solver,
+        source: _source,
+        sourceType: _type,
+        discovery_pubkey: _key,
+        transports: _transports,
+        ...market
+    } = lightningCard;
+    const unsigned = { version: 0, name, discovery_pubkey: pubkey, transports, markets: [market] };
+    const digest = sha256(new TextEncoder().encode(JSON.stringify(canonical(unsigned))));
+    const signed = { ...unsigned, sig: hex.encode(schnorr.sign(digest, secretKey)) };
+    const solver = { name, discovery_pubkey: pubkey, transports };
+    return {
+        solver,
+        // created now, so discovery's card-age check passes at every read
+        card: () => ({ pubkey, createdAt: Math.floor(Date.now() / 1000), card: signed }),
+        index: { ...indexOf([]), solvers: [solver] },
+    };
+};
 
 /** A feed answering a fixed price, and a count of how often it was asked. */
 export const feedServing = (price = 100_000): { fetch: typeof fetch; calls: () => number } => {

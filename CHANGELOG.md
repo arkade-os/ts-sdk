@@ -53,6 +53,13 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
+  the ad it named; kind 38859 now carries the signed solver card, exported
+  as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.
+- **`@arkade-os/swap`: `SnapshotRef.source` gains `"local"`.** It marks a
+  snapshot answered by pinned cards alone, while the registry is unreachable
+  and nothing is cached; such a snapshot carries no `registry`. Code with an
+  exhaustive `switch` on `source` must handle it.
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported
@@ -347,9 +354,36 @@ style and have not been backfilled.
   listed under Breaking Changes above. The shape is exported as
   `ArkadeServerProvider`, so a caller building a derivation-only client
   has a name to import. (#734)
+- **`@arkade-os/swap`: markets come from the cards solvers publish.** A
+  registry can list a solver by key alone; its markets come from the signed
+  card it publishes over Nostr (kind 38859, `d` = network).
+  `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
+  default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
+  `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
+  with the newest card it has seen, still subject to the discovery client's
+  card-age limit. A listed solver whose card still fails to arrive (a fresh
+  process whose relay is slow or dead, or a caller's own fetcher) no longer
+  drops out: for up to two hours such an answer leaves the cache alone,
+  `discoverMarkets` and `watchMarkets` keep serving the solver's cached
+  markets, and the client, which never mixes cached cards into a live
+  snapshot, asks again after a minute meanwhile. A missing `nostr-tools`
+  peer is not a failed delivery. The markets cache lasts ten minutes, not an
+  hour, and `watchMarkets` (`@arkade-os/swap/protocol`) keeps a long-lived
+  view current. Needs `@arkade-os/solver-discovery` 0.3.0.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: one dead relay no longer kills a Node 22 process.**
+  nostr-tools 2.25 closes a socket from its `onerror`, and Node 22's
+  WebSocket re-fires `error` synchronously from `close()` on a connecting
+  socket; the recursion overflowed the stack. Both relay pools now use a
+  socket whose `close()` runs once.
+- **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
+  registry.** A local card always counts as answering, so a registry outage
+  replaced the cached markets with the pins alone. Only a registry answering
+  now replaces the cache. With nothing cached, the client still answers from
+  the pins, as a `source: "local"` snapshot that asks the registry again
+  after a minute rather than standing for the ten-minute TTL.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

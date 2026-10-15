@@ -272,6 +272,7 @@
         "verifyLockupAddress",
         "verifyOfferAddress",
         "verifyReceiveInvoice",
+        "watchMarkets",
         "watchOfferSwaps",
         "WatchOfferSwapsParams"
     ],

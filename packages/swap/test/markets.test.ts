@@ -10,11 +10,16 @@ import {
     discoverMarkets,
     findMarket,
     makeCachedFeedFetch,
+    MARKETS_CACHE_TTL_MS,
     QUOTE_OPTIONS,
     validatePlan,
 } from "../src/markets";
+import type { TransportCardFetcher } from "@arkade-os/solver-discovery";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { btcChf, btcUsd, CHF_ID, USD_ID, XAU_ID, xauUsd } from "./fixtures";
+import { pointedSolver } from "./client/fixtures";
+import { nostrCardFetcher } from "../src/nostr";
+import type { SimplePool } from "nostr-tools";
 
 const markets = [btcUsd, btcChf];
 
@@ -253,6 +258,23 @@ describe("discoverMarkets caching", () => {
         repository = new InMemoryAssetSwapRepository();
     });
 
+    it("answers from the cache, and keeps it, when only a pinned card answered", async () => {
+        await seedCache(Date.now() - 2 * MARKETS_CACHE_TTL_MS, [btcUsd]);
+        const { solver: _solver, source: _source, sourceType: _type, ...market } = btcChf;
+        const markets = await discoverMarkets({
+            network: "mutinynet",
+            registryUrl: REGISTRY_URL,
+            repository,
+            fetchImpl: jsonFetch([new Error("registry down")]),
+            localCards: [
+                { card: { version: 0, name: "pinned", markets: [market] }, network: "mutinynet" },
+            ],
+            transportCards: null,
+        });
+        expect(markets.map((m) => m.pair)).toEqual(["BTC/USD"]);
+        expect((await cache())?.markets.map((m) => m.pair)).toEqual(["BTC/USD"]);
+    });
+
     it("fetches on a cold start and caches the result", async () => {
         const fetchImpl = jsonFetch([registryIndex()]);
         const markets = await discoverWith(fetchImpl);
@@ -268,6 +290,18 @@ describe("discoverMarkets caching", () => {
         const markets = await discoverWith(fetchImpl);
         expect(markets).toHaveLength(1);
         expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("keeps a cache fresh for ten minutes, then refetches", async () => {
+        await seedCache(Date.now() - 9 * 60_000);
+        const fresh = jsonFetch([registryIndex()]);
+        await discoverWith(fresh);
+        expect(fresh).not.toHaveBeenCalled();
+
+        await seedCache(Date.now() - 11 * 60_000);
+        const aged = jsonFetch([registryIndex()]);
+        await discoverWith(aged);
+        expect(aged).toHaveBeenCalledTimes(1);
     });
 
     it("serves a fresh pairless CAIP-19 cache without fetching", async () => {
@@ -430,6 +464,75 @@ describe("discoverMarkets caching", () => {
         });
         expect(markets).toEqual([]);
         expect(fetchImpl).not.toHaveBeenCalled();
+    });
+});
+
+describe("discoverMarkets with a listed solver whose card did not arrive", () => {
+    const REGISTRY = "https://registry.example/regtest.json";
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+    let repository: InMemoryAssetSwapRepository;
+    beforeEach(() => {
+        repository = new InMemoryAssetSwapRepository();
+    });
+    const cache = () => repository.getCachedMarkets("regtest", REGISTRY);
+    const read = (index: unknown, transportCards: TransportCardFetcher) =>
+        discoverMarkets({
+            network: "regtest",
+            registryUrl: REGISTRY,
+            repository,
+            useCache: false,
+            fetchImpl: jsonFetch([index]),
+            transportCards,
+        });
+    const relayDown: TransportCardFetcher = {
+        fetch: async () => {
+            throw new Error("relay timed out");
+        },
+    };
+    const relaySilent: TransportCardFetcher = { fetch: async () => [] };
+
+    it.each([
+        ["fails", relayDown],
+        ["answers without it", relaySilent],
+    ])("keeps the solver, and leaves the cache alone, when the fetch %s", async (_how, fetcher) => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const before = await cache();
+        const markets = await read(pointed.index, fetcher);
+        expect(markets.map((m) => m.solver)).toEqual(["pointed"]);
+        expect(await cache()).toEqual(before);
+    });
+
+    // a fresh process: the fetcher has no earlier card to fill the miss with
+    it("keeps the solver when a fresh nostrCardFetcher's relay misses its card", async () => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const before = await cache();
+        const silentPool = {
+            subscribeMany: (_r: unknown, _f: unknown, params: { oneose?: () => void }) => {
+                queueMicrotask(() => params.oneose?.());
+                return { close: () => {} };
+            },
+            close: () => {},
+        };
+        const markets = await read(
+            pointed.index,
+            nostrCardFetcher({ pool: silentPool as unknown as SimplePool }),
+        );
+        expect(markets.map((m) => m.solver)).toEqual(["pointed"]);
+        expect(await cache()).toEqual(before);
+    });
+
+    it("lets the solver go once the cache is two hours old", async () => {
+        const pointed = pointedSolver();
+        await read(pointed.index, { fetch: async () => [pointed.card()] });
+        const entry = (await cache())!;
+        await repository.saveCachedMarkets("regtest", REGISTRY, {
+            ...entry,
+            fetchedAt: Date.now() - TWO_HOURS_MS,
+        });
+        expect(await read(pointed.index, relayDown)).toEqual([]);
+        expect((await cache())?.markets).toEqual([]);
     });
 });
 

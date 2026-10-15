@@ -11,7 +11,7 @@ import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { discoveryIndex, isUsableCard } from "../../src/client/discovery";
 import { DiscoverySnapshotUnavailable } from "../../src/client/errors";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
-import { indexOf, lightningCard, spotCard } from "./fixtures";
+import { indexOf, lightningCard, pointedSolver, spotCard } from "./fixtures";
 
 const REGISTRY = "https://registry.example/regtest.json";
 
@@ -118,6 +118,26 @@ describe("a reachable registry", () => {
         await index.load({ refresh: true });
         expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
+
+    it("refetches on use once the held snapshot is ten minutes old", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const fetchImpl = serving([lightningCard]);
+            const index = discoveryIndex({
+                network: "regtest",
+                config: { registryUrl: REGISTRY, fetchImpl },
+            });
+            await index.load();
+            vi.advanceTimersByTime(9 * 60_000);
+            await index.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(60_000);
+            await index.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("an unreachable registry with a cache behind it", () => {
@@ -139,6 +159,79 @@ describe("an unreachable registry with a cache behind it", () => {
         const snapshot = await index.load();
         expect(snapshot.markets).toHaveLength(1);
         expect(snapshot.ref).toMatchObject({ live: false, source: "cache" });
+    });
+
+    it("still resolves from the cache when only a pinned card answered", async () => {
+        const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
+        const index = discoveryIndex({
+            network: "regtest",
+            config: {
+                registryUrl: REGISTRY,
+                fetchImpl: failing(),
+                localCards: [
+                    { card: { version: 0, name: "pinned", markets: [market] }, network: "regtest" },
+                ],
+                transportCards: null,
+            },
+            repository: await cached(),
+        });
+        const snapshot = await index.load();
+        expect(snapshot.ref).toMatchObject({ live: false, source: "cache" });
+        expect(snapshot.markets).toHaveLength(1);
+    });
+
+    it("answers with the pins when the registry is down and nothing is cached", async () => {
+        const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
+        const index = discoveryIndex({
+            network: "regtest",
+            config: {
+                registryUrl: REGISTRY,
+                fetchImpl: failing(),
+                localCards: [
+                    { card: { version: 0, name: "pinned", markets: [market] }, network: "regtest" },
+                ],
+                transportCards: null,
+            },
+        });
+        const snapshot = await index.load();
+        expect(snapshot.markets.map((m) => m.solver)).toEqual(["pinned"]);
+        // trusted like config, but no registry served it
+        expect(snapshot.ref).toMatchObject({ live: true, source: "local" });
+        expect(snapshot.ref.registry).toBeUndefined();
+    });
+
+    it("asks the registry again a minute after the pins answered, not ten", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
+            const fetchImpl = serving([lightningCard]);
+            fetchImpl.mockRejectedValueOnce(new Error("registry unreachable"));
+            const index = discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl,
+                    localCards: [
+                        {
+                            card: { version: 0, name: "pinned", markets: [market] },
+                            network: "regtest",
+                        },
+                    ],
+                    transportCards: null,
+                },
+            });
+            expect((await index.load()).ref.source).toBe("local");
+            vi.advanceTimersByTime(59_000);
+            expect((await index.load()).ref.source).toBe("local");
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(1_000);
+            const recovered = await index.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+            expect(recovered.ref).toMatchObject({ live: true, source: "live", registry: REGISTRY });
+            expect(recovered.markets.map((m) => m.solver)).toContain(lightningCard.solver);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("is what `peek()` reads, without touching the network at all", async () => {
@@ -164,6 +257,111 @@ describe("an injected snapshot", () => {
         expect((await index.peek()).ref).toMatchObject({ live: true, source: "injected" });
         expect((await index.load()).markets).toEqual([lightningCard]);
         expect(fetchImpl).not.toHaveBeenCalled();
+    });
+});
+
+describe("a market resolved from a transport card", () => {
+    it("survives the cache round trip, read back while the registry is down", async () => {
+        const { card, index } = pointedSolver();
+        const repository = new InMemoryAssetSwapRepository();
+
+        const live = discoveryIndex({
+            network: "regtest",
+            config: {
+                registryUrl: REGISTRY,
+                fetchImpl: (async () =>
+                    new Response(JSON.stringify(index))) as unknown as typeof fetch,
+                transportCards: { fetch: async () => [card()] },
+            },
+            repository,
+        });
+        expect((await live.load()).markets.map((m) => [m.solver, m.sourceType])).toEqual([
+            ["pointed", "registry"],
+        ]);
+
+        const offline = discoveryIndex({
+            network: "regtest",
+            config: { registryUrl: REGISTRY, fetchImpl: failing(), transportCards: null },
+            repository,
+        });
+        const cached = await offline.load();
+        expect(cached.ref.source).toBe("cache");
+        expect(cached.markets.map((m) => m.solver)).toEqual(["pointed"]);
+    });
+
+    // retrying every minute would cost each quote() a card timeout for as long as it stays down
+    it("lets a solver whose card never arrived, and is not cached, wait for the TTL", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { index } = pointedSolver();
+            const fetchImpl = vi.fn(async () => new Response(JSON.stringify(index)));
+            const discovery = discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl: fetchImpl as unknown as typeof fetch,
+                    transportCards: { fetch: async () => [] },
+                },
+                repository: new InMemoryAssetSwapRepository(),
+            });
+            await discovery.load();
+            vi.advanceTimersByTime(9 * 60_000);
+            await discovery.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(60_000);
+            await discovery.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("holds what arrived, leaves the cache alone, and asks again a minute later", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { card, index } = pointedSolver();
+            const repository = new InMemoryAssetSwapRepository();
+            const registry = async () => new Response(JSON.stringify(index));
+            await discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl: registry as unknown as typeof fetch,
+                    transportCards: { fetch: async () => [card()] },
+                },
+                repository,
+            }).load();
+            const before = await repository.getCachedMarkets("regtest", REGISTRY);
+
+            const fetchImpl = vi.fn(registry);
+            const relayDown = discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl: fetchImpl as unknown as typeof fetch,
+                    transportCards: {
+                        fetch: async () => {
+                            throw new Error("relay timed out");
+                        },
+                    },
+                },
+                repository,
+            });
+            const snapshot = await relayDown.load();
+            // live, so a cached card, whose key is unvalidated, never joins it
+            expect(snapshot.ref).toMatchObject({ live: true, source: "live" });
+            expect(snapshot.markets).toEqual([]);
+            expect(await repository.getCachedMarkets("regtest", REGISTRY)).toEqual(before);
+
+            vi.advanceTimersByTime(59_000);
+            await relayDown.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(1_000);
+            await relayDown.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

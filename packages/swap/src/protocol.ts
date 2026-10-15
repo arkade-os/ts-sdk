@@ -65,6 +65,7 @@ export {
 export {
     discoverMarkets,
     type DiscoverMarketsOptions,
+    watchMarkets,
     findMarket,
     makeCachedFeedFetch,
     type PlanError,

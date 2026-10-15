@@ -22,9 +22,16 @@ import {
     type DiscoveredMarket,
     type LocalCardInput,
     type Network as IndexedNetwork,
+    type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import type { NetworkName } from "@arkade-os/sdk";
-import { MARKETS_CACHE_TTL_MS } from "../markets";
+import {
+    MARKETS_CACHE_TTL_MS,
+    registryAnswered,
+    trackDelivery,
+    transportCardsOf,
+    undeliveredCarry,
+} from "../markets";
 import type { AssetSwapRepository } from "../repository";
 import { marketAssetId } from "../marketShape";
 import { isIndexedNetwork } from "./aliases";
@@ -56,6 +63,8 @@ export interface DiscoveryConfig {
     readonly registryUrl?: string | null;
     /** Locally pinned solver cards, merged with the registry's. */
     readonly localCards?: readonly LocalCardInput[];
+    /** Reads listed solvers' own cards. Absent means Nostr (optional `nostr-tools` peer); `null` none. */
+    readonly transportCards?: TransportCardFetcher | null;
     /**
      * Markets to resolve against without touching the network. Trusted like config: an
      * injected snapshot can pin an RFQ responder, a cached one cannot.
@@ -165,6 +174,13 @@ export interface DiscoveryIndexInput {
 }
 
 /**
+ * How long a partial answer holds before the registry is asked again: pins answering for an
+ * unreachable registry, or a registry answer that missed the card of a solver the cache still
+ * holds.
+ */
+const DEGRADED_RETRY_MS = 60_000;
+
+/**
  * One client's view of the market index.
  *
  * Holds one snapshot until it ages out or a refresh is asked for, so a `resolve()` and
@@ -186,6 +202,8 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     };
 
     let held: DiscoverySnapshot | undefined;
+    /** Until when `load()` reuses a live `held` rather than asking the registry again. */
+    let revalidateAt = 0;
 
     const unavailable = (detail: string): never => {
         throw new DiscoverySnapshotUnavailable(input.network, detail);
@@ -237,8 +255,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
 
     const load = async (opts: { refresh?: boolean } = {}): Promise<DiscoverySnapshot> => {
         if (injected) return injected;
-        const fresh =
-            held?.ref.live === true && Date.now() - held.ref.fetchedAt < MARKETS_CACHE_TTL_MS;
+        const fresh = held?.ref.live === true && Date.now() < revalidateAt;
         if (fresh && !opts.refresh) return held as DiscoverySnapshot;
 
         const { network: indexed, registry: url } = sources();
@@ -247,23 +264,40 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
             return unavailable(whyUnavailable());
         }
 
+        const delivery = trackDelivery(transportCardsOf(config.transportCards));
         const result = await discover({
             registries: [url],
             localCards: [...(config.localCards ?? [])],
             network: indexed,
             fetchImpl: config.fetchImpl,
+            transportCards: delivery.fetcher,
         });
         if (result.warnings.length) config.logger?.("solver discovery:", ...result.warnings);
 
         // A registry answering with an empty index is authoritative about there being no
         // market, unlike one that did not answer.
-        if (result.sources.some((source) => source.ok)) {
+        if (registryAnswered(result.sources)) {
             const fetchedAt = Date.now();
+            // What arrived is held as is: a cached card's key is unvalidated, so the markets of a
+            // solver whose card did not arrive never join a live snapshot.
             held = {
                 markets: result.markets,
                 ref: { fetchedAt, live: true, source: "live", registry: url },
             };
-            if (input.repository) {
+            // Nor may it replace a cache that still holds such a solver's markets.
+            const undelivered = delivery.undelivered();
+            const keepsCache =
+                undelivered.size > 0 &&
+                input.repository !== undefined &&
+                undeliveredCarry(
+                    result.markets,
+                    undelivered,
+                    await readCache(input.repository, indexed, url),
+                ).length > 0;
+            // Retried soon only while the cache is kept for it, so within the carry window: a
+            // solver whose card never arrives otherwise waits out the TTL like any other gap.
+            revalidateAt = fetchedAt + (keepsCache ? DEGRADED_RETRY_MS : MARKETS_CACHE_TTL_MS);
+            if (input.repository && !keepsCache) {
                 try {
                     await input.repository.saveCachedMarkets(indexed, url, {
                         markets: result.markets,
@@ -280,6 +314,14 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
         if (cached) {
             held = cached;
             return cached;
+        }
+        // Nothing cached to prefer: the pins still answer, without replacing any cache, and
+        // only until the registry can be asked again.
+        if (result.markets.length > 0) {
+            const fetchedAt = Date.now();
+            held = { markets: result.markets, ref: { fetchedAt, live: true, source: "local" } };
+            revalidateAt = fetchedAt + DEGRADED_RETRY_MS;
+            return held;
         }
         return unavailable(whyUnavailable());
     };

@@ -525,6 +525,7 @@ describe("the @deprecated pointers", () => {
         "chainSourceFrom",
         "discoverMarkets",
         "DiscoverMarketsOptions",
+        "watchMarkets",
         "extractPreimage",
         "findMarket",
         "getAssetSwaps",
