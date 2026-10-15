@@ -183,31 +183,58 @@ describe("an unreachable registry with a cache behind it", () => {
         expect(snapshot.markets).toHaveLength(1);
     });
 
-    it("answers with the pins, as their own source, when the registry is down and nothing is cached", async () => {
+    it("answers with the pins when the registry is down and nothing is cached", async () => {
         const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
-        let up = false;
-        const fetchImpl = vi.fn(async () => {
-            if (!up) throw new Error("registry unreachable");
-            return new Response(JSON.stringify(indexOf([lightningCard])));
-        }) as unknown as typeof fetch;
         const index = discoveryIndex({
             network: "regtest",
             config: {
                 registryUrl: REGISTRY,
-                fetchImpl,
+                fetchImpl: failing(),
                 localCards: [
                     { card: { version: 0, name: "pinned", markets: [market] }, network: "regtest" },
                 ],
                 transportCards: null,
             },
         });
-        const pinsOnly = await index.load();
-        expect(pinsOnly.markets.map((m) => m.solver)).toEqual(["pinned"]);
-        expect(pinsOnly.ref).toMatchObject({ live: true, source: "local" });
-        expect(pinsOnly.ref.registry).toBeUndefined();
+        const snapshot = await index.load();
+        expect(snapshot.markets.map((m) => m.solver)).toEqual(["pinned"]);
+        // trusted like config, but no registry served it
+        expect(snapshot.ref).toMatchObject({ live: true, source: "local" });
+        expect(snapshot.ref.registry).toBeUndefined();
+    });
 
-        up = true;
-        expect((await index.load()).ref.source).toBe("live");
+    it("asks the registry again a minute after the pins answered, not ten", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const { solver: _solver, source: _source, sourceType: _type, ...market } = spotCard;
+            const fetchImpl = serving([lightningCard]);
+            fetchImpl.mockRejectedValueOnce(new Error("registry unreachable"));
+            const index = discoveryIndex({
+                network: "regtest",
+                config: {
+                    registryUrl: REGISTRY,
+                    fetchImpl,
+                    localCards: [
+                        {
+                            card: { version: 0, name: "pinned", markets: [market] },
+                            network: "regtest",
+                        },
+                    ],
+                    transportCards: null,
+                },
+            });
+            expect((await index.load()).ref.source).toBe("local");
+            vi.advanceTimersByTime(59_000);
+            expect((await index.load()).ref.source).toBe("local");
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(1_000);
+            const recovered = await index.load();
+            expect(fetchImpl).toHaveBeenCalledTimes(2);
+            expect(recovered.ref).toMatchObject({ live: true, source: "live", registry: REGISTRY });
+            expect(recovered.markets.map((m) => m.solver)).toContain(lightningCard.solver);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("is what `peek()` reads, without touching the network at all", async () => {

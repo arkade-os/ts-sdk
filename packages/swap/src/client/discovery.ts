@@ -167,6 +167,9 @@ export interface DiscoveryIndexInput {
     readonly repository?: AssetSwapRepository;
 }
 
+/** How long pins answering for an unreachable registry hold before it is asked again. */
+const DEGRADED_RETRY_MS = 60_000;
+
 /**
  * One client's view of the market index.
  *
@@ -189,6 +192,8 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
     };
 
     let held: DiscoverySnapshot | undefined;
+    /** Until when `load()` reuses a live `held` rather than asking the registry again. */
+    let revalidateAt = 0;
 
     const unavailable = (detail: string): never => {
         throw new DiscoverySnapshotUnavailable(input.network, detail);
@@ -240,8 +245,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
 
     const load = async (opts: { refresh?: boolean } = {}): Promise<DiscoverySnapshot> => {
         if (injected) return injected;
-        const fresh =
-            held?.ref.source === "live" && Date.now() - held.ref.fetchedAt < MARKETS_CACHE_TTL_MS;
+        const fresh = held?.ref.live === true && Date.now() < revalidateAt;
         if (fresh && !opts.refresh) return held as DiscoverySnapshot;
 
         const { network: indexed, registry: url } = sources();
@@ -267,6 +271,7 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
                 markets: result.markets,
                 ref: { fetchedAt, live: true, source: "live", registry: url },
             };
+            revalidateAt = fetchedAt + MARKETS_CACHE_TTL_MS;
             if (input.repository) {
                 try {
                     await input.repository.saveCachedMarkets(indexed, url, {
@@ -285,12 +290,12 @@ export const discoveryIndex = (input: DiscoveryIndexInput): DiscoveryIndex => {
             held = cached;
             return cached;
         }
-        // Nothing cached to prefer: the pins answer as trusted config, never as fresh registry data.
+        // Nothing cached to prefer: the pins still answer, without replacing any cache, and
+        // only until the registry can be asked again.
         if (result.markets.length > 0) {
-            held = {
-                markets: result.markets,
-                ref: { fetchedAt: Date.now(), live: true, source: "local" },
-            };
+            const fetchedAt = Date.now();
+            held = { markets: result.markets, ref: { fetchedAt, live: true, source: "local" } };
+            revalidateAt = fetchedAt + DEGRADED_RETRY_MS;
             return held;
         }
         return unavailable(whyUnavailable());

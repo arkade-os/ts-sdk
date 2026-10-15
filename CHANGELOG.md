@@ -375,9 +375,9 @@ style and have not been backfilled.
 - **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
   registry.** A local card always counts as answering, so a registry outage
   replaced the cached markets with the pins alone. Only a registry answering
-  now replaces the cache; with nothing cached, the pins answer as
-  `SnapshotRef.source: "local"`, which is not served as fresh, so the next
-  read retries the registry.
+  now replaces the cache. With nothing cached, the client still answers from
+  the pins, as a `source: "local"` snapshot that asks the registry again
+  after a minute rather than standing for the ten-minute TTL.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,
