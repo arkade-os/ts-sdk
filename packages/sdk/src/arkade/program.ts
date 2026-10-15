@@ -273,14 +273,14 @@ export function witnessRefToBytes(
 }
 
 /**
- * Validate a tapscript segment: it must have signers; `asm` may combine with
+ * Validate a tapscript segment with its resolved signers; `asm` may combine with
  * `csv` (the condition + CSV closure) but `cltv` conflicts with both (arkd
  * recognizes no condition+CLTV or dual-timelock closure); the `asm` may not
  * contain Arkade opcodes (those are `OP_SUCCESS` on-chain and belong in the
  * `arkadeScript` segment).
  */
 export function validateTapscript(seg: TapscriptSegment): void {
-    if (!seg.signers || (seg.signers.length === 0 && seg.emulatorIndex === undefined)) {
+    if (!seg.signers || seg.signers.length === 0) {
         throw new Error("tapscript: at least one signer is required");
     }
     if (seg.asm !== undefined && seg.cltv !== undefined) {
@@ -517,7 +517,6 @@ function compileFunctions(
     }
 
     return defs.map((def, i) => {
-        validateTapscript(def.tapscript);
         const pubkeys = def.tapscript.signers.map((signer) => {
             if (!isTweakedSigner(signer)) return resolveSigner(signer, args);
             const script = covenants.get(signer.fn);
@@ -556,6 +555,7 @@ function compileFunctions(
                 `ArkadeContract: function '${names[i]}' specifies an emulator position without an emulator`,
             );
         }
+        validateTapscript({ ...def.tapscript, signers: leafPubkeys });
         const leafScript = encodeTapscriptSegment(def.tapscript, leafPubkeys, args).script;
         return { name: names[i], def, leafScript, arkadeScript, signerKeys: pubkeys };
     });
@@ -637,21 +637,41 @@ export function parseArtifact(artifact: {
             `parseArtifact: unsupported program version ${artifact.version}; expected ${SUPPORTED_PROGRAM_VERSION}`,
         );
     }
-    for (const def of [
-        ...(artifact.params ?? []),
-        ...Object.values(artifact.functions as Record<string, ArkadeFunction>).flatMap(
-            (fn) => fn.inputs ?? [],
-        ),
-    ]) {
+    const declarations: unknown[] = [artifact.params];
+    for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {
+        if (!fn || typeof fn !== "object" || Array.isArray(fn)) {
+            throw new Error(`parseArtifact: function '${name}' must be an object`);
+        }
+        const tap = fn.tapscript;
+        if (tap !== undefined && (!tap || typeof tap !== "object" || Array.isArray(tap))) {
+            throw new Error(`parseArtifact: function '${name}' tapscript must be an object`);
+        }
+        declarations.push(fn.inputs, tap?.signatures);
         if (
-            !def ||
-            typeof def.name !== "string" ||
-            def.name.length === 0 ||
-            !["bytes", "pubkey", "sig", "hash", "int"].includes(def.type)
+            tap?.emulatorIndex !== undefined &&
+            (!Number.isInteger(tap.emulatorIndex) || tap.emulatorIndex < 0)
         ) {
+            throw new Error(`parseArtifact: function '${name}' has an invalid emulator position`);
+        }
+    }
+    for (const defs of declarations) {
+        if (defs === undefined) continue;
+        if (!Array.isArray(defs)) {
             throw new Error(
-                "parseArtifact: parameters and inputs require typed { name, type } declarations",
+                "parseArtifact: parameters, inputs and signatures require arrays of typed declarations",
             );
+        }
+        for (const def of defs) {
+            if (
+                !def ||
+                typeof def.name !== "string" ||
+                def.name.length === 0 ||
+                !["bytes", "pubkey", "sig", "hash", "int"].includes(def.type)
+            ) {
+                throw new Error(
+                    "parseArtifact: parameters, inputs and signatures require typed { name, type } declarations",
+                );
+            }
         }
     }
     const functions: Record<string, ArkadeFunction> = Object.create(null);

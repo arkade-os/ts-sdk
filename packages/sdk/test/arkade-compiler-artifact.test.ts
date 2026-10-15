@@ -471,7 +471,7 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         );
-        const names = program.params!.map((p) => (typeof p === "string" ? p : p.name));
+        const names = program.params!.map((p) => p.name);
         expect(names).toEqual([
             "entries.0.assetId.txid",
             "entries.0.assetId.gidx",
