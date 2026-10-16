@@ -292,6 +292,9 @@ export async function readLockupFate(
         swapPkScript: Uint8Array;
         /** `sha256(P)`, hex — the quote's `payment_hash`. */
         paymentHash: string;
+        /** Read for the lockup's receiver, who holds no leaf that recovers a swept output:
+         * once a claim revealed `P`, swept outputs no longer hold the lockup `open`. */
+        receiver?: boolean;
     },
 ): Promise<LockupFate> {
     const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(input.swapPkScript)] });
@@ -308,9 +311,14 @@ export async function readLockupFate(
 
     const spentBy = new Map<string, LockupSpend>();
     let everySpendNamed = true;
+    let sweptLeft = false;
     for (const vtxo of all) {
         // Not `spentBy` alone: the wire permits `isSpent: true` with an EMPTY `spentBy`.
-        if (!isVtxoSpent(vtxo)) return { fate: "open" };
+        if (!isVtxoSpent(vtxo)) {
+            if (!(input.receiver && vtxo.isSwept)) return { fate: "open" };
+            sweptLeft = true;
+            continue;
+        }
         // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
         // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
         // checkpoint, so it is the wrong place to look).
@@ -349,6 +357,7 @@ export async function readLockupFate(
         }
     }
 
+    if (sweptLeft) return { fate: "open" };
     // Only a lockup whose every spend was actually seen can be called returned.
     return everySpendNamed && observed.size === spentBy.size
         ? { fate: "returned", spends }

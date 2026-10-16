@@ -414,7 +414,10 @@ style and have not been backfilled.
   `pushRefundWithoutReceiver` now spend at most `MAX_LOCKUP_SPEND_INPUTS` (16)
   outputs, the largest first. `pushClaim` also leaves swept outputs out
   instead of refusing the whole claim: only the sender's leaf can recover
-  them, and the value gate still counts live outputs only.
+  them, and the value gate still counts live outputs only. It returns the
+  outputs it `spent`, so the swap manager re-claims any remainder on a later
+  pass. A receive swap now settles once its claim is out even if swept
+  outputs remain: `readLockupFate` takes `receiver: true` for that read.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

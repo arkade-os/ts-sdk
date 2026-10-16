@@ -874,6 +874,7 @@ describe("readLockupFate", () => {
         isSpent?: boolean;
         settledBy?: string;
         isUnrolled?: boolean;
+        isSwept?: boolean;
         arkTxId?: string;
     }
 
@@ -961,6 +962,56 @@ describe("readLockupFate", () => {
 
     it("claims no spend when the lockup is still open", async () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: "" }]))).toEqual({ fate: "open" });
+    });
+
+    describe("read for the receiver", () => {
+        const readAsReceiver = (indexer: LockupSpendIndexer) =>
+            readLockupFate(indexer, {
+                swapPkScript: SWAP_PK_SCRIPT,
+                paymentHash: PAYMENT_HASH,
+                receiver: true,
+            });
+
+        it("settles a claim past a swept output the receiver cannot spend", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const vtxos = [
+                { ...OUT_A, spentBy: claim.txid },
+                { ...OUT_B, spentBy: "", isSwept: true },
+            ];
+            expect(await read(fateIndexer(vtxos, [claim]))).toEqual({ fate: "open" });
+            expect(await readAsReceiver(fateIndexer(vtxos, [claim]))).toMatchObject({
+                fate: "claimed",
+                preimage: PREIMAGE,
+            });
+        });
+
+        it("still reads swept outputs with no claim as open, not returned", async () => {
+            const refund = spendOf(OUT_A);
+            const fate = await readAsReceiver(
+                fateIndexer(
+                    [
+                        { ...OUT_A, spentBy: refund.txid },
+                        { ...OUT_B, spentBy: "", isSwept: true },
+                    ],
+                    [refund],
+                ),
+            );
+            expect(fate).toEqual({ fate: "open" });
+        });
+
+        it("keeps a live output open", async () => {
+            const claim = spendOf(OUT_A, [PREIMAGE]);
+            const fate = await readAsReceiver(
+                fateIndexer(
+                    [
+                        { ...OUT_A, spentBy: claim.txid },
+                        { ...OUT_B, spentBy: "" },
+                    ],
+                    [claim],
+                ),
+            );
+            expect(fate).toEqual({ fate: "open" });
+        });
     });
 
     it("reports an unrolled output as exited rather than open", async () => {

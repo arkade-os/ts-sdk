@@ -348,6 +348,9 @@ export interface RfqSwapManagerCallbacks {
      * **Pass `expectedAmount` and `partiallyClaimed` straight through.** The manager's
      * value check decides WHEN to act; `pushClaim`'s decides whether `P` is published and
      * is the load-bearing one. Do not drop it because the outer one exists.
+     *
+     * Return `pushClaim`'s `spent` too. Omitted, every output passed counts as claimed, so
+     * any it left behind is never re-claimed.
      */
     claimLockup: (
         swap: ReceiveLockupSwap,
@@ -357,7 +360,7 @@ export interface RfqSwapManagerCallbacks {
              * nothing left to protect; lets a piecemeal funding still be swept. */
             partiallyClaimed: boolean;
         },
-    ) => Promise<{ txid: string; amount: number }>;
+    ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
     /**
      * Push `refundWithoutReceiver` for every output at the lockup (see
      * `pushRefundWithoutReceiver`); return `null` for an empty lockup. Never called for a
@@ -1244,6 +1247,7 @@ export class RfqSwapManager {
             fate = await readLockupFate(this.deps.indexer, {
                 swapPkScript: swap.lockupPkScript,
                 paymentHash: swap.paymentHash,
+                receiver: swap.kind === "lightning_receive" || swap.kind === "onchain_receive",
             });
         } catch {
             // Transient by assumption; the remaining steps are gated on absolute timelocks.
@@ -1400,10 +1404,12 @@ export class RfqSwapManager {
         if (!this.config.enableAutoActions) return;
 
         try {
-            const { txid } = await this.callbacks.claimLockup(swap, vtxos, { partiallyClaimed });
+            const { txid, spent } = await this.callbacks.claimLockup(swap, vtxos, {
+                partiallyClaimed,
+            });
             delete swap.claimFailure;
             // Only on success: a claim that threw is retried with these outputs.
-            this.rememberClaimed(swap.rfqId, vtxos);
+            this.rememberClaimed(swap.rfqId, spent ?? vtxos);
             swap.claimTxid = txid;
             // Independently of `setState`, so the txid is persisted even if the label ever
             // stops moving on a re-claim: `P` is public and the txid must be recorded.

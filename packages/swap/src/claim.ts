@@ -100,7 +100,7 @@ export async function pushClaim(
         /** @see operatorUnrollScript */
         network?: Network;
     },
-): Promise<{ txid: string; amount: number }> {
+): Promise<{ txid: string; amount: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
 
     // Only the sender's leaf recovers a swept output, so it is not the receiver's to wait on.
@@ -134,7 +134,7 @@ export async function pushClaim(
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.contract.options.server },
     });
-    return { txid, amount: locked };
+    return { txid, amount: locked, spent: vtxos };
 }
 
 /** Wait for the solver-funded lockup to appear at the covenant script; past the unix-seconds

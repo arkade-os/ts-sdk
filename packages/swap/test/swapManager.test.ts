@@ -212,6 +212,7 @@ interface FakeVtxo {
     arkTxId?: string;
     isSpent?: boolean;
     settledBy?: string;
+    isSwept?: boolean;
     /** Broadcast onchain by a unilateral exit. A LOCATION, not a spend: the
      * wire pairs it with `isSpent: false`, so the money is still at the lockup
      * — it is just money no offchain spend can reach. */
@@ -408,7 +409,7 @@ interface Spies {
 const spies = (
     over: {
         claim?: () => Promise<{ txid: string }>;
-        claimLockup?: () => Promise<{ txid: string; amount: number }>;
+        claimLockup?: () => Promise<{ txid: string; amount: number; spent?: LockupVtxo[] }>;
         refund?: () => Promise<ArkadeRefundResult>;
         refundOnchain?: () => Promise<{ txid: string }>;
         probe?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
@@ -2088,6 +2089,55 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(s.lockupClaims).toHaveLength(2);
         expect(s.lockupClaims[1].partiallyClaimed).toBe(true);
         expect(s.lockupClaims[1].vtxos).toHaveLength(2);
+    });
+
+    it("re-claims the outputs a capped claim left behind", async () => {
+        const first = { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE, recoverable: false };
+        const rest = { ...LOCKUP_OUTPOINT, vout: 1, value: 330, recoverable: false };
+        let funded = [first, rest];
+        const s = spies({
+            claimLockup: async () => ({ txid: CLAIM_TXID, amount: LOCKUP_VALUE, spent: [first] }),
+        });
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                get vtxos() {
+                    return () => funded;
+                },
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        funded = [rest];
+        await m.poll();
+
+        expect(s.lockupClaims).toHaveLength(2);
+        expect(s.lockupClaims[1].partiallyClaimed).toBe(true);
+        expect(s.lockupClaims[1].vtxos).toEqual([rest]);
+    });
+
+    it("settles a claim that left only a swept output behind", async () => {
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: [
+                    ...spentBy(CLAIM_SPEND.txid),
+                    { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "", isSwept: true },
+                ],
+                txs: [CLAIM_SPEND],
+            }),
+            contracts: fundedContracts(330, { vout: 1, recoverable: true }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("settled");
+        expect(s.lockupClaims).toHaveLength(0);
     });
 
     it("ends refunded once the solver's reclaim window has passed unobserved", async () => {

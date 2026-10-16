@@ -328,6 +328,8 @@ describe("pushClaim", () => {
         const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
         expect(tx.inputsLength).toBe(MAX_LOCKUP_SPEND_INPUTS);
         expect(result.amount).toBe(100_000 + (MAX_LOCKUP_SPEND_INPUTS - 2) * 330);
+        expect(result.spent).toHaveLength(MAX_LOCKUP_SPEND_INPUTS);
+        expect(result.spent).toEqual(expect.arrayContaining(VTXOS));
     });
 
     it("claims past a swept output, which the receiver holds no leaf to recover", async () => {
