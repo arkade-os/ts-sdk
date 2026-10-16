@@ -150,9 +150,13 @@ export const covclaimdClient = (
 
         async reveal(params) {
             const { minAmount } = params;
-            if (typeof minAmount !== "bigint" || minAmount > BigInt(Number.MAX_SAFE_INTEGER)) {
+            if (
+                typeof minAmount !== "bigint" ||
+                minAmount < 1n ||
+                minAmount > BigInt(Number.MAX_SAFE_INTEGER)
+            ) {
                 throw new Error(
-                    `min_amount ${minAmount} is missing or past what a JSON number carries`,
+                    `min_amount ${minAmount} is missing, not positive, or past what a JSON number carries`,
                 );
             }
             await send("reveal", "/v1/reveal", {

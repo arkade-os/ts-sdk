@@ -224,10 +224,10 @@ describe("covclaimdClient", () => {
         });
     });
 
-    it("refuses a min_amount that is missing or past a JSON number's exact range, before posting", async () => {
+    it("refuses a min_amount that is missing, not positive, or past a JSON number's exact range, before posting", async () => {
         const { impl, calls } = stubFetch([{ body: "{}" }]);
         const client = covclaimdClient("https://cov.example", { fetchImpl: impl });
-        for (const minAmount of [BigInt(Number.MAX_SAFE_INTEGER) + 1n, undefined]) {
+        for (const minAmount of [BigInt(Number.MAX_SAFE_INTEGER) + 1n, undefined, 0n, -1n]) {
             await expect(
                 client.reveal({ ...anyReveal, minAmount: minAmount as bigint }),
             ).rejects.toThrow(/min_amount/);
