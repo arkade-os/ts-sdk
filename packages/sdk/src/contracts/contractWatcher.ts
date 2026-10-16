@@ -3,14 +3,7 @@ import { VirtualCoin } from "../wallet";
 import { getAllNormalizedVtxos, isVtxoSpent, isPastExpiry, normalizeVtxo } from "../wallet/vtxo";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
-import {
-    Contract,
-    ContractVtxo,
-    ContractEventCallback,
-    ContractEvent,
-    WatchedScript,
-    isWatchedContract,
-} from "./types";
+import { Contract, ContractVtxo, ContractEvent, WatchedScript, isWatchedContract } from "./types";
 import { isEventSourceError } from "../providers/utils";
 import { isEventSourceUnavailableError } from "../providers/eventSource";
 import { getVtxosForContract } from "./vtxoOwnership";
@@ -86,7 +79,22 @@ interface ContractState {
 
     /** Last known virtual outputs keyed by `txid:vout`. */
     lastKnownVtxos: Map<string, VirtualCoin>;
+
+    /** Bumped per delivered event and settled handler; a poll read across a bump is stale. */
+    generation: number;
+
+    /** Handlers still running for this contract's events. */
+    pending: number;
+
+    /** A handler failed: the repository is behind until a later one succeeds. */
+    stale: boolean;
 }
+
+/**
+ * A returned promise holds off the poll until the event's handling settles; resolving `false` or
+ * rejecting keeps it off until a later handling succeeds.
+ */
+export type ContractWatcherEventCallback = (event: ContractEvent) => unknown;
 
 /** No `Contract` — that absence is the ownership boundary. */
 interface WatchedScriptState {
@@ -133,7 +141,7 @@ export class ContractWatcher {
     private subscriptionId?: string;
     private abortController?: AbortController;
     private isWatching = false;
-    private eventCallback?: ContractEventCallback;
+    private eventCallback?: ContractWatcherEventCallback;
     private connectionState: ConnectionState = "disconnected";
     private reconnectAttempts = 0;
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
@@ -162,16 +170,24 @@ export class ContractWatcher {
      * @see getWatchedContracts
      */
     async addContract(contract: Contract): Promise<void> {
-        const state: ContractState = {
-            contract,
-            lastKnownVtxos: new Map(),
-        };
+        // A promoted look-ahead script is re-added mid-sync: keep its in-flight state.
+        const existing = this.contracts.get(contract.script);
+        if (existing) {
+            existing.contract = contract;
+        } else {
+            const state: ContractState = {
+                contract,
+                lastKnownVtxos: new Map(),
+                generation: 0,
+                pending: 0,
+                stale: false,
+            };
+            this.contracts.set(contract.script, state);
 
-        this.contracts.set(contract.script, state);
-
-        // Seed BEFORE any poll, or every persisted vtxo is re-announced as `vtxo_received` on
-        // each launch.
-        await this.seedLastKnownVtxos(state);
+            // Seed BEFORE any poll, or every persisted vtxo is re-announced as `vtxo_received` on
+            // each launch.
+            await this.seedLastKnownVtxos(state);
+        }
 
         if (this.isWatching && isWatchedContract(contract)) {
             await this.pollContracts([contract.script]);
@@ -337,7 +353,7 @@ export class ContractWatcher {
     }
 
     /** Start watching for virtual output events across all watched contracts. */
-    async startWatching(callback: ContractEventCallback): Promise<() => void> {
+    async startWatching(callback: ContractWatcherEventCallback): Promise<() => void> {
         if (this.isWatching) {
             throw new Error("Already watching");
         }
@@ -419,10 +435,7 @@ export class ContractWatcher {
                 }
                 this.connectionState = "disconnected";
                 if (this.reportEventSourceUnavailable(e)) return;
-                this.eventCallback?.({
-                    type: "connection_reset",
-                    timestamp: Date.now(),
-                });
+                this.emitConnectionReset();
                 this.scheduleReconnect();
             });
         } catch (error) {
@@ -431,10 +444,7 @@ export class ContractWatcher {
             }
             this.connectionState = "disconnected";
             if (this.reportEventSourceUnavailable(error)) return;
-            this.eventCallback?.({
-                type: "connection_reset",
-                timestamp: Date.now(),
-            });
+            this.emitConnectionReset();
             this.scheduleReconnect();
         }
     }
@@ -590,6 +600,9 @@ export class ContractWatcher {
         if (!this.eventCallback) return;
 
         const now = Date.now();
+        const generations = new Map(
+            contractScripts.map((s) => [s, this.contracts.get(s)?.generation]),
+        );
 
         try {
             // Spent rows too, so a spend is reported with the row that records it; the cached
@@ -602,6 +615,14 @@ export class ContractWatcher {
             for (const contractScript of contractScripts) {
                 const state = this.contracts.get(contractScript);
                 if (!state) continue;
+                // The repository lags the stream until the event's sync lands (#1083).
+                if (
+                    state.pending > 0 ||
+                    state.stale ||
+                    state.generation !== generations.get(contractScript)
+                ) {
+                    continue;
+                }
 
                 const known = vtxosMap.get(contractScript) || [];
                 const knownByKey = new Map(known.map((v) => [`${v.txid}:${v.vout}`, v]));
@@ -895,27 +916,59 @@ export class ContractWatcher {
             }
         }
 
+        let event: ContractEvent;
         switch (eventType) {
             case "vtxo_received":
-                this.eventCallback({
+                event = {
                     type: "vtxo_received",
                     vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,
-                });
-                return;
+                };
+                break;
             case "vtxo_spent":
-                this.eventCallback({
+                event = {
                     type: "vtxo_spent",
                     vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,
-                });
-                return;
+                };
+                break;
             default:
                 return;
         }
+
+        state.generation++;
+        const handled = this.eventCallback(event);
+        if (!(handled instanceof Promise)) return;
+        state.pending++;
+        const settle = (synced: boolean) => {
+            state.pending--;
+            state.generation++;
+            state.stale = !synced;
+        };
+        void handled.then(
+            (result) => settle(result !== false),
+            () => settle(false),
+        );
+    }
+
+    /** A successful reset reconciles every watched contract, so it clears {@link ContractState.stale}. */
+    private emitConnectionReset(): void {
+        const handled = this.eventCallback?.({ type: "connection_reset", timestamp: Date.now() });
+        if (!(handled instanceof Promise)) return;
+        void handled.then(
+            (result) => {
+                if (result === false) return;
+                for (const state of this.contracts.values()) {
+                    if (!state.stale) continue;
+                    state.stale = false;
+                    state.generation++;
+                }
+            },
+            () => {},
+        );
     }
 }

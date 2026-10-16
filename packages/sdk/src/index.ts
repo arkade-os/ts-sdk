@@ -516,7 +516,10 @@ import type {
     CreateContractParams,
 } from "./contracts/contractManager";
 import { ContractWatcher } from "./contracts/contractWatcher";
-import type { ContractWatcherConfig } from "./contracts/contractWatcher";
+import type {
+    ContractWatcherConfig,
+    ContractWatcherEventCallback,
+} from "./contracts/contractWatcher";
 import { contractHandlers } from "./contracts/handlers/registry";
 import { DefaultContractHandler } from "./contracts/handlers/default";
 import type { DefaultContractParams } from "./contracts/handlers/default";
@@ -1098,6 +1101,7 @@ export type {
     ContractManagerConfig,
     CreateContractParams,
     ContractWatcherConfig,
+    ContractWatcherEventCallback,
     ParsedArkContract,
     ExcludableVtxo,
     VtxoExclusion,

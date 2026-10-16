@@ -424,6 +424,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **The failsafe poll no longer reports a just-spent coin as received
+  (#1083).** The stream updates the watcher at once, but the repository only
+  once the event's sync lands; a poll in that gap read the stale rows and
+  emitted the transaction inverted (the spent coin received, the new one
+  spent), then re-emitted both on the next tick. The poll now skips a contract
+  while a handler for its events is still running or settled during the read,
+  and after a failed sync until a later event or reconnect syncs it.
+  `ContractWatcher.startWatching` accepts a callback that returns a promise
+  for this, and `ContractManager` returns its handler's.
 - **`@arkade-os/swap`: an `arkade -> onchain` send no longer settles on an
   unconfirmed L1 claim.** The swap ended `settled` the moment the solver
   claimed the Arkade lockup, which only proves the solver read `P` off the
