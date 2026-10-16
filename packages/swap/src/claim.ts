@@ -106,18 +106,20 @@ export async function pushClaim(
     // Only the sender's leaf recovers a swept output, so it is not the receiver's to wait on.
     const live = input.vtxos.filter((vtxo) => !vtxo.recoverable);
     if (live.length === 0) assertNoneSwept(input.vtxos, input.contract);
-    const vtxos = boundedLockupSpend(live);
 
-    // Summed across every live output: funding split over several is legitimate.
-    const locked = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-    assertFiniteAmount(locked, "lockup_malformed", "the lockup's summed value");
+    // Summed across every live output: funding split over several is legitimate. What this
+    // claim leaves stays ours until the solver's CLTV, and the next pass takes it.
+    const funded = live.reduce((sum, vtxo) => sum + vtxo.value, 0);
+    assertFiniteAmount(funded, "lockup_malformed", "the lockup's summed value");
     // Only on the comparing path: once `P` is public, refusing an old record would strand funds.
     if (!input.partiallyClaimed) {
         assertFiniteAmount(input.expectedAmount, "invalid_gate_input", "expectedAmount");
-        if (locked < input.expectedAmount) {
-            throw new LockupAmountMismatchError(input.expectedAmount, locked);
+        if (funded < input.expectedAmount) {
+            throw new LockupAmountMismatchError(input.expectedAmount, funded);
         }
     }
+    const vtxos = boundedLockupSpend(live);
+    const locked = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
 

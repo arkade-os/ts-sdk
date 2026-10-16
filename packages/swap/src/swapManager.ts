@@ -321,7 +321,12 @@ export function nextOnchainReceiveAction(input: {
 /** What the trader's own `refundWithoutReceiver` push returned, or `null` when
  * the lockup held nothing to return.
  */
-export type ArkadeRefundResult = { txid: string; amount: number } | null;
+export type ArkadeRefundResult = {
+    txid: string;
+    amount: number;
+    /** Outputs the push could not take in one transaction; the swap stays live for them. */
+    left?: number;
+} | null;
 
 /**
  * The money-moving half, injected. The manager decides when; these do it.
@@ -1364,7 +1369,8 @@ export class RfqSwapManager {
 
         // `P` is already public, so the value gate has nothing left to protect.
         const partiallyClaimed = swap.claimTxid !== undefined;
-        if (partiallyClaimed && !this.hasUnclaimedOutpoint(swap.rfqId, vtxos)) {
+        const toClaim = partiallyClaimed ? this.unclaimed(swap.rfqId, vtxos) : vtxos;
+        if (toClaim.length === 0) {
             // Indexer lag; re-submitting would fail and report a working swap as broken.
             return;
         }
@@ -1404,12 +1410,12 @@ export class RfqSwapManager {
         if (!this.config.enableAutoActions) return;
 
         try {
-            const { txid, spent } = await this.callbacks.claimLockup(swap, vtxos, {
+            const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {
                 partiallyClaimed,
             });
             delete swap.claimFailure;
             // Only on success: a claim that threw is retried with these outputs.
-            this.rememberClaimed(swap.rfqId, spent ?? vtxos);
+            this.rememberClaimed(swap.rfqId, spent ?? toClaim);
             swap.claimTxid = txid;
             // Independently of `setState`, so the txid is persisted even if the label ever
             // stops moving on a re-claim: `P` is public and the txid must be recorded.
@@ -1686,6 +1692,7 @@ export class RfqSwapManager {
             if (pushed) {
                 swap.refundTxid = pushed.txid;
                 this.touch(swap);
+                if (pushed.left) return;
             } else if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
                 // `null` (nothing to return) is not proof the money came home: ending now could
                 // record a late settlement as a refund. Wait for step 1 to see the spend.
@@ -1713,12 +1720,10 @@ export class RfqSwapManager {
         }
     }
 
-    /** Whether any output was never handed to the claim callback (the only reason to
-     * claim twice). */
-    private hasUnclaimedOutpoint(rfqId: string, vtxos: readonly LockupVtxo[]): boolean {
+    /** The outputs no claim of ours has taken yet (the only reason to claim twice). */
+    private unclaimed(rfqId: string, vtxos: readonly LockupVtxo[]): readonly LockupVtxo[] {
         const claimed = this.claimedOutpoints.get(rfqId);
-        if (!claimed) return true;
-        return vtxos.some((vtxo) => !claimed.has(outpointKey(vtxo)));
+        return claimed ? vtxos.filter((vtxo) => !claimed.has(outpointKey(vtxo))) : vtxos;
     }
 
     private rememberClaimed(rfqId: string, vtxos: readonly LockupVtxo[]): void {

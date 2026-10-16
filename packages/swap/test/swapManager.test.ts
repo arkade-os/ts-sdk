@@ -1198,6 +1198,27 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
         expect(s.refunds).toEqual([RFQ_ID]);
     });
 
+    it("keeps a swap whose refund left outputs behind until a later pass takes them", async () => {
+        let left = 3;
+        const s = spies({
+            refund: async () => ({ txid: "ee".repeat(32), amount: 100_000, left }),
+        });
+        const swap = lightningSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            now: REFUND_LOCKTIME + 1,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).not.toBe("refunded");
+
+        left = 0;
+        await m.poll();
+        expect(swap.state).toBe("refunded");
+        expect(s.refunds).toEqual([RFQ_ID, RFQ_ID]);
+    });
+
     it("does not let an unreachable indexer block the refund gate", async () => {
         // The gate depends on `refundLocktime` alone, and that timelock is not
         // something an outage can move — so an indexer that cannot answer must
@@ -2088,7 +2109,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
 
         expect(s.lockupClaims).toHaveLength(2);
         expect(s.lockupClaims[1].partiallyClaimed).toBe(true);
-        expect(s.lockupClaims[1].vtxos).toHaveLength(2);
+        expect(s.lockupClaims[1].vtxos.map((vtxo) => vtxo.vout)).toEqual([1]);
     });
 
     it("re-claims the outputs a capped claim left behind", async () => {

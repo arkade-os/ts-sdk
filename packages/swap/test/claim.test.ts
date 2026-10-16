@@ -332,6 +332,29 @@ describe("pushClaim", () => {
         expect(result.spent).toEqual(expect.arrayContaining(VTXOS));
     });
 
+    it("weighs every live output against the amount, though it spends only the largest", async () => {
+        const pieces = Array.from(
+            { length: 17 },
+            (_, i): LockupVtxo => ({
+                txid: "dd".repeat(32),
+                vout: i,
+                value: 6_000,
+                recoverable: false,
+            }),
+        );
+        const result = await pushClaim(fakeOperator(), {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: pieces,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(result.amount).toBe(MAX_LOCKUP_SPEND_INPUTS * 6_000);
+        expect(result.spent).toHaveLength(MAX_LOCKUP_SPEND_INPUTS);
+    });
+
     it("claims past a swept output, which the receiver holds no leaf to recover", async () => {
         const operator = fakeOperator();
         const result = await pushClaim(operator, {
