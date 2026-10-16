@@ -10,8 +10,9 @@
  *   key is lost, via the `nonInteractiveRefund` leaf the emulator co-signs under a covenant paying
  *   only the user's pre-committed address.
  * - receive (`lightning|onchain:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice
- *   or funds the L1 HTLC, and may go offline; the solver funds a lockup pinned to the user's payout
- *   ({@link lightningReceiveContract}), and the claim reveals `P`, settling the user's side.
+ *   or funds the L1 HTLC, and may go offline if an exact-out request sealed `P` to covclaimd; the
+ *   solver funds a lockup pinned to the user's payout ({@link lightningReceiveContract}), and the
+ *   claim reveals `P`, settling the user's side.
  * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
  *   filler may deliver, or the user cancels cooperatively.
  *
@@ -1564,7 +1565,7 @@ export const lightningReceiveRequest = (input: {
 });
 
 /** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC (holding its refund
- * role); P travels sealed to covclaimd so the user can go offline after funding. */
+ * role); on an exact-out request P travels sealed to covclaimd, so the user can go offline. */
 export const onchainReceiveRequest = (input: {
     rfqId: string;
     paymentHash: string;
@@ -2106,7 +2107,7 @@ export function deriveLightningReceive(input: {
 /** Both receive flows' setup; `persistBefore` names the step the warning is for. */
 const provisionReceive = async (
     wallet: IWallet,
-    covclaimdPubkey: Uint8Array | undefined,
+    params: { covclaimdPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
     persistBefore: "paying" | "funding",
 ) => {
     const secrets = await provisionClaimSecret(wallet);
@@ -2122,9 +2123,16 @@ const provisionReceive = async (
         wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
-    const claimPacket = covclaimdPubkey
-        ? await sealClaimPacket({ preimage, covclaimdPubkey })
-        : undefined;
+    // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets covclaimd
+    // claim dust and hand the solver `P`.
+    const claimPacket =
+        params.covclaimdPubkey && params.amountSide === "to"
+            ? await sealClaimPacket({
+                  preimage,
+                  covclaimdPubkey: params.covclaimdPubkey,
+                  minAmount: BigInt(params.amount),
+              })
+            : undefined;
     return { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket };
 };
 
@@ -2136,12 +2144,12 @@ const provisionReceive = async (
 const quoteReceive = async (
     wallet: IWallet,
     transport: RfqTransport,
-    covclaimdPubkey: Uint8Array | undefined,
+    params: Parameters<typeof provisionReceive>[1],
     persistBefore: "paying" | "funding",
     request: (provisioned: Awaited<ReturnType<typeof provisionReceive>>) => Record<string, unknown>,
 ) => {
     for (let attempt = 0; ; attempt++) {
-        const provisioned = await provisionReceive(wallet, covclaimdPubkey, persistBefore);
+        const provisioned = await provisionReceive(wallet, params, persistBefore);
         try {
             return { ...provisioned, quote: await transport.requestQuote(request(provisioned)) };
         } catch (error) {
@@ -2175,9 +2183,10 @@ export async function requestLightningReceive(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
-        /** covclaimd's 33-byte compressed pubkey; the claim packet seals `P` to it. Unset where
-         * none is deployed: nothing is sent, and claiming before `refund_locktime` is the caller's
-         * job. Never substitute a throwaway key — nobody could open it. */
+        /** covclaimd's 33-byte compressed pubkey; the claim packet seals `P` to it. Only an
+         * exact-out request (`amountSide: "to"`) carries one, bound to `amount`. Otherwise nothing
+         * is sent, and claiming before `refund_locktime` is the caller's job. Never substitute a
+         * throwaway key — nobody could open it. */
         covclaimdPubkey?: Uint8Array;
         /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice. Required: skipping
          * this check can lose the whole payment. */
@@ -2219,7 +2228,7 @@ export async function requestLightningReceive(
     const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
         wallet,
         transport,
-        params.covclaimdPubkey,
+        params,
         "paying",
         ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
             lightningReceiveRequest({
@@ -2370,7 +2379,8 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey; see {@link requestLightningReceive}. */
+        /** covclaimd's 33-byte compressed pubkey. Only an exact-out request (`amountSide: "to"`)
+         * carries a claim packet; see {@link requestLightningReceive}. */
         covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },
@@ -2399,7 +2409,7 @@ export async function requestOnchainReceive(
     const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
         wallet,
         transport,
-        params.covclaimdPubkey,
+        params,
         "funding",
         ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
             onchainReceiveRequest({

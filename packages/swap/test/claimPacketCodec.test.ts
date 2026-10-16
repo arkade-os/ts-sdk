@@ -73,6 +73,23 @@ describe("claim packet TLV, against covclaimd's own bytes", () => {
         expect(hex.encode(shape.covclaimdPubkey!)).toBe(COVCLAIMD_PUBKEY);
     });
 
+    it("reads a body carrying min_amount (0x04) as a packet, stamped or not", () => {
+        const withMinAmount = CLIENT_PART + "040008000000000000c350";
+        const stamped = hex.encode(
+            appendArkadeScript(hex.decode(withMinAmount), hex.decode(ARKADE_SCRIPT)),
+        );
+        for (const [body, needsArkadeScript] of [
+            [withMinAmount, true],
+            [stamped, false],
+        ] as const) {
+            const shape = shapeOf(body);
+            expect(shape.kind).toBe("packet");
+            if (shape.kind !== "packet") return;
+            expect(shape.needsArkadeScript).toBe(needsArkadeScript);
+            expect(hex.encode(shape.covclaimdPubkey!)).toBe(COVCLAIMD_PUBKEY);
+        }
+    });
+
     it("reads a bare sealed ciphertext as the legacy shape", () => {
         expect(claimPacketShape(base64.encode(new Uint8Array(93))).kind).toBe("ciphertext");
     });

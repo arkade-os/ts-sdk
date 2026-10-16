@@ -8,7 +8,7 @@
  * is a tamper on that agreement.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { contractSigner } from "@arkade-os/sdk";
 import { claimPacketShape } from "../../src/claimPacket";
 import { createSwapClient } from "../../src/client/client";
@@ -26,6 +26,7 @@ import {
     PAYMENT_HASH,
     SOLVER_DISCOVERY_KEY,
     SOLVER_PUBKEY,
+    USD_ASSET_ID,
     clockAt,
     compressed,
     feedServing,
@@ -190,18 +191,51 @@ describe("quote() on lightning -> arkade", () => {
             expect(Object.keys(profile)).not.toContain("claim_packet");
         });
 
-        it("sends a stampable packet for the configured covclaimd", async () => {
-            const { client, transport } = await setup({
-                corridors: { lightning: { covclaimd: { pubkey: compressed(7) } } },
-            });
-            await client.quote(receive());
+        const withCovclaimd = { lightning: { covclaimd: { pubkey: compressed(7) } } };
+        const packetOf = (transport: SolverTransport): Uint8Array =>
+            base64.decode(
+                (transport.sent[0] as { profile: Record<string, unknown> }).profile
+                    .claim_packet as string,
+            );
 
-            const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
-            const shape = claimPacketShape(profile.claim_packet as string);
+        it("sends a stampable packet bound to an exact-out take", async () => {
+            const { client, transport } = await setup({ corridors: withCovclaimd });
+            await client.quote({ via: "lightning", amount: 4_950n, amountOn: "take" });
+
+            const packet = packetOf(transport);
+            const shape = claimPacketShape(base64.encode(packet));
             expect(shape.kind).toBe("packet");
             if (shape.kind !== "packet") return;
             expect(shape.needsArkadeScript).toBe(true);
             expect(shape.covclaimdPubkey).toEqual(hex.decode(compressed(7)));
+            expect(hex.encode(packet.subarray(-11))).toBe("040008" + "0000000000001356");
+        });
+
+        it("is omitted for an exact-in receive, even with covclaimd configured", async () => {
+            const { client, transport } = await setup({ corridors: withCovclaimd });
+            await client.quote(receive());
+
+            const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
+            expect(Object.keys(profile)).not.toContain("claim_packet");
+        });
+
+        it("is omitted for a non-BTC take, whose pin is not in sats", async () => {
+            const usdCard = {
+                ...lightningCard,
+                pair: "USD/lightning:BTC",
+                base_asset: { id: USD_ASSET_ID, name: "US Dollar", ticker: "USD", decimals: 2 },
+            };
+            for (const amountOn of ["give", "take"] as const) {
+                const { client, transport } = await setup({
+                    snapshot: [usdCard],
+                    corridors: withCovclaimd,
+                });
+                await expect(
+                    client.quote({ via: "lightning", take: "USD", amount: 1_234n, amountOn }),
+                ).rejects.toBeInstanceOf(QuoteVerificationFailed);
+                const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
+                expect(Object.keys(profile)).not.toContain("claim_packet");
+            }
         });
     });
 });

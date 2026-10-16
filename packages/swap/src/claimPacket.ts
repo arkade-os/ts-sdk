@@ -5,7 +5,7 @@
  * Scheme (per the covclaimd wire protocol):
  * - ephemeral secp256k1 key; ECDH with covclaimd's public key (x coordinate);
  * - HKDF-SHA256, info `covclaimd/preimage/v1`, salt = the ephemeral pubkey;
- * - AES-256-GCM with the ephemeral pubkey as additional data;
+ * - AES-256-GCM with the ephemeral pubkey as additional data, `‖ u64be(min_amount)` when bound;
  * - wire layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64.
  *
  * Byte-exactness is confirmed against covclaimd@56cfd78's `preimage.Decrypt` and
@@ -23,7 +23,8 @@ const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 export interface SealedClaimPacket {
     /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 (93 bytes decoded). The legacy
      * `claim_packet` shape: usable only via covclaimd's Reveal API, which silently
-     * needs both sides on the SAME covclaimd. Prefer {@link SealedClaimPacket.packet}. */
+     * needs both sides on the SAME covclaimd, and opens only beside the same `min_amount`
+     * when sealed with one. Prefer {@link SealedClaimPacket.packet}. */
     ciphertext: string;
     /**
      * covclaimd's serialised `ClaimPacket` body, base64: TLV `0x01` ciphertext and `0x03`
@@ -42,6 +43,9 @@ export interface ClaimPacketInput {
     preimage: Uint8Array;
     /** covclaimd's public key, 33-byte compressed (from its /v1 info). */
     covclaimdPubkey: Uint8Array;
+    /** Sats the funded lockup must carry for covclaimd to claim it, as TLV `0x04` and in the
+     * AEAD's additional data so a courier cannot strip it. Unset: the unbound legacy bytes. */
+    minAmount?: bigint;
 }
 
 /**
@@ -71,6 +75,13 @@ export async function sealWithEntropy(
     if (input.covclaimdPubkey.length !== 33) {
         throw new Error("covclaimd pubkey must be 33-byte compressed");
     }
+    const { minAmount } = input;
+    if (
+        minAmount !== undefined &&
+        (typeof minAmount !== "bigint" || minAmount < 1n || minAmount >= 1n << 64n)
+    ) {
+        throw new Error("minAmount must be a bigint in [1, 2^64-1]");
+    }
     const ephemeralPub = secp256k1.getPublicKey(ephemeralKey, true);
     // shared secret = x coordinate of the ECDH point
     const sharedX = secp256k1
@@ -79,7 +90,11 @@ export async function sealWithEntropy(
     const key = hkdf(sha256, sharedX, ephemeralPub, HKDF_INFO, 32);
 
     if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
-    const sealed = gcm(key, nonce, ephemeralPub).encrypt(input.preimage);
+    const amount = new Uint8Array(8);
+    if (minAmount !== undefined) new DataView(amount.buffer).setBigUint64(0, minAmount, false);
+    const additionalData =
+        minAmount === undefined ? ephemeralPub : concatBytes(ephemeralPub, amount);
+    const sealed = gcm(key, nonce, additionalData).encrypt(input.preimage);
 
     const ciphertext = concatBytes(ephemeralPub, nonce, sealed);
     return {
@@ -88,6 +103,7 @@ export async function sealWithEntropy(
             concatBytes(
                 tlv(TLV_CIPHERTEXT, ciphertext),
                 tlv(TLV_COVCLAIMD_PUBKEY, input.covclaimdPubkey),
+                minAmount === undefined ? new Uint8Array() : tlv(TLV_MIN_AMOUNT, amount),
             ),
         ),
     };
@@ -96,6 +112,7 @@ export async function sealWithEntropy(
 const TLV_CIPHERTEXT = 0x01;
 const TLV_ARKADE_SCRIPT = 0x02;
 const TLV_COVCLAIMD_PUBKEY = 0x03;
+const TLV_MIN_AMOUNT = 0x04;
 
 const COMPRESSED_PUBKEY_LENGTH = 33;
 

@@ -565,9 +565,17 @@ const quoteLightningReceive = async (
     const payoutAddress = await input.wallet.getAddress();
     const lightning = input.corridors.get("lightning").deps;
     const sealTo = sealingKey(lightning);
-    const claimPacket = sealTo
-        ? await sealClaimPacket({ preimage: secrets.preimage, covclaimdPubkey: sealTo })
-        : undefined;
+    // Only an exact-out BTC take names, in the sats covclaimd compares, what the lockup must carry.
+    // Anything else would go unbound, and covclaimd would claim dust and hand the solver `P`.
+    const sealsAmount = pinned.on === "take" && input.legs.take.assetId === BTC_ASSET_ID;
+    const claimPacket =
+        sealTo !== undefined && sealsAmount
+            ? await sealClaimPacket({
+                  preimage: secrets.preimage,
+                  covclaimdPubkey: sealTo,
+                  minAmount: pinned.value,
+              })
+            : undefined;
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(

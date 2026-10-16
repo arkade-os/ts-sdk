@@ -236,6 +236,11 @@ style and have not been backfilled.
   taken off the class and called on its own, as in
   `const { create } = Wallet`, throws `this is not a constructor`. Call
   `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
+- **`@arkade-os/swap`: `revealClaimPacket` requires `minAmount`, and
+  `RevealParams` carries it.** The packet it seals opens only beside that
+  amount, and `covclaimdClient().reveal` sends it as `packet.min_amount`, a
+  JSON number, refusing one past `Number.MAX_SAFE_INTEGER`. Pass the sats the
+  lockup must carry, such as the swap record's `expectedAmount`.
 
 ### Features
 
@@ -406,6 +411,17 @@ style and have not been backfilled.
   after a minute rather than standing for the ten-minute TTL. `resolve()`
   answers from them too, without the network, so a payment rail still offers
   a pinned solver; 0.1.0-rc.24 left it out.
+- **`@arkade-os/swap`: a claim packet binds the amount the lockup must
+  carry.** It sealed `P` with no amount, so covclaimd claimed whatever the
+  solver funded: a solver could fund the lockup with dust, learn `P` from that
+  claim, and settle the payer's full hold invoice or claim the trader's full
+  L1 HTLC. `sealClaimPacket` takes `minAmount`, written as TLV `0x04` and into
+  the AEAD's additional data so the courier cannot strip it. An exact-out
+  receive (`amountSide: "to"`, or a take pin on `arkade:BTC`) seals with its
+  amount. An exact-in receive, or one taking a non-BTC asset, sends no packet:
+  the lockup's sats are unknown until the quote, so the trader claims that
+  lockup itself. A covclaimd that predates `min_amount` cannot open a bound
+  packet; deploy covclaimd with `min_amount` support first.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,
