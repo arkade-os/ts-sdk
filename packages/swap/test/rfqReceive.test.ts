@@ -11,7 +11,7 @@
  * payout key, `client` = the solver).
  */
 import { describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
@@ -787,7 +787,6 @@ const lightningReceiveFlow = async (
     const seen: {
         paymentHash?: string;
         payoutPubkey?: string;
-        claimPacket?: unknown;
         requests: { rfqId: string; paymentHash: string }[];
     } = { requests: [] };
     const transport: RfqTransport = {
@@ -799,7 +798,6 @@ const lightningReceiveFlow = async (
                 throw new SwapRefusal("quote_conflict", payload.rfq_id as string);
             }
             seen.payoutPubkey = profile.payout_pubkey as string;
-            seen.claimPacket = profile.claim_packet;
             return receiveQuote(payload, { from: 5_000, to: 4_950, ...over.quote });
         },
         async status() {
@@ -833,7 +831,7 @@ const lightningReceiveFlow = async (
 };
 
 describe("requestLightningReceive on an HD wallet", () => {
-    it("commits to the derived preimage, seals the packet to covclaimd, and returns the hold invoice to pay", async () => {
+    it("commits to the derived preimage and returns the hold invoice to pay", async () => {
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
 
@@ -851,8 +849,6 @@ describe("requestLightningReceive on an HD wallet", () => {
         });
         expect(flow.seen.paymentHash).toBe(paymentHashOf(preimage));
         expect(flow.seen.payoutPubkey).toBe(hex.encode(result.payoutPubkey));
-        // The wire carries the sealed packet string, never an object.
-        expect(typeof flow.seen.claimPacket).toBe("string");
         // Nothing secret leaves the function.
         expect(result).not.toHaveProperty("preimage");
     });
@@ -1294,7 +1290,35 @@ describe("a receive with no covclaimd to seal to", () => {
         expect(Object.keys(profile)).not.toContain("claim_packet");
     });
 
-    it("still seals on both legs when covclaimd IS configured", async () => {
+    const minAmountTlv = (packet: unknown): string =>
+        hex.encode(base64.decode(packet as string).subarray(-11));
+
+    it("seals an exact-out request on both legs, bound to the amount it pins", async () => {
+        const wallet = await hdWallet();
+        const lightning = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "to",
+                covclaimdPubkey: COVCLAIMD_PK,
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(minAmountTlv(lightning.claim_packet)).toBe("040008" + "0000000000001388");
+
+        const onchain = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                refundPubkey: L1_REFUND_PUBKEY,
+                covclaimdPubkey: COVCLAIMD_PK,
+            }),
+        );
+        expect(minAmountTlv(onchain.claim_packet)).toBe("040008" + "00000000000186a0");
+    });
+
+    it("sends no claim_packet for an exact-in request, even with covclaimd configured", async () => {
         const wallet = await hdWallet();
         const lightning = await capturedProfile((transport) =>
             requestLightningReceive(wallet, transport, {
@@ -1305,8 +1329,7 @@ describe("a receive with no covclaimd to seal to", () => {
                 decodeInvoice: decodeStub,
             }),
         );
-        expect(typeof lightning.claim_packet).toBe("string");
-        expect(lightning.claim_packet).not.toBe("");
+        expect(Object.keys(lightning)).not.toContain("claim_packet");
 
         const onchain = await capturedProfile((transport) =>
             requestOnchainReceive(wallet, transport, {
@@ -1317,7 +1340,6 @@ describe("a receive with no covclaimd to seal to", () => {
                 covclaimdPubkey: COVCLAIMD_PK,
             }),
         );
-        expect(typeof onchain.claim_packet).toBe("string");
-        expect(onchain.claim_packet).not.toBe("");
+        expect(Object.keys(onchain)).not.toContain("claim_packet");
     });
 });
