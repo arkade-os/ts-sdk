@@ -1707,6 +1707,12 @@ export class RfqSwapManager {
                 this.refundRefused.add(swap.rfqId);
                 return this.block(swap, error.message);
             }
+            // An output this push named is already spent: by an earlier refund of ours that a
+            // stale read still lists (after a restart, or from a second refunder), or by the
+            // solver. Neither is a failure; the next pass reads afresh, and step 1 settles a
+            // solver spend.
+            const ark = isArkError(error) ? error : maybeArkError(error);
+            if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return;
             // UNWRAPPED, so `instanceof` works: `LockupNeedsRecoveryError` names the
             // outpoints to recover, and after recovery the next pass succeeds.
             this.emitFailed(swap, error);

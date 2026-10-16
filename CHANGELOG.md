@@ -433,6 +433,14 @@ style and have not been backfilled.
   lagging indexer still lists. A receive swap now settles once its claim is
   out even if swept outputs remain: `readLockupFate` takes `receiver: true`
   for that read.
+- **`@arkade-os/swap`: a refund that worked is no longer marked `failed`.**
+  `arkadeRefunder` remembers the outputs a partial refund spent only in
+  memory, so after a restart, or with a second refunder, a read that still
+  listed them made the next push name a spent output. The manager reported
+  the `VTXO_ALREADY_SPENT` rejection as a failure and, past
+  `refundLocktime + REFUND_MTP_LAG_SECONDS`, ended the swap `failed`. It now
+  retries on the next pass, as the claim path already did, and step 1
+  settles a spend that was the solver's.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

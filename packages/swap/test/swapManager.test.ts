@@ -1608,6 +1608,36 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.failure).toMatch(/FORFEIT_CLOSURE_LOCKED/);
     });
 
+    it("retries a refund that re-spends an already-spent output, even past the window", async () => {
+        // A stale read after a restart still lists what an earlier partial refund spent.
+        let attempts = 0;
+        const failures: string[] = [];
+        const s = spies({
+            refund: async () => {
+                if (attempts++ === 0) {
+                    throw new ArkError(6, "vtxo already spent", ArkErrorName.VTXO_ALREADY_SPENT);
+                }
+                return { txid: "ee".repeat(32), amount: 100_000 };
+            },
+        });
+        const swap = lightningSwap();
+        const m = manager({
+            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+            spies: s,
+        });
+        m.onSwapFailed((_swap, error) => failures.push(error.message));
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).not.toBe("failed");
+        expect(swap.failure).toBeUndefined();
+        expect(failures).toEqual([]);
+
+        await m.poll();
+        expect(attempts).toBe(2);
+        expect(swap.state).toBe("refunded");
+    });
+
     it("does not end an unreadable lockup as a refund before the lag window closes", async () => {
         // Nothing to return does not mean the money came back. The indexer may
         // just not be able to show the spend yet, so ending here would record a
