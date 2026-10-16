@@ -454,7 +454,7 @@ export async function pushRefundWithoutReceiver(
         /** @see operatorUnrollScript */
         network?: Network;
     },
-): Promise<{ txid: string; amount: number; left: number }> {
+): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
 
     assertNoneSwept(input.vtxos, input.contract);
@@ -501,7 +501,12 @@ export async function pushRefundWithoutReceiver(
     );
 
     await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { txid: submitted.arkTxid, amount, left: input.vtxos.length - vtxos.length };
+    return {
+        txid: submitted.arkTxid,
+        amount,
+        left: input.vtxos.length - vtxos.length,
+        spent: vtxos,
+    };
 }
 
 // ── Ask first, then fall back ────────────────────────────────────────────────

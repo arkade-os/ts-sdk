@@ -417,8 +417,10 @@ style and have not been backfilled.
   them. The value gate weighs every live output, not just the batch the claim
   spends. `pushClaim` returns the outputs it `spent`, so the swap manager
   re-claims any remainder on a later pass, passing only outputs no claim has
-  taken yet. `pushRefundWithoutReceiver` returns how many outputs it `left`,
-  and the manager keeps the swap live until none are. A receive swap now
+  taken yet. `pushRefundWithoutReceiver` returns how many outputs it `left`
+  and which it `spent`, and the manager keeps the swap live until none are
+  left; `arkadeRefunder` skips outputs an earlier pass already refunded, which
+  a lagging indexer still lists. A receive swap now
   settles once its claim is out even if swept outputs remain:
   `readLockupFate` takes `receiver: true` for that read.
 - **A partial VTXO filter no longer drops recoverable coins.**

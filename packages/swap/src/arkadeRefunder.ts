@@ -10,6 +10,7 @@
 import type { IWallet, Network } from "@arkade-os/sdk";
 import {
     type LockupContractSource,
+    type LockupVtxo,
     findLockupVtxos,
     pushRefundWithoutReceiver,
     type SwapOperator,
@@ -50,6 +51,10 @@ export interface ArkadeRefunderDeps {
 export function arkadeRefunder(
     deps: ArkadeRefunderDeps,
 ): (swap: RfqSwap) => Promise<ArkadeRefundResult> {
+    // Per swap, what a partial refund already spent: a lagging indexer still lists it, and
+    // re-spending it fails the pass that should take the remainder.
+    const spentBy = new Map<string, Set<string>>();
+    const keyOf = (vtxo: LockupVtxo): string => `${vtxo.txid}:${vtxo.vout}`;
     return async (swap) => {
         const contract = swap.lockup?.script;
         if (!contract) {
@@ -62,7 +67,10 @@ export function arkadeRefunder(
         }
 
         // Before the store read: an empty lockup needs no signer, and `null` is "nothing to do".
-        const vtxos = await findLockupVtxos(deps.contracts, swap.lockupPkScript);
+        const done = spentBy.get(swap.rfqId);
+        const vtxos = (await findLockupVtxos(deps.contracts, swap.lockupPkScript)).filter(
+            (vtxo) => !done?.has(keyOf(vtxo)),
+        );
         if (vtxos.length === 0) return null;
 
         const record = await deps.repository.getRfqSwap(swap.rfqId);
@@ -77,11 +85,15 @@ export function arkadeRefunder(
         // `?? {}` is a refusal, not a default: no descriptor becomes the same typed "no-secrets",
         // keeping `senderIdentityForSwapRecord` the one place that decides it.
         const sender = await senderIdentityForSwapRecord(deps.wallet, rfqSignerOf(record) ?? {});
-        return pushRefundWithoutReceiver(deps.operator, {
+        const result = await pushRefundWithoutReceiver(deps.operator, {
             contract,
             sender,
             vtxos,
             network: await deps.network?.(),
         });
+        if (result.left > 0 || done) {
+            spentBy.set(swap.rfqId, new Set([...(done ?? []), ...result.spent.map(keyOf)]));
+        }
+        return result;
     };
 }
