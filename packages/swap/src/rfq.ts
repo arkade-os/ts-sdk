@@ -67,7 +67,7 @@ import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
-import { ASSET_CARRIER_SATS, createOffer } from "./offer";
+import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -1242,7 +1242,9 @@ export async function requestLightningSend(
     });
 
     // Last, so a refused quote leaves no row, but before the caller holds an address to fund.
-    await registerLockupContract(await wallet.getContractManager(), script, address);
+    await registerLockupContract(await wallet.getContractManager(), script, address, {
+        scope: wallet,
+    });
 
     return {
         rfqId,
@@ -1375,6 +1377,8 @@ export async function requestArkadeSwap(
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
+        /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
+        receiveAddress?: string;
         now?: number;
     },
 ): Promise<{
@@ -1401,11 +1405,25 @@ export async function requestArkadeSwap(
     }
     const rfqId = params.rfqId ?? newRfqId();
     const amountSide = params.amountSide ?? "from";
+    const receiveAddress = params.receiveAddress;
     const [makerAddress, makerPublicKey] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const ownPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const info =
+        receiveAddress === undefined
+            ? undefined
+            : await wallet.getArkadeInfo({ requireLive: true });
+    const makerPkScript =
+        info === undefined
+            ? ownPkScript
+            : resolveReceivePkScript(
+                  receiveAddress,
+                  ownPkScript,
+                  networkFromArkadeInfo(info).hrp,
+                  toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+              );
     const pair = rfqPair(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
@@ -1454,6 +1472,9 @@ export async function requestArkadeSwap(
         }
     }
     const offer = await createOffer(wallet, {
+        maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
+        ...(info === undefined ? {} : { info }),
+        ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
@@ -1812,6 +1833,7 @@ export async function requestOnchainSend(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {
@@ -2155,7 +2177,7 @@ const quoteReceive = async (
  * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant locally → verify → gate.
  * Returns the solver's hold invoice (already checked by {@link verifyReceiveInvoice}) for the
  * trader's own Lightning wallet to PAY before `invoiceExpiresAt`. Once the HTLC is held the solver
- * funds the lockup and the trader claims it with its own `P` ({@link claimReceiveLockup}).
+ * funds the lockup and the trader claims it with its own `P` (`pushClaim`).
  *
  * Three obligations, all before the invoice is handed to a payer:
  *
@@ -2255,6 +2277,7 @@ export async function requestLightningReceive(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {
@@ -2439,6 +2462,7 @@ export async function requestOnchainReceive(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {

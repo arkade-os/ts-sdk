@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
-import { cancelOffer, encodeOffer, offerContract, type Offer } from "../src/offer";
+import {
+    cancelOffer,
+    prepareOfferCancel,
+    encodeOffer,
+    offerContract,
+    type Offer,
+} from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
 
@@ -266,5 +272,55 @@ describe("cancelOffer coverage", () => {
         expect(setContractWatchState).not.toHaveBeenCalled();
         expect(warn).toHaveBeenCalled();
         vi.restoreAllMocks();
+    });
+});
+
+describe("cancel exact funding outpoint", () => {
+    const txid = "a".repeat(64);
+    const funded = { ...wallet, getAddress: async () => fundedAddress } as unknown as IWallet;
+    const resetDeposits = () => {
+        state.serverKey = fundedOperatorKey;
+        state.utxos = [
+            { txid, vout: 0, value: 10_000 },
+            { txid, vout: 2, value: 11_000 },
+        ];
+        state.sends = 0;
+    };
+
+    it("selects the named output without changing the cancel lifecycle", async () => {
+        resetDeposits();
+        const prepared = await prepareOfferCancel(funded, offerHex, {
+            fundingTxid: txid,
+            fundingOutpoint: { txid, vout: 2 },
+        });
+        expect(prepared.vtxo).toEqual({ txid, vout: 2, value: 11_000 });
+        const repository = new InMemoryAssetSwapRepository();
+        await addAssetSwap(repository, pendingSwap());
+        await cancelOffer(funded, offerHex, { repository, fundingOutpoint: { txid, vout: 2 } });
+        expect((await getAssetSwaps(repository))[0].status).toBe("cancelled");
+        expect(state.sends).toBe(1);
+    });
+
+    it("refuses an ambiguous bare txid before broadcasting", async () => {
+        resetDeposits();
+        await expect(
+            cancelOffer(funded, offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+                fundingTxid: txid,
+            }),
+        ).rejects.toThrow(/pass fundingOutpoint/);
+        expect(state.sends).toBe(0);
+    });
+
+    it("refuses a conflicting txid and outpoint before broadcasting", async () => {
+        resetDeposits();
+        await expect(
+            cancelOffer(funded, offerHex, {
+                repository: new InMemoryAssetSwapRepository(),
+                fundingTxid: "b".repeat(64),
+                fundingOutpoint: { txid, vout: 2 },
+            }),
+        ).rejects.toThrow(/does not match/);
+        expect(state.sends).toBe(0);
     });
 });

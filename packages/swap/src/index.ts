@@ -29,6 +29,7 @@ export {
     type SwapClient,
     type SwapClientConfig,
     type SwapFilter,
+    type AcceptOptions,
 } from "./client/client";
 export type { DiscoveryConfig, DiscoverySnapshot } from "./client/discovery";
 export { REGISTRY_URL } from "./client/discovery";
@@ -66,6 +67,13 @@ export type {
 } from "./client/route";
 export type { CorridorId } from "./client/corridor";
 export type {
+    AssetPaymentInput,
+    AssetPaymentTerms,
+    ArkadeCarrierChoice,
+    ReceiverPaidCarrierQuote,
+    TaxiIdentity,
+    VerifiedCarrierTerms,
+    RecordedAssetPayment,
     AssetRef,
     AuctionMarketRef,
     AuctionProvenance,
@@ -225,7 +233,7 @@ export { type SwapOperator } from "./refund";
 // `@deprecated` tag on them.
 export { type AssetSwap } from "./store";
 export { type InvoiceFacts } from "./rfq";
-export { type ChainSource } from "./onchainHtlc";
+export { type ChainSource, type TxStatus } from "./onchainHtlc";
 export { LockupRegistrationFailed } from "./lockupContract";
 export { type LockupSpendIndexer } from "./refund";
 export { type SwapContractRegistry } from "./swapManager";
@@ -253,3 +261,20 @@ export {
     swapHandle,
     type SwapRailClient,
 } from "./payment/swapRail";
+
+export {
+    buildOfferFillPlan,
+    verifyOfferFillPlan,
+    OFFER_FILL_TEMPLATE,
+    OFFER_FILL_OWNERS,
+    type BuildOfferFillPlanOpts,
+    type FillSponsor,
+    type FillSponsorFare,
+} from "./offerFillPlan";
+export {
+    deepFreeze,
+    digestJointGraph,
+    unsignedPsbtBytes,
+    verifyJointGraph,
+    type JointGraph,
+} from "./jointGraph";

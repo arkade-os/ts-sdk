@@ -21,11 +21,10 @@ import {
     signAndSubmitOffchainTx,
 } from "@arkade-os/sdk";
 
-import { assertPreimageMatches, gateError, pollUntil } from "./onchainHtlc";
+import { assertPreimageMatches, gateError } from "./onchainHtlc";
 import {
     assertNoneSwept,
-    type LockupContractSource,
-    findLockupVtxos,
+    boundedLockupSpend,
     lockupInputs,
     type LockupVtxo,
     operatorUnrollScript,
@@ -69,13 +68,17 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
 };
 
 /**
- * Build, sign, and push the collaborative claim of a receive-corridor lockup, moving every funded
- * output to the trader's destination and revealing `P` (the solver reads it off the claim).
+ * Build, sign, and push the collaborative claim of a receive-corridor lockup, moving the live
+ * outputs to the trader's destination and revealing `P` (the solver reads it off the claim).
  *
  * Preimage and funded VALUE are checked BEFORE signing: `P` reaches the operator at SUBMIT, so a
- * later check has already leaked it. Swept outputs are refused first (one non-live input would sink
+ * later check has already leaked it. Swept outputs are left out (one non-live input would sink
  * the aggregate tx). The server countersignature is verified per input, so "reported claimed,
  * nothing landed" fails immediately.
+ *
+ * One push spends at most `MAX_LOCKUP_SPEND_INPUTS` live outputs, the largest. `left` counts the
+ * live outputs it did not take (swept ones never count: the receiver cannot spend them). Until it
+ * is zero, call again with the outputs not in `spent` and `partiallyClaimed: true`.
  */
 export async function pushClaim(
     operator: SwapOperator,
@@ -100,21 +103,26 @@ export async function pushClaim(
         network?: Network;
         oneShot?: boolean;
     },
-): Promise<{ txid: string; amount: number }> {
+): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
 
-    assertNoneSwept(input.vtxos, input.contract);
+    // Only the sender's leaf recovers a swept output, so it is not the receiver's to wait on.
+    const live = input.vtxos.filter((vtxo) => !vtxo.recoverable);
+    if (live.length === 0) assertNoneSwept(input.vtxos, input.contract);
 
-    // Summed across every live output: funding split over several is legitimate.
-    const locked = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-    assertFiniteAmount(locked, "lockup_malformed", "the lockup's summed value");
+    // Summed across every live output: funding split over several is legitimate. What this
+    // claim leaves stays ours until the solver's CLTV, and the next pass takes it.
+    const funded = live.reduce((sum, vtxo) => sum + vtxo.value, 0);
+    assertFiniteAmount(funded, "lockup_malformed", "the lockup's summed value");
     // Only on the comparing path: once `P` is public, refusing an old record would strand funds.
     if (!input.partiallyClaimed) {
         assertFiniteAmount(input.expectedAmount, "invalid_gate_input", "expectedAmount");
-        if (locked < input.expectedAmount) {
-            throw new LockupAmountMismatchError(input.expectedAmount, locked);
+        if (funded < input.expectedAmount) {
+            throw new LockupAmountMismatchError(input.expectedAmount, funded);
         }
     }
+    const vtxos = boundedLockupSpend(live);
+    const locked = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
 
@@ -125,52 +133,12 @@ export async function pushClaim(
     const txid = await signAndSubmitOffchainTx({
         identity: claimWithPreimageIdentity(input.receiver, input.preimage),
         provider: operator,
-        inputs: lockupInputs(input.vtxos, input.contract, leaf),
+        inputs: lockupInputs(vtxos, input.contract, leaf),
         // One aggregate output: this leaf inspects nothing about the output set.
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.contract.options.server },
         oneShot: input.oneShot,
     });
-    return { txid, amount: locked };
-}
-
-/** Wait for the solver-funded lockup to appear at the covenant script; past the unix-seconds
- * `deadline`, throws with reason `lockup_timeout`. */
-export async function awaitLockupFunding(
-    contracts: LockupContractSource,
-    swapPkScript: Uint8Array,
-    options: { pollMs?: number; deadline?: number } = {},
-): Promise<readonly LockupVtxo[]> {
-    return pollUntil(
-        async () => {
-            const vtxos = await findLockupVtxos(contracts, swapPkScript);
-            return vtxos.length > 0 ? vtxos : undefined;
-        },
-        options,
-        "lockup_timeout",
-        "the lockup never appeared at the covenant script",
-    );
-}
-
-/**
- * The one-call composition: wait for the solver's funding, then push the claim. The deadline gates
- * the WAIT only; once funded, the claim is bounded by the quote's `refund_locktime`.
- *
- * The wait returns on the first output seen, so piecemeal funding can throw
- * {@link LockupAmountMismatchError}. Nothing was signed, so retrying once the rest lands is safe.
- */
-export async function claimReceiveLockup(
-    contracts: LockupContractSource,
-    operator: SwapOperator,
-    input: Parameters<typeof pushClaim>[1] & {
-        /** The covenant's scriptPubKey, from the request flow's `swapPkScript`. */
-        swapPkScript: Uint8Array;
-        pollMs?: number;
-        deadline?: number;
-    },
-): Promise<{ txid: string; amount: number }> {
-    const { swapPkScript, pollMs, deadline, ...claim } = input;
-    const vtxos = await awaitLockupFunding(contracts, swapPkScript, { pollMs, deadline });
-    return pushClaim(operator, { ...claim, vtxos });
+    return { txid, amount: locked, left: live.length - vtxos.length, spent: vtxos };
 }

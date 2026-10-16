@@ -170,6 +170,7 @@ type Initialize = {
         delegateUrl?: string;
         settlementConfig?: SettlementConfig | false;
         walletMode?: "auto" | "static" | "hd";
+        lazyInitialization?: boolean;
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
@@ -547,6 +548,7 @@ export class MessageBus {
                 delegateProvider,
                 settlementConfig: config.settlementConfig,
                 walletMode: config.walletMode,
+                lazyInitialization: config.lazyInitialization,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
                 oneShotSubmit: config.oneShotSubmit,
@@ -558,6 +560,7 @@ export class MessageBus {
 
         const identity = hydrateIdentity(serialized) as ReadonlyIdentity;
         const readonlyWallet = await ReadonlyWallet.create({
+            lazyInitialization: config.lazyInitialization,
             identity,
             arkProvider,
             arkServerPublicKey: config.arkServer.publicKey,

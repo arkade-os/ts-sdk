@@ -686,6 +686,45 @@ describe("ContractManager", () => {
         });
     });
 
+    describe("event sync outcome", () => {
+        const receive = async (handlerRegistered: boolean) => {
+            const contract = await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            const incoming = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+                txid: "ab".repeat(32),
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [incoming] });
+            const get = contractHandlers.get.bind(contractHandlers);
+            const spy = vi
+                .spyOn(contractHandlers, "get")
+                .mockImplementation((type) => (handlerRegistered ? get(type) : undefined));
+            try {
+                return await (manager as any).handleContractEvent({
+                    type: "vtxo_received",
+                    contractScript: contract.script,
+                    contract,
+                    vtxos: [incoming],
+                    timestamp: Date.now(),
+                });
+            } finally {
+                spy.mockRestore();
+            }
+        };
+
+        it("reports a sync that stored the event's contract", async () => {
+            await expect(receive(true)).resolves.toBe(true);
+        });
+
+        // #1083: the watcher would resume polling a repository that never catches up.
+        it("reports an unannotatable contract as not synced", async () => {
+            await expect(receive(false)).resolves.toBe(false);
+        });
+    });
+
     describe("watch state", () => {
         const newManager = (walletRepository = new InMemoryWalletRepository()) =>
             ContractManager.create({

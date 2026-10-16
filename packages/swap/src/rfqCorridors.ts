@@ -123,11 +123,13 @@ export interface OnchainSendProfile extends Record<string, unknown> {
     /** Where the claim PAYS, hex. The spender's own choice, so nothing else
      * gives it back — and `buildHtlcClaim` needs it. */
     payoutPkScript: string;
-    /** The fill's outpoint, learned on first sighting. Without it a SPENT htlc
-     * reads as never funded — see `classifyOnchainHtlc`. */
-    funding?: { txid: string; vout: number };
+    /** The fill's outpoint and value, learned on first sighting. Without it a SPENT htlc
+     * reads as never funded, and no replacement claim can be signed — `classifyOnchainHtlc`. */
+    funding?: { txid: string; vout: number; amount?: number };
     /** Our own L1 claim, so a restart does not re-broadcast it. */
     claimTxid?: string;
+    claimFeeRateSatVb?: number;
+    claimBroadcastAt?: number;
 }
 
 /**
@@ -172,6 +174,12 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
             expectedAmount: send.expectedAmount,
             ...(send.funding ? { funding: send.funding } : {}),
             ...(send.claimTxid ? { claimTxid: send.claimTxid } : {}),
+            ...(send.claimFeeRateSatVb === undefined
+                ? {}
+                : { claimFeeRateSatVb: send.claimFeeRateSatVb }),
+            ...(send.claimBroadcastAt === undefined
+                ? {}
+                : { claimBroadcastAt: send.claimBroadcastAt }),
         };
     },
 
@@ -231,6 +239,12 @@ const OnchainSendCorridor: RfqCorridorHandler<OnchainSendProfile> = {
                 : {}),
             ...(profile.funding ? { funding: profile.funding } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
+            ...(typeof profile.claimFeeRateSatVb === "number"
+                ? { claimFeeRateSatVb: profile.claimFeeRateSatVb }
+                : {}),
+            ...(typeof profile.claimBroadcastAt === "number"
+                ? { claimBroadcastAt: profile.claimBroadcastAt }
+                : {}),
         };
     },
 
