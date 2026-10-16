@@ -418,9 +418,10 @@ style and have not been backfilled.
   L1 HTLC. `sealClaimPacket` takes `minAmount`, written as TLV `0x04` and into
   the AEAD's additional data so the courier cannot strip it. An exact-out
   receive (`amountSide: "to"`, or a take pin on `arkade:BTC`) seals with its
-  amount; an exact-in receive sends no packet, since its lockup amount is
-  unknown until the quote, and the trader claims that lockup itself. A
-  covclaimd that predates `min_amount` cannot open a bound packet.
+  amount. An exact-in receive, or one taking a non-BTC asset, sends no packet:
+  the lockup's sats are unknown until the quote, so the trader claims that
+  lockup itself. A covclaimd that predates `min_amount` cannot open a bound
+  packet; deploy covclaimd with `min_amount` support first.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

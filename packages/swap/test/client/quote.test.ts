@@ -219,7 +219,7 @@ describe("quote() on lightning -> arkade", () => {
             expect(Object.keys(profile)).not.toContain("claim_packet");
         });
 
-        it("stays unbound for a non-BTC take, whose pin is not in sats", async () => {
+        it("is omitted for a non-BTC take, whose pin is not in sats", async () => {
             const usdCard = {
                 ...lightningCard,
                 pair: "USD/lightning:BTC",
@@ -233,9 +233,8 @@ describe("quote() on lightning -> arkade", () => {
                 await expect(
                     client.quote({ via: "lightning", take: "USD", amount: 1_234n, amountOn }),
                 ).rejects.toBeInstanceOf(QuoteVerificationFailed);
-                expect(hex.encode(packetOf(transport).subarray(-36))).toBe(
-                    "030021" + compressed(7),
-                );
+                const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
+                expect(Object.keys(profile)).not.toContain("claim_packet");
             }
         });
     });
