@@ -327,14 +327,18 @@ export function nextOnchainReceiveAction(input: {
 /** What the trader's own `refundWithoutReceiver` push returned, or `null` when
  * the lockup held nothing to return.
  */
-export type ArkadeRefundResult = { txid: string; amount: number } | null;
+export type ArkadeRefundResult = {
+    txid: string;
+    amount: number;
+    /** Outputs the push could not take in one transaction; the swap stays live for them. */
+    left?: number;
+} | null;
 
 /**
  * The money-moving half, injected. The manager decides when; these do it.
  *
- * Use `arkadeRefunder` for `refundArkade` rather than assembling it. Do NOT wire it to
- * `refundIfUnresolved`, whose own polling and MTP retry loop would nest inside the
- * manager's. Resolve the sender key via `senderIdentityForSwapRecord`, which turns "this
+ * Use `arkadeRefunder` for `refundArkade` rather than assembling it: it pushes once per pass,
+ * leaving status polling and the MTP retry to the manager. Resolve the sender key via `senderIdentityForSwapRecord`, which turns "this
  * wallet cannot sign" into {@link RefundNotLocallyPossibleError} (`needs_counterparty`)
  * instead of retrying for the whole refund window.
  */
@@ -355,12 +359,14 @@ export interface RfqSwapManagerCallbacks {
      */
     refundOnchain: (swap: OnchainReceiveSwap, utxo: ChainUtxo) => Promise<{ txid: string }>;
     /**
-     * Claim the solver-funded lockup on a receive leg, revealing `P`. Wire it to
-     * `pushClaim` (the outputs are supplied, so `claimReceiveLockup`'s wait is redundant).
+     * Claim the solver-funded lockup on a receive leg, revealing `P`. Wire it to `pushClaim`.
      *
      * **Pass `expectedAmount` and `partiallyClaimed` straight through.** The manager's
      * value check decides WHEN to act; `pushClaim`'s decides whether `P` is published and
      * is the load-bearing one. Do not drop it because the outer one exists.
+     *
+     * Return `pushClaim`'s `spent` too. Omitted, every output passed counts as claimed, so
+     * any it left behind is never re-claimed.
      */
     claimLockup: (
         swap: ReceiveLockupSwap,
@@ -370,7 +376,7 @@ export interface RfqSwapManagerCallbacks {
              * nothing left to protect; lets a piecemeal funding still be swept. */
             partiallyClaimed: boolean;
         },
-    ) => Promise<{ txid: string; amount: number }>;
+    ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
     /**
      * Push `refundWithoutReceiver` for every output at the lockup (see
      * `pushRefundWithoutReceiver`); return `null` for an empty lockup. Never called for a
@@ -1257,6 +1263,7 @@ export class RfqSwapManager {
             fate = await readLockupFate(this.deps.indexer, {
                 swapPkScript: swap.lockupPkScript,
                 paymentHash: swap.paymentHash,
+                receiver: swap.kind === "lightning_receive" || swap.kind === "onchain_receive",
             });
         } catch {
             // Transient by assumption; the remaining steps are gated on absolute timelocks.
@@ -1379,7 +1386,8 @@ export class RfqSwapManager {
 
         // `P` is already public, so the value gate has nothing left to protect.
         const partiallyClaimed = swap.claimTxid !== undefined;
-        if (partiallyClaimed && !this.hasUnclaimedOutpoint(swap.rfqId, vtxos)) {
+        const toClaim = partiallyClaimed ? this.unclaimed(swap.rfqId, vtxos) : vtxos;
+        if (toClaim.length === 0) {
             // Indexer lag; re-submitting would fail and report a working swap as broken.
             return;
         }
@@ -1419,10 +1427,12 @@ export class RfqSwapManager {
         if (!this.config.enableAutoActions) return;
 
         try {
-            const { txid } = await this.callbacks.claimLockup(swap, vtxos, { partiallyClaimed });
+            const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {
+                partiallyClaimed,
+            });
             delete swap.claimFailure;
             // Only on success: a claim that threw is retried with these outputs.
-            this.rememberClaimed(swap.rfqId, vtxos);
+            this.rememberClaimed(swap.rfqId, spent ?? toClaim);
             swap.claimTxid = txid;
             // Independently of `setState`, so the txid is persisted even if the label ever
             // stops moving on a re-claim: `P` is public and the txid must be recorded.
@@ -1807,6 +1817,7 @@ export class RfqSwapManager {
             if (pushed) {
                 swap.refundTxid = pushed.txid;
                 this.touch(swap);
+                if (pushed.left) return;
             } else if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
                 // `null` (nothing to return) is not proof the money came home: ending now could
                 // record a late settlement as a refund. Wait for step 1 to see the spend.
@@ -1823,6 +1834,12 @@ export class RfqSwapManager {
                 this.refundRefused.add(swap.rfqId);
                 return this.block(swap, error.message);
             }
+            // An output this push named is already spent: by an earlier refund of ours that a
+            // stale read still lists (after a restart, or from a second refunder), or by the
+            // solver. Neither is a failure; the next pass reads afresh, and step 1 settles a
+            // solver spend.
+            const ark = isArkError(error) ? error : maybeArkError(error);
+            if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return;
             // UNWRAPPED, so `instanceof` works: `LockupNeedsRecoveryError` names the
             // outpoints to recover, and after recovery the next pass succeeds.
             this.emitFailed(swap, error);
@@ -1834,12 +1851,10 @@ export class RfqSwapManager {
         }
     }
 
-    /** Whether any output was never handed to the claim callback (the only reason to
-     * claim twice). */
-    private hasUnclaimedOutpoint(rfqId: string, vtxos: readonly LockupVtxo[]): boolean {
+    /** The outputs no claim of ours has taken yet (the only reason to claim twice). */
+    private unclaimed(rfqId: string, vtxos: readonly LockupVtxo[]): readonly LockupVtxo[] {
         const claimed = this.claimedOutpoints.get(rfqId);
-        if (!claimed) return true;
-        return vtxos.some((vtxo) => !claimed.has(outpointKey(vtxo)));
+        return claimed ? vtxos.filter((vtxo) => !claimed.has(outpointKey(vtxo))) : vtxos;
     }
 
     private rememberClaimed(rfqId: string, vtxos: readonly LockupVtxo[]): void {

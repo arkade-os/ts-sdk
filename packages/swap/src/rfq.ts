@@ -2177,7 +2177,7 @@ const quoteReceive = async (
  * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant locally → verify → gate.
  * Returns the solver's hold invoice (already checked by {@link verifyReceiveInvoice}) for the
  * trader's own Lightning wallet to PAY before `invoiceExpiresAt`. Once the HTLC is held the solver
- * funds the lockup and the trader claims it with its own `P` ({@link claimReceiveLockup}).
+ * funds the lockup and the trader claims it with its own `P` (`pushClaim`).
  *
  * Three obligations, all before the invoice is handed to a payer:
  *
