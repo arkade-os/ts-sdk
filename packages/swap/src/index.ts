@@ -233,7 +233,7 @@ export { type SwapOperator } from "./refund";
 // `@deprecated` tag on them.
 export { type AssetSwap } from "./store";
 export { type InvoiceFacts } from "./rfq";
-export { type ChainSource } from "./onchainHtlc";
+export { type ChainSource, type TxStatus } from "./onchainHtlc";
 export { LockupRegistrationFailed } from "./lockupContract";
 export { type LockupSpendIndexer } from "./refund";
 export { type SwapContractRegistry } from "./swapManager";
