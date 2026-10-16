@@ -15,6 +15,7 @@ import {
     makeHdWalletForTest,
     makeStaticWalletForTest,
     makeMockIndexer,
+    awaitWalletBooted,
 } from "./helpers/restoreWallet";
 
 /**
@@ -89,6 +90,7 @@ describe("HD look-ahead band composition", () => {
                 },
             },
         });
+        await manager.whenBooted();
         return { manager, indexer, contractRepository, provider, promoted };
     }
 
@@ -248,6 +250,7 @@ describe("HD look-ahead band composition", () => {
             },
         });
 
+        await manager.whenBooted();
         // The boot band was [0, 1] and none of it is funded.
         expect(await collectContracts(contractRepository, {})).toEqual([]);
         const fetchesBeforeDispose = indexer.getVtxosCalls.length;
@@ -338,6 +341,7 @@ describe("Wallet HD look-ahead", () => {
                 delegatePubKey: DELEGATE_PUBKEY_COMPRESSED,
             },
         );
+        await awaitWalletBooted(wallet);
         try {
             expect(wallet.offchainTapscript).toBeInstanceOf(DelegateVtxo.Script);
             const rows = await collectContracts(contractRepository, { script: [issued] });

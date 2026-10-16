@@ -433,6 +433,10 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * ```
  */
 interface ServiceWorkerWalletOptions {
+    /** Start contract synchronization in the background; inspect provider connection state. */
+    lazyInitialization?: boolean;
+    /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
+    lazyBoarding?: boolean;
     /** Arkade server endpoint and optional public key. */
     arkServer?: {
         url: string;
@@ -517,6 +521,7 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 };
 
 type MessageBusInitConfig = {
+    lazyInitialization?: boolean;
     wallet: SerializedIdentity;
     arkServer: {
         url: string;
@@ -644,6 +649,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
         });
     }
@@ -657,6 +663,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     ): Promise<W> {
         const arkServer = options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL };
         const initWalletPayload = {
+            lazyBoarding: options.lazyBoarding,
             arkServerUrl: arkServer.url,
             arkServerPublicKey: arkServer.publicKey,
         };
@@ -1802,6 +1809,7 @@ export class ServiceWorkerWallet
             delegateUrl: options.delegateUrl,
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
+            lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
