@@ -82,6 +82,7 @@ export function arkadeRefunder(
             sender,
             vtxos,
             network: await deps.network?.(),
+            oneShot: deps.wallet.oneShotSubmit,
         });
     };
 }

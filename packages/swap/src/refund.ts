@@ -545,6 +545,7 @@ export async function refundIfUnresolved(
         attemptDeadline?: number;
         /** Injected for tests; defaults to wall clock, in unix seconds. */
         now?: () => number;
+        oneShot?: boolean;
     },
 ): Promise<RefundOutcome> {
     const pollMs = input.pollMs ?? 5_000;
@@ -584,6 +585,7 @@ export async function refundIfUnresolved(
                     sender: input.sender,
                     vtxos,
                     refundPkScript: input.refundPkScript,
+                    oneShot: input.oneShot,
                 });
                 return { outcome: "refunded", status, ...pushed };
             } catch (error) {

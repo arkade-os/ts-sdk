@@ -1723,6 +1723,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        public readonly oneShotSubmit?: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1775,6 +1776,7 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
+            options.oneShotSubmit,
         );
 
         return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {

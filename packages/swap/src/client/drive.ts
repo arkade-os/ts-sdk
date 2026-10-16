@@ -640,6 +640,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 expectedAmount: swap.expectedAmount,
                 partiallyClaimed,
                 network: await pinnedNetwork(),
+                oneShot: wallet.oneShotSubmit,
             }),
         );
     };

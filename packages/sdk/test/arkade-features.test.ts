@@ -392,6 +392,35 @@ describe("ArkadeContract — extended features", () => {
         expect(indexer.getVirtualTxs).not.toHaveBeenCalled();
     });
 
+    it("keeps the arkd path two-step with oneShotSubmit: false", async () => {
+        const { identity } = mockIdentity();
+        const { arkProvider, indexer, captured } = providers(server, emulatorKey, [COIN]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            indexer,
+            identity,
+            network: networks.regtest,
+            oneShotSubmit: false,
+        });
+        const c = ark.contract({
+            version: 0,
+            params: ["server", "user"],
+            functions: {
+                exit: {
+                    tapscript: {
+                        signers: ["$user", "$server"],
+                        csv: { type: "blocks", value: 20n },
+                    },
+                },
+            },
+        });
+        await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
+
+        const submitted = Transaction.fromPSBT(base64.decode(captured.cps![0]));
+        expect(submitted.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        expect(arkProvider.finalizeTx).toHaveBeenCalledTimes(1);
+    });
+
     // A pure-tapscript spend with one funded input: two checkpoints, so the
     // server's response order can differ from the submission order.
     async function sendTwoCheckpointSpend(

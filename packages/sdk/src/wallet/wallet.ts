@@ -3031,7 +3031,7 @@ export class Wallet
         /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
         protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
         /** @see WalletConfig.oneShotSubmit */
-        private readonly oneShotSubmit: boolean = true,
+        readonly oneShotSubmit: boolean = true,
     ) {
         super(
             identity,
@@ -4615,6 +4615,7 @@ export class Wallet
                         ],
                         outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
                         serverUnrollScript,
+                        oneShot: this.oneShotSubmit,
                     });
                     swept += vtxo.value;
                 } catch (error) {

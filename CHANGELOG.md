@@ -17,10 +17,12 @@ style and have not been backfilled.
 - **Offchain sends finalize in one call on arkd with one-shot submit.**
   Checkpoints are submitted already signed, so arkd finalizes the transaction
   within `submitTx`; an arkd without support drops the signatures and the SDK
-  falls back to `finalizeTx` as before. Covers wallet sends, `signAndSubmitOffchainTx`,
-  Arkade contract spends and swap refunds. Set `WalletConfig.oneShotSubmit: false`
-  (or `oneShot: false` on the helpers) to keep the two-step flow, in which arkd
-  holds no checkpoint signature before the wallet holds the cosigned ark tx.
+  falls back to `finalizeTx` as before. Covers wallet sends, ArkadeCash sweeps,
+  `signAndSubmitOffchainTx`, Arkade contract spends, and swap claims, refunds and
+  offer cancels. Set `WalletConfig.oneShotSubmit: false` to keep the two-step flow,
+  in which arkd holds no checkpoint signature before the wallet holds the cosigned
+  ark tx. Swaps read it from the new `IWallet.oneShotSubmit`; an `Arkade` client
+  takes `ArkadeConnectOptions.oneShotSubmit` and the helpers `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the

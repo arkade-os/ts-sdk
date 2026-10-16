@@ -250,6 +250,9 @@ export interface ArkadeConnectOptions {
      * repository-backed state for registered contracts instead of the indexer.
      */
     contractManager?: IContractManager;
+    /** For pure-tapscript spends; a client built for a wallet passes `wallet.oneShotSubmit`.
+     * @see WalletConfig.oneShotSubmit */
+    oneShotSubmit?: boolean;
 }
 
 /**
@@ -276,6 +279,7 @@ export class Arkade {
     readonly userKey?: Uint8Array;
     /** The wallet's contract manager, when contract persistence is wired up. */
     readonly contractManager?: IContractManager;
+    readonly oneShotSubmit?: boolean;
 
     private constructor(fields: {
         arkProvider: ArkadeServerProvider;
@@ -288,6 +292,7 @@ export class Arkade {
         identity?: Identity;
         userKey?: Uint8Array;
         contractManager?: IContractManager;
+        oneShotSubmit?: boolean;
     }) {
         this.arkProvider = fields.arkProvider;
         this.emulator = fields.emulator;
@@ -299,6 +304,7 @@ export class Arkade {
         this.identity = fields.identity;
         this.userKey = fields.userKey;
         this.contractManager = fields.contractManager;
+        this.oneShotSubmit = fields.oneShotSubmit;
     }
 
     /** Connect and resolve the server key, checkpoint closure and (if present) the co-signer key. */
@@ -338,6 +344,7 @@ export class Arkade {
             identity: opts.identity,
             userKey,
             contractManager: opts.contractManager,
+            oneShotSubmit: opts.oneShotSubmit,
         });
     }
 
@@ -729,6 +736,8 @@ export class ArkadeTransactionBuilder {
                 signArkTx: async (tx) => ({ arkTx: await this.signArk(tx, userInputs) }),
                 signCheckpoint: (checkpoint) => identity.sign(checkpoint, [0]),
             },
+            undefined,
+            { oneShot: client.oneShotSubmit },
         );
         return {
             txid: res.arkTxid,
