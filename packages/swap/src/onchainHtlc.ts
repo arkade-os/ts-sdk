@@ -420,6 +420,7 @@ export function nextClaimFeeRate(input: {
               : Math.max(last, estimate);
     // The PINNED vsize, which is rounded up, so the ceiling errs toward clearing dust.
     const affordable = Number((input.utxoAmount - ONCHAIN_DUST_SATS) / BigInt(ONCHAIN_CLAIM_VSIZE));
+    // `last` was built against this same fill and vsize, so it never exceeds `affordable`.
     return Math.max(last ?? input.configuredSatVb, Math.min(wanted, affordable));
 }
 

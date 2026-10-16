@@ -1664,8 +1664,27 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
 
         expect(s.claims).toHaveLength(1);
         expect(s.claims[0].utxo.txid).toBe(FILL.txid);
+        expect(s.claims[0].options).toBeUndefined();
         expect(swap.claimTxid).toBe("dd".repeat(32));
         expect(swap.state).toBe("claimed");
+    });
+
+    it("re-broadcasts a forgotten claim at a higher fee when a bump is due too", async () => {
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: "ef".repeat(32),
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW, status: {} }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].options).toEqual({ bump: true });
     });
 
     it("re-publishes a forgotten claim past the refund leaf, racing the solver", async () => {
