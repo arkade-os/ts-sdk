@@ -1850,6 +1850,10 @@ export class ContractManager implements IContractManager {
             this.markSyncDegraded(err);
             synced = false;
         }
+        // An unannotatable contract's VTXOs are dropped, so its repository rows never catch up.
+        if (isContractVtxoEvent(event) && this.annotationFailures.has(event.contract.script)) {
+            synced = false;
+        }
 
         this.emitEvent(event);
         return synced;
