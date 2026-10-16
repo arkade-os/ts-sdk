@@ -1,3 +1,12 @@
+export type {
+    AssetPaymentInput,
+    AssetPaymentTerms,
+    ArkadeCarrierChoice,
+    ReceiverPaidCarrierQuote,
+    TaxiIdentity,
+    VerifiedCarrierTerms,
+    RecordedAssetPayment,
+} from "./assetPayment";
 /**
  * What a quote is: the order, fully resolved, plus the provenance that says who priced it and
  * where that card came from. Types only — the quote path assembles these, `accept()` consumes
@@ -6,6 +15,7 @@
  * A `Quote` is binding terms plus the evidence for them: every field is something the caller must
  * act on or be able to audit. Nothing internal rides along (no covenant, secret or transport).
  */
+import type { AssetPaymentInput, AssetPaymentTerms } from "./assetPayment";
 import type { AssetId } from "./assetId";
 import type { AmountOn } from "./rfqAmount";
 import type { Corridor, CorridorId } from "./corridor";
@@ -29,6 +39,7 @@ export type AssetRef = AssetId | (string & {});
  * it pins, and — on receives, where no instrument exists yet — a corridor.
  */
 export interface QuoteInput {
+    assetPayment?: AssetPaymentInput;
     /** Omitted when the route determines it: the give leg is the wallet's. */
     give?: AssetRef;
     /** Omitted when `to` determines it — a corridor that carries BTC only does. */
@@ -149,6 +160,7 @@ export interface QuoteLeg {
  * `fee` restates the spread rather than adding to it.
  */
 export interface Quote {
+    readonly assetPayment?: AssetPaymentTerms;
     readonly id: QuoteId;
     /** Both endpoints resolved, instruments included. */
     readonly route: Route;

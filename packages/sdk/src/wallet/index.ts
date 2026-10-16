@@ -420,6 +420,11 @@ export interface Recipient {
     tapTree?: Bytes;
 }
 
+export type InputExpiryFloor = {
+    readonly kind: "time" | "height";
+    readonly value: bigint;
+};
+
 /** Object form of `IWallet.send`'s arguments; the variadic form has no slot for options. */
 export interface SendParams {
     /** One or more recipients — the variadic arguments of the other form. */
@@ -433,6 +438,12 @@ export interface SendParams {
      * @see IReadonlyWallet.getVtxos
      */
     selectedVtxos?: ExtendedVirtualCoin[];
+
+    /** Refuse before provider submission at or after this UNIX timestamp in seconds. */
+    validUntil?: number;
+
+    /** Require every input's known expiry to be at least this UNIX-seconds or block-height floor. */
+    inputExpiryFloor?: InputExpiryFloor;
 
     /** Maximum sats of unavoidable change this send may pay as an offchain fee. Defaults to any change below the operator's VTXO minimum; 0 disables it. */
     maxChangeFee?: number;
