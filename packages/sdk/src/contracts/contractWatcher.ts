@@ -164,18 +164,23 @@ export class ContractWatcher {
      * @see getWatchedContracts
      */
     async addContract(contract: Contract): Promise<void> {
-        const state: ContractState = {
-            contract,
-            lastKnownVtxos: new Map(),
-            generation: 0,
-            pending: 0,
-        };
+        // A promoted look-ahead script is re-added mid-sync: keep its in-flight state.
+        const existing = this.contracts.get(contract.script);
+        if (existing) {
+            existing.contract = contract;
+        } else {
+            const state: ContractState = {
+                contract,
+                lastKnownVtxos: new Map(),
+                generation: 0,
+                pending: 0,
+            };
+            this.contracts.set(contract.script, state);
 
-        this.contracts.set(contract.script, state);
-
-        // Seed BEFORE any poll, or every persisted vtxo is re-announced as `vtxo_received` on
-        // each launch.
-        await this.seedLastKnownVtxos(state);
+            // Seed BEFORE any poll, or every persisted vtxo is re-announced as `vtxo_received` on
+            // each launch.
+            await this.seedLastKnownVtxos(state);
+        }
 
         if (this.isWatching && isWatchedContract(contract)) {
             await this.pollContracts([contract.script]);

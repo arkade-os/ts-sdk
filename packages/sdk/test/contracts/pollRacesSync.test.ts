@@ -150,4 +150,32 @@ describe("failsafe poll vs. the sync behind a stream event", () => {
         await vi.advanceTimersByTimeAsync(1000);
         expect(events).toEqual(["vtxo_received:bb", "vtxo_spent:aa"]);
     });
+
+    it("keeps the in-flight state when the sync re-adds the contract", async () => {
+        const sync = deferred();
+        const events: string[] = [];
+        await watcher.addContract(target);
+        await watcher.startWatching((e) => {
+            events.push(label(e));
+            return sync.promise;
+        });
+
+        push({
+            scripts: [TEST_DEFAULT_SCRIPT],
+            newVtxos: [B],
+            spentVtxos: [{ ...A, isSpent: true }],
+            sweptVtxos: [],
+        });
+        await vi.advanceTimersByTimeAsync(10);
+
+        // as promoteLookAheadHits does, before the promoted sync persists
+        await watcher.addContract({ ...target });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(events).toEqual(["vtxo_received:bb", "vtxo_spent:aa"]);
+
+        await syncLands();
+        sync.resolve();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(events).toEqual(["vtxo_received:bb", "vtxo_spent:aa"]);
+    });
 });
