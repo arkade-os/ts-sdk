@@ -25,6 +25,14 @@ style and have not been backfilled.
   takes `ArkadeConnectOptions.oneShotSubmit` and the helpers `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
+- **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
+  A covenant can read state the transaction carries — `tx.packet(type)` in the
+  spend itself, `tx.inputs[i].packet(type)` when the output is spent later —
+  but the builder only ever wrote the asset and emulator packets, so a
+  contract keeping its terms in a packet had to rebuild the extension output
+  by hand after `build()`. The caller's packet now joins those two in the one
+  extension output; a type either of them already uses is refused at build.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
