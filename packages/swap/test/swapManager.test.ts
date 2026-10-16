@@ -38,6 +38,7 @@ import {
     paymentHashOf,
     type ChainSource,
     type ChainUtxo,
+    type TxStatus,
 } from "../src/onchainHtlc";
 import {
     LockupNeedsRecoveryError,
@@ -305,6 +306,7 @@ const fakeChain = (state: {
     /** Confirmation by txid, as the OPTIONAL `getTxStatus` answers it; a txid absent
      * from the map is one the chain does not know. No field, no method. */
     status?: Record<string, boolean>;
+    failStatus?: boolean;
     feeRate?: number;
 }): FakeChain => {
     const spendLookups: { txid: string; vout: number }[] = [];
@@ -313,9 +315,11 @@ const fakeChain = (state: {
         ...(state.status === undefined
             ? {}
             : {
-                  async getTxStatus(txid: string) {
+                  async getTxStatus(txid: string): Promise<TxStatus> {
+                      if (state.failStatus) throw new Error("esplora unreachable");
                       const confirmed = state.status?.[txid];
-                      return confirmed === undefined ? null : { confirmed };
+                      if (confirmed === undefined) return "missing";
+                      return confirmed ? "confirmed" : "unconfirmed";
                   },
               }),
         ...(state.feeRate === undefined
@@ -1683,6 +1687,41 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(s.claims[0].utxo.txid).toBe(FILL.txid);
         expect(s.claims[0].options).toBeUndefined();
         expect(swap.claimTxid).toBe("dd".repeat(32));
+        expect(swap.state).toBe("claimed");
+    });
+
+    it("re-broadcasts a claim whose status the chain cannot read", async () => {
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW, status: {}, failStatus: true }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+    });
+
+    it("does not settle on a claim whose status the chain cannot read", async () => {
+        const claim = await ourClaim();
+        const swap = claimedSwap({ claimTxid: claim.txid });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: true },
+                failStatus: true,
+            }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
         expect(swap.state).toBe("claimed");
     });
 

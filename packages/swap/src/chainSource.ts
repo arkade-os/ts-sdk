@@ -8,7 +8,7 @@
 import * as btc from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import type { OnchainProvider } from "@arkade-os/sdk";
-import type { ChainSource, ChainUtxo, OnchainNetwork } from "./onchainHtlc";
+import type { ChainSource, ChainUtxo, OnchainNetwork, TxStatus } from "./onchainHtlc";
 import { L1_NETWORKS } from "./onchainHtlc";
 
 const addressOf = (pkScript: Uint8Array, network: OnchainNetwork): string =>
@@ -75,12 +75,8 @@ export const chainSourceFrom = (
             return (await provider.getChainTip()).time;
         },
 
-        async getTxStatus(txid: string): Promise<{ confirmed: boolean } | null> {
-            try {
-                return { confirmed: (await provider.getTxStatus(txid)).confirmed };
-            } catch {
-                return null;
-            }
+        async getTxStatus(txid: string): Promise<TxStatus> {
+            return (await provider.getTxStatus(txid)).confirmed ? "confirmed" : "unconfirmed";
         },
 
         getFeeRate(): Promise<number | undefined> {

@@ -239,6 +239,7 @@ const CURATED_ROOT: readonly string[] = [
     "AssetSwap",
     "InvoiceFacts",
     "ChainSource",
+    "TxStatus",
     "LockupRegistrationFailed",
     "LockupSpendIndexer",
     "SwapContractRegistry",

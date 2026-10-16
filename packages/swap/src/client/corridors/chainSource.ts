@@ -13,7 +13,7 @@
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
 import { EsploraProvider, type OnchainProvider } from "@arkade-os/sdk";
-import type { ChainSource, ChainUtxo } from "../../onchainHtlc";
+import type { ChainSource, ChainUtxo, TxStatus } from "../../onchainHtlc";
 
 /** The chain tip, as the two reads that need it want it. */
 export interface L1Tip {
@@ -111,13 +111,10 @@ export const chainSourceOver = (
             return (await backend.tip()).mtp;
         },
 
-        async getTxStatus(txid: string): Promise<{ confirmed: boolean } | null> {
-            try {
-                return { confirmed: (await backend.provider.getTxStatus(txid)).confirmed };
-            } catch {
-                // The provider throws on the 404 an unknown txid answers with.
-                return null;
-            }
+        async getTxStatus(txid: string): Promise<TxStatus> {
+            return (await backend.provider.getTxStatus(txid)).confirmed
+                ? "confirmed"
+                : "unconfirmed";
         },
 
         getFeeRate(): Promise<number | undefined> {

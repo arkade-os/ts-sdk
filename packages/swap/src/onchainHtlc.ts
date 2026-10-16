@@ -371,6 +371,9 @@ export interface ChainUtxo extends HtlcUtxo {
     confirmations: number;
 }
 
+/** `missing`: the chain knows no such transaction. A source that cannot tell says `unconfirmed`. */
+export type TxStatus = "confirmed" | "unconfirmed" | "missing";
+
 /** The package's whole view of Bitcoin L1, injected so the package stays backend-free
  * (`CorridorOverrides.onchain.chain` takes it). */
 export interface ChainSource {
@@ -390,11 +393,11 @@ export interface ChainSource {
     broadcast(txHex: string): Promise<string>;
     /** Current median-time-past, unix seconds — gates refund broadcasting. */
     getMtp(): Promise<number>;
-    /** Whether `txid` is confirmed, `null` when the chain does not know it at all.
+    /** Where `txid` stands; throws when the chain cannot answer.
      * **Optional, and an `arkade -> onchain` payout turns on it**: without it a mempool
      * claim reads as a mined one, so such a swap still settles on the solver's Arkade
      * claim alone — which its refund, replacing the claim, turns into a loss of both. */
-    getTxStatus?(txid: string): Promise<{ confirmed: boolean } | null>;
+    getTxStatus?(txid: string): Promise<TxStatus>;
     /** Current fee estimate, sat/vB. Optional. */
     getFeeRate?(): Promise<number | undefined>;
 }

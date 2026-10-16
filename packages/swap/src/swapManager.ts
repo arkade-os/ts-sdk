@@ -1598,9 +1598,11 @@ export class RfqSwapManager {
         const chain = this.deps.chain;
         if (!chain?.getTxStatus) return false;
         try {
-            return (await chain.getTxStatus(txid)) === null;
+            return (await chain.getTxStatus(txid)) === "missing";
         } catch {
-            return false;
+            // Unreadable counts as gone: the SDK's Esplora provider throws on an unknown txid
+            // too, and a needless re-publication at worst replaces our own claim.
+            return true;
         }
     }
 
@@ -1610,7 +1612,7 @@ export class RfqSwapManager {
         if (!chain?.getTxStatus || !swap.claimTxid) return undefined;
         let confirmed: boolean;
         try {
-            confirmed = (await chain.getTxStatus(swap.claimTxid))?.confirmed === true;
+            confirmed = (await chain.getTxStatus(swap.claimTxid)) === "confirmed";
         } catch {
             // Unreadable is not confirmed: a swap held open is recoverable, one settled
             // on a claim that never landed is not.
