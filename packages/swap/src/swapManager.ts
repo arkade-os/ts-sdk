@@ -331,9 +331,8 @@ export type ArkadeRefundResult = {
 /**
  * The money-moving half, injected. The manager decides when; these do it.
  *
- * Use `arkadeRefunder` for `refundArkade` rather than assembling it. Do NOT wire it to
- * `refundIfUnresolved`, whose own polling and MTP retry loop would nest inside the
- * manager's. Resolve the sender key via `senderIdentityForSwapRecord`, which turns "this
+ * Use `arkadeRefunder` for `refundArkade` rather than assembling it: it pushes once per pass,
+ * leaving status polling and the MTP retry to the manager. Resolve the sender key via `senderIdentityForSwapRecord`, which turns "this
  * wallet cannot sign" into {@link RefundNotLocallyPossibleError} (`needs_counterparty`)
  * instead of retrying for the whole refund window.
  */

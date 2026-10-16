@@ -72,6 +72,12 @@ style and have not been backfilled.
   snapshot answered by pinned cards alone, while the registry is unreachable
   and nothing is cached; such a snapshot carries no `registry`. Code with an
   exhaustive `switch` on `source` must handle it.
+- **`@arkade-os/swap/protocol` no longer exports `refundIfUnresolved` or
+  `RefundOutcome`.** The deprecated loop pushed one capped refund and
+  reported `refunded` while outputs past the 16-input cap stayed at the
+  lockup, and its type hid the `left` count that would have said so.
+  `client.recover()` drives the refund to completion; to drive it by hand,
+  call `pushRefundWithoutReceiver` until it reports nothing `left`.
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported

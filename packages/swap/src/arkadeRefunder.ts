@@ -1,7 +1,6 @@
 /**
- * The `refundArkade` callback, assembled. Its obvious implementation, `refundIfUnresolved`, is
- * wrong here: it brings its own status polling and MTP retry loop, which would nest inside the
- * manager's.
+ * The `refundArkade` callback, assembled: one push per pass, leaving status polling and the MTP
+ * retry to the manager.
  *
  * An empty lockup returns `null`; {@link RefundNotLocallyPossibleError} and
  * {@link LockupNeedsRecoveryError} propagate untouched, since catching either would turn a state

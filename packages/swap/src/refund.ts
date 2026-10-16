@@ -6,7 +6,7 @@
  * `requestQuote`, `status`, `close`). "Ask first" means WATCH `status()`: a solver that gives up
  * co-signs `refund` or pushes its own `nonInteractiveRefund`, both paying the trader's committed
  * address. The fallback is the trader refunding once `refund_locktime` matures
- * ({@link refundIfUnresolved}).
+ * ({@link pushRefundWithoutReceiver}, driven by `client.recover()`).
  *
  * | leaf                              | needs                        | timelock |
  * |-----------------------------------|------------------------------|----------|
@@ -23,7 +23,6 @@ import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
-    assertTimerMs,
     ConditionWitness,
     type ArkTxInput,
     type IContractManager,
@@ -45,7 +44,7 @@ import {
     type IWallet,
 } from "@arkade-os/sdk";
 
-import { pollUntil, sleep } from "./onchainHtlc";
+import { pollUntil } from "./onchainHtlc";
 import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
 
 /** True for the states after which the solver will report nothing further. */
@@ -61,9 +60,6 @@ export const isRfqTerminal = (state: string): boolean =>
  * refund. The VTXO lookup, not the RFQ state, decides whether anything is there.
  */
 export const RFQ_RESOLVED_STATES = ["settled", "refunded"] as const;
-
-const isResolved = (state: string): boolean =>
-    (RFQ_RESOLVED_STATES as readonly string[]).includes(state);
 
 /**
  * Poll a swap's status until it reaches a terminal state. Same conventions as
@@ -436,7 +432,7 @@ export const lockupInputs = (
  * address); overridable because this leaf genuinely permits any destination.
  *
  * **Median-time-past (BIP-113), not wall clock, decides spendability**: it trails by about an
- * hour, so an early rejection is expected; {@link refundIfUnresolved} retries.
+ * hour, so an early rejection is expected; the caller retries until `REFUND_MTP_LAG_SECONDS`.
  *
  * **Swept outputs refuse the whole push** with {@link LockupNeedsRecoveryError}: one swept input
  * would sink the aggregate tx, and silently filtering it would report success over unmoved money.
@@ -509,7 +505,7 @@ export async function pushRefundWithoutReceiver(
     };
 }
 
-// ── Ask first, then fall back ────────────────────────────────────────────────
+// ── Refund timing ────────────────────────────────────────────────────────────
 
 /**
  * How long past `refundLocktime` to keep retrying the push before surfacing the server's refusal.
@@ -517,133 +513,3 @@ export async function pushRefundWithoutReceiver(
  * of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes of the same margin.
  */
 export const REFUND_MTP_LAG_SECONDS = 2 * 60 * 60;
-
-export type RefundOutcome =
-    /** The solver resolved it — claimed (`settled`) or returned it (`refunded`). */
-    | { outcome: "resolved"; status: RfqStatus }
-    /** The trader took it back via `refundWithoutReceiver`. */
-    | { outcome: "refunded"; txid: string; amount: number; status: RfqStatus | null }
-    /** The refund window opened but the lockup holds nothing to return. */
-    | { outcome: "nothing_to_refund"; status: RfqStatus | null }
-    /**
-     * The money is still at the lockup but its batch was swept; no waiting fixes that (see
-     * {@link LockupNeedsRecoveryError}). Recover the named outpoints, then call again.
-     */
-    | {
-          outcome: "needs_recovery";
-          outpoints: string[];
-          vtxos: LockupVtxo[];
-          status: RfqStatus | null;
-      }
-    /**
-     * The lockup was unilaterally exited: its outputs sit onchain, beyond any offchain refund.
-     * Complete the unroll and spend the named outputs onchain.
-     *
-     * **`outpoints` may not be the whole lockup.** `exited` fires as soon as ANY output exited
-     * (the same rule `RfqSwapManager` uses; the two must agree), and a still-live sibling is left
-     * for the caller to pursue separately. Distinct from `needs_recovery`, whose batch-recovery
-     * remedy cannot reach an onchain output.
-     */
-    | { outcome: "exited"; outpoints: string[]; status: RfqStatus | null };
-
-/**
- * Ask first, then fall back: watch the swap for the solver to resolve it, and
- * if `refundLocktime` matures without that happening, take the lockup back
- * with `refundWithoutReceiver`.
- *
- * - **A dead negotiation does not stop the wait** (see {@link RFQ_RESOLVED_STATES}).
- * - **Early pushes may fail** while MTP catches up; retried at the poll interval until
- *   `attemptDeadline`, then the last error is rethrown.
- * - **A swept lockup returns `needs_recovery`** instead of burning the window.
- * - **An exited lockup returns `exited`**, checked first via {@link readLockupFate} (an extra
- *   indexer read per pass). A failing fate read is swallowed: it is a shortcut only.
- *
- * Safe to call late and to call again: an empty lockup is `nothing_to_refund`, not an error.
- *
- * @deprecated Use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
-export async function refundIfUnresolved(
-    transport: RfqTransport,
-    operator: SwapOperator,
-    contracts: LockupContractSource,
-    indexer: LockupSpendIndexer,
-    input: {
-        rfqId: string;
-        contract: InstanceType<typeof VHTLC.ScriptV2>;
-        /** @see pushRefundWithoutReceiver */
-        sender: Identity;
-        /**
-         * `sha256(P)`, hex — the quote's `payment_hash`. Not derivable from `script`, whose
-         * `preimageHash` is a `hash160`.
-         */
-        paymentHash: string;
-        /** `refund_locktime` from the quote, unix seconds. */
-        refundLocktime: number;
-        /** Defaults to the contract's own committed refund destination. */
-        refundPkScript?: Uint8Array;
-        pollMs?: number;
-        /** Stop retrying the push at this unix time, rethrowing the last
-         * error. Defaults to `refundLocktime + REFUND_MTP_LAG_SECONDS`. */
-        attemptDeadline?: number;
-        /** Injected for tests; defaults to wall clock, in unix seconds. */
-        now?: () => number;
-    },
-): Promise<RefundOutcome> {
-    const pollMs = input.pollMs ?? 5_000;
-    assertTimerMs("pollMs", pollMs);
-    const now = input.now ?? (() => Math.floor(Date.now() / 1000));
-    const attemptDeadline = input.attemptDeadline ?? input.refundLocktime + REFUND_MTP_LAG_SECONDS;
-
-    for (;;) {
-        const status = await transport.status(input.rfqId);
-        if (status && isResolved(status.state)) return { outcome: "resolved", status };
-
-        if (now() >= input.refundLocktime) {
-            // Before the refundable read, to prevent the doomed push. Guarded: a transient
-            // `getVirtualTxs` failure must not end a wait the path below can answer.
-            let fate: LockupFate = { fate: "unknown" };
-            try {
-                fate = await readLockupFate(indexer, {
-                    swapPkScript: input.contract.pkScript,
-                    paymentHash: input.paymentHash,
-                });
-            } catch {
-                // `findLockupVtxos`'s own drop still refuses the doomed push.
-            }
-            if (fate.fate === "exited") {
-                return {
-                    outcome: "exited",
-                    outpoints: fate.outpoints.map((o) => `${o.txid}:${o.vout}`),
-                    status,
-                };
-            }
-
-            const vtxos = await findLockupVtxos(contracts, input.contract.pkScript);
-            if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
-            try {
-                const pushed = await pushRefundWithoutReceiver(operator, {
-                    contract: input.contract,
-                    sender: input.sender,
-                    vtxos,
-                    refundPkScript: input.refundPkScript,
-                });
-                return { outcome: "refunded", status, ...pushed };
-            } catch (error) {
-                // Swept is "not this way", not "not yet": retrying would burn the window.
-                if (error instanceof LockupNeedsRecoveryError) {
-                    return {
-                        outcome: "needs_recovery",
-                        outpoints: error.outpoints,
-                        vtxos,
-                        status,
-                    };
-                }
-                // Expected while median-time-past has not caught up; give up
-                // only once the window closes, and surface the real reason.
-                if (now() >= attemptDeadline) throw error;
-            }
-        }
-
-        await sleep(pollMs);
-    }
-}

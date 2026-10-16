@@ -147,8 +147,6 @@ export {
     type LockupVtxo,
     pushRefundWithoutReceiver,
     readLockupFate,
-    refundIfUnresolved,
-    type RefundOutcome,
 } from "./refund";
 export {
     type RefundBlockedReason,
