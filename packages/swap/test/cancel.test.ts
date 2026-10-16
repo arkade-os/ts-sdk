@@ -14,7 +14,12 @@ const state = vi.hoisted(() => ({
     serverKey: new Uint8Array(0) as Uint8Array,
     utxos: [] as { txid: string; vout: number; value: number }[],
     connectOptions: undefined as
-        | { contractManager?: unknown; indexer?: unknown; arkade?: unknown }
+        | {
+              contractManager?: unknown;
+              indexer?: unknown;
+              arkade?: unknown;
+              oneShotSubmit?: unknown;
+          }
         | undefined,
     sends: 0,
 }));
@@ -184,6 +189,17 @@ describe("cancelOffer guards", () => {
             submitTx: arkadeBroadcaster.submitTx,
             finalizeTx: arkadeBroadcaster.finalizeTx,
         });
+    });
+
+    it("hands the wallet's oneShotSubmit to the arkade client", async () => {
+        state.serverKey = fundedOperatorKey;
+        state.utxos = [];
+        state.connectOptions = undefined;
+        const optedOut = { ...wallet, oneShotSubmit: false } as unknown as IWallet;
+        await expect(
+            cancelOffer(optedOut, offerHex, { repository: new InMemoryAssetSwapRepository() }),
+        ).rejects.toThrow("no spendable VTXO");
+        expect(state.connectOptions!.oneShotSubmit).toBe(false);
     });
 });
 
