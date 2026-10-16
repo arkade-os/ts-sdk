@@ -105,6 +105,8 @@ import {
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
     RequestSend,
+    RequestSendWithDeadline,
+    RequestSendWithInputExpiryFloor,
     ResponseSend,
     RequestGetAssetDetails,
     ResponseGetAssetDetails,
@@ -153,6 +155,8 @@ import {
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
+import { captureInputExpiryFloor } from "../sendInputExpiry";
 import type {
     Contract,
     ContractEventCallback,
@@ -273,6 +277,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are treated as long-running on both sides of the bus: the values below
     // are retained only for type completeness and are never enforced.
     SEND: 50_000,
+    SEND_WITH_DEADLINE: 50_000,
+    SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
     // Broadcast: the server round-trip a spend ends in, so it belongs
     // with the writes rather than the reads above.
@@ -768,6 +774,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 }
 
+                if (response.type === "SEND_DEADLINE_EXCEEDED") {
+                    if (event.source !== this.serviceWorker || response.tag !== request.tag) return;
+                    cleanup();
+                    if (
+                        (request.type === "SEND_WITH_DEADLINE" ||
+                            request.type === "SEND_WITH_INPUT_EXPIRY_FLOOR") &&
+                        response.error instanceof Error &&
+                        (response.broadcast === undefined || response.broadcast === false) &&
+                        Number.isSafeInteger(response.payload?.validUntil) &&
+                        response.payload.validUntil > 0 &&
+                        response.payload.validUntil === request.payload.validUntil
+                    ) {
+                        reject(new SendDeadlineExceededError(request.payload.validUntil));
+                    } else {
+                        reject(new Error("Invalid timed-send refusal response"));
+                    }
+                    return;
+                }
                 cleanup();
                 if (response.error) {
                     reject(restoreErrorName(response));
@@ -2043,31 +2067,61 @@ export class ServiceWorkerWallet
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const [first] = args;
-        const { recipients, selectedVtxos, maxChangeFee } =
-            args.length === 1 && first && "recipients" in first
-                ? (first as SendParams)
-                : {
-                      recipients: args as [Recipient, ...Recipient[]],
-                      selectedVtxos: undefined,
-                      maxChangeFee: undefined,
-                  };
-        const message: RequestSend = {
-            tag: this.messageTag,
-            type: "SEND",
-            id: getRandomId(),
-            // Omitted rather than sent as `undefined`, so an older worker sees
-            // exactly the payload it saw before.
-            payload: {
-                recipients,
-                ...(selectedVtxos ? { selectedVtxos } : {}),
-                ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
-            },
+        const {
+            recipients,
+            selectedVtxos,
+            maxChangeFee,
+            validUntil: wireDeadline,
+            inputExpiryFloor: wireInputExpiryFloor,
+        } = args.length === 1 && first && "recipients" in first
+            ? (first as SendParams)
+            : {
+                  recipients: args as [Recipient, ...Recipient[]],
+                  selectedVtxos: undefined,
+                  maxChangeFee: undefined,
+                  validUntil: undefined,
+                  inputExpiryFloor: undefined,
+              };
+        const validUntil = captureSendDeadline(wireDeadline);
+        const inputExpiryFloor = captureInputExpiryFloor(wireInputExpiryFloor);
+        // Optional fields are omitted rather than sent as `undefined`, so an
+        // older worker sees exactly the payload it saw before.
+        const options = {
+            ...(selectedVtxos ? { selectedVtxos } : {}),
+            ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
         };
+        const message: RequestSend | RequestSendWithDeadline | RequestSendWithInputExpiryFloor =
+            inputExpiryFloor !== undefined
+                ? {
+                      tag: this.messageTag,
+                      type: "SEND_WITH_INPUT_EXPIRY_FLOOR",
+                      id: getRandomId(),
+                      payload: {
+                          recipients,
+                          ...options,
+                          inputExpiryFloor,
+                          ...(validUntil === undefined ? {} : { validUntil }),
+                      },
+                  }
+                : validUntil === undefined
+                  ? {
+                        tag: this.messageTag,
+                        type: "SEND",
+                        id: getRandomId(),
+                        payload: { recipients, ...options },
+                    }
+                  : {
+                        tag: this.messageTag,
+                        type: "SEND_WITH_DEADLINE",
+                        id: getRandomId(),
+                        payload: { recipients, ...options, validUntil },
+                    };
 
         try {
             const response = await this.sendMessage(message);
             return (response as ResponseSend).payload.txid;
         } catch (error) {
+            if (error instanceof SendDeadlineExceededError) throw error;
             throw new Error(`Send failed: ${error}`);
         }
     }

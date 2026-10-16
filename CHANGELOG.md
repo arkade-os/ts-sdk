@@ -66,6 +66,13 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- Removed the deprecated `receivePkScriptFor` helper from `@arkade-os/swap/protocol`.
+
+- **Public offchain submissions share the wallet transaction lock.**
+  `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
+  submissions. The lock is non-reentrant: do not call it from a settlement
+  callback while that settlement still holds the lock.
+
 - **`IContractManager.dispose()` returns a promise.** Implementations must
   return `Promise<void>`; callers can await teardown, including in-flight
   event handling and repository writes.
@@ -244,6 +251,12 @@ style and have not been backfilled.
 
 ### Features
 
+- **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
+  optional third argument reports `preparing` after lock acquisition and
+  `registration_attempt` before intent registration, allowing backend callers
+  to retain reservations once registration may have been attempted. `IWallet`
+  and `ServiceWorkerWallet` retain their two-argument settlement API.
+
 - **Opt-in faster startup with repository-first reads.** Wallet
   construction waited for the look-ahead band, the boot reconcile and the
   watcher start, so a returning wallet showed nothing until the indexer
@@ -420,6 +433,19 @@ style and have not been backfilled.
   and after a failed sync until a later event or reconnect syncs it.
   `ContractWatcher.startWatching` accepts a callback that returns a promise
   for this, and `ContractManager` returns its handler's.
+- **Selected send inputs normalize their expiry before checking a funding floor.**
+  JSON date strings and millisecond timestamps now receive the same expiry check
+  as `Date` values, and those normalized inputs reach transaction construction.
+- **Retry deadlines stay local to the funding attempt.** A tighter deadline on
+  a retry no longer overwrites the durable bound of an earlier ambiguous send.
+  Failed non-submission proof writes preserve the original authenticated send
+  deadline error and leave the contract watched until the proof is durable.
+- **Asset-payment comparisons ignore object key order.** Equivalent restored
+  terms and recipients no longer conflict with their verified quote. Malformed
+  stored payment terms are isolated from healthy swaps during listing and restore.
+  A funded offer whose fate changes during restore remains stored and watched;
+  its malformed public projection cannot poison readiness or other updates.
+
 - **`wallet.dispose()` waits for contract events still being handled.** It
   stopped the contract watcher but returned while an event handler could still
   be syncing, so that handler could write to storage the caller had already

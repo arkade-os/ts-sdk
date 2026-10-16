@@ -60,6 +60,9 @@ import {
 } from "../wallet";
 import { computeOffchainBalance, toWalletBalance } from "../balance";
 import { getDustAmount } from "../utils";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
+import { captureInputExpiryFloor } from "../sendInputExpiry";
+import type { InputExpiryFloor } from "../index";
 import { isHDAllocationCapable, isHDWalletCapable } from "../hdWalletCapable";
 import { gatedFrom, isGatedVtxo } from "../../contracts/spendability";
 import type {
@@ -570,6 +573,32 @@ export type RequestSend = RequestEnvelope & {
         maxChangeFee?: number;
     };
 };
+export type RequestSendWithDeadline = RequestEnvelope & {
+    type: "SEND_WITH_DEADLINE";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
+        validUntil: number;
+    };
+};
+export type RequestSendWithInputExpiryFloor = RequestEnvelope & {
+    type: "SEND_WITH_INPUT_EXPIRY_FLOOR";
+    payload: {
+        recipients: [Recipient, ...Recipient[]];
+        selectedVtxos?: ExtendedVirtualCoin[];
+        /** @see SendParams.maxChangeFee */
+        maxChangeFee?: number;
+        inputExpiryFloor: InputExpiryFloor;
+        validUntil?: number;
+    };
+};
+export type ResponseSendDeadlineExceeded = ResponseEnvelope & {
+    type: "SEND_DEADLINE_EXCEEDED";
+    error: Error;
+    payload: { validUntil: number };
+};
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
     payload: { txid: string };
@@ -900,6 +929,8 @@ export type WalletUpdaterRequest =
     | RequestGetUsedSigningDescriptors
     | RequestAdvanceSigningDescriptorWatermark
     | RequestSend
+    | RequestSendWithDeadline
+    | RequestSendWithInputExpiryFloor
     | RequestGetAssetDetails
     | RequestIssue
     | RequestReissue
@@ -962,6 +993,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseAdvanceSigningDescriptorWatermark
         | ResponseContractEvent
         | ResponseSend
+        | ResponseSendDeadlineExceeded
         | ResponseGetAssetDetails
         | ResponseIssue
         | ResponseReissue
@@ -1613,6 +1645,51 @@ export class WalletMessageHandler
                         type: "SEND_SUCCESS",
                         payload: { txid },
                     });
+                }
+                case "SEND_WITH_DEADLINE":
+                case "SEND_WITH_INPUT_EXPIRY_FLOOR": {
+                    const wallet = this.requireWallet();
+                    const {
+                        recipients,
+                        selectedVtxos,
+                        maxChangeFee,
+                        validUntil: wireDeadline,
+                    } = (message as RequestSendWithDeadline | RequestSendWithInputExpiryFloor)
+                        .payload;
+                    const inputExpiryFloor =
+                        message.type === "SEND_WITH_INPUT_EXPIRY_FLOOR"
+                            ? captureInputExpiryFloor(
+                                  (message as RequestSendWithInputExpiryFloor).payload
+                                      .inputExpiryFloor,
+                                  true,
+                              )!
+                            : undefined;
+                    const validUntil = captureSendDeadline(
+                        wireDeadline,
+                        message.type === "SEND_WITH_DEADLINE",
+                    );
+                    try {
+                        const txid = await wallet.send({
+                            recipients,
+                            ...(selectedVtxos ? { selectedVtxos } : {}),
+                            ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
+                            validUntil,
+                            ...(inputExpiryFloor ? { inputExpiryFloor } : {}),
+                        });
+                        return this.tagged({ id, type: "SEND_SUCCESS", payload: { txid } });
+                    } catch (error) {
+                        if (
+                            validUntil === undefined ||
+                            !(error instanceof SendDeadlineExceededError)
+                        )
+                            throw error;
+                        return this.tagged({
+                            id,
+                            type: "SEND_DEADLINE_EXCEEDED",
+                            error,
+                            payload: { validUntil },
+                        });
+                    }
                 }
                 case "GET_ASSET_DETAILS": {
                     const { assetId } = (message as RequestGetAssetDetails).payload;

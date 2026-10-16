@@ -76,6 +76,7 @@ import {
     ReadonlyWalletConfig,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -83,6 +84,8 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
+import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
+import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
@@ -3449,18 +3452,27 @@ export class Wallet
      *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
+     * @param hooks - Optional phases for preparation and intent registration.
      * @returns The finalized Arkade transaction id
      */
     async settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string> {
-        return this._withTxLock(() => this._settleImpl(params, eventCallback));
+        return this._withTxLock(() => {
+            hooks?.onPhase?.("preparing");
+            const onRegistrationAttempt = hooks?.onPhase
+                ? () => hooks.onPhase?.("registration_attempt")
+                : undefined;
+            return this._settleImpl(params, eventCallback, onRegistrationAttempt);
+        });
     }
 
     private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        onRegistrationAttempt?: () => void,
     ): Promise<string> {
         if (params?.inputs) {
             for (const input of params.inputs) {
@@ -3759,6 +3771,7 @@ export class Wallet
                 yield* stream;
             })();
 
+            onRegistrationAttempt?.();
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
             await this.persistIntentSnapshot(
@@ -5086,14 +5099,18 @@ export class Wallet
      */
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const params = asSendParams(args);
-        return this._withTxLock(() => this._sendImpl(params));
+        const validUntil = captureSendDeadline(params.validUntil);
+        const inputExpiryFloor = captureInputExpiryFloor(params.inputExpiryFloor);
+        assertSendDeadline(validUntil);
+        return this._withTxLock(() => this._sendImpl(params, validUntil, inputExpiryFloor));
     }
 
-    private async _sendImpl({
-        recipients: args,
-        selectedVtxos,
-        maxChangeFee,
-    }: SendParams): Promise<string> {
+    private async _sendImpl(
+        { recipients: args, selectedVtxos, maxChangeFee }: SendParams,
+        validUntil?: number,
+        inputExpiryFloor?: InputExpiryFloor,
+    ): Promise<string> {
+        assertSendDeadline(validUntil);
         if (args.length === 0) {
             // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
@@ -5110,6 +5127,13 @@ export class Wallet
             throw new Error("send({ maxChangeFee }): expected a non-negative safe integer");
         }
         if (selectedVtxos) {
+            if (inputExpiryFloor) selectedVtxos = selectedVtxos.map(normalizeVtxo);
+            if (
+                inputExpiryFloor &&
+                selectedVtxos.some((coin) => !meetsInputExpiryFloor(coin, inputExpiryFloor))
+            ) {
+                throw new Error("send({ selectedVtxos }): input expiry floor not met");
+            }
             // Naming inputs skips the generic-spending gate, as on `settle({ inputs })`.
             void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
         }
@@ -5138,6 +5162,11 @@ export class Wallet
                 withRecoverable: false,
                 genericallySpendableOnly: true,
             });
+            if (inputExpiryFloor) {
+                virtualCoins = virtualCoins.filter((coin) =>
+                    meetsInputExpiryFloor(coin, inputExpiryFloor),
+                );
+            }
         }
 
         // keep track of asset changes
@@ -5447,15 +5476,20 @@ export class Wallet
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        return this._submitOffchainSpend(selectedCoins, outputs, {
-            sentAmount,
-            changeAmount: BigInt(changeAmount),
-            changeVout: changeReceiver ? changeIndex : 0,
-            offchainTapscript,
-            serverPubKey,
-            serverUnrollScript,
-            changeAssets: changeReceiver?.assets,
-        });
+        return this._submitOffchainSpend(
+            selectedCoins,
+            outputs,
+            {
+                sentAmount,
+                changeAmount: BigInt(changeAmount),
+                changeVout: changeReceiver ? changeIndex : 0,
+                offchainTapscript,
+                serverPubKey,
+                serverUnrollScript,
+                changeAssets: changeReceiver?.assets,
+            },
+            { validUntil },
+        );
     }
 
     /**
@@ -5475,13 +5509,15 @@ export class Wallet
             changeAssets?: Asset[];
             recordSentHistory?: boolean;
         },
+        options?: { validUntil?: number },
     ): Promise<string> {
         this._addPendingSpends(inputs);
         try {
-            const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
+            const { arkTxid, signedCheckpointTxs } = await this._buildAndSubmitOffchainTx(
                 inputs,
                 outputs,
                 persist.serverUnrollScript,
+                options,
             );
 
             await this.updateDbAfterOffchainTx(
@@ -5600,7 +5636,23 @@ export class Wallet
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
+        options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
+        return this._withTxLock(() =>
+            this._buildAndSubmitOffchainTx(inputs, outputs, serverUnrollScript, { validUntil }),
+        );
+    }
+
+    private async _buildAndSubmitOffchainTx(
+        inputs: ExtendedVirtualCoin[],
+        outputs: TransactionOutput[],
+        serverUnrollScript: CSVMultisigTapscript.Type,
+        options?: { validUntil?: number },
+    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
         void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
         // Before anything is signed or submitted: the tx would build fine from
         // the tapscripts stored on each coin, and only `updateDbAfterOffchainTx`
@@ -5674,7 +5726,26 @@ export class Wallet
             {
                 // Mark pending before submitting — if we crash between submit and
                 // finalize, the next init recovers via finalizePendingTxs.
-                beforeSubmit: () => this.setPendingTxFlag(true),
+                beforeSubmit: async () => {
+                    const ownsPendingFlag =
+                        validUntil !== undefined && !(await this.hasPendingTxFlag());
+                    await this.setPendingTxFlag(true);
+                    try {
+                        assertSendDeadline(validUntil);
+                    } catch (error) {
+                        if (ownsPendingFlag) {
+                            try {
+                                await this.setPendingTxFlag(false);
+                            } catch (clearError) {
+                                console.error(
+                                    "Failed to clear pending tx flag after deadline expiry:",
+                                    clearError,
+                                );
+                            }
+                        }
+                        throw error;
+                    }
+                },
                 afterFinalize: async () => {
                     try {
                         await this.setPendingTxFlag(false);

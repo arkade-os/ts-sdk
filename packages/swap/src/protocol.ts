@@ -80,6 +80,8 @@ export {
     encodeOffer,
     fillOffer,
     type FillFunding,
+    type FillOutpoint,
+    offerVtxoScript,
     NoSpendableDepositError,
     type Offer,
     OFFER_PACKET_TYPE,
