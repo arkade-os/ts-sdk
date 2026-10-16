@@ -148,6 +148,8 @@ export interface BaseWalletConfig {
  * ```
  */
 export interface ReadonlyWalletConfig extends BaseWalletConfig {
+    /** Opt in to background contract initialization for explicit stored reads. */
+    lazyInitialization?: boolean;
     /** Readonly identity used to derive wallet addresses. */
     identity: ReadonlyIdentity;
     /**
@@ -286,6 +288,7 @@ export interface WalletBalance {
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        loaded?: boolean;
     };
     /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
     settled: number;
@@ -1003,6 +1006,8 @@ export interface IReadonlyWallet {
 
     /** @returns The wallet's combined onchain and offchain balance. */
     getBalance(): Promise<WalletBalance>;
+    /** Cached display balance; check provider state and boarding.loaded. */
+    getStoredBalance?(): Promise<WalletBalance>;
 
     /**
      * Get virtual outputs tracked by the wallet.
@@ -1012,6 +1017,8 @@ export interface IReadonlyWallet {
      * @see GetVtxosFilter
      */
     getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+    /** Cached display coins; may be incomplete until synchronization finishes. */
+    getStoredVtxos?(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
      * The subset of {@link getVtxos} generic spending may select: minus gated contracts,
@@ -1025,6 +1032,13 @@ export interface IReadonlyWallet {
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+    /**
+     * Boarding inputs as last cached, with no onchain call: stale or empty until this wallet
+     * instance has fetched them (see `WalletBalance.boarding.loaded`). For display, never coin
+     * selection.
+     */
+    getStoredBoardingUtxos?(): Promise<ExtendedCoin[]>;
 
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;
