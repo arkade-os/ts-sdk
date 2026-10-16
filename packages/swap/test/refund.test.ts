@@ -6,7 +6,7 @@
  * `refundWithoutReceiver` leaf (carrying the CLTV that makes it valid), and
  * that a dead-but-funded swap is still refunded rather than reported done.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -123,18 +123,6 @@ const fakeOperator = (
             finalized.push({ txid, checkpoints });
         },
     } as unknown as FakeOperator;
-};
-
-const fakeIndexer = (vtxos: LockupVtxo[]): LockupSpendIndexer & { scripts: string[][] } => {
-    const scripts: string[][] = [];
-    return {
-        scripts,
-        getVtxos: async (opts?: { scripts?: string[] }) => {
-            scripts.push(opts?.scripts ?? []);
-            return { vtxos };
-        },
-        getVirtualTxs: async () => ({ txs: [] }),
-    } as unknown as LockupSpendIndexer & { scripts: string[][] };
 };
 
 /** A lockup output as a test names it, plus the fact flags the manager's
