@@ -29,7 +29,7 @@ import { assetPaymentOf } from "./assetPayment";
 import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
-import { buildHtlcRefund, claimOnchainFill } from "../onchainHtlc";
+import { buildHtlcRefund, claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { restoreOfferCoverage } from "../offer";
 import { LockupContractMissing, lockupContractParams } from "../lockupContract";
@@ -487,6 +487,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         | null
         | undefined;
 
+    const liveFeeRate = async (
+        chain: NonNullable<RfqSwapManagerDeps["chain"]>,
+    ): Promise<number | undefined> => {
+        try {
+            return await chain.getFeeRate?.();
+        } catch {
+            return undefined;
+        }
+    };
+
     /**
      * The wallet-backed default L1 claim, synthesized when the caller wired none and the corridor
      * can price one. HTLC and payout script come off the rebuilt swap (the store's word), the
@@ -497,7 +507,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         chain: NonNullable<RfqSwapManagerDeps["chain"]>,
         feeRateSatVb: number,
     ): RfqSwapManagerCallbacks["claimOnchain"] => {
-        return async (swap, utxo) => {
+        return async (swap, utxo, options) => {
             const record = await corridorStore().getRfqSwap(swap.rfqId);
             if (!record) {
                 throw new Error(`rfq swap ${swap.rfqId} has no stored record to claim from`);
@@ -526,6 +536,17 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 // Optional only so older records still restore; no claim can be built without it.
                 throw new Error(`rfq swap ${swap.rfqId} carries no claim payout script`);
             }
+            // The agreed rate is the relay floor on every network — a claim that can sit
+            // unconfirmed until the solver's refund leaf replaces it.
+            const rate = nextClaimFeeRate({
+                configuredSatVb: feeRateSatVb,
+                utxoAmount: utxo.amount,
+                estimateSatVb: await liveFeeRate(chain),
+                ...(swap.claimFeeRateSatVb === undefined
+                    ? {}
+                    : { lastSatVb: swap.claimFeeRateSatVb }),
+                ...(options?.bump ? { bump: true } : {}),
+            });
             // `now` stays wall-clock: the claim's own deadline check is a consensus-margin probe,
             // not the drive's (injectable) window clock.
             // Tracked so `idle()`/`dispose()` drain this money-moving broadcast.
@@ -535,11 +556,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                     utxo,
                     preimage,
                     payoutPkScript: swap.payoutPkScript,
-                    feeRateSatVb,
+                    feeRateSatVb: rate,
                     sign: (sighash) => signer.signMessage(sighash, "schnorr"),
+                    ...(swap.claimTxid ? { republish: true } : {}),
                 }),
             );
-            return { txid };
+            return { txid, feeRateSatVb: rate };
         };
     };
 

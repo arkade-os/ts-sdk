@@ -433,6 +433,19 @@ style and have not been backfilled.
   and after a failed sync until a later event or reconnect syncs it.
   `ContractWatcher.startWatching` accepts a callback that returns a promise
   for this, and `ContractManager` returns its handler's.
+- **`@arkade-os/swap`: an `arkade -> onchain` send no longer settles on an
+  unconfirmed L1 claim.** The swap ended `settled` the moment the solver
+  claimed the Arkade lockup, which only proves the solver read `P` off the
+  trader's claim — not that the claim was mined. Built at the relay floor on
+  every network, that claim can sit in the mempool until the solver's refund
+  leaf matures on median-time-past and replaces it, taking both sides of the
+  trade from a wallet already reporting success; an eviction loses the same
+  money with no solver at fault, since nothing re-broadcast it. The payout now
+  waits for the claim to confirm, is re-published when the chain has forgotten
+  it, and is replaced at a higher fee while it stays unconfirmed. `ChainSource`
+  gains two optional reads for this (`getTxStatus`, `getFeeRate`), both
+  implemented by the package's Esplora sources; a chain source without
+  `getTxStatus` keeps the old behaviour, and the old exposure.
 - **Selected send inputs normalize their expiry before checking a funding floor.**
   JSON date strings and millisecond timestamps now receive the same expiry check
   as `Date` values, and those normalized inputs reach transaction construction.

@@ -32,6 +32,7 @@ import {
 } from "@arkade-os/sdk";
 
 import {
+    ONCHAIN_CLAIM_BUMP_SECONDS,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     classifyOnchainHtlc,
     type ChainSource,
@@ -165,11 +166,16 @@ export interface OnchainSendSwap extends RfqSwapCommon {
     /** Where {@link RfqSwapManagerCallbacks.claimOnchain} pays; optional only
      * so records predating its profile slot still restore. */
     payoutPkScript?: Uint8Array;
-    /** The fill's outpoint, learned on first sighting. Without it a SPENT
-     * HTLC reads as never funded — see {@link classifyOnchainHtlc}. */
-    funding?: { txid: string; vout: number };
-    /** Our L1 claim's txid. */
+    /** The fill's outpoint and value, learned on first sighting. Without it a SPENT HTLC
+     * reads as never funded, and no replacement claim can be signed ({@link classifyOnchainHtlc}). */
+    funding?: { txid: string; vout: number; amount?: number };
+    /** Our L1 claim's txid, the sat/vB it went out at, and when (unix seconds). */
     claimTxid?: string;
+    claimFeeRateSatVb?: number;
+    claimBroadcastAt?: number;
+    /** Whether the chain reports {@link claimTxid} confirmed; `undefined` when it cannot
+     * say. Read fresh each pass, never persisted: a stale `true` is what loses money. */
+    claimConfirmed?: boolean;
 }
 
 /**
@@ -333,8 +339,15 @@ export type ArkadeRefundResult = { txid: string; amount: number } | null;
  * instead of retrying for the whole refund window.
  */
 export interface RfqSwapManagerCallbacks {
-    /** Build and broadcast the L1 claim. See `claimOnchainFill`. */
-    claimOnchain: (swap: OnchainSendSwap, utxo: ChainUtxo) => Promise<{ txid: string }>;
+    /** Build and broadcast the L1 claim (see `claimOnchainFill`). Called again while a
+     * claim of ours is unconfirmed: to re-publish one the chain dropped, and with `bump`
+     * to REPLACE one that is not confirming — return `feeRateSatVb` so the next bump can
+     * clear BIP125's floor over it, as `nextClaimFeeRate` does. */
+    claimOnchain: (
+        swap: OnchainSendSwap,
+        utxo: ChainUtxo,
+        options?: { bump?: boolean },
+    ) => Promise<{ txid: string; feeRateSatVb?: number }>;
     /**
      * `buildHtlcRefund` over `swap.refundPkScript`, then `chain.broadcast`. Required for
      * {@link claimOnchain}'s reason: monitoring one of these unwired strands the trader's
@@ -1059,7 +1072,7 @@ export class RfqSwapManager {
         }
         if (!swap) throw new Error(`swap ${rfqId} is not monitored`);
         if (swap.state === "failed") throw new Error(swap.failure ?? `swap ${rfqId} failed`);
-        if (isPayoutDecided(swap)) return outcomeOf(swap);
+        if (isPayoutDecided(swap, this.reportsConfirmations)) return outcomeOf(swap);
 
         return new Promise<RfqSwapOutcome>((resolve, reject) => {
             const set = this.waiters.get(rfqId) ?? new Set();
@@ -1259,6 +1272,12 @@ export class RfqSwapManager {
             // Before `setState`, so its single write already names the ending transaction.
             this.stampLockupSpends(swap, fate.spends);
             if (fate.fate === "claimed") this.stampSettlementPreimage(swap, fate.preimage);
+            // An onchain send is paid on L1, so the solver holding `P` is no proof the
+            // trader was paid: its refund leaf can still replace an unconfirmed claim and
+            // take both sides. No ChainSource, no L1 half to read.
+            if (swap.kind === "onchain_send" && fate.fate === "claimed" && this.deps.chain) {
+                return this.driveOnchainPayout(swap);
+            }
             this.setState(swap, fate.fate === "claimed" ? "settled" : "refunded");
             return;
         }
@@ -1272,8 +1291,8 @@ export class RfqSwapManager {
             return;
         }
 
-        //    The L1 half, skipped once claimed.
-        if (swap.kind === "onchain_send" && swap.state !== "claimed") {
+        //    The L1 half, driven past `claimed` too: dropped claims are re-published.
+        if (swap.kind === "onchain_send") {
             if ((await this.driveOnchain(swap)) === "handled") return;
         }
 
@@ -1549,8 +1568,65 @@ export class RfqSwapManager {
         return { verdict: "live", attempted: true };
     }
 
-    /** `handled` ends the pass; `continue` falls through to the refund gate. */
-    private async driveOnchain(swap: OnchainSendSwap): Promise<"handled" | "continue"> {
+    /** The solver has `P` and the lockup; the trader's payout is the L1 claim alone. */
+    private async driveOnchainPayout(swap: OnchainSendSwap): Promise<void> {
+        const l1 = await this.driveOnchain(swap);
+        // Never overwrite an ending the drive itself reached.
+        if (isRfqSwapTerminal(swap.state)) return;
+        if (l1 === "swept") {
+            return this.fail(
+                swap,
+                new Error(
+                    "the solver claimed the Arkade lockup and its L1 refund took the fill — " +
+                        `the claim ${swap.claimTxid ?? ""} was replaced before it confirmed`,
+                ),
+            );
+        }
+        // A chain that can confirm must say so. `undefined` here is a claim we cannot name
+        // (lost to a crash before its save): the solver holding `P` proves it went out, not
+        // that it landed.
+        const confirmed = await this.readClaimConfirmed(swap);
+        if (this.reportsConfirmations ? confirmed !== true : confirmed === false) return;
+        this.setState(swap, "settled");
+    }
+
+    private get reportsConfirmations(): boolean {
+        return this.deps.chain?.getTxStatus !== undefined;
+    }
+
+    private async claimVanished(txid: string): Promise<boolean> {
+        const chain = this.deps.chain;
+        if (!chain?.getTxStatus) return false;
+        try {
+            return (await chain.getTxStatus(txid)) === "missing";
+        } catch {
+            // Unreadable counts as gone: the SDK's Esplora provider throws on an unknown txid
+            // too, and a needless re-publication at worst replaces our own claim.
+            return true;
+        }
+    }
+
+    /** Stamped on the swap for {@link isPayoutDecided}; `undefined` when it cannot be read. */
+    private async readClaimConfirmed(swap: OnchainSendSwap): Promise<boolean | undefined> {
+        const chain = this.deps.chain;
+        if (!chain?.getTxStatus || !swap.claimTxid) return undefined;
+        let confirmed: boolean;
+        try {
+            confirmed = (await chain.getTxStatus(swap.claimTxid)) === "confirmed";
+        } catch {
+            // Unreadable is not confirmed: a swap held open is recoverable, one settled
+            // on a claim that never landed is not.
+            confirmed = false;
+        }
+        if (confirmed !== swap.claimConfirmed) {
+            swap.claimConfirmed = confirmed;
+            this.touch(swap);
+        }
+        return confirmed;
+    }
+
+    /** `handled` ends the pass; `continue` and `swept` fall through to the refund gate. */
+    private async driveOnchain(swap: OnchainSendSwap): Promise<"handled" | "continue" | "swept"> {
         if (!this.deps.chain) {
             // Blind, the claim window would pass in silence. A wiring mistake, so fail on the
             // first pass while there is still time to configure a chain and re-add the swap.
@@ -1576,10 +1652,26 @@ export class RfqSwapManager {
             return "continue";
         }
 
-        // Without the outpoint a SPENT htlc reads back as never funded.
-        if ("utxo" in phase && !swap.funding) {
-            swap.funding = { txid: phase.utxo.txid, vout: phase.utxo.vout };
+        if ("utxo" in phase && swap.funding?.amount === undefined) {
+            swap.funding = {
+                txid: phase.utxo.txid,
+                vout: phase.utxo.vout,
+                amount: Number(phase.utxo.amount),
+            };
             this.touch(swap);
+        }
+
+        // A claim of ours is out, yet the fill is unspent: it is not in this backend's
+        // mempool, whatever `getTxStatus` answers, and the `claimed` phase that would bump
+        // it never comes. Past the claim window too, where `P` is already public.
+        if (swap.claimTxid && (phase.phase === "claimable" || phase.phase === "refundable")) {
+            const due =
+                this.reportsConfirmations &&
+                this.config.now() - (swap.claimBroadcastAt ?? 0) >= ONCHAIN_CLAIM_BUMP_SECONDS;
+            if (due || (await this.claimVanished(swap.claimTxid))) {
+                await this.pushOnchainClaim(swap, phase.utxo, due);
+            }
+            return "continue";
         }
 
         const action = nextOnchainAction({
@@ -1589,9 +1681,6 @@ export class RfqSwapManager {
         });
 
         if (action === "claim" && phase.phase === "claimable") {
-            // The txid, not the label, says the claim was made (a blocked swap keeps the
-            // txid); re-broadcasting would publish P twice.
-            if (swap.claimTxid) return "continue";
             // Before the label: the claim publishes `P`, which is not recallable.
             if (!Number.isSafeInteger(swap.expectedAmount) || swap.expectedAmount <= 0) {
                 this.block(
@@ -1616,31 +1705,69 @@ export class RfqSwapManager {
                 return "handled";
             }
             this.setOnchainState(swap, "claimable");
-            if (!this.config.enableAutoActions || !this.callbacks?.claimOnchain) return "handled";
-            try {
-                const { txid } = await this.callbacks.claimOnchain(swap, phase.utxo);
-                swap.claimTxid = txid;
-                this.setOnchainState(swap, "claimed");
-                this.emitAction(swap, "claimOnchain");
-            } catch (error) {
-                // Retried next pass; a failed build or broadcast published nothing.
-                this.emitFailed(swap, error);
-            }
-            return "handled";
+            return this.pushOnchainClaim(swap, phase.utxo, false);
         }
 
         if (action === "claimed" && phase.phase === "claimed") {
-            // Only the trader holds P, so this claim is ours, perhaps from a previous process.
-            if (!swap.claimTxid) {
+            // Only the trader holds P, so the spend is one of OUR versions — after a bump,
+            // not necessarily the last. Rate and clock stay the last broadcast's.
+            if (swap.claimTxid !== phase.txid) {
                 swap.claimTxid = phase.txid;
                 this.touch(swap);
             }
             this.setOnchainState(swap, "claimed");
+            await this.bumpOnchainClaim(swap);
+            return "continue";
         }
+
+        if (phase.phase === "swept") return "swept";
 
         // Everything else falls through to the refund gate, "still waiting" included: an
         // unfunded HTLC at `refundLocktime` means the solver never came.
         return "continue";
+    }
+
+    /** Build and broadcast a claim. The bump clock restarts on every broadcast, same-txid
+     * re-publications included, or a claim at the dust ceiling would go out every pass. */
+    private async pushOnchainClaim(
+        swap: OnchainSendSwap,
+        utxo: ChainUtxo,
+        bump: boolean,
+    ): Promise<"handled"> {
+        if (!this.config.enableAutoActions || !this.callbacks?.claimOnchain) return "handled";
+        try {
+            const { txid, feeRateSatVb } = await this.callbacks.claimOnchain(
+                swap,
+                utxo,
+                bump ? { bump } : undefined,
+            );
+            swap.claimTxid = txid;
+            swap.claimBroadcastAt = this.config.now();
+            delete swap.claimConfirmed;
+            if (feeRateSatVb !== undefined) swap.claimFeeRateSatVb = feeRateSatVb;
+            this.touch(swap);
+            this.setOnchainState(swap, "claimed");
+            this.emitAction(swap, "claimOnchain");
+        } catch (error) {
+            // Retried next pass; a failed build or broadcast published nothing.
+            this.emitFailed(swap, error);
+        }
+        return "handled";
+    }
+
+    /** Replace a claim that is not confirming, before median-time-past opens the solver's
+     * refund leaf. Needs `getTxStatus`: blind, it would replace claims that already landed. */
+    private async bumpOnchainClaim(swap: OnchainSendSwap): Promise<void> {
+        if ((await this.readClaimConfirmed(swap)) !== false) return;
+        const funding = swap.funding;
+        if (funding?.amount === undefined) return;
+        if (this.config.now() - (swap.claimBroadcastAt ?? 0) < ONCHAIN_CLAIM_BUMP_SECONDS) return;
+        // Depth is meaningless for an output the replaced claim already spent.
+        await this.pushOnchainClaim(
+            swap,
+            { ...funding, amount: BigInt(funding.amount), confirmations: 0 },
+            true,
+        );
     }
 
     private async driveArkadeRefund(swap: RfqSwap): Promise<void> {
@@ -1887,7 +2014,7 @@ export class RfqSwapManager {
         if (swap.state === "failed") {
             const error = new Error(swap.failure ?? `swap ${swap.rfqId} failed`);
             for (const waiter of waiting) waiter.reject(error);
-        } else if (isPayoutDecided(swap)) {
+        } else if (isPayoutDecided(swap, this.reportsConfirmations)) {
             const outcome = outcomeOf(swap);
             for (const waiter of waiting) waiter.resolve(outcome);
         } else {
@@ -1914,11 +2041,15 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined =>
 
 // Keyed on the txid, not the label, which may read `needs_counterparty` after a real L1
 // payout. A receive's claim txid deliberately does NOT decide it: an Arkade submission can
-// still go `claimed -> refunded`, so it waits for `settled`.
-const isPayoutDecided = (swap: RfqSwap): boolean =>
+// still go `claimed -> refunded`, so it waits for `settled`. `confirmations` says the
+// chain can report a transaction mined: then a send's claim decides only once it IS one,
+// the solver's refund leaf being able to replace it until then.
+const isPayoutDecided = (swap: RfqSwap, confirmations = false): boolean =>
     swap.state === "settled" ||
     swap.state === "refunded" ||
-    (swap.kind === "onchain_send" && swap.claimTxid !== undefined);
+    (swap.kind === "onchain_send" &&
+        swap.claimTxid !== undefined &&
+        (confirmations ? swap.claimConfirmed === true : true));
 
 const outcomeOf = (swap: RfqSwap): RfqSwapOutcome => {
     // A lost receive's `claimTxid` names a submission the chain never took; omitted here,
