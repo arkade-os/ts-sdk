@@ -533,6 +533,8 @@ export function assertSubmittedArkTxid(
  * server at `submitTx`, before any of this runs. What it buys is a loud,
  * immediate failure instead of a caller reporting success, watching nothing
  * confirm, and learning the truth when the counterparty's refund lands.
+ * Under one-shot submit the server has already finalized when it runs, so it
+ * reports a bad response rather than preventing one.
  */
 export interface VerifyServerSignatures {
     /** The Ark server's key; x-only or compressed, both accepted. */
@@ -725,17 +727,19 @@ export async function submitOffchainTx(
     const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
 
     // Matching pins the checkpoint body, but the sighash type is declared
-    // outside it: a returned checkpoint is signed below, so what it asks to be
-    // signed under is checked here.
-    matched.forEach(({ server }, index) => {
-        try {
-            assertAllowedSighashTypes(server);
-        } catch (error) {
-            throw new ServerResponseMismatchError(
-                `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
-    });
+    // outside it: the two-step flow signs a returned checkpoint below, so what
+    // it asks to be signed under is checked here. One-shot signs only its own.
+    if (!oneShot) {
+        matched.forEach(({ server }, index) => {
+            try {
+                assertAllowedSighashTypes(server);
+            } catch (error) {
+                throw new ServerResponseMismatchError(
+                    `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
+                );
+            }
+        });
+    }
 
     const verify = options?.verifyServerSignatures;
     if (verify) {

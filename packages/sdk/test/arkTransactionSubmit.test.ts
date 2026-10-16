@@ -298,9 +298,9 @@ describe("submitOffchainTx sighash guard", () => {
         const local = checkpoint(1);
         const p = provider(encode([withSighash(local, sighashType)]));
 
-        await expect(submitOffchainTx(p, offchainTx([local]), signer())).rejects.toThrow(
-            /Unallowed sighash type/,
-        );
+        await expect(
+            submitOffchainTx(p, offchainTx([local]), signer(), undefined, { oneShot: false }),
+        ).rejects.toThrow(/Unallowed sighash type/);
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
 
@@ -308,7 +308,9 @@ describe("submitOffchainTx sighash guard", () => {
         const local = checkpoint(1);
         const p = provider(encode([withSighash(local, SigHash.DEFAULT)]));
 
-        await expect(submitOffchainTx(p, offchainTx([local]), signer())).resolves.toBeDefined();
+        await expect(
+            submitOffchainTx(p, offchainTx([local]), signer(), undefined, { oneShot: false }),
+        ).resolves.toBeDefined();
         expect(p.finalizeTx).toHaveBeenCalled();
     });
 
@@ -316,8 +318,19 @@ describe("submitOffchainTx sighash guard", () => {
         const local = checkpoint(1);
         const p = provider(encode([local]));
 
-        await expect(submitOffchainTx(p, offchainTx([local]), signer())).resolves.toBeDefined();
+        await expect(
+            submitOffchainTx(p, offchainTx([local]), signer(), undefined, { oneShot: false }),
+        ).resolves.toBeDefined();
         expect(p.finalizeTx).toHaveBeenCalled();
+    });
+
+    it("skips the check under one-shot, which signs none of the returned checkpoints", async () => {
+        const local = checkpoint(1);
+        const p = provider(encode([withSighash(userSigned(local, 1), SigHash.NONE_ANYONECANPAY)]));
+
+        await submitOffchainTx(p, offchainTx([local]), signer([userSigned(local, 1)]));
+
+        expect(p.finalizeTx).not.toHaveBeenCalled();
     });
 });
 
