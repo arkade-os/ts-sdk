@@ -603,6 +603,15 @@ style and have not been backfilled.
   reads only watched and awaiting-funds contracts too, instead of every
   row.
 
+### Internal
+
+- **Compiler covenant comparisons use the merged fixed-width witness guard.**
+  The comparison branch pins compiler #172 at `58f9895a` and refreshes its manual
+  baseline to SDK `57512284`. Existing handwritten covenant bytes stay unchanged;
+  regenerated artifacts and reports compare both optimization modes through the
+  same 784 leaf fixtures and 8,342 paired VM cases. V2 still rejects matching
+  31- and 33-byte preimages; production builders are not replaced.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

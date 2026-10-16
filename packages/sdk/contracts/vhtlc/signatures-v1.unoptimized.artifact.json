@@ -1,0 +1,232 @@
+{
+    "formatVersion": 1,
+    "contractName": "VHTLCSignaturesV1",
+    "constructorInputs": [
+        {
+            "name": "sender",
+            "type": "pubkey"
+        },
+        {
+            "name": "receiver",
+            "type": "pubkey"
+        },
+        {
+            "name": "preimageHash",
+            "type": "bytes20"
+        },
+        {
+            "name": "refundLocktime",
+            "type": "int"
+        },
+        {
+            "name": "claimSequence",
+            "type": "int"
+        },
+        {
+            "name": "refundSequence",
+            "type": "int"
+        },
+        {
+            "name": "refundWithoutReceiverSequence",
+            "type": "int"
+        }
+    ],
+    "functions": [
+        {
+            "name": "claim",
+            "leaves": [
+                {
+                    "name": "claim",
+                    "witness": [
+                        {
+                            "name": "preimage",
+                            "type": "bytes",
+                            "encoding": "raw"
+                        },
+                        {
+                            "name": "receiverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "OP_HASH160",
+                        "<preimageHash>",
+                        "OP_EQUAL",
+                        "OP_VERIFY",
+                        "<receiver>",
+                        "OP_CHECKSIGVERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "refund",
+            "leaves": [
+                {
+                    "name": "refund",
+                    "witness": [
+                        {
+                            "name": "senderSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "receiverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<sender>",
+                        "OP_CHECKSIGVERIFY",
+                        "<receiver>",
+                        "OP_CHECKSIGVERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "refundWithoutReceiver",
+            "leaves": [
+                {
+                    "name": "refundWithoutReceiver",
+                    "witness": [
+                        {
+                            "name": "senderSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<refundLocktime>",
+                        "OP_CHECKLOCKTIMEVERIFY",
+                        "OP_DROP",
+                        "<sender>",
+                        "OP_CHECKSIGVERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "unilateralClaim",
+            "leaves": [
+                {
+                    "name": "unilateralClaim",
+                    "witness": [
+                        {
+                            "name": "preimage",
+                            "type": "bytes",
+                            "encoding": "raw"
+                        },
+                        {
+                            "name": "receiverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        }
+                    ],
+                    "asm": [
+                        "OP_HASH160",
+                        "<preimageHash>",
+                        "OP_EQUAL",
+                        "OP_VERIFY",
+                        "<claimSequence>",
+                        "OP_CHECKSEQUENCEVERIFY",
+                        "OP_DROP",
+                        "<receiver>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "unilateralRefund",
+            "leaves": [
+                {
+                    "name": "unilateralRefund",
+                    "witness": [
+                        {
+                            "name": "senderSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "receiverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        }
+                    ],
+                    "asm": [
+                        "<refundSequence>",
+                        "OP_CHECKSEQUENCEVERIFY",
+                        "OP_DROP",
+                        "<sender>",
+                        "OP_CHECKSIGVERIFY",
+                        "<receiver>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "unilateralRefundWithoutReceiver",
+            "leaves": [
+                {
+                    "name": "unilateralRefundWithoutReceiver",
+                    "witness": [
+                        {
+                            "name": "senderSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        }
+                    ],
+                    "asm": [
+                        "<refundWithoutReceiverSequence>",
+                        "OP_CHECKSEQUENCEVERIFY",
+                        "OP_DROP",
+                        "<sender>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        }
+    ],
+    "source": {
+        "entry": "signatures-v1.ark",
+        "files": {
+            "signatures-v1.ark": "pragma arkade ^0.1.0;\n\ncontract VHTLCSignaturesV1(\n    pubkey sender,\n    pubkey receiver,\n    bytes20 preimageHash,\n    int refundLocktime,\n    int claimSequence,\n    int refundSequence,\n    int refundWithoutReceiverSequence\n) {\n    function claim(bytes preimage, signature receiverSig, signature serverSig) tapscript {\n        require(hash160(preimage) == preimageHash);\n        require(checkMultisig([receiver, server], [receiverSig, serverSig], 2));\n    }\n\n    function refund(signature senderSig, signature receiverSig, signature serverSig) tapscript {\n        require(checkMultisig([sender, receiver, server], [senderSig, receiverSig, serverSig], 3));\n    }\n\n    function refundWithoutReceiver(signature senderSig, signature serverSig) tapscript {\n        require(after(refundLocktime));\n        require(checkMultisig([sender, server], [senderSig, serverSig], 2));\n    }\n\n    function unilateralClaim(bytes preimage, signature receiverSig) tapscript {\n        require(hash160(preimage) == preimageHash);\n        require(older(claimSequence));\n        require(checkSig(receiverSig, receiver));\n    }\n\n    function unilateralRefund(signature senderSig, signature receiverSig) tapscript {\n        require(older(refundSequence));\n        require(checkMultisig([sender, receiver], [senderSig, receiverSig], 2));\n    }\n\n    function unilateralRefundWithoutReceiver(signature senderSig) tapscript {\n        require(older(refundWithoutReceiverSequence));\n        require(checkSig(senderSig, sender));\n    }\n}\n"
+        }
+    },
+    "compiler": {
+        "name": "arkadec",
+        "version": "0.1.0",
+        "options": {
+            "optimize": false
+        }
+    },
+    "fingerprint": "sha256:9668eedc399a8a56ed0bb9f3d89e524c53fffd178cf323925c59c337461b2237"
+}

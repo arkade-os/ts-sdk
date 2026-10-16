@@ -1,0 +1,10 @@
+/scripts/compiler-* text eol=lf
+/scripts/compiler-engine/** text eol=lf
+/scripts/run-compiler-engine.mjs text eol=lf
+/scripts/tsconfig.compiler.json text eol=lf
+/contracts/compiler-comparison/** text eol=lf
+/packages/sdk/contracts/vhtlc/** text eol=lf
+/packages/swap/contracts/** text eol=lf
+/packages/sdk/test/compiler-vhtlc.* text eol=lf
+/packages/swap/test/compiler-covenants.* text eol=lf
+/.github/workflows/compiler-covenants.yml text eol=lf
