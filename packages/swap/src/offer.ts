@@ -912,6 +912,7 @@ export async function prepareOfferCancel(
         // for offers created before registration existed
         contractManager,
         // no `network`: the row lookup is by script and the payout comes from wallet.getAddress()
+        oneShotSubmit: wallet.oneShotSubmit,
     });
 
     // the offer's own keys, not the client's, so the script matches the funded address exactly

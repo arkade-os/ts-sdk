@@ -219,6 +219,20 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `20`
      */
     lookAheadWindow?: number;
+
+    /**
+     * Submit offchain transactions with signed checkpoints, so a supporting
+     * arkd finalizes them in one call (older arkd falls back to finalizeTx).
+     * ⚠️ Trust tradeoff: the server then holds checkpoint signatures before the
+     * wallet holds the cosigned ark tx, so an operator that withholds it can
+     * publish the checkpoint and sweep it after the checkpoint exit delay. Set
+     * `false` to keep the two-step flow for this wallet's sends and ArkadeCash
+     * sweeps, and for swap claims, refunds and cancels driven through it; an
+     * `Arkade` client takes its own `oneShotSubmit`.
+     *
+     * @defaultValue `true`
+     */
+    oneShotSubmit?: boolean;
 }
 
 /**
@@ -932,6 +946,9 @@ export interface IWallet extends IReadonlyWallet {
      * @see ArkadeBroadcaster
      */
     getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
+
+    /** @see WalletConfig.oneShotSubmit — read by plugins that sign checkpoints for this wallet. */
+    readonly oneShotSubmit?: boolean;
 
     /**
      * Signing identity associated with the wallet. Must be a real signer (`isSigningIdentity`):

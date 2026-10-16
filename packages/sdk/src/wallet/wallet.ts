@@ -3102,6 +3102,8 @@ export class Wallet
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
         /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
         protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
+        /** @see WalletConfig.oneShotSubmit */
+        readonly oneShotSubmit: boolean = true,
     ) {
         super(
             identity,
@@ -3337,6 +3339,7 @@ export class Wallet
                     : {}),
             },
             checkpointExitDelayOverrides,
+            config.oneShotSubmit,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -4695,6 +4698,7 @@ export class Wallet
                         ],
                         outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
                         serverUnrollScript,
+                        oneShot: this.oneShotSubmit,
                     });
                     swept += vtxo.value;
                 } catch (error) {
@@ -5763,6 +5767,7 @@ export class Wallet
                         hex.decode(h),
                     ),
                 },
+                oneShot: this.oneShotSubmit,
             },
         );
     }

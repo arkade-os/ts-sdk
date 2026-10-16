@@ -32,14 +32,12 @@ import {
     RestIndexerProvider,
     Transaction,
     VHTLC,
-    assertSubmittedArkTxid,
     assertValidServerUnrollScript,
-    buildOffchainTx,
     getArkPsbtFields,
     isVtxoSpent,
-    matchServerCheckpoints,
     networkFromArkadeInfo,
     resolveCheckpointExitDelayPolicy,
+    signAndSubmitOffchainTx,
     toXOnly,
     type IWallet,
 } from "@arkade-os/sdk";
@@ -449,6 +447,7 @@ export async function pushRefundWithoutReceiver(
         refundPkScript?: Uint8Array;
         /** @see operatorUnrollScript */
         network?: Network;
+        oneShot?: boolean;
     },
 ): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
@@ -469,36 +468,17 @@ export async function pushRefundWithoutReceiver(
     const vtxos = boundedLockupSpend(input.vtxos);
     const amount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
-    // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
-    const { arkTx: tx, checkpoints } = buildOffchainTx(
-        lockupInputs(vtxos, input.contract, leaf),
-        [{ script: refundPkScript, amount: BigInt(amount) }],
+    // nLockTime/sequence come from the leaf's CLTV, checkpoints included.
+    const txid = await signAndSubmitOffchainTx({
+        identity: input.sender,
+        provider: operator,
+        inputs: lockupInputs(vtxos, input.contract, leaf),
+        outputs: [{ script: refundPkScript, amount: BigInt(amount) }],
         serverUnrollScript,
-    );
-
-    // No index list: every input spends the same leaf, so all are signed.
-    const signedTx = await input.sender.sign(tx);
-    const submitted = await operator.submitTx(
-        base64.encode(signedTx.toPSBT()),
-        checkpoints.map((c) => base64.encode(c.toPSBT())),
-    );
-    assertSubmittedArkTxid(submitted, signedTx, "refundWithoutReceiver");
-
-    // Only checkpoints we built get signed: a substituted one is rejected, not blind-signed.
-    const matched = matchServerCheckpoints(
-        submitted.signedCheckpointTxs,
-        checkpoints,
-        "refundWithoutReceiver",
-    );
-    const finalCheckpoints = await Promise.all(
-        matched.map(async ({ server }) =>
-            base64.encode((await input.sender.sign(server, [0])).toPSBT()),
-        ),
-    );
-
-    await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
+        oneShot: input.oneShot,
+    });
     return {
-        txid: submitted.arkTxid,
+        txid,
         amount,
         left: input.vtxos.length - vtxos.length,
         spent: vtxos,

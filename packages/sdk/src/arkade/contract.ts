@@ -67,10 +67,10 @@ import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
 import {
-    assertSubmittedArkTxid,
     buildOffchainTx,
-    matchServerCheckpoints,
+    submitOffchainTx,
     type ArkTxInput,
+    type OffchainTxSubmitProvider,
 } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
 import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
@@ -250,6 +250,9 @@ export interface ArkadeConnectOptions {
      * repository-backed state for registered contracts instead of the indexer.
      */
     contractManager?: IContractManager;
+    /** For pure-tapscript spends; a client built for a wallet passes `wallet.oneShotSubmit`.
+     * @see WalletConfig.oneShotSubmit */
+    oneShotSubmit?: boolean;
 }
 
 /**
@@ -276,6 +279,7 @@ export class Arkade {
     readonly userKey?: Uint8Array;
     /** The wallet's contract manager, when contract persistence is wired up. */
     readonly contractManager?: IContractManager;
+    readonly oneShotSubmit?: boolean;
 
     private constructor(fields: {
         arkProvider: ArkadeServerProvider;
@@ -288,6 +292,7 @@ export class Arkade {
         identity?: Identity;
         userKey?: Uint8Array;
         contractManager?: IContractManager;
+        oneShotSubmit?: boolean;
     }) {
         this.arkProvider = fields.arkProvider;
         this.emulator = fields.emulator;
@@ -299,6 +304,7 @@ export class Arkade {
         this.identity = fields.identity;
         this.userKey = fields.userKey;
         this.contractManager = fields.contractManager;
+        this.oneShotSubmit = fields.oneShotSubmit;
     }
 
     /** Connect and resolve the server key, checkpoint closure and (if present) the co-signer key. */
@@ -338,6 +344,7 @@ export class Arkade {
             identity: opts.identity,
             userKey,
             contractManager: opts.contractManager,
+            oneShotSubmit: opts.oneShotSubmit,
         });
     }
 
@@ -717,10 +724,10 @@ export class ArkadeTransactionBuilder {
             };
         }
 
-        // Pure-tapscript path → arkd directly: sign the ark tx, submit UNSIGNED checkpoints, then
-        // sign the server-returned checkpoints and finalize.
+        // Pure-tapscript path → arkd directly.
         // NOTE: not yet covered by integration tests.
-        if (!client.identity) {
+        const identity = client.identity;
+        if (!identity) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
         // Checked before anything is signed.
@@ -730,22 +737,20 @@ export class ArkadeTransactionBuilder {
                 "broadcasting requires an `arkade` provider with `submitTx`/`finalizeTx` on the Arkade client",
             );
         }
-        const signedArk = await this.signArk(arkTx, userInputs);
-        const res = await ark.submitTx(
-            base64.encode(signedArk.toPSBT()),
-            checkpoints.map((c) => base64.encode(c.toPSBT())),
+        const res = await submitOffchainTx(
+            ark as OffchainTxSubmitProvider,
+            { arkTx, checkpoints },
+            {
+                signArkTx: async (tx) => ({ arkTx: await this.signArk(tx, userInputs) }),
+                signCheckpoint: (checkpoint) => identity.sign(checkpoint, [0]),
+            },
+            undefined,
+            { oneShot: client.oneShotSubmit },
         );
-        assertSubmittedArkTxid(res, signedArk, "submitTx");
-        const matched = matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "submitTx");
-        const finalCps = await Promise.all(
-            matched.map(async ({ server }) =>
-                base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
-            ),
-        );
-        await ark.finalizeTx(res.arkTxid, finalCps);
         return {
             txid: res.arkTxid,
-            signedArkTx: res.finalArkTx,
+            // Required by ArkadeBroadcaster; RestArkProvider.submitTx rejects a response without it.
+            signedArkTx: res.finalArkTx!,
             signedCheckpointTxs: res.signedCheckpointTxs,
         };
     }
