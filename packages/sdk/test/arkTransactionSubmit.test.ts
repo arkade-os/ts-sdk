@@ -9,6 +9,7 @@ import {
     type OffchainTxSigner,
     type OffchainTxSubmitProvider,
 } from "../src/utils/arkTransaction";
+import { ConditionWitness, getArkPsbtFields, setArkPsbtField } from "../src/utils/unknownFields";
 
 const P2TR = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
 
@@ -363,6 +364,47 @@ describe("submitOffchainTx one-shot", () => {
             [hex.encode(SERVER_KEY), hex.encode(key(1))].sort(),
             [hex.encode(SERVER_KEY), hex.encode(key(2))].sort(),
         ]);
+    });
+
+    it("carries the condition witness onto checkpoints the server rebuilt", async () => {
+        // A claim's signer attaches the preimage after signing; a pre-one-shot
+        // arkd rebuilds the checkpoints without it, and finalizeTx needs it back.
+        const cps = local();
+        const preimage = new Uint8Array(32).fill(0x42);
+        const signed = [userSigned(cps[0], 1), userSigned(cps[1], 2)];
+        for (const c of signed) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        const p = provider(encode(cps));
+
+        await submitOffchainTx(p, offchainTx(cps), signer(signed));
+
+        for (const c of p.finalizeTx.mock.calls[0][1] as string[]) {
+            const witnesses = getArkPsbtFields(
+                Transaction.fromPSBT(base64.decode(c)),
+                0,
+                ConditionWitness,
+            );
+            expect(witnesses.map((w) => w.map((item) => hex.encode(item)))).toEqual([
+                [hex.encode(preimage)],
+            ]);
+        }
+    });
+
+    it("keeps a condition witness the server returned instead of adding a second", async () => {
+        const cps = local();
+        const preimage = new Uint8Array(32).fill(0x42);
+        const signed = [userSigned(cps[0], 1), userSigned(cps[1], 2)];
+        for (const c of signed) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        const returned = cps.map((c) => Transaction.fromPSBT(c.toPSBT()));
+        for (const c of returned) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        const p = provider(encode(returned));
+
+        await submitOffchainTx(p, offchainTx(cps), signer(signed));
+
+        for (const c of p.finalizeTx.mock.calls[0][1] as string[]) {
+            expect(
+                getArkPsbtFields(Transaction.fromPSBT(base64.decode(c)), 0, ConditionWitness),
+            ).toHaveLength(1);
+        }
     });
 
     it("finalizes when only some checkpoints kept the signatures", async () => {

@@ -13,7 +13,12 @@ import {
 } from "../script/base";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
-import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
+import {
+    ConditionWitness,
+    getArkPsbtFields,
+    setArkPsbtField,
+    VtxoTaprootTree,
+} from "./unknownFields";
 import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
@@ -793,7 +798,9 @@ export async function submitOffchainTx(
             return result;
         }
         finalCheckpoints = matched.map(({ server, local }) => {
-            combineTapscriptSigs(userByTxid.get(local.id)!, server);
+            const userSigned = userByTxid.get(local.id)!;
+            combineTapscriptSigs(userSigned, server);
+            carryConditionWitness(userSigned, server);
             return base64.encode(server.toPSBT());
         });
     } else {
@@ -809,6 +816,16 @@ export async function submitOffchainTx(
     await hooks?.afterFinalize?.();
 
     return result;
+}
+
+// A rebuilt checkpoint comes back without the condition witness (e.g. a swap
+// claim's preimage) the signer attached to its own copy, and finalizeTx checks
+// the leaf's condition against it. The taptree is rebuilt server-side, so only
+// this field is carried over, and only when the server's copy has none.
+function carryConditionWitness(userSigned: Transaction, server: Transaction): void {
+    if (getArkPsbtFields(server, 0, ConditionWitness).length > 0) return;
+    const [witness] = getArkPsbtFields(userSigned, 0, ConditionWitness);
+    if (witness) setArkPsbtField(server, 0, ConditionWitness, witness);
 }
 
 // Input 0 only: a checkpoint spends exactly one VTXO.

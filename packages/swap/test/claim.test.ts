@@ -169,6 +169,37 @@ describe("pushClaim", () => {
         expect(operator.finalized).toHaveLength(0);
     });
 
+    it("keeps the preimage on the checkpoints a pre-one-shot arkd rebuilt", async () => {
+        // arkd before one-shot rebuilds the checkpoints: our signatures and the
+        // Ark PSBT fields are gone, and finalizeTx checks the claim leaf's
+        // condition against the preimage, so it has to come back.
+        const rebuild = (submitted: string[]) =>
+            submitted.map((c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                tx.updateInput(0, { tapScriptSig: undefined, unknown: undefined }, true);
+                expect(tx.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+                expect(tx.getInput(0).unknown ?? []).toHaveLength(0);
+                return base64.encode(tx.toPSBT());
+            });
+        const operator = fakeOperator({ checkpointsFor: rebuild });
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(operator.finalized).toHaveLength(1);
+        for (const checkpoint of operator.finalized[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            const conditionFields = getArkPsbtFields(cp, 0, ConditionWitness);
+            expect(conditionFields).toHaveLength(1);
+            expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
+        }
+    });
+
     it("keeps the two-step flow with oneShot: false", async () => {
         const operator = fakeOperator();
         const result = await pushClaim(operator, {
