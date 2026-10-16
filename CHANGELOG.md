@@ -72,12 +72,15 @@ style and have not been backfilled.
   snapshot answered by pinned cards alone, while the registry is unreachable
   and nothing is cached; such a snapshot carries no `registry`. Code with an
   exhaustive `switch` on `source` must handle it.
-- **`@arkade-os/swap/protocol` no longer exports `refundIfUnresolved` or
-  `RefundOutcome`.** The deprecated loop pushed one capped refund and
-  reported `refunded` while outputs past the 16-input cap stayed at the
-  lockup, and its type hid the `left` count that would have said so.
-  `client.recover()` drives the refund to completion; to drive it by hand,
-  call `pushRefundWithoutReceiver` until it reports nothing `left`.
+- **`@arkade-os/swap/protocol` no longer exports `refundIfUnresolved`,
+  `RefundOutcome`, `claimReceiveLockup` or `awaitLockupFunding`.** The
+  deprecated refund loop pushed one capped refund and reported `refunded`
+  while outputs past the 16-input cap stayed at the lockup, and its type hid
+  the `left` count that would have said so. `claimReceiveLockup` did the same
+  to a claim after publishing `P`, so the outputs it left went back to the
+  solver at their CLTV; `awaitLockupFunding` was its wait. `client.recover()`
+  and the drive finish both; to drive them by hand, call
+  `pushRefundWithoutReceiver` or `pushClaim` until it reports nothing `left`.
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported
@@ -421,14 +424,15 @@ style and have not been backfilled.
   outputs, the largest first. `pushClaim` also leaves swept outputs out
   instead of refusing the whole claim: only the sender's leaf can recover
   them. The value gate weighs every live output, not just the batch the claim
-  spends. `pushClaim` returns the outputs it `spent`, so the swap manager
-  re-claims any remainder on a later pass, passing only outputs no claim has
-  taken yet. `pushRefundWithoutReceiver` returns how many outputs it `left`
-  and which it `spent`, and the manager keeps the swap live until none are
-  left; `arkadeRefunder` skips outputs an earlier pass already refunded, which
-  a lagging indexer still lists. A receive swap now
-  settles once its claim is out even if swept outputs remain:
-  `readLockupFate` takes `receiver: true` for that read.
+  spends. `pushClaim` returns the outputs it `spent` and how many live
+  outputs it `left`, so the swap manager re-claims any remainder on a later
+  pass, passing only outputs no claim has taken yet.
+  `pushRefundWithoutReceiver` returns how many outputs it `left` and which it
+  `spent`, and the manager keeps the swap live until none are left;
+  `arkadeRefunder` skips outputs an earlier pass already refunded, which a
+  lagging indexer still lists. A receive swap now settles once its claim is
+  out even if swept outputs remain: `readLockupFate` takes `receiver: true`
+  for that read.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

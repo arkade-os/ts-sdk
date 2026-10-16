@@ -102,7 +102,7 @@ this for you now", not "this goes away next release".
 | Offers                                           | `createOffer`, `cancelOffer`, `offerContract`, `encodeOffer`, `decodeOffer`, `swapPrograms` | `client.accept()`; `client.cancel()` for cancel |
 | The RFQ manager and its record types             | `RfqSwapManager`, `RfqSwap*`, `nextOnchainAction`                  | `createSwapClient`, `client.onUpdate()`         |
 | Records and the asset-swap store                 | `addAssetSwap`, `getAssetSwaps`, `updateAssetSwap`, `createRfqSwapRecord`, `rebuildRfqSwap` | `accept()` writes; `client.swaps()` reads       |
-| Watching, restoring, refunding, claiming         | `watchOfferSwaps`, `restoreAssetSwaps`, `arkadeRefunder`, `pushClaim`, `awaitLockupFunding` | the drive; `await client.ready`, `client.recover()` |
+| Watching, restoring, refunding, claiming         | `watchOfferSwaps`, `restoreAssetSwaps`, `arkadeRefunder`, `pushClaim` | the drive; `await client.ready`, `client.recover()` |
 | Markets and pricing                              | `discoverMarkets`, `findMarket`, `validatePlan`, `QUOTE_OPTIONS`, `makeCachedFeedFetch` | `client.markets()`; pricing is inside `quote()` |
 | The onchain HTLC and its chain source            | `onchainHtlcScript`, `buildHtlcClaim`, `buildHtlcRefund`, `classifyOnchainHtlc`, `chainSourceFrom` | internal to the onchain corridor                |
 | Lockup contracts and secrets profiles            | `lockupContractParams`, `registerLockupContract`, `rfqSecretsProfile`, `rfqClaimSecretOf`, `rfqSignerOf` | internal to `accept()` and the corridor modules |
@@ -183,9 +183,11 @@ this release: `assertFundable`, `assertReceivable`, `offerTermsFromQuote`, `newR
 gets a `/protocol` floor in a patch: internalizing is a finding about who uses what, not a
 decision to break you.
 
-`refundIfUnresolved` and its `RefundOutcome` are gone too, but for being wrong rather than unused:
-one call pushed one capped refund and reported `refunded` with outputs still at the lockup. Use
-`client.recover()`, or call `pushRefundWithoutReceiver` until it reports nothing `left`.
+`refundIfUnresolved` (with its `RefundOutcome`) and `claimReceiveLockup` (with its
+`awaitLockupFunding` wait) are gone too, but for being wrong rather than unused: each pushed one
+spend capped at 16 outputs and returned as if done, leaving the rest at the lockup. The claim had
+already published `P`, so what it left went back to the solver. Use `client.recover()` and the
+drive, or call `pushRefundWithoutReceiver` / `pushClaim` until each reports nothing `left`.
 
 
 ## `0.0.9` → `0.1.0` — the operator and contract rename
