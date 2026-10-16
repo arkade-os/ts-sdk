@@ -1582,7 +1582,11 @@ export class RfqSwapManager {
                 ),
             );
         }
-        if ((await this.readClaimConfirmed(swap)) === false) return;
+        // A chain that can confirm must say so. `undefined` here is a claim we cannot name
+        // (lost to a crash before its save): the solver holding `P` proves it went out, not
+        // that it landed.
+        const confirmed = await this.readClaimConfirmed(swap);
+        if (this.reportsConfirmations ? confirmed !== true : confirmed === false) return;
         this.setState(swap, "settled");
     }
 

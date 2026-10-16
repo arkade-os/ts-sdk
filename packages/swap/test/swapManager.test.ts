@@ -1613,6 +1613,23 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(await m.hasSwap(RFQ_ID)).toBe(false);
     });
 
+    it("does not settle on a claim the record lost to a crash before its save", async () => {
+        // Fill seen, claim broadcast and spent it, process gone before the write: the record
+        // names neither, so the HTLC reads back unfunded and no txid can be asked about.
+        const swap = onchainSwap({ state: "claimable" });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({ utxos: [], mtp: SAFE_NOW, status: {} }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
     it("settles on the solver's claim alone when the chain source cannot answer", async () => {
         const claim = await ourClaim();
         const swap = claimedSwap({ claimTxid: claim.txid });
