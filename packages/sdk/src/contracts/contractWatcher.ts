@@ -85,9 +85,15 @@ interface ContractState {
 
     /** Handlers still running for this contract's events. */
     pending: number;
+
+    /** A handler failed: the repository is behind until a later one succeeds. */
+    stale: boolean;
 }
 
-/** A returned promise holds off the poll until the event's handling settles. */
+/**
+ * A returned promise holds off the poll until the event's handling settles; resolving `false` or
+ * rejecting keeps it off until a later handling succeeds.
+ */
 export type ContractWatcherEventCallback = (event: ContractEvent) => unknown;
 
 /** No `Contract` — that absence is the ownership boundary. */
@@ -174,6 +180,7 @@ export class ContractWatcher {
                 lastKnownVtxos: new Map(),
                 generation: 0,
                 pending: 0,
+                stale: false,
             };
             this.contracts.set(contract.script, state);
 
@@ -428,10 +435,7 @@ export class ContractWatcher {
                 }
                 this.connectionState = "disconnected";
                 if (this.reportEventSourceUnavailable(e)) return;
-                this.eventCallback?.({
-                    type: "connection_reset",
-                    timestamp: Date.now(),
-                });
+                this.emitConnectionReset();
                 this.scheduleReconnect();
             });
         } catch (error) {
@@ -440,10 +444,7 @@ export class ContractWatcher {
             }
             this.connectionState = "disconnected";
             if (this.reportEventSourceUnavailable(error)) return;
-            this.eventCallback?.({
-                type: "connection_reset",
-                timestamp: Date.now(),
-            });
+            this.emitConnectionReset();
             this.scheduleReconnect();
         }
     }
@@ -615,7 +616,11 @@ export class ContractWatcher {
                 const state = this.contracts.get(contractScript);
                 if (!state) continue;
                 // The repository lags the stream until the event's sync lands (#1083).
-                if (state.pending > 0 || state.generation !== generations.get(contractScript)) {
+                if (
+                    state.pending > 0 ||
+                    state.stale ||
+                    state.generation !== generations.get(contractScript)
+                ) {
                     continue;
                 }
 
@@ -939,10 +944,31 @@ export class ContractWatcher {
         const handled = this.eventCallback(event);
         if (!(handled instanceof Promise)) return;
         state.pending++;
-        const settle = () => {
+        const settle = (synced: boolean) => {
             state.pending--;
             state.generation++;
+            state.stale = !synced;
         };
-        void handled.then(settle, settle);
+        void handled.then(
+            (result) => settle(result !== false),
+            () => settle(false),
+        );
+    }
+
+    /** A successful reset reconciles every watched contract, so it clears {@link ContractState.stale}. */
+    private emitConnectionReset(): void {
+        const handled = this.eventCallback?.({ type: "connection_reset", timestamp: Date.now() });
+        if (!(handled instanceof Promise)) return;
+        void handled.then(
+            (result) => {
+                if (result === false) return;
+                for (const state of this.contracts.values()) {
+                    if (!state.stale) continue;
+                    state.stale = false;
+                    state.generation++;
+                }
+            },
+            () => {},
+        );
     }
 }

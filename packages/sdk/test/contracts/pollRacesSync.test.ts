@@ -178,4 +178,47 @@ describe("failsafe poll vs. the sync behind a stream event", () => {
         await vi.advanceTimersByTimeAsync(1000);
         expect(events).toEqual(["vtxo_received:bb", "vtxo_spent:aa"]);
     });
+
+    it("keeps the poll off after a failed sync until a later one succeeds", async () => {
+        const C = createMockVtxo({
+            script: TEST_DEFAULT_SCRIPT,
+            txid: "ee".repeat(32),
+        }) as ExtendedVirtualCoin;
+        const D = createMockVtxo({
+            script: TEST_DEFAULT_SCRIPT,
+            txid: "ff".repeat(32),
+        }) as ExtendedVirtualCoin;
+        const synced: boolean[] = [false, false];
+        const events: string[] = [];
+        await watcher.addContract(target);
+        await watcher.startWatching((e) => {
+            events.push(label(e));
+            return Promise.resolve(synced.shift() ?? true);
+        });
+
+        push({
+            scripts: [TEST_DEFAULT_SCRIPT],
+            newVtxos: [B],
+            spentVtxos: [{ ...A, isSpent: true }],
+            sweptVtxos: [],
+        });
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(events).toEqual(["vtxo_received:bb", "vtxo_spent:aa"]);
+
+        // a later event's sync succeeds and brings the repository up to date
+        await syncLands();
+        await saveVtxosForContract(repository, target, [C]);
+        push({ scripts: [TEST_DEFAULT_SCRIPT], newVtxos: [C], spentVtxos: [], sweptVtxos: [] });
+        await vi.advanceTimersByTimeAsync(10);
+
+        // the poll is back on and reports what only the repository has
+        await saveVtxosForContract(repository, target, [D]);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(events).toEqual([
+            "vtxo_received:bb",
+            "vtxo_spent:aa",
+            "vtxo_received:ee",
+            "vtxo_received:ff",
+        ]);
+    });
 });

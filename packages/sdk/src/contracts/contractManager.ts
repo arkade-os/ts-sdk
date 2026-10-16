@@ -638,7 +638,7 @@ export class ContractManager implements IContractManager {
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
     /** Watcher events still being handled. They write VTXO rows, so {@link dispose} waits for them. */
-    private readonly inFlightEvents = new Set<Promise<void>>();
+    private readonly inFlightEvents = new Set<Promise<unknown>>();
     /** `undefined` while online; the failure reason once a sync degrades. */
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
@@ -804,6 +804,7 @@ export class ContractManager implements IContractManager {
         this.stopWatcherFn = await this.watcher.startWatching((event) => {
             const handled = this.handleContractEvent(event).catch((error) => {
                 console.error("Error handling contract event:", error);
+                return false;
             });
             this.inFlightEvents.add(handled);
             void handled.finally(() => this.inFlightEvents.delete(handled));
@@ -1803,13 +1804,15 @@ export class ContractManager implements IContractManager {
         }
     }
 
-    private async handleContractEvent(event: ContractEvent) {
+    /** Resolves `false` when the event's sync failed, so the watcher keeps its poll off. */
+    private async handleContractEvent(event: ContractEvent): Promise<boolean> {
         // Delivered before dispose but run after it: the repositories may already be closed.
-        if (this.disposed) return;
+        if (this.disposed) return true;
         // Any event proves the transport is back, so pay an owed band refill now.
         if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         // A retryable failure must degrade sync state here, not be swallowed by startWatching's
         // `.catch`, or diagnostics keep reporting online. The event is forwarded either way.
+        let synced = true;
         try {
             switch (event.type) {
                 // `isContractVtxoEvent` is the ownership boundary: watch-only scripts report these
@@ -1845,9 +1848,11 @@ export class ContractManager implements IContractManager {
         } catch (err) {
             if (!isRetryableProviderError(err)) throw err;
             this.markSyncDegraded(err);
+            synced = false;
         }
 
         this.emitEvent(event);
+        return synced;
     }
 
     private async getVtxosForContracts(

@@ -391,7 +391,8 @@ style and have not been backfilled.
   once the event's sync lands; a poll in that gap read the stale rows and
   emitted the transaction inverted (the spent coin received, the new one
   spent), then re-emitted both on the next tick. The poll now skips a contract
-  while a handler for its events is still running or settled during the read.
+  while a handler for its events is still running or settled during the read,
+  and after a failed sync until a later event or reconnect syncs it.
   `ContractWatcher.startWatching` accepts a callback that returns a promise
   for this, and `ContractManager` returns its handler's.
 - **`wallet.dispose()` waits for contract events still being handled.** It
