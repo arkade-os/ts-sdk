@@ -297,10 +297,10 @@ describe("quote() on a negotiated asset market", () => {
 });
 
 describe("quote() refuses before it discloses anything", () => {
-    it("refuses an exact-out asset swap", async () => {
+    it("refuses an exact-out asset-to-BTC swap", async () => {
         const { client, transport } = await setup();
 
-        await expect(client.quote({ ...buy(), amountOn: "take" })).rejects.toThrow(/exact-in/);
+        await expect(client.quote({ ...sell(), amountOn: "take" })).rejects.toThrow(/exact-in/);
         expect(transport.sent).toHaveLength(0);
     });
 
