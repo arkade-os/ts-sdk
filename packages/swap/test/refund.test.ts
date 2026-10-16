@@ -21,6 +21,7 @@ import {
 import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
 import {
     LockupNeedsRecoveryError,
+    MAX_LOCKUP_SPEND_INPUTS,
     RFQ_RESOLVED_STATES,
     awaitRfqResolution,
     findLockupVtxos,
@@ -71,6 +72,13 @@ const VTXOS: LockupVtxo[] = [
     { txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false },
     { txid: "22".repeat(32), vout: 1, value: 40_000, recoverable: false },
 ];
+const dustOutputs = (count: number): LockupVtxo[] =>
+    Array.from({ length: count }, (_, i) => ({
+        txid: "dd".repeat(32),
+        vout: i,
+        value: 330,
+        recoverable: false,
+    }));
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the ark txid it was submitted.
@@ -267,6 +275,20 @@ describe("pushRefundWithoutReceiver", () => {
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
         expect(operator.finalized).toHaveLength(1);
         expect(operator.finalized[0].txid).toBe(result.txid);
+    });
+
+    it("spends at most MAX_LOCKUP_SPEND_INPUTS outputs, the largest", async () => {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: [...dustOutputs(20), ...VTXOS],
+        });
+
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
+        expect(tx.inputsLength).toBe(MAX_LOCKUP_SPEND_INPUTS);
+        expect(result.amount).toBe(100_000 + (MAX_LOCKUP_SPEND_INPUTS - 2) * 330);
+        expect(tx.getOutput(0).amount).toBe(BigInt(result.amount));
     });
 
     it("honours an explicit destination override", async () => {

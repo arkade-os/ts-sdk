@@ -31,6 +31,7 @@ import {
 } from "../src/claim";
 import {
     LockupNeedsRecoveryError,
+    MAX_LOCKUP_SPEND_INPUTS,
     type LockupContractSource,
     type LockupVtxo,
 } from "../src/refund";
@@ -302,6 +303,64 @@ describe("pushClaim", () => {
             expectedAmount: EXPECTED_AMOUNT - 1,
         });
         expect(result.amount).toBe(100_000);
+    });
+
+    it("spends at most MAX_LOCKUP_SPEND_INPUTS outputs, the largest", async () => {
+        const operator = fakeOperator();
+        const dust = Array.from(
+            { length: 20 },
+            (_, i): LockupVtxo => ({
+                txid: "dd".repeat(32),
+                vout: i,
+                value: 330,
+                recoverable: false,
+            }),
+        );
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [...dust, ...VTXOS],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        const tx = Transaction.fromPSBT(base64.decode(operator.submitted[0].tx));
+        expect(tx.inputsLength).toBe(MAX_LOCKUP_SPEND_INPUTS);
+        expect(result.amount).toBe(100_000 + (MAX_LOCKUP_SPEND_INPUTS - 2) * 330);
+    });
+
+    it("claims past a swept output, which the receiver holds no leaf to recover", async () => {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [{ txid: "33".repeat(32), vout: 0, value: 330, recoverable: true }, ...VTXOS],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(result.amount).toBe(100_000);
+        expect(Transaction.fromPSBT(base64.decode(operator.submitted[0].tx)).inputsLength).toBe(2);
+    });
+
+    it("weighs only live outputs against the amount, so a swept funding publishes nothing", async () => {
+        const operator = fakeOperator();
+        await expect(
+            pushClaim(operator, {
+                contract: swapScript(),
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: [
+                    { txid: "33".repeat(32), vout: 0, value: 100_000, recoverable: true },
+                    { txid: "44".repeat(32), vout: 0, value: 330, recoverable: false },
+                ],
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+            }),
+        ).rejects.toThrow(LockupAmountMismatchError);
+        expect(operator.submitted).toHaveLength(0);
     });
 
     it("claims the remainder of a partially-claimed lockup regardless of the amount", async () => {

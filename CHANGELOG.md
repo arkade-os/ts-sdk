@@ -406,6 +406,15 @@ style and have not been backfilled.
   after a minute rather than standing for the ten-minute TTL. `resolve()`
   answers from them too, without the network, so a payment rail still offers
   a pinned solver; 0.1.0-rc.24 left it out.
+- **`@arkade-os/swap`: dust sent to a lockup can no longer block the trader's
+  claim or refund.** Anyone can pay a lockup address, and both spends took
+  every output there. A few dozen dust outputs pushed the transaction past
+  arkd's `maxTxWeight`, so the refund of a send-leg lockup could never be
+  built and the funds stayed stuck. `pushClaim` and
+  `pushRefundWithoutReceiver` now spend at most `MAX_LOCKUP_SPEND_INPUTS` (16)
+  outputs, the largest first. `pushClaim` also leaves swept outputs out
+  instead of refusing the whole claim: only the sender's leaf can recover
+  them, and the value gate still counts live outputs only.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

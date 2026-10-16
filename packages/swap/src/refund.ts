@@ -392,6 +392,13 @@ export const operatorUnrollScript = async (
     );
 };
 
+/** The most lockup outputs one spend takes, as on the solver. Anyone can pay a lockup address, so
+ * sprayed dust would otherwise push the spend past arkd's `maxTxWeight`. */
+export const MAX_LOCKUP_SPEND_INPUTS = 16;
+
+export const boundedLockupSpend = (vtxos: readonly LockupVtxo[]): LockupVtxo[] =>
+    [...vtxos].sort((a, b) => b.value - a.value).slice(0, MAX_LOCKUP_SPEND_INPUTS);
+
 /** Every lockup output as an offchain input spending `leaf`. */
 export const lockupInputs = (
     vtxos: readonly LockupVtxo[],
@@ -409,8 +416,8 @@ export const lockupInputs = (
 };
 
 /**
- * Build, sign, and push the `refundWithoutReceiver` spend: return every funded
- * output at the lockup to the trader's refund address.
+ * Build, sign, and push the `refundWithoutReceiver` spend: return the largest funded
+ * outputs at the lockup to the trader's refund address.
  *
  * The leaf is `CLTV(refundLocktime) + <sender> + <server>`: no emulator (it co-signs only the
  * covenant leaves), so the tx is submitted SIGNED. One aggregate output, since this leaf has no
@@ -454,11 +461,12 @@ export async function pushRefundWithoutReceiver(
     const serverUnrollScript = await operatorUnrollScript(operator, input.network);
 
     const leaf = input.contract.refundWithoutReceiver();
-    const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+    const vtxos = boundedLockupSpend(input.vtxos);
+    const amount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
     const { arkTx: tx, checkpoints } = buildOffchainTx(
-        lockupInputs(input.vtxos, input.contract, leaf),
+        lockupInputs(vtxos, input.contract, leaf),
         [{ script: refundPkScript, amount: BigInt(amount) }],
         serverUnrollScript,
     );

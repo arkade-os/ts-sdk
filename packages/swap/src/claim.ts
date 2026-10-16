@@ -24,6 +24,7 @@ import {
 import { assertPreimageMatches, gateError, pollUntil } from "./onchainHtlc";
 import {
     assertNoneSwept,
+    boundedLockupSpend,
     type LockupContractSource,
     findLockupVtxos,
     lockupInputs,
@@ -69,11 +70,11 @@ const assertFiniteAmount = (value: number, reason: string, label: string): void 
 };
 
 /**
- * Build, sign, and push the collaborative claim of a receive-corridor lockup, moving every funded
- * output to the trader's destination and revealing `P` (the solver reads it off the claim).
+ * Build, sign, and push the collaborative claim of a receive-corridor lockup, moving the live
+ * outputs to the trader's destination and revealing `P` (the solver reads it off the claim).
  *
  * Preimage and funded VALUE are checked BEFORE signing: `P` reaches the operator at SUBMIT, so a
- * later check has already leaked it. Swept outputs are refused first (one non-live input would sink
+ * later check has already leaked it. Swept outputs are left out (one non-live input would sink
  * the aggregate tx). The server countersignature is verified per input, so "reported claimed,
  * nothing landed" fails immediately.
  */
@@ -102,10 +103,13 @@ export async function pushClaim(
 ): Promise<{ txid: string; amount: number }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
 
-    assertNoneSwept(input.vtxos, input.contract);
+    // Only the sender's leaf recovers a swept output, so it is not the receiver's to wait on.
+    const live = input.vtxos.filter((vtxo) => !vtxo.recoverable);
+    if (live.length === 0) assertNoneSwept(input.vtxos, input.contract);
+    const vtxos = boundedLockupSpend(live);
 
     // Summed across every live output: funding split over several is legitimate.
-    const locked = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+    const locked = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
     assertFiniteAmount(locked, "lockup_malformed", "the lockup's summed value");
     // Only on the comparing path: once `P` is public, refusing an old record would strand funds.
     if (!input.partiallyClaimed) {
@@ -124,7 +128,7 @@ export async function pushClaim(
     const txid = await signAndSubmitOffchainTx({
         identity: claimWithPreimageIdentity(input.receiver, input.preimage),
         provider: operator,
-        inputs: lockupInputs(input.vtxos, input.contract, leaf),
+        inputs: lockupInputs(vtxos, input.contract, leaf),
         // One aggregate output: this leaf inspects nothing about the output set.
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
         serverUnrollScript,
