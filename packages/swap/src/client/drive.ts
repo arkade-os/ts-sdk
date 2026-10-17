@@ -37,6 +37,7 @@ import { arkadeRefunder } from "../arkadeRefunder";
 import {
     LockupNeedsRecoveryError,
     findLockupVtxos,
+    readLockupFate,
     type LockupContractSource,
     type LockupSpendIndexer,
     type LockupVtxo,
@@ -953,6 +954,52 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
+        if (mode !== "readonly") {
+            for (const [index, record] of corridor.entries()) {
+                if (
+                    record.kind !== "lightning_send" ||
+                    record.state !== "refunded" ||
+                    record.refundTxid
+                )
+                    continue;
+                try {
+                    const fate = await readLockupFate(indexer, {
+                        swapPkScript: hex.decode(record.lockupPkScript),
+                        paymentHash: record.lock.hash,
+                    });
+                    if (fate.fate !== "claimed") continue;
+                    const current = await repository.getSwapRecord(record.id);
+                    if (
+                        current?.family !== "rfq" ||
+                        current.kind !== "lightning_send" ||
+                        current.state !== "refunded" ||
+                        current.refundTxid ||
+                        current.updatedAt !== record.updatedAt ||
+                        current.lock.hash !== record.lock.hash ||
+                        current.lockupPkScript !== record.lockupPkScript
+                    )
+                        continue;
+                    const corrected: CorridorSwapRecord = {
+                        ...current,
+                        state: "settled",
+                        settlementPreimageHex: hex.encode(fate.preimage),
+                        lockupSpendTxids: [
+                            ...new Set(
+                                fate.spends.flatMap((spend) => (spend.txid ? [spend.txid] : [])),
+                            ),
+                        ],
+                        updatedAt: now(),
+                    };
+                    await repository.saveSwapRecord(corrected);
+                    corridor[index] = corrected;
+                } catch (error) {
+                    console.warn(
+                        `[swap] could not verify stored Lightning refund ${record.id}`,
+                        error,
+                    );
+                }
+            }
+        }
         const retiredScripts = new Set<string>();
         for (const record of [...corridor, ...offer]) {
             records.set(record.id, record);
