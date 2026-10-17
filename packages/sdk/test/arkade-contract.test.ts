@@ -326,6 +326,47 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(signed).toEqual([]);
     });
 
+    it.each([undefined, xOnly()])(
+        "signs restored contract inputs with the connected identity when stored userKey is %s",
+        async (storedUser) => {
+            const signed: number[][] = [];
+            const identity = {
+                ...stubIdentity(receiver),
+                sign: async (tx: Transaction, indexes: number[]) => {
+                    signed.push(indexes);
+                    return tx;
+                },
+            };
+            const { ark } = await connect({ identity });
+            const original = new arkade.ArkadeContract(
+                ark,
+                {
+                    ...exitProgram(),
+                    functions: {
+                        spend: {
+                            tapscript: { signers: ["$server", "$user"] },
+                            arkadeScript: { asm: [1] },
+                        },
+                    },
+                },
+                { server, user: receiver },
+                { serverKey: server, userKey: storedUser, emulatorKey },
+            );
+            const restored = arkade.ArkadeContract.fromContract(
+                ark,
+                original.toContractParams() as any,
+            );
+            expect(restored.pkScript).toEqual(original.pkScript);
+            expect(restored.keys.userKey).toEqual(storedUser);
+            await restored.functions
+                .spend()
+                .from(COIN)
+                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
+                .send();
+            expect(signed).toEqual([[0], [0]]);
+        },
+    );
+
     const compilerExit = () =>
         arkade.programFromArtifact({
             formatVersion: 1,
@@ -350,7 +391,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             ],
         });
 
-    async function compilerClient(delay: bigint) {
+    async function compilerClient(delay: bigint | undefined) {
         const providers = stubProviders(server, emulatorKey);
         const info = await providers.arkProvider.getInfo();
         return arkade.Arkade.connect({
@@ -359,6 +400,11 @@ describe("arkade.Arkade / ArkadeContract", () => {
             network: networks.regtest,
         });
     }
+
+    it.each([undefined, -1n, 0n])("rejects unusable server exit delay %s", async (delay) => {
+        const ark = await compilerClient(delay);
+        expect(() => ark.contract(compilerExit())).toThrow(/positive unilateral exit delay/);
+    });
 
     it.each([
         [144n, 144n],

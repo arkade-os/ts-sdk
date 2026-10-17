@@ -366,9 +366,9 @@ export class Arkade {
         }
         if (declared.includes("SERVER_EXIT_DELAY")) {
             const delay = this.serverExitDelay;
-            if (delay === undefined || delay < 0n)
+            if (delay === undefined || delay <= 0n)
                 throw new Error(
-                    "compiler artifact: server must provide a non-negative unilateral exit delay",
+                    "compiler artifact: server must provide a positive unilateral exit delay",
                 );
             const typed = toTimelock(delay);
             if (typed.type === "seconds" && delay % 512n !== 0n) {
@@ -809,7 +809,7 @@ export class ArkadeTransactionBuilder {
     /** Indexes of inputs the client owns and must sign (contract input + funded inputs). */
     private userInputIndexes(): number[] {
         const idxs: number[] = [];
-        const userKey = this.contract.keys.userKey;
+        const userKey = this.contract.client.userKey;
         if (userKey && this.fn.signerKeys.some((k) => equalBytes(k, userKey))) {
             idxs.push(0);
         }
