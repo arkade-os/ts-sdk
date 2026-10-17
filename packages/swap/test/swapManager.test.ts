@@ -1130,13 +1130,10 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
             finalWitness: [impostor, new Uint8Array(32).fill(9)],
         });
         const { swap } = await resolve(fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }));
-        expect(swap.state).toBe("refunded");
+        expect(swap.state).toBe("pending");
     });
 
-    it("reads a spend carrying no preimage at all as a refund", async () => {
-        // Every non-claim leaf either pays the trader's own committed address
-        // (the covenant pins it) or needs the trader's own signature, so a
-        // spend with nothing to verify means the money went back.
+    it("reads a refund leaf carrying no preimage as a refund", async () => {
         const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
         const { swap } = await resolve(fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }));
         expect(swap.state).toBe("refunded");
@@ -1149,7 +1146,24 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
         const spend = spendOfLockup({ conditionWitness: [PREIMAGE] });
         const vtxos = [{ txid: "77".repeat(32), vout: 3, spentBy: spend.txid }];
         const { swap } = await resolve(fakeIndexer({ vtxos, txs: [spend] }));
-        expect(swap.state).toBe("refunded");
+        expect(swap.state).toBe("pending");
+    });
+
+    it("keeps an incomplete claim pending and settles after its witness arrives", async () => {
+        const pending = spendOfLockup();
+        expect(pending.txid).toBe(CLAIM_SPEND.txid);
+        const state = { vtxos: spentBy(pending.txid), txs: [pending] };
+        const s = spies();
+        const swap = lightningSwap();
+        const m = manager({ indexer: fakeIndexer(state), now: SAFE_NOW, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("pending");
+
+        state.txs = [CLAIM_SPEND];
+        await m.poll();
+        expect(swap.state).toBe("settled");
+        expect(s.refunds).toHaveLength(0);
     });
 
     it("leaves an unspent lockup pending, and asks nobody", async () => {

@@ -1739,6 +1739,81 @@ describe("the drive's own record write", () => {
 });
 
 describe("the settlement receipt", () => {
+    it("preserves a refund recorded while the claim proof was being read", async () => {
+        const spend = claimSpend();
+        const record = settleable({ state: "refunded", fundingTxid: "aa".repeat(32) });
+        const repository = memoryRepository();
+        await repository.saveSwapRecord(record);
+        const getRecord = repository.getSwapRecord.bind(repository);
+        const concurrent = { ...record, refundTxid: "cc".repeat(32) };
+        repository.getSwapRecord = async (id) => {
+            await repository.saveSwapRecord(concurrent);
+            return getRecord(id);
+        };
+        const h = await build({
+            repository,
+            mode: "manual",
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+        });
+
+        expect(await getRecord(record.id)).toEqual(concurrent);
+        expect(h.drive.swap(record.id)?.outcome).toBe("refunded");
+        await h.drive.dispose();
+    });
+
+    it.each([false, true])(
+        "repairs a refunded Lightning send from its claim proof (legacy=%s)",
+        async (legacy) => {
+            const spend = claimSpend();
+            const record = settleable({ state: "refunded", fundingTxid: "aa".repeat(32) });
+            const h = await build({
+                ...(legacy ? { legacy: [rfqRecordOf(record)] } : { records: [record] }),
+                mode: "manual",
+                vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid, arkTxId: "bb".repeat(32) }],
+                txs: [spend],
+            });
+
+            const id = legacy ? record.rfqId : record.id;
+            expect(await h.repository.getSwapRecord(id)).toMatchObject({
+                state: "settled",
+                settlementPreimageHex: hex.encode(PREIMAGE),
+                lockupSpendTxids: ["bb".repeat(32)],
+            });
+            expect(h.drive.swap(id)?.outcome).toBe("paid");
+            expect(h.recoveries).toEqual([]);
+            await h.drive.dispose();
+        },
+    );
+
+    it.each(["unavailable", "unspent", "unverified", "readonly", "onchain", "pushed"])(
+        "preserves a stored refund when reconciliation is %s",
+        async (scenario) => {
+            const spend = claimSpend();
+            const record = settleable({
+                state: "refunded",
+                fundingTxid: "aa".repeat(32),
+                ...(scenario === "onchain" ? { kind: "onchain_send" } : {}),
+                ...(scenario === "pushed" ? { refundTxid: "cc".repeat(32) } : {}),
+            });
+            const h = await build({
+                records: [record],
+                mode: scenario === "readonly" ? "readonly" : "manual",
+                indexerFails: scenario === "unavailable",
+                vtxos:
+                    scenario === "unspent"
+                        ? unspent()
+                        : [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+                txs: scenario === "unverified" ? [] : [spend],
+            });
+
+            expect(await h.repository.getSwapRecord(record.id)).toEqual(record);
+            expect(h.drive.swap(record.id)?.outcome).toBe("refunded");
+            expect(h.recoveries).toEqual([]);
+            await h.drive.dispose();
+        },
+    );
+
     it("stamps the preimage that settled a send onto the stored record", async () => {
         // Driven, not seeded: the receipt is learned from the witness the fate
         // read verifies, and only the real pass exercises the path from that

@@ -10,11 +10,15 @@ import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { TaprootControlBlock } from "@scure/btc-signer";
 import {
     CSVMultisigTapscript,
+    ConditionWitness,
     SingleKey,
     Transaction,
     getNetwork,
+    setArkPsbtField,
+    scriptFromTapLeafScript,
     type ArkProvider,
 } from "@arkade-os/sdk";
 
@@ -576,7 +580,18 @@ describe("awaitRfqResolution", () => {
 describe("readLockupFate", () => {
     const PREIMAGE = new Uint8Array(32).fill(9);
     const PAYMENT_HASH = hex.encode(sha256(PREIMAGE));
-    const SWAP_PK_SCRIPT = p2tr(key(21));
+    const LOCKUP = lightningSendContract({
+        solverPubkey: key(1),
+        operatorPubkey: key(3),
+        paymentHash: PAYMENT_HASH,
+        refundLocktime: REFUND_LOCKTIME,
+        claimDelay: 4096,
+        emulatorPubkey: key(9),
+        refundPkScript: REFUND_PK_SCRIPT,
+        senderPubkey: key(13),
+        receiverPkScript: p2tr(key(1)),
+    });
+    const SWAP_PK_SCRIPT = LOCKUP.pkScript;
     const OUT_A = { txid: "b2".repeat(32), vout: 0 };
     const OUT_B = { txid: "b3".repeat(32), vout: 1 };
 
@@ -584,9 +599,16 @@ describe("readLockupFate", () => {
     const spendOf = (
         out: { txid: string; vout: number },
         witness?: Uint8Array[],
+        leaf: ReturnType<typeof LOCKUP.claim> | null = witness
+            ? LOCKUP.claim()
+            : LOCKUP.refundWithoutReceiver(),
     ): { txid: string; psbt: string } => {
         const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
-        tx.addInput({ txid: out.txid, index: out.vout });
+        tx.addInput({
+            txid: out.txid,
+            index: out.vout,
+            ...(leaf ? { tapLeafScript: [leaf] } : {}),
+        });
         tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
         if (witness) tx.updateInput(0, { finalScriptWitness: witness });
         return { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
@@ -619,6 +641,88 @@ describe("readLockupFate", () => {
 
     const read = (indexer: LockupSpendIndexer) =>
         readLockupFate(indexer, { swapPkScript: SWAP_PK_SCRIPT, paymentHash: PAYMENT_HASH });
+
+    it("waits for a claim preimage and accepts the finalized checkpoint with the same txid", async () => {
+        const pending = spendOf(OUT_A, undefined, LOCKUP.claim());
+        const indexer = fateIndexer([{ ...OUT_A, spentBy: pending.txid }], [pending]);
+        expect(await read(indexer)).toEqual({ fate: "unknown" });
+
+        const tx = Transaction.fromPSBT(base64.decode(pending.psbt));
+        setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+        const finalized = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+        expect(finalized.txid).toBe(pending.txid);
+        expect(
+            await read(fateIndexer([{ ...OUT_A, spentBy: finalized.txid }], [finalized])),
+        ).toMatchObject({ fate: "claimed", preimage: PREIMAGE });
+    });
+
+    it.each(["missing", "unrecognized"])("keeps a %s spend leaf unresolved", async (name) => {
+        const leaf: ReturnType<typeof LOCKUP.claim> | null =
+            name === "missing" ? null : [LOCKUP.claim()[0], new Uint8Array([0x51, 0xc0])];
+        const spend = spendOf(OUT_A, undefined, leaf);
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toEqual({
+            fate: "unknown",
+        });
+    });
+
+    it.each([
+        "refund",
+        "refundWithoutReceiver",
+        "unilateralRefund",
+        "unilateralRefundWithoutReceiver",
+        "nonInteractiveRefund",
+    ] as const)("recognizes the %s leaf", async (name) => {
+        const leaf = name === "nonInteractiveRefund" ? LOCKUP[name]()[0] : LOCKUP[name]();
+        const spend = spendOf(OUT_A, undefined, leaf);
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toMatchObject(
+            {
+                fate: "returned",
+            },
+        );
+    });
+
+    it("recognizes a refund leaf in a finalized raw witness", async () => {
+        const leaf = LOCKUP.refundWithoutReceiver();
+        const control = TaprootControlBlock.encode(leaf[0]);
+        const spend = spendOf(
+            OUT_A,
+            [new Uint8Array(64), scriptFromTapLeafScript(leaf), control],
+            null,
+        );
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toMatchObject(
+            {
+                fate: "returned",
+            },
+        );
+    });
+
+    it("keeps a mixed refund and incomplete claim unresolved", async () => {
+        const refund = spendOf(OUT_A);
+        const claim = spendOf(OUT_B, undefined, LOCKUP.claim());
+        const vtxos = [
+            { ...OUT_A, spentBy: refund.txid },
+            { ...OUT_B, spentBy: claim.txid },
+        ];
+        expect(await read(fateIndexer(vtxos, [refund, claim]))).toEqual({ fate: "unknown" });
+        const finalizedClaim = spendOf(OUT_B, [PREIMAGE]);
+        expect(await read(fateIndexer(vtxos, [refund, finalizedClaim]))).toMatchObject({
+            fate: "claimed",
+        });
+    });
+
+    it("does not infer a refund from a checkpoint that spends another outpoint", async () => {
+        const refund = spendOf(OUT_B);
+        expect(await read(fateIndexer([{ ...OUT_A, spentBy: refund.txid }], [refund]))).toEqual({
+            fate: "unknown",
+        });
+    });
+
+    it("ignores an unrequested checkpoint even if it spends the lockup", async () => {
+        const refund = spendOf(OUT_A);
+        const indexer = fateIndexer([{ ...OUT_A, spentBy: "ff".repeat(32) }]);
+        indexer.getVirtualTxs = async () => ({ txs: [refund.psbt] });
+        expect(await read(indexer)).toEqual({ fate: "unknown" });
+    });
 
     it("names every checkpoint that spent a multi-output lockup, and the ark tx each rode", async () => {
         const first = spendOf(OUT_A);
