@@ -9,7 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { contractSigner, VtxoScript, type DelegateeProvider } from "@arkade-os/sdk";
+import { contractSigner, ArkAddress, RestDelegateeProvider } from "@arkade-os/sdk";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { ScriptNum } from "@scure/btc-signer";
 import { openClaimPacket } from "../helpers/claimPacket";
@@ -25,8 +25,6 @@ import type { QuoteInput } from "../../src/client/quote";
 import { l1ScriptForAddress } from "../../src/onchainHtlc";
 import {
     BOARDING_ADDRESS,
-    ARK_INFO,
-    OPERATOR_PUBKEY,
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
     SOLVER_DISCOVERY_KEY,
@@ -86,102 +84,81 @@ const setup = async (
 const sendInput = (): QuoteInput => ({ to: invoiceFor(PAYMENT_HASH, CLOCK) });
 
 describe("delegatee offline receive", () => {
+    afterEach(() => vi.restoreAllMocks());
     const templateId = "11".repeat(32);
     const secret = new Uint8Array(32).fill(2);
-    const info = {
-        network: ARK_INFO.network,
-        serverPubkey: `02${ARK_INFO.signerPubkey}`,
-        emulatorPubkey: EMULATOR_PUBKEY_HEX,
+    const offlineReceive = {
         encryptionPubkey: hex.encode(secp256k1.getPublicKey(secret, true)),
+        templateId,
     };
-    const provider = () => ({
-        getInfo: vi.fn(async () => info),
-        registerDelegation: vi.fn<DelegateeProvider["registerDelegation"]>(async (request) => ({
-            address: VtxoScript.decode(hex.decode(request.variables.taptree))
-                .address("tark", OPERATOR_PUBKEY)
-                .encode(),
-            status: "active",
-            templateId: request.templateId,
-            expiresAt: request.expiresAt,
-        })),
-    });
 
-    it.each(["lightning", "onchain"] as const)(
-        "registers authenticated claim terms before returning %s funding instructions",
-        async (via) => {
-            const service = provider();
-            const { client, transport } = await setup({
-                offlineReceive: { provider: service, templateId },
+    it.each([
+        ["lightning", 4_950n],
+        ["onchain", 5_000n],
+    ] as const)(
+        "carries authenticated %s claim terms in the RFQ packet without delegatee calls",
+        async (via, amount) => {
+            const info = vi.spyOn(RestDelegateeProvider.prototype, "getInfo");
+            const register = vi.spyOn(RestDelegateeProvider.prototype, "registerDelegation");
+            const { client, transport } = await setup({ offlineReceive });
+            const quote = await client.quote({ via, amount, amountOn: "take" });
+            const profile = transport.sent[0].profile as Record<string, unknown>;
+            const packet = profile.claim_packet;
+            expect(typeof packet).toBe("string");
+            const bytes = base64.decode(packet as string);
+            let ciphertext: Uint8Array | undefined;
+            let marker: string | undefined;
+            for (let offset = 0; offset < bytes.length; ) {
+                const tag = bytes[offset];
+                const length = (bytes[offset + 1] << 8) | bytes[offset + 2];
+                const value = bytes.subarray(offset + 3, offset + 3 + length);
+                if (tag === 1) ciphertext = value;
+                if (tag === 127) marker = new TextDecoder().decode(value);
+                offset += 3 + length;
+            }
+            expect(marker).toBe("delegatee-secrets/v1");
+            expect(claimPacketShape(packet as string)).toMatchObject({
+                kind: "packet",
+                needsArkadeScript: true,
             });
-            const quote = await client.quote({ via, amount: 5_000n, amountOn: "give" });
-            const request = service.registerDelegation.mock.calls[0][0];
-            const plaintext = await openClaimPacket(
-                base64.encode(hex.decode(request.variables.ciphertext)),
-                secret,
-            );
+            const plaintext = await openClaimPacket(base64.encode(ciphertext!), secret);
             const payload = JSON.parse(new TextDecoder().decode(plaintext));
             expect(payload.template_id).toBe(templateId);
             expect(ScriptNum().decode(hex.decode(payload.values.minimum_value))).toBe(
                 quote.take.amount,
             );
-            expect(Number(ScriptNum().decode(hex.decode(payload.values.claim_until)))).toBe(
-                quote.refundLocktime! - 60,
-            );
-            expect(payload.values.lockup_program).toBe(
+            expect(payload.values.receiver_program).toBe(
                 hex.encode(
-                    VtxoScript.decode(hex.decode(request.variables.taptree)).pkScript.subarray(2),
+                    ArkAddress.decode(profile.payout_address as string).pkScript.subarray(2),
                 ),
             );
-            expect(transport.sent[0]).not.toHaveProperty("profile.claim_packet");
+            expect(payload.values.preimage).toMatch(/^[0-9a-f]{64}$/);
+            expect(info).not.toHaveBeenCalled();
+            expect(register).not.toHaveBeenCalled();
+            expect(transport.sent).toHaveLength(1);
+            info.mockRestore();
+            register.mockRestore();
         },
     );
 
-    it("withholds the invoice when registration fails or the returned watch disagrees", async () => {
-        for (const [failure, message] of [
-            ["outage", "delegatee unavailable"],
-            ["wrong address", "delegatee did not register the expected active claim watch"],
-        ] as const) {
-            const service = provider();
-            if (failure === "outage")
-                service.registerDelegation.mockRejectedValueOnce(
-                    new Error("delegatee unavailable"),
-                );
-            else
-                service.registerDelegation.mockImplementationOnce(async (request) => ({
-                    address: "wrong",
-                    status: "active",
-                    templateId,
-                    expiresAt: request.expiresAt,
-                }));
-            const { client } = await setup({ offlineReceive: { provider: service, templateId } });
-            await expect(
-                client.quote({ via: "lightning", amount: 5_000n, amountOn: "give" }),
-            ).rejects.toThrow(message);
-            expect(service.registerDelegation).toHaveBeenCalledOnce();
-        }
-    });
+    it.each(["lightning", "onchain"] as const)(
+        "rejects an unpinned %s payout before contacting the solver",
+        async (via) => {
+            const { client, transport } = await setup({ offlineReceive });
+            await expect(client.quote({ via, amount: 5_000n, amountOn: "give" })).rejects.toThrow(
+                "packet-only offline receive requires amountOn: take",
+            );
+            expect(transport.sent).toHaveLength(0);
+        },
+    );
 
-    it("refuses a delegatee on another network before registering the secret", async () => {
-        const service = provider();
-        service.getInfo.mockResolvedValueOnce({ ...info, network: "bitcoin" });
-        const { client } = await setup({ offlineReceive: { provider: service, templateId } });
-        await expect(
-            client.quote({ via: "lightning", amount: 5_000n, amountOn: "give" }),
-        ).rejects.toThrow(/different network/);
-        expect(service.registerDelegation).not.toHaveBeenCalled();
-    });
-
-    it("applies the onchain refund policy before disclosing anything to delegatee", async () => {
-        const service = provider();
+    it("rejects an invalid encryption key before contacting the solver", async () => {
         const { client } = await setup({
-            offlineReceive: { provider: service, templateId },
-            policy: { maxRefundWindowSeconds: 1 },
+            offlineReceive: { ...offlineReceive, encryptionPubkey: "00" },
         });
         await expect(
-            client.quote({ via: "onchain", amount: 5_000n, amountOn: "give" }),
-        ).rejects.toThrow(/refund_window/);
-        expect(service.getInfo).not.toHaveBeenCalled();
-        expect(service.registerDelegation).not.toHaveBeenCalled();
+            client.quote({ via: "lightning", amount: 4_950n, amountOn: "take" }),
+        ).rejects.toThrow("encryption key must be compressed");
     });
 });
 

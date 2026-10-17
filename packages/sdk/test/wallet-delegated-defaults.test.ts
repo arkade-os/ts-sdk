@@ -5,6 +5,7 @@ import {
     DelegateeContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     SingleKey,
     Wallet,
     networks,
@@ -73,7 +74,7 @@ async function walletWith(options: { delegatee: boolean; rows: boolean }) {
     }
     const wallet = await Wallet.create({
         identity,
-        arkServerUrl: "http://localhost:7070",
+        arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: { walletRepository: new InMemoryWalletRepository(), contractRepository },
         settlementConfig: false,
         ...(options.delegatee ? { delegateeProvider } : {}),

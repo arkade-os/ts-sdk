@@ -111,6 +111,11 @@ export const CLAIM_PACKET_TYPE = 0x04;
 const tlv = (type: number, value: Uint8Array): Uint8Array =>
     Uint8Array.from([type, (value.length >> 8) & 0xff, value.length & 0xff, ...value]);
 
+export const DELEGATEE_CLAIM_PACKET_PREFIX = tlv(
+    0x7f,
+    new TextEncoder().encode("delegatee-secrets/v1"),
+);
+
 /**
  * Stamp the covenant script into a client's packet — the solver's half.
  *
@@ -175,7 +180,12 @@ export const claimPacketShape = (b64: string): ClaimPacketShape => {
         if (raw.length === SEALED_CIPHERTEXT_LENGTH) return { kind: "ciphertext" };
         const { ciphertextLength, hasArkadeScript, pubkey } = parseTlv(raw);
         // A wrong length fails to decrypt either way, so take the loud path.
-        if (ciphertextLength !== SEALED_CIPHERTEXT_LENGTH || pubkey === undefined) {
+        const delegatee =
+            DELEGATEE_CLAIM_PACKET_PREFIX.every((byte, i) => raw[i] === byte) &&
+            ciphertextLength !== undefined &&
+            ciphertextLength > SEALED_CIPHERTEXT_LENGTH &&
+            ciphertextLength <= 520;
+        if ((!delegatee && ciphertextLength !== SEALED_CIPHERTEXT_LENGTH) || pubkey === undefined) {
             return { kind: "ciphertext" };
         }
         return {

@@ -1,82 +1,42 @@
-import {
-    ArkAddress,
-    sealDelegateeSecrets,
-    toXOnly,
-    type ArkadeInfo,
-    type DelegateeProvider,
-    type VHTLC,
-} from "@arkade-os/sdk";
-import { hex } from "@scure/base";
+import { ArkAddress, sealDelegateeSecrets } from "@arkade-os/sdk";
+import { base64, hex } from "@scure/base";
 import { ScriptNum } from "@scure/btc-signer";
+import { concatBytes } from "@scure/btc-signer/utils.js";
+import { DELEGATEE_CLAIM_PACKET_PREFIX } from "./claimPacket";
 
 export interface DelegateeReceiveOptions {
-    provider: DelegateeProvider;
-    /** The operator-trusted offline_receive template's content id. */
+    /** The operator can decrypt the preimage and must be trusted with it. */
+    encryptionPubkey: string;
     templateId: string;
 }
 
-export async function registerDelegateeReceive(input: {
+export function sealDelegateeReceive(input: {
     delegatee: DelegateeReceiveOptions | undefined;
-    info: ArkadeInfo;
-    emulatorPubkey: Uint8Array;
     preimage: Uint8Array;
-    script: InstanceType<typeof VHTLC.ScriptV2>;
-    address: string;
     payoutAddress: string;
-    expectedAmount: number;
-    refundLocktime: number;
-}): Promise<void> {
-    if (!input.delegatee) return;
-    if (
-        !Number.isSafeInteger(input.expectedAmount) ||
-        input.expectedAmount <= 0 ||
-        input.expectedAmount > 2_100_000_000_000_000
-    ) {
+    amount: { on: "give" | "take"; value: bigint };
+}): string | undefined {
+    if (!input.delegatee) return undefined;
+    if (input.amount.on !== "take") {
+        throw new Error("packet-only offline receive requires amountOn: take");
+    }
+    if (input.amount.value <= 0n || input.amount.value > 2_100_000_000_000_000n) {
         throw new Error("invalid offline receive amount");
     }
-    const claimUntil = input.refundLocktime - 60;
-    if (!Number.isSafeInteger(claimUntil) || claimUntil <= Math.floor(Date.now() / 1000)) {
-        throw new Error("offline receive claim deadline has passed");
-    }
-    const { provider, templateId } = input.delegatee;
-    const info = await provider.getInfo();
-    if (
-        info.network !== input.info.network ||
-        hex.encode(toXOnly(hex.decode(info.serverPubkey), "delegatee operator")) !==
-            hex.encode(toXOnly(hex.decode(input.info.signerPubkey), "operator")) ||
-        hex.encode(toXOnly(hex.decode(info.emulatorPubkey), "delegatee emulator")) !==
-            hex.encode(toXOnly(input.emulatorPubkey, "emulator"))
-    ) {
-        throw new Error("delegatee is on a different network or signer set");
-    }
+    if (input.preimage.length !== 32) throw new Error("preimage must be 32 bytes");
+    const encryptionPubkey = hex.decode(input.delegatee.encryptionPubkey);
     const ciphertext = sealDelegateeSecrets({
-        templateId,
-        encryptionPubkey: hex.decode(info.encryptionPubkey),
+        templateId: input.delegatee.templateId,
+        encryptionPubkey,
         values: {
             preimage: input.preimage,
-            minimum_value: ScriptNum(8).encode(BigInt(input.expectedAmount)),
-            claim_until: ScriptNum(8).encode(BigInt(claimUntil)),
-            lockup_program: input.script.pkScript.subarray(2),
+            minimum_value: ScriptNum(8).encode(input.amount.value),
+            receiver_program: ArkAddress.decode(input.payoutAddress).pkScript.subarray(2),
         },
     });
-    const watch = await provider.registerDelegation({
-        templateId,
-        variables: {
-            taptree: hex.encode(input.script.encode()),
-            receiver_program: hex.encode(
-                ArkAddress.decode(input.payoutAddress).pkScript.subarray(2),
-            ),
-            ciphertext: hex.encode(ciphertext),
-        },
-        expiresAt: claimUntil,
-    });
-    if (
-        watch.address !== input.address ||
-        watch.status !== "active" ||
-        watch.templateId !== templateId ||
-        watch.expiresAt !== claimUntil ||
-        watch.expiresAt <= Math.floor(Date.now() / 1000)
-    ) {
-        throw new Error("delegatee did not register the expected active claim watch");
-    }
+    const tlv = (tag: number, value: Uint8Array) =>
+        concatBytes(new Uint8Array([tag, value.length >> 8, value.length & 0xff]), value);
+    return base64.encode(
+        concatBytes(DELEGATEE_CLAIM_PACKET_PREFIX, tlv(1, ciphertext), tlv(3, encryptionPubkey)),
+    );
 }

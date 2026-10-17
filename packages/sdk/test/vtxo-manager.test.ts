@@ -1151,6 +1151,7 @@ describe("VtxoManager - Renewal", () => {
             const now = Date.now();
             const soon = (txid: string, script: string) =>
                 ({
+                    ...createMockVtxo(5000),
                     txid,
                     vout: 0,
                     value: 5000,
@@ -1170,7 +1171,7 @@ describe("VtxoManager - Renewal", () => {
             };
             const swept = { ...soon("swept", "51delegated"), isSwept: true } as ExtendedVirtualCoin;
             const vtxos = [soon("own", "51own"), soon("delegated", "51delegated"), swept];
-            const config = { enabled: true, thresholdMs: 100_000 };
+            const config = { vtxoThreshold: 100 };
 
             // no delegatee manager: delegation turned off still leaves them to the service, but a
             // swept one is the wallet's to recover
