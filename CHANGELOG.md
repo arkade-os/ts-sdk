@@ -541,6 +541,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Compiler server exit delays must be positive.** A missing server delay can arrive as zero, which previously compiled into a zero-block CSV leaf. Contract creation rejects zero alongside missing and negative delays before binding `SERVER_EXIT_DELAY`.
+
+- **Restored Arkade contracts sign with the connected identity.** Input selection used the persisted `userKey` even though signing preflight checked the connected identity, so a missing or different stored key could skip required signatures. Both checks now use the connected identity while persisted keys continue to preserve the contract script.
+
 - **`@arkade-os/swap`: a restore scan no longer reopens a cancelled or filled
   offer.** A client starting right after a cancel scans its deposits, and the
   indexer can still report the spent deposit as unspent. The scan wrote that
