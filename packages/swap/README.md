@@ -23,8 +23,9 @@ list without touching the network.
 
 ## The four routes
 
-Each is one `quote` → `accept` chain. `quote` returns binding, verified terms and touches nothing
-durable; `accept` writes the record, then funds.
+Each is one `quote` → `accept` chain. `quote` returns binding, verified terms;
+`accept` writes the local record, then funds. When configured, delegatee receive watches
+are registered during `quote`, before a payment artifact can leave the client.
 
 ```ts
 const BTC = btcOn("arkade", "bitcoin"); // arkade:bitcoin/slip44:0 (slip44:1 on test networks)
@@ -61,6 +62,34 @@ client takes the L1 funding back itself once the HTLC's refund leaf matures, pay
 address of this wallet fixed at quote time and signing with the wallet key the HTLC was derived
 with. The refund is built at the same `claimFeeRateSatVb` as the `arkade -> onchain` claim; wire
 your own with `corridors: { onchain: { refund } }`.
+
+### Offline receive with delegatee
+
+```ts
+import { RestDelegateeProvider } from "@arkade-os/sdk";
+
+const client = createSwapClient({
+    wallet,
+    repository: new IndexedDbAssetSwapRepository(),
+    offlineReceive: {
+        provider: new RestDelegateeProvider("https://delegatee.example"),
+        templateId: "<content id of the operator-trusted offline_receive template>",
+    },
+});
+const receive = await client.receive({ via: "lightning", amount: 50_000n });
+showToPayer(receive.artifact.bolt11);
+```
+
+This also covers `via: "onchain"`. Delegatee must run the `offline_receive` template
+with an encryption key configured. Registration must succeed before the client returns
+the invoice or deposit instructions. The watch survives daemon restarts and discovers
+funding through the indexer, including funding received during downtime.
+
+The encrypted envelope binds the preimage to the template, exact lockup program,
+minimum quoted payout and a deadline 60 seconds before the solver's refund opens.
+Delegatee decrypts it during registration; the solver learns the preimage from the claim
+transaction. HTTPS protects discovery of the encryption key. Legacy covclaimd configuration
+continues to use transaction packets; configure one offline receive service at a time.
 
 An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that claim's miner fee
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the
