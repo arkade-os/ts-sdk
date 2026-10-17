@@ -1152,3 +1152,5 @@ export type {
     VirtualTx,
     VtxoBranch,
 };
+export { RestDelegateeProvider, sealDelegateeSecrets } from "./providers/delegatee";
+export type { DelegateeInfo, DelegateeProvider, DelegateeWatch } from "./providers/delegatee";

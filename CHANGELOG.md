@@ -14,6 +14,11 @@ style and have not been backfilled.
 
 ### Added
 
+- **Delegatee can claim an offline receive from a durable watch.** The SDK exposes a
+  generic delegatee provider and encrypted template secret envelopes. Swap clients can
+  register the verified lockup, minimum payout and claim deadline before returning
+  payment instructions, without exposing the preimage to the solver.
+
 - **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
   A covenant can read state the transaction carries — `tx.packet(type)` in the
   spend itself, `tx.inputs[i].packet(type)` when the output is spent later —

@@ -1,8 +1,8 @@
 /**
  * The RFQ backend: one addressed request per route, verified before it is returned and persisted by
- * nobody. Four routes cross a corridor and lock a VHTLC; the fifth (arkade->arkade) derives an
- * offer covenant instead. No contract registration, record or funding here — `accept()` does that,
- * reusing the covenant derived here via {@link RfqPreparation}.
+ * nobody locally. Four routes cross a corridor and lock a VHTLC; the fifth (arkade->arkade) derives
+ * an offer covenant instead. An opted-in delegatee watch is registered before returning a receive
+ * artifact. Local registration, records and funding stay in `accept()`.
  *
  * The responder check runs BEFORE the request: what it prevents is disclosing an invoice and an
  * amount to a transport that cannot say who is listening.
@@ -24,6 +24,7 @@ import {
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
 import { sealClaimPacket } from "../claimPacket";
+import { registerDelegateeReceive, type DelegateeReceiveOptions } from "../delegateeReceive";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
 import { BTC_ASSET_ID } from "../store";
@@ -192,6 +193,7 @@ export type CorridorRfqPreparation =
       });
 
 export interface RfqQuoteInput {
+    readonly offlineReceive?: DelegateeReceiveOptions;
     readonly assetPayment?: AssetPaymentInput;
     readonly quoteId: QuoteId;
     readonly route:
@@ -661,6 +663,9 @@ const quoteLightningReceive = async (
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutAddress = await input.wallet.getAddress();
     const lightning = input.corridors.get("lightning").deps;
+    if (input.offlineReceive && lightning.covclaimd) {
+        throw new Error("choose one offline receive service");
+    }
     const sealTo = sealingKey(lightning);
     const claimPacket = sealTo
         ? await sealClaimPacket({ preimage: secrets.preimage, covclaimdPubkey: sealTo })
@@ -715,6 +720,18 @@ const quoteLightningReceive = async (
         expiresAt: payDeadline,
         now: input.now,
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
+    });
+
+    await registerDelegateeReceive({
+        delegatee: input.offlineReceive,
+        info: input.info,
+        emulatorPubkey: covenant.emulatorPubkey,
+        preimage: secrets.preimage,
+        script: derived.script,
+        address: derived.address,
+        payoutAddress,
+        expectedAmount: Number(parsed.take),
+        refundLocktime: derived.refundLocktime,
     });
 
     // The give leg's instrument IS the artifact: the solver's hold invoice.
@@ -992,6 +1009,18 @@ const quoteOnchainReceive = async (
         expiresAt: parsed.validUntil,
         now: input.now,
         floorSeconds: input.policy?.quoteTtlFloorSeconds,
+    });
+
+    await registerDelegateeReceive({
+        delegatee: input.offlineReceive,
+        info: input.info,
+        emulatorPubkey: covenant.emulatorPubkey,
+        preimage: secrets.preimage,
+        script: derived.script,
+        address: derived.address,
+        payoutAddress,
+        expectedAmount: Number(parsed.take),
+        refundLocktime: derived.refundLocktime,
     });
 
     // The give leg's instrument IS the artifact: the HTLC the trader funds, for exactly this much.

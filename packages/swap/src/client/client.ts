@@ -52,8 +52,10 @@ import {
 } from "./verbs";
 import { cardMarketOf, marketBackendOf, marketKeyOf, usableMarkets, type Market } from "./market";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
+import type { DelegateeReceiveOptions } from "../delegateeReceive";
 
 export interface SwapClientConfig {
+    readonly offlineReceive?: DelegateeReceiveOptions;
     /** The wallet, and through it the operator: server info, chain reads and broadcast all come from
      * it; no server URL is accepted anywhere. */
     readonly wallet: IWallet;
@@ -390,6 +392,9 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             });
             try {
                 const { quote, preparation } = await quoteViaRfq({
+                    ...(config.offlineReceive === undefined
+                        ? {}
+                        : { offlineReceive: config.offlineReceive }),
                     quoteId,
                     route: resolvedRoute.pair,
                     ...(assetPayment === undefined ? {} : { assetPayment }),

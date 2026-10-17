@@ -8,8 +8,11 @@
  * is a tamper on that agreement.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
-import { contractSigner } from "@arkade-os/sdk";
+import { base64, hex } from "@scure/base";
+import { contractSigner, VtxoScript, type DelegateeProvider } from "@arkade-os/sdk";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { ScriptNum } from "@scure/btc-signer";
+import { openClaimPacket } from "../helpers/claimPacket";
 import { claimPacketShape } from "../../src/claimPacket";
 import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
@@ -22,6 +25,8 @@ import type { QuoteInput } from "../../src/client/quote";
 import { l1ScriptForAddress } from "../../src/onchainHtlc";
 import {
     BOARDING_ADDRESS,
+    ARK_INFO,
+    OPERATOR_PUBKEY,
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
     SOLVER_DISCOVERY_KEY,
@@ -56,6 +61,7 @@ const setup = async (
         policy?: Parameters<typeof createSwapClient>[0]["policy"];
         corridors?: Parameters<typeof createSwapClient>[0]["corridors"];
         price?: number;
+        offlineReceive?: Parameters<typeof createSwapClient>[0]["offlineReceive"];
     } = {},
 ) => {
     const wallet = await hdWallet();
@@ -72,11 +78,108 @@ const setup = async (
         fetchImpl: feed.fetch,
         ...(over.policy === undefined ? {} : { policy: over.policy }),
         ...(over.corridors === undefined ? {} : { corridors: over.corridors }),
+        ...(over.offlineReceive === undefined ? {} : { offlineReceive: over.offlineReceive }),
     });
     return { client, transport, feed, wallet };
 };
 
 const sendInput = (): QuoteInput => ({ to: invoiceFor(PAYMENT_HASH, CLOCK) });
+
+describe("delegatee offline receive", () => {
+    const templateId = "11".repeat(32);
+    const secret = new Uint8Array(32).fill(2);
+    const info = {
+        network: ARK_INFO.network,
+        serverPubkey: `02${ARK_INFO.signerPubkey}`,
+        emulatorPubkey: EMULATOR_PUBKEY_HEX,
+        encryptionPubkey: hex.encode(secp256k1.getPublicKey(secret, true)),
+    };
+    const provider = () => ({
+        getInfo: vi.fn(async () => info),
+        registerDelegation: vi.fn<DelegateeProvider["registerDelegation"]>(async (request) => ({
+            address: VtxoScript.decode(hex.decode(request.variables.taptree))
+                .address("tark", OPERATOR_PUBKEY)
+                .encode(),
+            status: "active",
+            templateId: request.templateId,
+            expiresAt: request.expiresAt,
+        })),
+    });
+
+    it.each(["lightning", "onchain"] as const)(
+        "registers authenticated claim terms before returning %s funding instructions",
+        async (via) => {
+            const service = provider();
+            const { client, transport } = await setup({
+                offlineReceive: { provider: service, templateId },
+            });
+            const quote = await client.quote({ via, amount: 5_000n, amountOn: "give" });
+            const request = service.registerDelegation.mock.calls[0][0];
+            const plaintext = await openClaimPacket(
+                base64.encode(hex.decode(request.variables.ciphertext)),
+                secret,
+            );
+            const payload = JSON.parse(new TextDecoder().decode(plaintext));
+            expect(payload.template_id).toBe(templateId);
+            expect(ScriptNum().decode(hex.decode(payload.values.minimum_value))).toBe(
+                quote.take.amount,
+            );
+            expect(Number(ScriptNum().decode(hex.decode(payload.values.claim_until)))).toBe(
+                quote.refundLocktime! - 60,
+            );
+            expect(payload.values.lockup_program).toBe(
+                hex.encode(
+                    VtxoScript.decode(hex.decode(request.variables.taptree)).pkScript.subarray(2),
+                ),
+            );
+            expect(transport.sent[0]).not.toHaveProperty("profile.claim_packet");
+        },
+    );
+
+    it("withholds the invoice when registration fails or the returned watch disagrees", async () => {
+        for (const failure of ["outage", "wrong address"] as const) {
+            const service = provider();
+            if (failure === "outage")
+                service.registerDelegation.mockRejectedValueOnce(
+                    new Error("delegatee unavailable"),
+                );
+            else
+                service.registerDelegation.mockResolvedValueOnce({
+                    address: "wrong",
+                    status: "active",
+                    templateId,
+                    expiresAt: NOW + 100,
+                });
+            const { client } = await setup({ offlineReceive: { provider: service, templateId } });
+            await expect(
+                client.quote({ via: "lightning", amount: 5_000n, amountOn: "give" }),
+            ).rejects.toThrow();
+        }
+    });
+
+    it("refuses a delegatee on another network before registering the secret", async () => {
+        const service = provider();
+        service.getInfo.mockResolvedValueOnce({ ...info, network: "bitcoin" });
+        const { client } = await setup({ offlineReceive: { provider: service, templateId } });
+        await expect(
+            client.quote({ via: "lightning", amount: 5_000n, amountOn: "give" }),
+        ).rejects.toThrow(/different network/);
+        expect(service.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("applies the onchain refund policy before disclosing anything to delegatee", async () => {
+        const service = provider();
+        const { client } = await setup({
+            offlineReceive: { provider: service, templateId },
+            policy: { maxRefundWindowSeconds: 1 },
+        });
+        await expect(
+            client.quote({ via: "onchain", amount: 5_000n, amountOn: "give" }),
+        ).rejects.toThrow();
+        expect(service.getInfo).not.toHaveBeenCalled();
+        expect(service.registerDelegation).not.toHaveBeenCalled();
+    });
+});
 
 beforeEach(() => {
     vi.useFakeTimers();
