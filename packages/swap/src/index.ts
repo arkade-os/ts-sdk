@@ -23,6 +23,7 @@
  */
 
 // ── The client ──────────────────────────────────────────────────────────────
+export type { DelegateeReceiveOptions } from "./delegateeReceive";
 // The factory, its object and config, plus the field types a caller names when writing a config.
 export {
     createSwapClient,

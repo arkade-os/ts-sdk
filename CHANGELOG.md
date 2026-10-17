@@ -14,6 +14,10 @@ style and have not been backfilled.
 
 ### Added
 
+- **Delegatee packet-only offline receive.** Seal the preimage, receiver and minimum payout
+  into the funding packet using the existing delegatee provider's encryption key. Both receive
+  routes support going offline without calling delegatee; persisted watches recover after restart.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new

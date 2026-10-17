@@ -8,6 +8,7 @@ export interface DelegateeInfo {
     delegatePubkey: string;
     serverPubkey: string;
     emulatorPubkey: string;
+    encryptionPubkey?: string;
 }
 
 /** The service's keys a wallet's delegatee contracts are derived from. */
@@ -240,6 +241,10 @@ function parseDelegateeInfo(value: unknown): DelegateeInfo {
     decodeCompressed(info.delegatePubkey, "delegatePubkey");
     decodeCompressed(info.serverPubkey, "serverPubkey");
     decodeCompressed(info.emulatorPubkey, "emulatorPubkey");
+    if (value.encryptionPubkey !== undefined && value.encryptionPubkey !== "") {
+        info.encryptionPubkey = requiredString(value, "encryptionPubkey");
+        decodeCompressed(info.encryptionPubkey, "encryptionPubkey");
+    }
     return info;
 }
 

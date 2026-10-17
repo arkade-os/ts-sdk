@@ -1,4 +1,5 @@
 import { Transaction } from "./utils/transaction";
+export { sealDelegateeSecrets } from "./utils/delegateeSecrets";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {

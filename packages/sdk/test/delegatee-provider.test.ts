@@ -24,6 +24,21 @@ describe("RestDelegateeProvider", () => {
         expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/info");
     });
 
+    it("exposes an optional encryption key for offline packet configuration", async () => {
+        const info = { ...makeInfo(), encryptionPubkey: makeInfo().delegatePubkey };
+        respond(info);
+        await expect(
+            new RestDelegateeProvider("https://delegatee.test").getInfo(),
+        ).resolves.toEqual(info);
+    });
+
+    it("rejects an invalid advertised encryption key", async () => {
+        respond({ ...makeInfo(), encryptionPubkey: "00" });
+        await expect(new RestDelegateeProvider("https://delegatee.test").getInfo()).rejects.toThrow(
+            "encryptionPubkey is not compressed",
+        );
+    });
+
     it("rejects info with a non-compressed key", async () => {
         respond({ ...makeInfo(), delegatePubkey: hex.encode(ownerKey) });
         await expect(new RestDelegateeProvider("https://delegatee.test").getInfo()).rejects.toThrow(

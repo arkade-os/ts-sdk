@@ -8,8 +8,11 @@
  * is a tamper on that agreement.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
-import { contractSigner } from "@arkade-os/sdk";
+import { base64, hex } from "@scure/base";
+import { contractSigner, ArkAddress, RestDelegateeProvider } from "@arkade-os/sdk";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { ScriptNum } from "@scure/btc-signer";
+import { openClaimPacket } from "../helpers/claimPacket";
 import { claimPacketShape } from "../../src/claimPacket";
 import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
@@ -56,6 +59,7 @@ const setup = async (
         policy?: Parameters<typeof createSwapClient>[0]["policy"];
         corridors?: Parameters<typeof createSwapClient>[0]["corridors"];
         price?: number;
+        offlineReceive?: Parameters<typeof createSwapClient>[0]["offlineReceive"];
     } = {},
 ) => {
     const wallet = await hdWallet();
@@ -72,11 +76,91 @@ const setup = async (
         fetchImpl: feed.fetch,
         ...(over.policy === undefined ? {} : { policy: over.policy }),
         ...(over.corridors === undefined ? {} : { corridors: over.corridors }),
+        ...(over.offlineReceive === undefined ? {} : { offlineReceive: over.offlineReceive }),
     });
     return { client, transport, feed, wallet };
 };
 
 const sendInput = (): QuoteInput => ({ to: invoiceFor(PAYMENT_HASH, CLOCK) });
+
+describe("delegatee offline receive", () => {
+    afterEach(() => vi.restoreAllMocks());
+    const templateId = "11".repeat(32);
+    const secret = new Uint8Array(32).fill(2);
+    const offlineReceive = {
+        encryptionPubkey: hex.encode(secp256k1.getPublicKey(secret, true)),
+        templateId,
+    };
+
+    it.each([
+        ["lightning", 4_950n],
+        ["onchain", 5_000n],
+    ] as const)(
+        "carries authenticated %s claim terms in the RFQ packet without delegatee calls",
+        async (via, amount) => {
+            const info = vi.spyOn(RestDelegateeProvider.prototype, "getInfo");
+            const register = vi.spyOn(RestDelegateeProvider.prototype, "registerDelegation");
+            const { client, transport } = await setup({ offlineReceive });
+            const quote = await client.quote({ via, amount, amountOn: "take" });
+            const profile = transport.sent[0].profile as Record<string, unknown>;
+            const packet = profile.claim_packet;
+            expect(typeof packet).toBe("string");
+            const bytes = base64.decode(packet as string);
+            let ciphertext: Uint8Array | undefined;
+            let marker: string | undefined;
+            for (let offset = 0; offset < bytes.length; ) {
+                const tag = bytes[offset];
+                const length = (bytes[offset + 1] << 8) | bytes[offset + 2];
+                const value = bytes.subarray(offset + 3, offset + 3 + length);
+                if (tag === 1) ciphertext = value;
+                if (tag === 127) marker = new TextDecoder().decode(value);
+                offset += 3 + length;
+            }
+            expect(marker).toBe("delegatee-secrets/v1");
+            expect(claimPacketShape(packet as string)).toMatchObject({
+                kind: "packet",
+                needsArkadeScript: true,
+            });
+            const plaintext = await openClaimPacket(base64.encode(ciphertext!), secret);
+            const payload = JSON.parse(new TextDecoder().decode(plaintext));
+            expect(payload.template_id).toBe(templateId);
+            expect(ScriptNum().decode(hex.decode(payload.values.minimum_value))).toBe(
+                quote.take.amount,
+            );
+            expect(payload.values.receiver_program).toBe(
+                hex.encode(
+                    ArkAddress.decode(profile.payout_address as string).pkScript.subarray(2),
+                ),
+            );
+            expect(payload.values.preimage).toMatch(/^[0-9a-f]{64}$/);
+            expect(info).not.toHaveBeenCalled();
+            expect(register).not.toHaveBeenCalled();
+            expect(transport.sent).toHaveLength(1);
+            info.mockRestore();
+            register.mockRestore();
+        },
+    );
+
+    it.each(["lightning", "onchain"] as const)(
+        "rejects an unpinned %s payout before contacting the solver",
+        async (via) => {
+            const { client, transport } = await setup({ offlineReceive });
+            await expect(client.quote({ via, amount: 5_000n, amountOn: "give" })).rejects.toThrow(
+                "packet-only offline receive requires amountOn: take",
+            );
+            expect(transport.sent).toHaveLength(0);
+        },
+    );
+
+    it("rejects an invalid encryption key before contacting the solver", async () => {
+        const { client } = await setup({
+            offlineReceive: { ...offlineReceive, encryptionPubkey: "00" },
+        });
+        await expect(
+            client.quote({ via: "lightning", amount: 4_950n, amountOn: "take" }),
+        ).rejects.toThrow("encryption key must be compressed");
+    });
+});
 
 beforeEach(() => {
     vi.useFakeTimers();

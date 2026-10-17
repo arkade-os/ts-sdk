@@ -23,8 +23,9 @@ list without touching the network.
 
 ## The four routes
 
-Each is one `quote` → `accept` chain. `quote` returns binding, verified terms and touches nothing
-durable; `accept` writes the record, then funds.
+Each is one `quote` → `accept` chain. `quote` returns binding, verified terms;
+`accept` writes the local record, then funds. Offline receive seals its packet before the RFQ;
+the funding transaction delivers it to the delegatee and creates the claim watch.
 
 ```ts
 const BTC = btcOn("arkade", "bitcoin"); // arkade:bitcoin/slip44:0 (slip44:1 on test networks)
@@ -61,6 +62,39 @@ client takes the L1 funding back itself once the HTLC's refund leaf matures, pay
 address of this wallet fixed at quote time and signing with the wallet key the HTLC was derived
 with. The refund is built at the same `claimFeeRateSatVb` as the `arkade -> onchain` claim; wire
 your own with `corridors: { onchain: { refund } }`.
+
+### Offline receive with delegatee
+
+```ts
+const client = createSwapClient({
+    wallet,
+    repository: new IndexedDbAssetSwapRepository(),
+    offlineReceive: {
+        encryptionPubkey: "<trusted delegatee encryption key, compressed hex>",
+        templateId: "<content id of the operator-trusted offline_receive template>",
+    },
+});
+const receive = await client.receive({ via: "lightning", amount: 50_000n });
+showToPayer(receive.artifact.bolt11);
+```
+
+This also covers `via: "onchain"`. Configure the encryption key and trusted template ID
+from the delegatee deployment. Offline receive makes no calls to delegatee and needs no
+delegatee URL. The operator enables the `offline_receive` transaction stream template.
+
+The SDK seals the preimage, fixed receiver and minimum payout into the RFQ's `claim_packet`.
+The solver carries it opaquely, appends its covenant script and stamps a type-4 extension
+packet and full taptree into the funding transaction. Delegatee discovers that packet,
+decrypts the authenticated fields and persists a claim watch. The solver learns the preimage
+from the claim transaction. Legacy covclaimd packets continue to work unchanged.
+
+`receive()` pins the amount received. When using `quote()` directly, offline receive requires
+`amountOn: "take"`; an exact-in quote does not yet know the minimum payout to authenticate.
+The packet authenticates the payment intent, not the complete later-quoted tree or deadline.
+
+The receiver can go offline after `receive()` returns. Delegatee must observe the funding
+packet while connected: its stream has no historical replay. Once a watch is persisted, its
+indexer scans and pending-transaction recovery survive daemon restarts.
 
 An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that claim's miner fee
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the

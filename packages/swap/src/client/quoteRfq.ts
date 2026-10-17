@@ -23,6 +23,7 @@ import {
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { sealClaimPacket } from "../claimPacket";
+import { sealDelegateeReceive, type DelegateeReceiveOptions } from "../delegateeReceive";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, type DerivedOffer } from "../offer";
 import { BTC_ASSET_ID } from "../store";
@@ -181,6 +182,7 @@ export type CorridorRfqPreparation =
       });
 
 export interface RfqQuoteInput {
+    readonly offlineReceive?: DelegateeReceiveOptions;
     readonly quoteId: QuoteId;
     readonly route:
         | "arkade->arkade"
@@ -564,6 +566,9 @@ const quoteLightningReceive = async (
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutAddress = await input.wallet.getAddress();
     const lightning = input.corridors.get("lightning").deps;
+    if (input.offlineReceive && lightning.covclaimd) {
+        throw new Error("choose one offline receive service");
+    }
     const sealTo = sealingKey(lightning);
     const claimPacket = sealTo
         ? await sealClaimPacket({ preimage: secrets.preimage, covclaimdPubkey: sealTo })
@@ -576,7 +581,13 @@ const quoteLightningReceive = async (
                 paymentHash,
                 payoutAddress,
                 payoutPubkey: secrets.pubkey,
-                claimPacket: claimPacket?.packet,
+                claimPacket:
+                    sealDelegateeReceive({
+                        delegatee: input.offlineReceive,
+                        preimage: secrets.preimage,
+                        payoutAddress,
+                        amount: pinned,
+                    }) ?? claimPacket?.packet,
                 // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
@@ -850,6 +861,12 @@ const quoteOnchainReceive = async (
                 payoutAddress,
                 payoutPubkey: secrets.pubkey,
                 refundPubkey: refundKey.pubkey,
+                claimPacket: sealDelegateeReceive({
+                    delegatee: input.offlineReceive,
+                    preimage: secrets.preimage,
+                    payoutAddress,
+                    amount: pinned,
+                }),
                 // Placeholder: `withCanonicalAmount` writes the canonical decimal string.
                 amount: 0,
                 amountSide: toRfqAmountSide(pinned.on),
