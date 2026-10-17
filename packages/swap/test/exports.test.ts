@@ -63,6 +63,7 @@ const CURATED_ROOT: readonly string[] = [
     "createSwapClient",
     "SwapClient",
     "SwapClientConfig",
+    "DelegateeReceiveOptions",
     "SwapFilter",
     "DiscoveryConfig",
     "DiscoverySnapshot",
