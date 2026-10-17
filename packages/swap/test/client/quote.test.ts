@@ -137,23 +137,27 @@ describe("delegatee offline receive", () => {
     );
 
     it("withholds the invoice when registration fails or the returned watch disagrees", async () => {
-        for (const failure of ["outage", "wrong address"] as const) {
+        for (const [failure, message] of [
+            ["outage", "delegatee unavailable"],
+            ["wrong address", "delegatee did not register the expected active claim watch"],
+        ] as const) {
             const service = provider();
             if (failure === "outage")
                 service.registerDelegation.mockRejectedValueOnce(
                     new Error("delegatee unavailable"),
                 );
             else
-                service.registerDelegation.mockResolvedValueOnce({
+                service.registerDelegation.mockImplementationOnce(async (request) => ({
                     address: "wrong",
                     status: "active",
                     templateId,
-                    expiresAt: NOW + 100,
-                });
+                    expiresAt: request.expiresAt,
+                }));
             const { client } = await setup({ offlineReceive: { provider: service, templateId } });
             await expect(
                 client.quote({ via: "lightning", amount: 5_000n, amountOn: "give" }),
-            ).rejects.toThrow();
+            ).rejects.toThrow(message);
+            expect(service.registerDelegation).toHaveBeenCalledOnce();
         }
     });
 
@@ -175,7 +179,7 @@ describe("delegatee offline receive", () => {
         });
         await expect(
             client.quote({ via: "onchain", amount: 5_000n, amountOn: "give" }),
-        ).rejects.toThrow();
+        ).rejects.toThrow(/refund_window/);
         expect(service.getInfo).not.toHaveBeenCalled();
         expect(service.registerDelegation).not.toHaveBeenCalled();
     });
