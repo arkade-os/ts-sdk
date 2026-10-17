@@ -8,6 +8,7 @@ coverage
 .idea
 .vscode
 .tmp
+.reference/
 .swp
 .nyc_output
 .claude/

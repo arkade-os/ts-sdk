@@ -1,0 +1,188 @@
+{
+    "formatVersion": 1,
+    "contractName": "VHTLCPayoutBtcV1",
+    "constructorInputs": [
+        {
+            "name": "receiver",
+            "type": "pubkey"
+        },
+        {
+            "name": "preimageHash",
+            "type": "bytes20"
+        },
+        {
+            "name": "receiverProgram",
+            "type": "bytes32"
+        },
+        {
+            "name": "senderProgram",
+            "type": "bytes32"
+        },
+        {
+            "name": "refundLocktime",
+            "type": "int"
+        }
+    ],
+    "functions": [
+        {
+            "name": "nonInteractiveClaim",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_NIP",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_DROP",
+                    "<receiverProgram>",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "OP_1"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "nonInteractiveClaim",
+                    "witness": [
+                        {
+                            "name": "preimage",
+                            "type": "bytes",
+                            "encoding": "raw"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "OP_HASH160",
+                        "<preimageHash>",
+                        "OP_EQUAL",
+                        "OP_VERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:nonInteractiveClaim>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "nonInteractiveRefund",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_NIP",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_DROP",
+                    "<senderProgram>",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "OP_1"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "nonInteractiveRefund",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "receiverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<receiver>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:nonInteractiveRefund>",
+                        "OP_CHECKSIG"
+                    ]
+                },
+                {
+                    "name": "nonInteractiveRefundWithoutReceiver",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<refundLocktime>",
+                        "OP_CHECKLOCKTIMEVERIFY",
+                        "OP_DROP",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:nonInteractiveRefund>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        }
+    ],
+    "source": {
+        "entry": "payout-btc-v1.ark",
+        "files": {
+            "payout-btc-v1.ark": "pragma arkade ^0.1.0;\n\ncontract VHTLCPayoutBtcV1(\n    pubkey receiver,\n    bytes20 preimageHash,\n    bytes32 receiverProgram,\n    bytes32 senderProgram,\n    int refundLocktime\n) {\n    function nonInteractiveClaim() {\n        require(tx.outputs[this.activeInputIndex].witnessVersion == 1);\n        require(tx.outputs[this.activeInputIndex].scriptPubKey == receiverProgram);\n        require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);\n    }\n\n    function nonInteractiveRefund() {\n        require(tx.outputs[this.activeInputIndex].witnessVersion == 1);\n        require(tx.outputs[this.activeInputIndex].scriptPubKey == senderProgram);\n        require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);\n    }\n\n    function nonInteractiveClaim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {\n        require(hash160(preimage) == preimageHash);\n        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n    }\n\n    function nonInteractiveRefund(signature serverSig, signature receiverSig, signature emulatorSig) tapscript {\n        require(checkMultisig([server, receiver, emulator], [serverSig, receiverSig, emulatorSig], 3));\n    }\n\n    function nonInteractiveRefundWithoutReceiver(signature serverSig, signature emulatorSig) tapscript {\n        require(after(refundLocktime));\n        require(checkMultisig([server, tweak(emulator, nonInteractiveRefund)], [serverSig, emulatorSig], 2));\n    }\n}\n"
+        }
+    },
+    "compiler": {
+        "name": "arkadec",
+        "version": "0.1.0",
+        "options": {
+            "optimize": false
+        }
+    },
+    "fingerprint": "sha256:944558a93e91db218dec7fcbdd036840d48a2937d523a0387d9ea83fae2aeac2"
+}

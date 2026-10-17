@@ -1,0 +1,35 @@
+pragma arkade ^0.1.0;
+
+contract VHTLCPayoutBtcV2Candidate(
+    pubkey receiver,
+    bytes20 preimageHash,
+    bytes32 receiverProgram,
+    bytes32 senderProgram,
+    int refundLocktime
+) {
+    function nonInteractiveClaim() {
+        require(tx.outputs[this.activeInputIndex].witnessVersion == 1);
+        require(tx.outputs[this.activeInputIndex].scriptPubKey == receiverProgram);
+        require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);
+    }
+
+    function nonInteractiveRefund() {
+        require(tx.outputs[this.activeInputIndex].witnessVersion == 1);
+        require(tx.outputs[this.activeInputIndex].scriptPubKey == senderProgram);
+        require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);
+    }
+
+    function nonInteractiveClaim(bytes32 preimage, signature serverSig, signature emulatorSig) tapscript {
+        require(hash160(preimage) == preimageHash);
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    }
+
+    function nonInteractiveRefund(signature serverSig, signature receiverSig, signature emulatorSig) tapscript {
+        require(checkMultisig([server, receiver, emulator], [serverSig, receiverSig, emulatorSig], 3));
+    }
+
+    function nonInteractiveRefundWithoutReceiver(signature serverSig, signature emulatorSig) tapscript {
+        require(after(refundLocktime));
+        require(checkMultisig([server, tweak(emulator, nonInteractiveRefund)], [serverSig, emulatorSig], 2));
+    }
+}

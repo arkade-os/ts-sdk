@@ -392,6 +392,114 @@ describe("reading an arkadec artifact", () => {
         ]);
     });
 
+    const guardedHash = (prefix: string[], type: string, csv = false) =>
+        demo({
+            constructorInputs: [{ name: "hash", type: "bytes32" }],
+            functions: [
+                {
+                    name: "claim",
+                    leaves: [
+                        {
+                            name: "claim",
+                            witness: [{ name: "preimage", type }],
+                            asm: [
+                                ...prefix,
+                                ...(csv ? ["144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"] : []),
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+
+    it.each(
+        ["OP_SHA256", "OP_HASH160", "OP_HASH256", "OP_RIPEMD160"].flatMap((hashOpcode) =>
+            [20, 32].flatMap((width) => [false, true].map((csv) => ({ hashOpcode, width, csv }))),
+        ),
+    )("preserves the $width-byte $hashOpcode guard and CSV=$csv", ({ hashOpcode, width, csv }) => {
+        const prefix = [
+            "OP_SIZE",
+            String(width),
+            "OP_EQUALVERIFY",
+            hashOpcode,
+            "<hash>",
+            "OP_EQUAL",
+            "OP_VERIFY",
+        ];
+        const compiledArtifact = guardedHash(prefix, `bytes${width}`, csv);
+        const program = programFromArtifact(compiledArtifact);
+        expect(program.functions.claim.inputs).toEqual([{ name: "preimage", type: "hash" }]);
+        expect(program.functions.claim.tapscript.witness).toEqual(["preimage"]);
+        const script = new ArkadeProgramScript(
+            program,
+            { hash: ARGS.oracleMessageHash, server: SERVER_KEY },
+            { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+        );
+        expect(hex.encode(script.compiled[0].leafScript)).toBe(
+            hex.encode(
+                assemble(compiledArtifact.functions[0].leaves[0].asm, {
+                    SERVER_KEY,
+                    hash: ARGS.oracleMessageHash as Uint8Array,
+                }),
+            ),
+        );
+    });
+
+    it.each([
+        ["31", "OP_EQUALVERIFY", "OP_HASH160", "OP_VERIFY", "bytes32"],
+        ["32", "OP_EQUAL", "OP_HASH160", "OP_VERIFY", "bytes32"],
+        ["32", "OP_EQUALVERIFY", "OP_DUP", "OP_VERIFY", "bytes32"],
+        ["32", "OP_EQUALVERIFY", "OP_HASH160", "OP_DROP", "bytes32"],
+        ["20", "OP_EQUALVERIFY", "OP_HASH160", "OP_VERIFY", "bytes32"],
+        ["32", "OP_EQUALVERIFY", "OP_HASH160", "OP_VERIFY", "bytes20"],
+        ["32", "OP_EQUALVERIFY", "OP_HASH160", "OP_VERIFY", "bytes"],
+        ["<width>", "OP_EQUALVERIFY", "OP_HASH160", "OP_VERIFY", "bytes32"],
+    ])(
+        "refuses a malformed or mismatched hash guard %s %s %s %s %s",
+        (width, equal, hash, verify, type) => {
+            expect(() =>
+                programFromArtifact(
+                    guardedHash(
+                        ["OP_SIZE", width, equal, hash, "<hash>", "OP_EQUAL", verify],
+                        type,
+                    ),
+                ),
+            ).toThrow(/programFromArtifact/);
+        },
+    );
+
+    it.each([
+        { witness: [] },
+        {
+            witness: [
+                { name: "extra", type: "bytes32" },
+                { name: "preimage", type: "bytes32" },
+            ],
+        },
+    ])(
+        "refuses a fixed-width guard without exactly one preimage witness: $witness",
+        ({ witness }) => {
+            const guarded = guardedHash(
+                [
+                    "OP_SIZE",
+                    "32",
+                    "OP_EQUALVERIFY",
+                    "OP_HASH160",
+                    "<hash>",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                ],
+                "bytes32",
+            );
+            guarded.functions[0].leaves[0].witness = witness;
+            expect(() => programFromArtifact(guarded)).toThrow(
+                /invalid fixed-width hash condition/,
+            );
+        },
+    );
+
     it("tweaks a constructor pubkey by the named covenant", () => {
         const insurer = schnorr.getPublicKey(new Uint8Array(32).fill(0x09));
         const program = programFromArtifact(
