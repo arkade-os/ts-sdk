@@ -49,7 +49,11 @@ import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
 import { isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps, toRestoreTx } from "../restore";
 import { preimageForSwapRecord } from "../store";
-import { collectSwapRecords, type AssetSwapRepository } from "../repository";
+import {
+    collectSwapRecords,
+    type AssetSwapRepository,
+    type ConditionalSwapRecordRepository,
+} from "../repository";
 import {
     RfqSwapManager,
     isRfqConfigurationRefusal,
@@ -954,7 +958,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
-        if (mode !== "readonly") {
+        const conditional = repository as Partial<ConditionalSwapRecordRepository>;
+        if (mode !== "readonly" && typeof conditional.saveSwapRecordIfUnchanged === "function") {
             for (const [index, record] of corridor.entries()) {
                 if (
                     record.kind !== "lightning_send" ||
@@ -990,7 +995,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                         ],
                         updatedAt: now(),
                     };
-                    await repository.saveSwapRecord(corrected);
+                    if (!(await conditional.saveSwapRecordIfUnchanged(current, corrected)))
+                        continue;
                     corridor[index] = corrected;
                 } catch (error) {
                     console.warn(

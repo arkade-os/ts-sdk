@@ -7,7 +7,7 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
 import {
     marketsCacheKey,
     assertRfqSwapPageFilter,
-    type AssetSwapRepository,
+    type ConditionalSwapRecordRepository,
     type MarketsCacheEntry,
     type RfqSwapPageFilter,
     type RfqSwapPageCursor,
@@ -42,7 +42,7 @@ const INSERT_CHUNK = 500;
  * the **same executor instance** to every repository on the database: the
  * write chain is keyed by that object, and a per-repository literal splits it.
  */
-export class SQLiteAssetSwapRepository implements AssetSwapRepository {
+export class SQLiteAssetSwapRepository implements ConditionalSwapRecordRepository {
     readonly version = 5 as const;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
@@ -235,6 +235,24 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
                 [record.id, record.family, record.updatedAt, JSON.stringify(record)],
             );
         });
+    }
+
+    async saveSwapRecordIfUnchanged(expected: SwapRecord, next: SwapRecord): Promise<boolean> {
+        if (expected.id !== next.id) return false;
+        const expectedJson = JSON.stringify(expected);
+        const nextJson = JSON.stringify(next);
+        await this.ensureInit();
+        let saved = false;
+        await this.withTx(async () => {
+            await this.db.run(
+                `UPDATE ${this.swapRecords} SET family = ?, updated_at = ?, data = ?
+                 WHERE id = ? AND data = ?`,
+                [next.family, next.updatedAt, nextJson, expected.id, expectedJson],
+            );
+            const result = await this.db.get<{ changed: number }>("SELECT changes() AS changed");
+            saved = result?.changed === 1;
+        });
+        return saved;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

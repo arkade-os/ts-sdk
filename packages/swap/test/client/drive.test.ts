@@ -1739,6 +1739,56 @@ describe("the drive's own record write", () => {
 });
 
 describe("the settlement receipt", () => {
+    it.each(["refund", "metadata"])(
+        "preserves a concurrent %s write after the final reread",
+        async (change) => {
+            const spend = claimSpend();
+            const record = settleable({ state: "refunded", fundingTxid: "aa".repeat(32) });
+            const repository = memoryRepository();
+            await repository.saveSwapRecord(record);
+            const getRecord = repository.getSwapRecord.bind(repository);
+            const concurrent = {
+                ...record,
+                ...(change === "refund"
+                    ? { refundTxid: "cc".repeat(32) }
+                    : { consumerNote: { source: "another client" } }),
+            };
+            repository.getSwapRecord = async (id) => {
+                const snapshot = await getRecord(id);
+                await repository.saveSwapRecord(concurrent);
+                return snapshot;
+            };
+            const h = await build({
+                repository,
+                mode: "manual",
+                vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+                txs: [spend],
+            });
+
+            expect(await getRecord(record.id)).toEqual(concurrent);
+            expect(h.drive.swap(record.id)?.outcome).toBe("refunded");
+            await h.drive.dispose();
+        },
+    );
+
+    it("preserves history on custom stores without conditional writes", async () => {
+        const spend = claimSpend();
+        const record = settleable({ state: "refunded", fundingTxid: "aa".repeat(32) });
+        const repository = memoryRepository();
+        Object.defineProperty(repository, "saveSwapRecordIfUnchanged", { value: undefined });
+        const h = await build({
+            repository,
+            records: [record],
+            mode: "manual",
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+        });
+
+        expect(await repository.getSwapRecord(record.id)).toEqual(record);
+        expect(h.drive.swap(record.id)?.outcome).toBe("refunded");
+        await h.drive.dispose();
+    });
+
     it("preserves a refund recorded while the claim proof was being read", async () => {
         const spend = claimSpend();
         const record = settleable({ state: "refunded", fundingTxid: "aa".repeat(32) });

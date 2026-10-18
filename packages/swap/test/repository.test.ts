@@ -4,8 +4,12 @@ import { describe, expect, it } from "vitest";
 import type { AssetSwap } from "../src/store";
 import type { RfqSwapRecord } from "../src/rfqRecord";
 import type { AtomicDecimal } from "../src/client/amount";
-import type { CorridorSwapRecord } from "../src/client/record";
-import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/repository";
+import type { CorridorSwapRecord, SwapRecord } from "../src/client/record";
+import {
+    AssetSwapRepository,
+    InMemoryAssetSwapRepository,
+    type ConditionalSwapRecordRepository,
+} from "../src/repository";
 import { IndexedDbAssetSwapRepository } from "../src/indexedDbRepository";
 import { runInTransaction, type SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
 import { SQLiteAssetSwapRepository } from "../src/repositories/sqlite";
@@ -542,6 +546,63 @@ it("Realm RFQ pages use the same Unicode ordering for sorting and resuming", asy
  * case here asserts that rather than tolerating it.
  */
 describe.each(backends)("v2 swap records (%s)", (_, create) => {
+    it("conditionally replaces an unchanged record without dropping consumer fields", async () => {
+        await using repository = create() as ConditionalSwapRecordRepository;
+        expect(repository.saveSwapRecordIfUnchanged).toBeTypeOf("function");
+        const expected = { ...swapRecord("q1"), consumer: { labels: ["payment"], revision: 1 } };
+        const next = { ...expected, state: "settled" as const };
+        await repository.saveSwapRecord(expected);
+        expect(await repository.saveSwapRecordIfUnchanged(expected, next)).toBe(true);
+        expect(await repository.getSwapRecord("q1")).toEqual(next);
+    });
+
+    it("does not conditionally insert a missing record or change its id", async () => {
+        await using repository = create() as ConditionalSwapRecordRepository;
+        expect(repository.saveSwapRecordIfUnchanged).toBeTypeOf("function");
+        const expected = swapRecord("q1");
+        expect(await repository.saveSwapRecordIfUnchanged(expected, expected)).toBe(false);
+        await repository.saveSwapRecord(expected);
+        expect(
+            await repository.saveSwapRecordIfUnchanged(expected, { ...expected, id: "q2" }),
+        ).toBe(false);
+        expect(await collectSwapRecords(repository)).toEqual([expected]);
+    });
+
+    it.each([{ refundTxid: "aa".repeat(32) }, { consumer: { nested: { value: "new" } } }])(
+        "keeps a concurrent change at the same timestamp: %j",
+        async (change) => {
+            await using repository = create() as ConditionalSwapRecordRepository;
+            expect(repository.saveSwapRecordIfUnchanged).toBeTypeOf("function");
+            const expected = swapRecord("q1");
+            await repository.saveSwapRecord(expected);
+            const concurrent = { ...expected, ...change };
+            await repository.saveSwapRecord(concurrent);
+            expect(
+                await repository.saveSwapRecordIfUnchanged(expected, {
+                    ...expected,
+                    state: "settled",
+                }),
+            ).toBe(false);
+            expect(await repository.getSwapRecord("q1")).toEqual(concurrent);
+        },
+    );
+
+    it("allows only one conditional writer for the same expected record", async () => {
+        await using repository = create() as ConditionalSwapRecordRepository;
+        expect(repository.saveSwapRecordIfUnchanged).toBeTypeOf("function");
+        const expected = swapRecord("q1");
+        await repository.saveSwapRecord(expected);
+        const next: SwapRecord[] = [
+            { ...expected, state: "settled" },
+            { ...expected, refundTxid: "aa".repeat(32) },
+        ];
+        const results = await Promise.all(
+            next.map((record) => repository.saveSwapRecordIfUnchanged(expected, record)),
+        );
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect(await repository.getSwapRecord("q1")).toEqual(next[results.indexOf(true)]);
+    });
+
     it("upserts by quote id and reads one back", async () => {
         await using repository = create();
         await repository.saveSwapRecord(swapRecord("q1"));
@@ -651,6 +712,61 @@ describe.each(backends)("v2 swap records (%s)", (_, create) => {
         expect(await repository.getScannedTxids()).toEqual(new Set());
     });
 });
+
+const sharedBackends: [string, () => [AssetSwapRepository, AssetSwapRepository]][] = [
+    [
+        "indexedDb",
+        () => {
+            const name = `conditional-${Math.random()}`;
+            return [new IndexedDbAssetSwapRepository(name), new IndexedDbAssetSwapRepository(name)];
+        },
+    ],
+    [
+        "sqlite",
+        () => {
+            const db = createNodeSQLExecutor();
+            return [new SQLiteAssetSwapRepository(db), new SQLiteAssetSwapRepository(db)];
+        },
+    ],
+    [
+        "realm",
+        () => {
+            const realm = createMockRealm({ ArkadeSwapRecord: "id" });
+            return [new RealmAssetSwapRepository(realm), new RealmAssetSwapRepository(realm)];
+        },
+    ],
+];
+
+describe.each(sharedBackends)(
+    "conditional writes across repository instances (%s)",
+    (_, create) => {
+        it("preserves another instance's refund and atomically chooses one replacement", async () => {
+            const pair = create() as [
+                ConditionalSwapRecordRepository,
+                ConditionalSwapRecordRepository,
+            ];
+            await using first = pair[0];
+            await using second = pair[1];
+            expect(first.saveSwapRecordIfUnchanged).toBeTypeOf("function");
+            const expected = swapRecord("q1");
+            const refund = { ...expected, refundTxid: "aa".repeat(32) };
+            const settled = { ...expected, state: "settled" as const };
+            await first.saveSwapRecord(expected);
+            const snapshot = (await first.getSwapRecord("q1"))!;
+            await second.saveSwapRecord(refund);
+            expect(await first.saveSwapRecordIfUnchanged(snapshot, settled)).toBe(false);
+            expect(await first.getSwapRecord("q1")).toEqual(refund);
+
+            await second.saveSwapRecord(expected);
+            const results = await Promise.all([
+                first.saveSwapRecordIfUnchanged(expected, settled),
+                second.saveSwapRecordIfUnchanged(expected, refund),
+            ]);
+            expect(results.filter(Boolean)).toHaveLength(1);
+            expect(await second.getSwapRecord("q1")).toEqual(results[0] ? settled : refund);
+        });
+    },
+);
 
 /**
  * The riskiest claim in this change: the version bump runs against databases

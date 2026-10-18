@@ -3,7 +3,7 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
 import {
     marketsCacheKey,
     assertRfqSwapPageFilter,
-    type AssetSwapRepository,
+    type ConditionalSwapRecordRepository,
     type MarketsCacheEntry,
     type RfqSwapPageFilter,
     type RfqSwapPageCursor,
@@ -38,7 +38,7 @@ const MARKETS = "ArkadeAssetSwapMarketsCache";
  * Realm creates the schemas on open, so there is nothing to initialise. The
  * consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
  */
-export class RealmAssetSwapRepository implements AssetSwapRepository {
+export class RealmAssetSwapRepository implements ConditionalSwapRecordRepository {
     readonly version = 5 as const;
 
     constructor(private readonly realm: RealmLike) {}
@@ -138,6 +138,26 @@ export class RealmAssetSwapRepository implements AssetSwapRepository {
                 "modified",
             );
         });
+    }
+
+    async saveSwapRecordIfUnchanged(expected: SwapRecord, next: SwapRecord): Promise<boolean> {
+        if (expected.id !== next.id) return false;
+        const expectedJson = JSON.stringify(expected);
+        const nextJson = JSON.stringify(next);
+        let saved = false;
+        this.realm.write(() => {
+            const [current] = this.realm
+                .objects<{ data: string }>(SWAP_RECORDS)
+                .filtered("id == $0", expected.id);
+            if (!current || current.data !== expectedJson) return;
+            this.realm.create(
+                SWAP_RECORDS,
+                { id: next.id, family: next.family, updatedAt: next.updatedAt, data: nextJson },
+                "modified",
+            );
+            saved = true;
+        });
+        return saved;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

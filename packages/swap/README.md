@@ -184,6 +184,12 @@ though: a `Date` in a field you added comes back an ISO string, a `Set` or `Map`
 and a `bigint` throws on save. The package's own records are JSON-safe by design; keep yours that
 way too.
 
+Built-in stores also implement `ConditionalSwapRecordRepository`, whose
+`saveSwapRecordIfUnchanged(expected, next)` compares and replaces a complete record
+atomically. Startup repair of historical Lightning receipts uses this capability;
+custom stores without it keep their existing records and skip that repair. The
+base `AssetSwapRepository` interface and version are unchanged.
+
 For bounded reads, all four backends provide `getAssetSwapsPage`,
 `getRfqSwapsPage`, and `getSwapRecordsPage`. Pass `{ limit, after? }` with a
 limit of 1–500, then use each result's `nextCursor` for the following page.

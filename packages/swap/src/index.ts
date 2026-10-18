@@ -211,6 +211,7 @@ export type { RecoveryResult } from "./client/drive";
 // a swap with nowhere to write it is the silent loss the rule forbids.
 export {
     type AssetSwapRepository,
+    type ConditionalSwapRecordRepository,
     type MarketsCacheEntry,
     type RfqSwapPageFilter,
     type RfqSwapPageCursor,
