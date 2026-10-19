@@ -433,6 +433,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Swap refunds require a recognized refund spend leaf.** A claim checkpoint can be
+  visible before its preimage arrives, while retaining the same transaction id. The
+  lockup reader previously treated that missing witness as a refund and stopped
+  watching a successful payment. Incomplete claims and unsupported spend data now
+  remain unresolved until proof arrives; refund evidence must match every lockup outpoint.
+
 - **The failsafe poll no longer reports a just-spent coin as received
   (#1083).** The stream updates the watcher at once, but the repository only
   once the event's sync lands; a poll in that gap read the stale rows and
