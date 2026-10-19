@@ -11,7 +11,7 @@ import {
 import {
     marketsCacheKey,
     assertRfqSwapPageFilter,
-    type ConditionalSwapRecordRepository,
+    type AssetSwapRepository,
     type MarketsCacheEntry,
     type RfqSwapPageFilter,
     type RfqSwapPageCursor,
@@ -71,7 +71,7 @@ function initDatabase(db: IDBDatabase, _oldVersion: number, transaction: IDBTran
 }
 
 /** Browser backend over the SDK's shared IndexedDB manager. */
-export class IndexedDbAssetSwapRepository implements ConditionalSwapRecordRepository {
+export class IndexedDbAssetSwapRepository implements AssetSwapRepository {
     readonly version = 5 as const;
     private readonly connection: ManagedConnection;
 
@@ -172,21 +172,6 @@ export class IndexedDbAssetSwapRepository implements ConditionalSwapRecordReposi
         await this.write(STORE_SWAP_RECORDS, (store) => {
             store.put(record);
         });
-    }
-
-    async saveSwapRecordIfUnchanged(expected: SwapRecord, next: SwapRecord): Promise<boolean> {
-        if (expected.id !== next.id) return false;
-        const expectedJson = JSON.stringify(expected);
-        let saved = false;
-        await this.write(STORE_SWAP_RECORDS, (store) => {
-            const request = store.get(expected.id);
-            request.onsuccess = () => {
-                if (JSON.stringify(request.result) !== expectedJson) return;
-                store.put(next);
-                saved = true;
-            };
-        });
-        return saved;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

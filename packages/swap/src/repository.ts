@@ -110,13 +110,7 @@ export interface AssetSwapRepository extends AsyncDisposable {
     clear(): Promise<void>;
 }
 
-export interface ConditionalSwapRecordRepository extends AssetSwapRepository {
-    /** Atomically replace the complete JSON-safe record only if it still equals `expected`.
-     * Returns false for a missing or changed record, or mismatched ids. */
-    saveSwapRecordIfUnchanged(expected: SwapRecord, next: SwapRecord): Promise<boolean>;
-}
-
-export class InMemoryAssetSwapRepository implements ConditionalSwapRecordRepository {
+export class InMemoryAssetSwapRepository implements AssetSwapRepository {
     readonly version = 5 as const;
     private readonly swaps = new Map<string, AssetSwap>();
     private readonly records = new Map<string, SwapRecord>();
@@ -174,15 +168,6 @@ export class InMemoryAssetSwapRepository implements ConditionalSwapRecordReposit
 
     async saveSwapRecord(record: SwapRecord): Promise<void> {
         this.records.set(record.id, record);
-    }
-
-    async saveSwapRecordIfUnchanged(expected: SwapRecord, next: SwapRecord): Promise<boolean> {
-        if (expected.id !== next.id) return false;
-        const current = this.records.get(expected.id);
-        if (current === undefined || JSON.stringify(current) !== JSON.stringify(expected))
-            return false;
-        this.records.set(next.id, next);
-        return true;
     }
 
     async getSwapRecord(id: string): Promise<SwapRecord | undefined> {

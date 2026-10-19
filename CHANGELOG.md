@@ -438,11 +438,6 @@ style and have not been backfilled.
   lockup reader previously treated that missing witness as a refund and stopped
   watching a successful payment. Incomplete claims and unsupported spend data now
   remain unresolved until proof arrives; refund evidence must match every lockup outpoint.
-  Writable clients also restore falsely refunded Lightning sends from verified claim
-  proof, using atomic conditional writes to preserve concurrent updates. All built-in
-  stores support `ConditionalSwapRecordRepository`; custom stores without that optional
-  capability skip historical repair. The base repository interface and version remain
-  unchanged. Readonly clients and onchain swap records keep their existing behavior.
 
 - **The failsafe poll no longer reports a just-spent coin as received
   (#1083).** The stream updates the watcher at once, but the repository only

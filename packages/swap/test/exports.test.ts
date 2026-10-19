@@ -226,7 +226,6 @@ const CURATED_ROOT: readonly string[] = [
     "RecoveryResult",
     // Storage: the interface and the two root backends.
     "AssetSwapRepository",
-    "ConditionalSwapRecordRepository",
     "MarketsCacheEntry",
     "RfqSwapPageFilter",
     "RfqSwapPageCursor",
