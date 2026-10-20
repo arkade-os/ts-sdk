@@ -2948,9 +2948,7 @@ export class Wallet
      */
     reserveVtxos(outpoints: readonly Outpoint[]): VtxoReservation {
         const keys = outpoints.map((o) => `${o.txid}:${o.vout}`);
-        const inFlight = keys.filter(
-            (k) => this._pendingSpendOutpoints.has(k) || this._claimedOutpoints.has(k),
-        );
+        const inFlight = keys.filter((k) => this._pendingSpendOutpoints.has(k));
         if (inFlight.length > 0) throw new VtxoReservedError(inFlight, "in-flight");
         const held = keys.filter((k) => this._heldOutpoints.has(k));
         if (held.length > 0) throw new VtxoReservedError(held, "held");
@@ -2967,41 +2965,27 @@ export class Wallet
     }
 
     /**
-     * @internal For `AssetManager`: with `concurrentSpending`, runs `fn` under the wallet lock and
-     * reserves what it submits, releasing the lock once reserved. Otherwise runs `fn` unlocked,
-     * exactly as before.
+     * @internal For `AssetManager`: reserves what `fn` submits, hiding it from other picks until
+     * the submit ends. With `concurrentSpending`, `fn` runs under the wallet lock, released once
+     * the inputs are reserved; otherwise `fn` runs unlocked and only the submit takes the lock.
      */
     withSpendLock<T>(fn: (submit: OffchainSubmit) => Promise<T>): Promise<T> {
-        if (!this._concurrentSpending) {
-            return fn(async (inputs, outputs) => {
-                this._assertNotHeld(inputs);
-                const keys = coinKeys(inputs);
-                for (const key of keys) this._claimedOutpoints.add(key);
-                try {
-                    return await this.buildAndSubmitOffchainTx(inputs, outputs);
-                } finally {
-                    for (const key of keys) this._claimedOutpoints.delete(key);
-                }
-            });
-        }
-        return this._withTxLock((release) =>
+        const run = (release?: () => void) =>
             fn(async (inputs, outputs) => {
                 this._assertNotHeld(inputs);
-                this._assertNotInFlight(inputs);
+                if (release) this._assertNotInFlight(inputs);
                 this._addPendingSpends(inputs);
-                release();
+                release?.();
                 try {
-                    // The unlocked tail: reserved above, so it must not queue for the lock again.
-                    return await this._buildAndSubmitOffchainTx(
-                        inputs,
-                        outputs,
-                        this.serverUnrollScript,
-                    );
+                    // Reserved above: once released, the tail must not queue for the lock again.
+                    return await (release
+                        ? this._buildAndSubmitOffchainTx(inputs, outputs, this.serverUnrollScript)
+                        : this.buildAndSubmitOffchainTx(inputs, outputs));
                 } finally {
                     this._removePendingSpends(inputs);
                 }
-            }),
-        );
+            });
+        return this._concurrentSpending ? this._withTxLock(run) : run();
     }
 
     private _withTxLock<T>(fn: (release: () => void) => Promise<T>): Promise<T> {
@@ -3151,9 +3135,6 @@ export class Wallet
     public readonly settlementConfig: SettlementConfig | false;
 
     private _concurrentSpending = false;
-    // Inputs an asset operation without concurrentSpending is submitting: refused by
-    // reserveVtxos, but not hidden from reads the way the pending set hides them.
-    private readonly _claimedOutpoints = new Set<string>();
     private _submitsAwaitingFinalize = 0;
 
     /** @see WalletConfig.concurrentSpending */

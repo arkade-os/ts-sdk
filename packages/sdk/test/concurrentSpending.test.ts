@@ -34,7 +34,49 @@ describe("send without concurrentSpending", () => {
         await expect(second).resolves.toBe("2".repeat(64));
         await wallet.dispose();
     });
+
+    it("keeps an asset operation's inputs out of a send that picks while it waits", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, arkProvider, coins, outpoints } = await fundedWallet();
+        const batch = parkSettle(wallet, arkProvider);
+        const submits = stallSubmits(wallet);
+
+        const settling = wallet.settle({
+            inputs: [coins[0]],
+            outputs: [{ address: BTC_ADDR, amount: 9_000n }],
+        });
+        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        // Queued behind the settle; picks only once it holds the lock.
+        const sending = wallet.send({ address: await wallet.getAddress(), amount: 15_000 });
+        // Picks unlocked, then queues its submit behind the send.
+        const issuing = wallet.assetManager.issue({ amount: 100n });
+        await new Promise((r) => setTimeout(r, 50));
+        expect(thrown(() => wallet.reserveVtxos([coins[1]]))).toMatchObject({
+            holder: "in-flight",
+        });
+
+        batch.open();
+        await settling.catch(() => undefined);
+        await vi.waitFor(() => expect(submits).toHaveLength(1));
+        expect(submits[0].inputs).toEqual([outpoints[0], outpoints[2]]);
+        submits[0].finish();
+        await sending;
+        await vi.waitFor(() => expect(submits).toHaveLength(2));
+        expect(submits[1].inputs).toEqual([outpoints[1]]);
+        submits[1].finish();
+        await issuing;
+        await wallet.dispose();
+    });
 });
+
+const thrown = (fn: () => unknown): unknown => {
+    try {
+        fn();
+    } catch (error) {
+        return error;
+    }
+    throw new Error("expected a throw");
+};
 
 describe("concurrentSpending", () => {
     it("picks disjoint inputs for two concurrent sends, in call order", async () => {

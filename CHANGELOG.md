@@ -273,7 +273,8 @@ style and have not been backfilled.
   held VTXO's value moves from `available` to `reserved`, and without holds no
   existing field changes value. Code that builds `WalletBalance` objects
   (custom `IWallet` implementations, test doubles) must add `reserved`. Without
-  the setting and without holds, behavior is unchanged.
+  the setting and without holds, behavior is unchanged except for asset
+  operations, listed under Bug Fixes.
 
 - **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
   optional third argument reports `preparing` after lock acquisition and
@@ -447,6 +448,14 @@ style and have not been backfilled.
   0.3.0.
 
 ### Bug Fixes
+
+- **An asset operation's inputs are no longer picked by a parallel `send`.**
+  `issue`, `reissue` and `burn` pick their coins without the wallet lock and
+  only queue for it to submit, while `getVtxos()` and every SDK pick still
+  showed those coins; a `send` that picked in that window spent the same
+  coin, and the operator refused whichever submit came second. The inputs are
+  now marked in flight from the moment the operation submits, as a `send`'s
+  are, so other picks skip them and `reserveVtxos` refuses them.
 
 - **Swap refunds require a recognized refund spend leaf.** A claim checkpoint can be
   visible before its preimage arrives, while retaining the same transaction id. The
