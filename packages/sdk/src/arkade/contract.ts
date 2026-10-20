@@ -700,6 +700,9 @@ export class ArkadeTransactionBuilder {
     /** Assemble the unsigned onchain spend of a coin sitting at the contract address. */
     async buildOnchain(): Promise<Transaction> {
         if (this.fundingCoins.length > 0) throw new Error("fund() is not supported onchain");
+        if (this.assetSpecs.length > 0 || this.extraPackets.length > 0) {
+            throw new Error("withAsset() and withPacket() are not supported onchain");
+        }
         if (this.outputs.length === 0) {
             throw new Error("ArkadeTransactionBuilder: at least one output is required");
         }

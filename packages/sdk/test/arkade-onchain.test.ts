@@ -11,6 +11,7 @@ import {
     networks,
     SingleKey,
     Transaction,
+    UnknownPacket,
     type EmulatorProvider,
 } from "../src";
 import { scriptFromTapLeafScript } from "../src/script/base";
@@ -204,6 +205,16 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
             .fund([{ txid: "cd".repeat(32), vout: 0, value: 1 } as any])
             .to(out, AMOUNT);
         await expect(funded.buildOnchain()).rejects.toThrow(/fund\(\) is not supported onchain/);
+    });
+
+    it("rejects caller packets onchain rather than dropping them", async () => {
+        const { contract } = await setup();
+        const withPacket = contract.functions
+            .collab()
+            .from(COIN)
+            .withPacket(new UnknownPacket(77, new Uint8Array(1)))
+            .to(out, AMOUNT);
+        await expect(withPacket.buildOnchain()).rejects.toThrow(/not supported onchain/);
     });
 
     it("requires an explicit from() coin", async () => {
