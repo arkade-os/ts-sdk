@@ -25,6 +25,7 @@ import {
 import {
     ArkadeInfo,
     INFO_FETCH_TIMEOUT_MS,
+    OnchainCosignAmbiguousError,
     OnchainCosignUnsupportedError,
     SettlementEvent,
 } from "../../providers/ark";
@@ -365,6 +366,10 @@ function getRequestDedupKey(request: WalletUpdaterRequest): string {
 function cosignWorkerError(e: unknown): unknown {
     if (e instanceof Error && e.message === "Unknown message") {
         return new OnchainCosignUnsupportedError();
+    }
+    // The page stops waiting but the worker does not, so the spend may still go out.
+    if (e instanceof ServiceWorkerTimeoutError) {
+        return new OnchainCosignAmbiguousError(e.message, { cause: e });
     }
     return rehydrateCosignError(e);
 }

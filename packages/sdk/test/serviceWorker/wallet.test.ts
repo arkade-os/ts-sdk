@@ -1010,6 +1010,31 @@ describe("ServiceWorkerWallet", () => {
         }
     });
 
+    it("reports a cosign the page stopped waiting for as ambiguous", async () => {
+        vi.useFakeTimers();
+        try {
+            const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness(
+                () => null,
+            );
+            vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
+            const wallet = createSWWallet(serviceWorker as any, messageTag);
+
+            for (const call of [
+                () => wallet.cosignOnchainTx("cHNidP8="),
+                () => wallet.sendOnchain({ outputs: [], sweepTo: "bc1-dest" }),
+            ]) {
+                const outcome = call().catch((e) => e);
+                await vi.advanceTimersByTimeAsync(50_000);
+                const err = await outcome;
+                expect(err).toBeInstanceOf(OnchainCosignAmbiguousError);
+                expect(err.cause).toBeInstanceOf(ServiceWorkerTimeoutError);
+                expect(isCosignFallback(err)).toBe(false);
+            }
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("passes unrelated worker errors through unchanged", async () => {
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => ({
             id: message.id,
