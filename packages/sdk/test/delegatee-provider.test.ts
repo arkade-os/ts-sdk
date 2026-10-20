@@ -118,8 +118,9 @@ describe("RestDelegateeProvider", () => {
 
 describe("DelegateeManagerImpl.register", () => {
     it("registers the boarding variables and returns the address both sides agree on", async () => {
-        const provider = makeProvider();
+        const provider = makeProvider({ expiresAt: 9 });
         contractManager.createContract.mockClear();
+        contractManager.updateContract.mockClear();
         const manager = new DelegateeManagerImpl(provider, wallet);
 
         await expect(manager.registerBoarding(params, { expiresAt: 9 })).resolves.toEqual({
@@ -143,6 +144,16 @@ describe("DelegateeManagerImpl.register", () => {
             vectors.renewal.pkScript,
             vectors.boarding.pkScript,
         ]);
+        expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
+            metadata: { delegationStatus: "active", delegationExpiresAt: 9 },
+        });
+    });
+
+    it("refuses a watch the service returns as no longer active", async () => {
+        const manager = new DelegateeManagerImpl(makeProvider({ status: "expired" }), wallet);
+        await expect(manager.registerBoarding(params)).rejects.toThrow(
+            `delegatee watch ${vectors.boarding.address} is expired`,
+        );
     });
 
     it("refuses an address the service derived differently, e.g. under another delegate key", async () => {
@@ -318,6 +329,7 @@ const contractManager = {
     // the wallet's own receive contracts, which migration retires
     getContracts: vi.fn(async () => [{ script: "51default" }, { script: "51delegate" }]),
     setContractState: vi.fn(),
+    updateContract: vi.fn(),
 };
 
 function makeProvider(overrides: Record<string, unknown> = {}) {

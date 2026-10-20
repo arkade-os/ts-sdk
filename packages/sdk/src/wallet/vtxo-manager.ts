@@ -1846,7 +1846,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Classify the wallet's `default`/`delegate` contracts against the fresh signer set, splitting
+     * Classify the wallet's `default`/`delegate`/`delegatee` contracts against the fresh signer set, splitting
      * spendable VTXOs into cooperatively-migratable and cutoff-expired sets and building the
      * per-signer report. Current-signer contracts are skipped.
      */
@@ -1860,7 +1860,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const nowSeconds = Math.floor(Date.now() / 1000);
 
         const contractsWithVtxos = await cm.getContractsWithVtxos({
-            type: ["default", "delegate"],
+            type: ["default", "delegate", "delegatee"],
         });
 
         const reportsBySigner = new Map<string, DeprecatedSignerReport>();
@@ -2145,7 +2145,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const wanted = new Set(inputs.map((i) => `${i.txid}:${i.vout}`));
         const cm = await this.wallet.getContractManager();
         const contractsWithVtxos = await cm.getContractsWithVtxos({
-            type: ["default", "delegate"],
+            type: ["default", "delegate", "delegatee"],
         });
         for (const { contract, vtxos } of contractsWithVtxos) {
             const serverPubKey = contract.params.serverPubKey;

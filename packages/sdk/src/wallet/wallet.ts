@@ -842,13 +842,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return this._delegatedTapscript ?? this._offchainTapscript;
     }
 
+    /** The wallet's own receive tapscript, never the delegatee contract standing in for it. */
+    get receiveTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
+        return this._offchainTapscript;
+    }
+
     /** The delegatee renewal contract standing in for the receive tapscript, see syncDelegatedDefaults. */
     private _delegatedTapscript?: DefaultVtxo.Script;
     private _delegatedBoardingAddress?: string;
 
     /**
      * With a delegatee configured, the wallet's own delegatee contracts (newest renewal and
-     * boarding rows for its key and current server) are its default addresses: receiving, change
+     * boarding rows for its key and current server, registered active and not expired) are its default addresses: receiving, change
      * and settlement land in delegated coins. Without one, the defaults are the wallet's own and
      * the delegatee rows stay watched, so their coins still count and spend. Read from the
      * contract repository, so it follows registrations made through any wallet front-end.
@@ -859,12 +864,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (this.delegateeProvider) {
             const owner = hex.encode(await this.identity.xOnlyPublicKey());
             const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+            const nowSeconds = Math.floor(Date.now() / 1000);
             const rows = (
                 await collectContracts(this.contractRepository, { type: ["delegatee"] })
             ).sort((a, b) => b.createdAt - a.createdAt);
             for (const c of rows) {
                 const { template } = c.params;
                 if (template === "renewal" ? renewal : template === "boarding" ? boarding : true)
+                    continue;
+                const { delegationStatus, delegationExpiresAt } = c.metadata ?? {};
+                if (
+                    delegationStatus !== "active" ||
+                    (typeof delegationExpiresAt === "number" &&
+                        delegationExpiresAt > 0 &&
+                        delegationExpiresAt <= nowSeconds)
+                )
                     continue;
                 try {
                     if (
@@ -873,6 +887,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     )
                         continue;
                     const script = DelegateeContractHandler.createScript(c.params);
+                    if (hex.encode(script.pkScript) !== c.script) {
+                        throw new Error(
+                            `delegatee contract ${c.script} no longer derives from its params`,
+                        );
+                    }
                     if (template === "renewal") renewal = script;
                     else boarding = script.onchainAddress(this.network);
                 } catch (e) {
@@ -1876,6 +1895,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const script = handler.createScript(contract.params) as
                     | DefaultVtxo.Script
                     | DelegateVtxo.Script;
+                if (
+                    contract.type === "delegatee" &&
+                    hex.encode(script.pkScript) !== contract.script
+                ) {
+                    console.warn(
+                        "Skipping delegatee contract that no longer derives from its params",
+                        contract.script,
+                    );
+                    continue;
+                }
                 map.set(contract.script, script);
             }
         }
@@ -1999,11 +2028,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
         // by scriptHex.
         const delegatePubKey =
-            this.offchainTapscript instanceof DelegateVtxo.Script
-                ? this.offchainTapscript.options.delegatePubKey
+            this._offchainTapscript instanceof DelegateVtxo.Script
+                ? this._offchainTapscript.options.delegatePubKey
                 : undefined;
         const baselineSigners = [
-            this.offchainTapscript.options.serverPubKey,
+            this._offchainTapscript.options.serverPubKey,
             ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
         ];
         const seenBaselineScripts = new Set<string>();
@@ -2250,12 +2279,12 @@ export class Wallet
     private receiveCandidateDeps(): CandidateDeps {
         return {
             network: { hrp: this.network.hrp },
-            serverPubKey: this.offchainTapscript.options.serverPubKey,
+            serverPubKey: this._offchainTapscript.options.serverPubKey,
             deprecatedSignerPubKeys: [...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
             csvTimelocks: this.walletContractTimelocks,
             delegatePubKey:
-                this.offchainTapscript instanceof DelegateVtxo.Script
-                    ? this.offchainTapscript.options.delegatePubKey
+                this._offchainTapscript instanceof DelegateVtxo.Script
+                    ? this._offchainTapscript.options.delegatePubKey
                     : undefined,
         };
     }
@@ -2455,7 +2484,7 @@ export class Wallet
         manager: ContractManager,
         type: NewAddressType,
     ): Promise<string> {
-        const display = type === "boarding" ? this._boardingTapscript : this.offchainTapscript;
+        const display = type === "boarding" ? this._boardingTapscript : this._offchainTapscript;
         const [row] = await manager.getContracts({ script: hex.encode(display.pkScript) });
         const persisted = row?.metadata?.signingDescriptor;
         if (typeof persisted === "string") return persisted;
@@ -2494,7 +2523,7 @@ export class Wallet
             };
         }
         const built = buildReceiveContract(
-            this.offchainTapscript,
+            this._offchainTapscript,
             descriptor,
             this.network.hrp,
             tagSource,
@@ -2692,25 +2721,33 @@ export class Wallet
 
         // Carry the current rows' signing metadata so a descriptor-backed owner keeps signing.
         const [currentOffchainRow] = await manager.getContracts({
-            script: this.defaultContractScript,
+            script: hex.encode(this._offchainTapscript.pkScript),
         });
         const currentBoardingScript = hex.encode(this._boardingTapscript.pkScript);
         const [currentBoardingRow] = await manager.getContracts({
             script: currentBoardingScript,
         });
 
-        // Build the new tapscripts locally, preserving every option but the
-        // server key (mirrors `rebuildTapscript`, swapping serverPubKey).
+        // Build the new tapscripts locally from the wallet's own receive script, never from a
+        // delegatee contract standing in for it, preserving every option but the server key
+        // (mirrors `rebuildTapscript`, swapping serverPubKey). Delegatee rows stay under the old
+        // signer: their coins follow the deprecated-signer migration back to the wallet's own
+        // contracts, and delegation turns off until re-registered under the new signer.
         const newOffchain =
-            this.offchainTapscript instanceof DelegateVtxo.Script
+            this._offchainTapscript instanceof DelegateVtxo.Script
                 ? new DelegateVtxo.Script({
-                      ...this.offchainTapscript.options,
+                      ...this._offchainTapscript.options,
                       serverPubKey: xonly,
                   })
                 : new DefaultVtxo.Script({
-                      ...this.offchainTapscript.options,
+                      ...this._offchainTapscript.options,
                       serverPubKey: xonly,
                   });
+        if (this.defaultContractScript !== hex.encode(this._offchainTapscript.pkScript)) {
+            console.warn(
+                "Server signer rotated: delegatee registrations stay under the old signer and will be migrated; re-register to keep delegating",
+            );
+        }
         const newBoarding = new DefaultVtxo.Script({
             ...this._boardingTapscript.options,
             serverPubKey: xonly,
@@ -2861,8 +2898,8 @@ export class Wallet
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
 
         const delegatePubKey =
-            this.offchainTapscript instanceof DelegateVtxo.Script
-                ? this.offchainTapscript.options.delegatePubKey
+            this._offchainTapscript instanceof DelegateVtxo.Script
+                ? this._offchainTapscript.options.delegatePubKey
                 : undefined;
 
         // Current and deprecated signers from one fresh snapshot so they're mutually consistent
@@ -3265,7 +3302,7 @@ export class Wallet
             this.arkProvider,
             this.indexerProvider,
             this.arkServerPublicKey,
-            this.offchainTapscript,
+            this._offchainTapscript,
             this.boardingTapscript,
             this.dustAmount,
             this.walletRepository,
@@ -4411,7 +4448,7 @@ export class Wallet
 
         const cash = ArkadeCash.generate(
             this.arkServerPublicKey,
-            this.offchainTapscript.options.csvTimelock,
+            this._offchainTapscript.options.csvTimelock,
             cashHrp,
         );
         const address = cash.address(this.network.hrp).encode();

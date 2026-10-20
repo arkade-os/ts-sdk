@@ -249,12 +249,26 @@ export class DelegateeManagerImpl implements IDelegateeManager {
         );
         // The service fills <DELEGATE_KEY> with its key: the same address proves it is GetInfo's,
         // and commits to the same tapscripts.
+        if (delegation.status !== "active") {
+            throw new Error(`delegatee watch ${delegation.address} is ${delegation.status}`);
+        }
         if (delegation.address !== watchAddress) {
             throw new Error(
                 `delegatee derived a different address: expected ${watchAddress}, got ${delegation.address}`,
             );
         }
-        await watchDelegateeContracts(this.wallet, keys, params);
+        const contracts = await watchDelegateeContracts(this.wallet, keys, params);
+        const row = contracts.find((c) => c.params.template === kind);
+        if (row) {
+            const manager = await this.wallet.getContractManager();
+            await manager.updateContract(row.script, {
+                metadata: {
+                    ...row.metadata,
+                    delegationStatus: delegation.status,
+                    delegationExpiresAt: delegation.expiresAt,
+                },
+            });
+        }
         return { address: watchAddress, templateId, variables, keys, delegation };
     }
 }

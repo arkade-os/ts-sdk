@@ -9,6 +9,7 @@ import {
 } from "./helpers/restoreWallet";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { DefaultVtxo } from "../src/script/default";
 import { jsonResponse } from "./helpers/response";
 
 const NEW_SERVER = "ab".repeat(32);
@@ -68,6 +69,36 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const oldRows = all.filter((c) => c.params.serverPubKey === oldServerHex);
             expect(oldRows.length).toBeGreaterThan(0);
             expect(oldRows.every((c) => c.state === "active")).toBe(true);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("rotates the wallet's own receive script, not a delegatee contract standing in for it", async () => {
+        const { wallet, contractRepository } = await makeStaticWalletForTest();
+        try {
+            const own = wallet.receiveTapscript as DefaultVtxo.Script;
+            const delegated = new DefaultVtxo.Script({
+                pubKey: own.options.pubKey,
+                serverPubKey: own.options.serverPubKey,
+                csvTimelock: { type: "blocks", value: 1024n },
+            });
+            (wallet as any)._delegatedTapscript = delegated;
+            expect(wallet.defaultContractScript).toBe(hex.encode(delegated.pkScript));
+
+            await wallet.rotateServerSigner(
+                hex.decode(NEW_SERVER),
+                mockArkInfo.checkpointTapscript,
+            );
+
+            expect(wallet.receiveTapscript.options.csvTimelock).toEqual(own.options.csvTimelock);
+            expect(hex.encode(wallet.receiveTapscript.options.serverPubKey)).toBe(NEW_SERVER);
+            const all = await collectContracts(contractRepository, {});
+            const rows = all.filter((c) => c.params.serverPubKey === NEW_SERVER);
+            expect(rows.map((c) => c.params.csvTimelock)).not.toContain("1024");
+            expect(
+                rows.some((c) => c.script === hex.encode(wallet.receiveTapscript.pkScript)),
+            ).toBe(true);
         } finally {
             await wallet.dispose();
         }

@@ -60,6 +60,7 @@ async function delegateeRow(template: "renewal" | "boarding") {
             address: script.address("tark", hex.decode(SERVER_KEY_HEX).subarray(1)).encode(),
             state: "active" as const,
             createdAt: Date.now(),
+            metadata: { delegationStatus: "active" } as Record<string, unknown>,
         },
     };
 }
@@ -148,6 +149,35 @@ describe("delegated default addresses", () => {
 
         await wallet.contractRepository.saveContract(renewal.contract);
         expect(await wallet.getAddress()).toBe(renewal.contract.address);
+    });
+
+    it("falls back to the wallet's own addresses once the delegation lapses", async () => {
+        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const own = wallet.arkAddress.encode();
+        await wallet.contractRepository.saveContract({
+            ...renewal.contract,
+            metadata: { delegationStatus: "active", delegationExpiresAt: 1 },
+        });
+        expect(await wallet.getAddress()).not.toBe(renewal.contract.address);
+        expect(await wallet.getAddress()).toBe(own);
+
+        await wallet.contractRepository.saveContract({ ...renewal.contract, metadata: undefined });
+        expect(await wallet.getAddress()).toBe(own);
+    });
+
+    it("skips a newer row whose params no longer derive its script", async () => {
+        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await wallet.contractRepository.saveContract({
+            ...renewal.contract,
+            script: "51",
+            params: { ...renewal.contract.params, maxFee: "200" },
+            createdAt: renewal.contract.createdAt + 1,
+        });
+
+        expect(await wallet.getAddress()).toBe(renewal.contract.address);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
     });
 
     it("skips a newer malformed delegatee row for the older valid one", async () => {
