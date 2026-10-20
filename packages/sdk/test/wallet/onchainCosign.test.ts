@@ -131,11 +131,61 @@ describe("wallet.sendOnchain", () => {
         expect(row.spentBy).toBe(COSIGNED);
     });
 
-    it("skips unconfirmed coins and fails when nothing is left", async () => {
-        const { wallet } = await makeWallet({ status: { confirmed: false } });
+    it("spends an unconfirmed coin, which arkd cosigns", async () => {
+        const { wallet, arkProvider, boardingCoin } = await makeWallet({
+            status: { confirmed: false },
+        });
+        await expect(
+            wallet.sendOnchain({ outputs: [{ address: externalAddress, amount: 1_000 }] }),
+        ).resolves.toBe(COSIGNED);
+        expect(hex.encode(sentPsbt(arkProvider).getInput(0).txid!)).toBe(boardingCoin.txid);
+    });
+
+    it("fails preflight when no coin is clear of exit maturity", async () => {
+        // A 9216s exit leaves 3216s at tip 110, inside the default six-block margin.
+        const { wallet } = await makeWallet({}, {}, 9216n);
         const send = wallet.sendOnchain({ outputs: [{ address: externalAddress, amount: 1_000 }] });
         await expect(send).rejects.toThrow(/insufficient/i);
         await expect(send).rejects.toBeInstanceOf(OnchainCosignPreflightError);
+    });
+
+    it("leaves a coin a settlement holds, and says so when it is named", async () => {
+        const { wallet, boardingCoin } = await makeWallet();
+        const outpoint = `${boardingCoin.txid}:${boardingCoin.vout}`;
+        vi.spyOn(wallet as any, "lockedOutpoints").mockResolvedValue(new Set([outpoint]));
+        await expect(
+            wallet.sendOnchain({ outputs: [{ address: externalAddress, amount: 1_000 }] }),
+        ).rejects.toThrow(/insufficient/i);
+        await expect(
+            wallet.sendOnchain({
+                outputs: [{ address: externalAddress, amount: 1_000 }],
+                inputs: [boardingCoin],
+            }),
+        ).rejects.toThrow(`${outpoint} is locked by an in-flight settlement`);
+    });
+
+    it("sweeps at most arkd's 64 inputs, the largest first", async () => {
+        const { wallet, arkProvider, onchainProvider } = await makeWallet();
+        const coins = Array.from({ length: 70 }, (_, i) => ({
+            txid: i.toString(16).padStart(64, "0"),
+            vout: 0,
+            value: 10_000 + i,
+            status: { confirmed: true, block_height: 100, block_time: 1700000000 },
+        }));
+        const boardingAddress = wallet.boardingTapscript.onchainAddress(wallet.network);
+        onchainProvider.getCoins.mockImplementation(async (a: string) =>
+            a === boardingAddress ? coins : [],
+        );
+
+        await wallet.sendOnchain({ outputs: [], sweepTo: externalAddress });
+
+        const psbt = sentPsbt(arkProvider);
+        expect(psbt.inputsLength).toBe(64);
+        const spent = new Set(
+            Array.from({ length: 64 }, (_, i) => hex.encode(psbt.getInput(i).txid!)),
+        );
+        expect(spent.has(coins[69].txid)).toBe(true);
+        expect(spent.has(coins[0].txid)).toBe(false);
     });
 
     it("sweeps every cosignable coin to one output carrying Σin − fee", async () => {
@@ -149,7 +199,7 @@ describe("wallet.sendOnchain", () => {
     });
 
     it("refuses a sweep with no candidates or a sub-dust remainder", async () => {
-        const none = await makeWallet({ status: { confirmed: false } });
+        const none = await makeWallet({}, {}, 9216n);
         await expect(
             none.wallet.sendOnchain({ outputs: [], sweepTo: externalAddress }),
         ).rejects.toThrow(/nothing to sweep/);
@@ -375,6 +425,24 @@ describe("wallet.cosignOnchainTx", () => {
         const err = await wallet.cosignOnchainTx(tx).catch((e) => e);
         expect(err).toBeInstanceOf(OnchainCosignPreflightError);
         expect(err.message).toContain(`input 1 (${foreign}:2) has no witnessUtxo`);
+        expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
+    });
+
+    it("refuses more inputs than arkd cosigns before asking it", async () => {
+        const { wallet, arkProvider, boardingCoin, externalScript } = await makeWallet();
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
+        for (let i = 0; i < 64; i++) {
+            tx.addInput({
+                txid: hex.decode(i.toString(16).padStart(64, "0")),
+                index: 0,
+                witnessUtxo: { script: externalScript, amount: 1_000n },
+            });
+        }
+        tx.addOutput({ script: externalScript, amount: 40_000n });
+        await expect(wallet.cosignOnchainTx(tx)).rejects.toThrow(
+            "65 inputs exceed arkd's limit of 64",
+        );
         expect(arkProvider.cosignOnchainTx).not.toHaveBeenCalled();
     });
 

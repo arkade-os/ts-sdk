@@ -32,6 +32,9 @@ import type { RelativeTimelock } from "../script/tapscript";
 
 export const DEFAULT_COSIGN_MARGIN_BLOCKS = 6;
 
+/** arkd's `maxCosignOnchainTxInputs`, foreign inputs included. */
+export const MAX_COSIGN_INPUTS = 64;
+
 /** Upper bound on the renew window; short-CSV networks use a quarter of the CSV instead. */
 export const ONCHAIN_RENEW_WINDOW_BLOCKS = 144;
 
@@ -139,8 +142,13 @@ export function assertCosignable(
             `${outpoint} has no CSV exit path; cosign margin cannot be evaluated`,
         );
     }
+    // arkd cosigns an unconfirmed input: its exit cannot have matured.
+    if (!coin.status.confirmed) return;
     const left = untilExitMaturity(coin, csv, tip);
-    if (!left) throw new OnchainCosignPreflightError(`${outpoint} is unconfirmed`);
+    if (!left) {
+        const unit = csv.type === "blocks" ? "height" : "time";
+        throw new OnchainCosignPreflightError(`${outpoint} has no confirmation ${unit}`);
+    }
     if (left.remaining <= marginBlocks * left.perBlock) {
         throw new OnchainCosignPreflightError(
             `${outpoint} is within ${marginBlocks} blocks of exit maturity`,

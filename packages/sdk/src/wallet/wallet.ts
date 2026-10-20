@@ -214,6 +214,7 @@ import {
     OnchainCosignPreflightError,
     assertCosignable,
     DEFAULT_COSIGN_MARGIN_BLOCKS,
+    MAX_COSIGN_INPUTS,
     needsOnchainSweep,
     exitCsvOf,
     emulatorInputIndexes,
@@ -4533,7 +4534,10 @@ export class Wallet
         } else {
             await manager.syncOnchain();
         }
-        const tip = await this.onchainProvider.getChainTip();
+        const [tip, locked] = await Promise.all([
+            this.onchainProvider.getChainTip(),
+            this.lockedOutpoints(),
+        ]);
         const dropped = new Map<string, string>();
         const candidates = (await this.onchainCoins(manager))
             .filter(({ coin, contract }) => {
@@ -4541,6 +4545,12 @@ export class Wallet
                 return isContractGenericallySpendable(contract);
             })
             .filter(({ coin, contract }) => {
+                const key = vtxoOutpoint(coin);
+                // arkd refuses to cosign an input queued for a batch.
+                if (locked.has(key) || this._pendingSpendOutpoints.has(key)) {
+                    dropped.set(key, `${key} is locked by an in-flight settlement`);
+                    return false;
+                }
                 try {
                     assertCosignable(coin, exitCsvOf(contract), tip, this._cosignMarginBlocks);
                     return true;
@@ -4563,12 +4573,14 @@ export class Wallet
         const tx = new SdkTransaction({ version: 2 });
 
         if (sweepTo) {
-            for (const { coin } of candidates) {
+            // The largest first; whatever exceeds arkd's input cap waits for the next sweep.
+            const swept = candidates.slice(0, MAX_COSIGN_INPUTS);
+            for (const { coin } of swept) {
                 tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
             }
-            const total = candidates.reduce((sum, { coin }) => sum + coin.value, 0);
-            const amount = total - estimateOnchainCosignFee(candidates.length, 1, feeRate);
-            if (candidates.length === 0 || amount < Number(this.dustAmount)) {
+            const total = swept.reduce((sum, { coin }) => sum + coin.value, 0);
+            const amount = total - estimateOnchainCosignFee(swept.length, 1, feeRate);
+            if (swept.length === 0 || amount < Number(this.dustAmount)) {
                 throw new OnchainCosignPreflightError("nothing to sweep");
             }
             tx.addOutputAddress(sweepTo, BigInt(amount), this.network);
@@ -4579,15 +4591,17 @@ export class Wallet
         const want = outputs.reduce((sum, o) => sum + o.amount, 0);
         let have = 0;
         let fee = 0;
-        for (const { coin } of candidates) {
+        for (const { coin } of candidates.slice(0, MAX_COSIGN_INPUTS)) {
             tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
             have += coin.value;
             fee = estimateOnchainCosignFee(tx.inputsLength, outputs.length + 1, feeRate);
             if (have >= want + fee) break;
         }
         if (have < want + fee || tx.inputsLength === 0) {
+            const cap =
+                candidates.length > MAX_COSIGN_INPUTS ? ` in ${MAX_COSIGN_INPUTS} inputs` : "";
             throw new OnchainCosignPreflightError(
-                `insufficient onchain funds: have ${have}, need ${want + fee}`,
+                `insufficient onchain funds${cap}: have ${have}, need ${want + fee}`,
             );
         }
         const change = have - want - fee;
@@ -4644,6 +4658,11 @@ export class Wallet
         let outSum = 0n;
         for (let i = 0; i < tx.outputsLength; i++) outSum += tx.getOutput(i).amount ?? 0n;
         if (outSum > inSum) throw new Error(`outputs ${outSum} exceed inputs ${inSum}`);
+        if (arkInputs.size > 0 && tx.inputsLength > MAX_COSIGN_INPUTS) {
+            throw new OnchainCosignPreflightError(
+                `${tx.inputsLength} inputs exceed arkd's limit of ${MAX_COSIGN_INPUTS}`,
+            );
+        }
 
         if (emulated.size > 0) await attachPrevoutTxs(tx, this.onchainProvider);
         const signed = (await this._signerRouter.sign(
@@ -4689,6 +4708,7 @@ export class Wallet
                     !locked.has(vtxoOutpoint(coin)) &&
                     needsOnchainSweep(coin, contract, tip, this._cosignMarginBlocks),
             )
+            .slice(0, MAX_COSIGN_INPUTS)
             .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
     }
 

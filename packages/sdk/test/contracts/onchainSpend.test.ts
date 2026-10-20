@@ -131,10 +131,15 @@ describe("assertCosignable", () => {
     const seconds = (value: number) => ({ type: "seconds" as const, value: BigInt(value) });
     const tip = (height: number, time = 0) => ({ height, time });
 
-    it("rejects unconfirmed", () => {
+    it("accepts unconfirmed, as arkd does", () => {
         expect(() =>
             assertCosignable({ ...coin, status: { confirmed: false } }, blocks(144), tip(120)),
-        ).toThrow(OnchainCosignPreflightError);
+        ).not.toThrow();
+    });
+    it("rejects a confirmed coin without its confirmation height", () => {
+        expect(() =>
+            assertCosignable({ ...coin, status: { confirmed: true } }, blocks(144), tip(120)),
+        ).toThrow(`${coin.txid}:${coin.vout} has no confirmation height`);
     });
     it("rejects within the margin of CSV maturity", () => {
         expect(() => assertCosignable(coin, blocks(144), tip(238))).toThrow(/maturity/);
@@ -168,8 +173,10 @@ describe("assertCosignable", () => {
             );
             expect(() => assertCosignable(timed, csv, tip(101, T + 604_672 - 3_601))).not.toThrow();
         });
-        it("treats a confirmed coin without block_time as unconfirmed", () => {
-            expect(() => assertCosignable(coin, csv, tip(101, T))).toThrow(/is unconfirmed/);
+        it("rejects a confirmed coin without block_time", () => {
+            expect(() => assertCosignable(coin, csv, tip(101, T))).toThrow(
+                /has no confirmation time/,
+            );
         });
     });
 });
