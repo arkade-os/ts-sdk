@@ -134,6 +134,31 @@ describe("wallet.sendOnchain", () => {
         expect(row.spentBy).toBe(COSIGNED);
     });
 
+    it("hides the coin from boarding reads while arkd is cosigning it", async () => {
+        const { wallet, arkProvider, boardingCoin } = await makeWallet();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        arkProvider.cosignOnchainTx.mockImplementation(async () => {
+            await gate;
+            return COSIGNED;
+        });
+        const send = wallet.sendOnchain({
+            outputs: [{ address: externalAddress, amount: 1_000 }],
+        });
+        await vi.waitFor(() => expect(arkProvider.cosignOnchainTx).toHaveBeenCalled());
+
+        const during = await wallet.getBoardingUtxos();
+        release();
+        await send;
+
+        expect(during.some((c) => c.txid === boardingCoin.txid)).toBe(false);
+        expect((await wallet.getBoardingUtxos()).some((c) => c.txid === boardingCoin.txid)).toBe(
+            false,
+        );
+    });
+
     it("spends an unconfirmed coin, which arkd cosigns", async () => {
         const { wallet, arkProvider, boardingCoin } = await makeWallet({
             status: { confirmed: false },

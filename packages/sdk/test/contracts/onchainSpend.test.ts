@@ -187,6 +187,8 @@ describe("isCosignFallback", () => {
         expect(isCosignFallback(new OnchainCosignRejectedError("x", "INVALID_ARK_PSBT"))).toBe(
             true,
         );
+        expect(isCosignFallback(new OnchainCosignRejectedError("x", "TX_TOO_LARGE"))).toBe(true);
+        expect(isCosignFallback(new OnchainCosignRejectedError("x", "SOMETHING_NEW"))).toBe(false);
         expect(isCosignFallback(new OnchainCosignPreflightError("x"))).toBe(true);
         expect(isCosignFallback(new OnchainCosignRejectedError("x"))).toBe(false);
         expect(isCosignFallback(new OnchainCosignRejectedError("x", "INTERNAL_ERROR"))).toBe(false);

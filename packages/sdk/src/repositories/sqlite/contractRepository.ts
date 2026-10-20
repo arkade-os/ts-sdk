@@ -122,25 +122,24 @@ export class SQLiteContractRepository implements ContractRepository {
             this.addFilterCondition(conditions, params, "type", filter.type);
             this.addFilterCondition(conditions, params, WATCH_STATE, filter.watch);
         }
-        if (page.after !== undefined) {
-            conditions.push("script > ?");
-            params.push(page.after);
+        // A row without a stored scope takes its handler's default, which SQL cannot see, so the
+        // scope filter runs here, reading on until the page is full.
+        const wanted = filter?.scope === undefined ? undefined : [filter.scope].flat();
+        const matches: Contract[] = [];
+        let after = page.after;
+        for (;;) {
+            const where = [...conditions, ...(after === undefined ? [] : ["script > ?"])];
+            const rows = await this.db.all<ContractRow>(
+                `SELECT * FROM ${this.table}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY script LIMIT ?`,
+                [...params, ...(after === undefined ? [] : [after]), page.limit + 1],
+            );
+            for (const contract of rows.map(contractRowToDomain)) {
+                if (!wanted || wanted.includes(scopeOf(contract))) matches.push(contract);
+            }
+            if (!wanted || rows.length <= page.limit || matches.length > page.limit) break;
+            after = rows[rows.length - 1].script;
         }
-        const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
-        const rows = await this.db.all<ContractRow>(
-            `SELECT * FROM ${this.table}${where} ORDER BY script LIMIT ?`,
-            [...params, page.limit + 1],
-        );
-        const result = pageResult(
-            rows.map(contractRowToDomain),
-            page.limit,
-            (contract) => contract.script,
-        );
-        if (filter?.scope !== undefined) {
-            const wanted = [filter.scope].flat();
-            result.items = result.items.filter((contract) => wanted.includes(scopeOf(contract)));
-        }
-        return result;
+        return pageResult(matches, page.limit, (contract) => contract.script);
     }
 
     async saveContract(contract: Contract): Promise<void> {

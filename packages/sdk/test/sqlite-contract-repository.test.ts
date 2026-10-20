@@ -434,6 +434,26 @@ describe("SQLiteContractRepository", () => {
     });
 
     describe("scope", () => {
+        it("fills a scope-filtered page past rows that do not match", async () => {
+            repository = new SQLiteContractRepository(createNodeSQLExecutor());
+            for (const script of ["a1", "a2", "a3"]) {
+                await repository.saveContract(createMockContract({ script, type: "default" }));
+            }
+            for (const script of ["b1", "b2"]) {
+                await repository.saveContract(createMockContract({ script, type: "boarding" }));
+            }
+
+            const first = await repository.getContractsPage({ scope: "onchain" }, { limit: 1 });
+            const second = await repository.getContractsPage(
+                { scope: "onchain" },
+                { limit: 1, after: first.nextCursor },
+            );
+
+            expect(first.items.map((c) => c.script)).toEqual(["b1"]);
+            expect(second.items.map((c) => c.script)).toEqual(["b2"]);
+            expect(second.nextCursor).toBeUndefined();
+        });
+
         it("round-trips scope and filters it, resolving rows without one via the handler default", async () => {
             repository = new SQLiteContractRepository(createNodeSQLExecutor());
             await repository.saveContract(

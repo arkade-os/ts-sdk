@@ -12,7 +12,6 @@ import {
     OnchainCosignRejectedError,
     OnchainCosignUnsupportedError,
 } from "../providers/ark";
-import { ArkErrorName } from "../providers/errors";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { OnchainProvider } from "../providers/onchain";
 import { Transaction } from "../utils/transaction";
@@ -201,10 +200,17 @@ function finalizeOwnedInput(tx: Transaction, index: number): void {
     });
 }
 
+/** arkd's cosign errors raised before it signs (v0.9.22); any other name may follow a broadcast. */
+const DEFINITE_COSIGN_REJECTIONS: ReadonlySet<string> = new Set([
+    "INVALID_ARK_PSBT",
+    "TX_NOT_FOUND",
+    "TX_TOO_LARGE",
+]);
+
 /** True only when the coins were definitely not spent, so paying another way is safe. */
 export function isCosignFallback(e: unknown): boolean {
     if (e instanceof OnchainCosignRejectedError) {
-        return !!e.arkErrorName && e.arkErrorName !== ArkErrorName.INTERNAL_ERROR;
+        return !!e.arkErrorName && DEFINITE_COSIGN_REJECTIONS.has(e.arkErrorName);
     }
     return e instanceof OnchainCosignUnsupportedError || e instanceof OnchainCosignPreflightError;
 }

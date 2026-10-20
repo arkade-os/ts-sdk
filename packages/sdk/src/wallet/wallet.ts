@@ -1783,7 +1783,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         : [],
                 );
                 const utxos = fetched[i]
-                    .filter((c) => !spent.has(vtxoOutpoint(c)))
+                    .filter((c) => {
+                        const key = vtxoOutpoint(c);
+                        return !spent.has(key) && !this._pendingSpendOutpoints.has(key);
+                    })
                     .map((utxo) => extendCoinWithTapscript(tapscript, utxo));
                 return {
                     tapscript,
@@ -1846,9 +1849,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const rows = await getVtxosForContract(this.walletRepository, contract, {
                     unspentOnly: true,
                 });
-                return onchainRows(contract, rows).map((v) =>
-                    extendCoinWithTapscript(tapscript, v),
-                );
+                return onchainRows(contract, rows)
+                    .filter((v) => !this._pendingSpendOutpoints.has(vtxoOutpoint(v)))
+                    .map((v) => extendCoinWithTapscript(tapscript, v));
             }),
         );
         return perScript.flat();
@@ -4679,20 +4682,27 @@ export class Wallet
                 console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
             }
         };
-        let txid: string;
+        // Boarding reads run outside the tx lock: hide the inputs until the store marks them.
+        const held = spent.map(vtxoOutpoint);
+        for (const key of held) this._pendingSpendOutpoints.add(key);
         try {
-            txid = await submitOnchainSpend(signed, arkInputs, {
-                arkProvider: this.arkProvider,
-                emulator: this._emulator,
-                onchainProvider: this.onchainProvider,
-            });
-        } catch (e) {
-            // Segwit txids ignore witnesses, so the unsigned id is the one arkd may have broadcast.
-            if (e instanceof OnchainCosignAmbiguousError) await markPending(signed.id);
-            throw e;
+            let txid: string;
+            try {
+                txid = await submitOnchainSpend(signed, arkInputs, {
+                    arkProvider: this.arkProvider,
+                    emulator: this._emulator,
+                    onchainProvider: this.onchainProvider,
+                });
+            } catch (e) {
+                // Segwit txids ignore witnesses, so the unsigned id is the one arkd may have broadcast.
+                if (e instanceof OnchainCosignAmbiguousError) await markPending(signed.id);
+                throw e;
+            }
+            await markPending(txid);
+            return txid;
+        } finally {
+            for (const key of held) this._pendingSpendOutpoints.delete(key);
         }
-        await markPending(txid);
-        return txid;
     }
 
     /** Boarding outpoints the automatic cosign sweep should renew now (never unrolled exits); excludes coins an intent has locked. */
