@@ -15,7 +15,7 @@ import {
     type DelegateeDefault,
     type DelegationParams,
     defaultVariables,
-} from "../script/delegateeTemplate";
+} from "../script/delegatee/delegateeTemplate";
 
 export type { DelegateeContractKeys };
 

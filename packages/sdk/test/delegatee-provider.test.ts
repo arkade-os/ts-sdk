@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RestDelegateeProvider } from "../src/providers/delegatee";
-import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/delegateeTemplate";
+import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/delegatee/delegateeTemplate";
 import { DelegateeManagerImpl } from "../src/wallet/delegatee";
 import vectors from "./fixtures/delegatee/vectors.json";
 

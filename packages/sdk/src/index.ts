@@ -1187,4 +1187,4 @@ export type {
     VtxoBranch,
 };
 
-export type { DelegateeDefault, DelegationParams } from "./script/delegateeTemplate";
+export type { DelegateeDefault, DelegationParams } from "./script/delegatee/delegateeTemplate";

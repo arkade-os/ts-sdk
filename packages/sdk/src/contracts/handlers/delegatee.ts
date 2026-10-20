@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { DefaultVtxo } from "../../script/default";
-import { defaultContract, type DelegateeDefault } from "../../script/delegateeTemplate";
+import { defaultContract, type DelegateeDefault } from "../../script/delegatee/delegateeTemplate";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
 import { isCsvSpendable } from "./helpers";

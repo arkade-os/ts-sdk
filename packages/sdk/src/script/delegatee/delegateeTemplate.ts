@@ -1,12 +1,14 @@
 import { hex } from "@scure/base";
 import { ScriptNum } from "@scure/btc-signer";
 import { concatBytes } from "@scure/btc-signer/utils.js";
-import { getOpcodeValue } from "../arkade/opcodes";
-import { ArkadeScript } from "../arkade/script";
-import { computeArkadeScriptPublicKey } from "../arkade/tweak";
-import type { DelegateeContractKeys } from "../providers/delegatee";
-import { VtxoScript } from "./base";
-import defaultDocuments from "./delegateeDefaults.json";
+import { getOpcodeValue } from "../../arkade/opcodes";
+import { ArkadeScript } from "../../arkade/script";
+import { computeArkadeScriptPublicKey } from "../../arkade/tweak";
+import type { DelegateeContractKeys } from "../../providers/delegatee";
+import { VtxoScript } from "../base";
+import artifactDocument from "./artifact.json";
+import boardingDocument from "./boarding.json";
+import renewalDocument from "./renewal.json";
 
 /** The parameters of a delegation under the default templates. */
 export interface DelegationParams {
@@ -24,10 +26,11 @@ export interface DelegationParams {
 export type DelegateeDefault = "renewal" | "boarding";
 
 /** The default templates and the artifact they lock to, as the service's templates/ ships them. */
-const DELEGATEE_DEFAULTS = defaultDocuments as Record<
-    `${DelegateeDefault}.json` | "delegated_vtxo.json",
-    object
->;
+const DELEGATEE_DEFAULTS = {
+    "renewal.json": renewalDocument,
+    "boarding.json": boardingDocument,
+    "artifact.json": artifactDocument,
+} as Record<`${DelegateeDefault}.json` | "artifact.json", object>;
 
 /** The ids the service computes for the bundled documents; they change with the bundle. */
 export const DEFAULT_TEMPLATE_IDS: Readonly<Record<DelegateeDefault, string>> = {
@@ -112,7 +115,7 @@ function instantiate(
 ): VtxoScript {
     const def = (
         "artifact" in construction.definition
-            ? DELEGATEE_DEFAULTS["delegated_vtxo.json"]
+            ? DELEGATEE_DEFAULTS["artifact.json"]
             : construction.definition
     ) as Definition;
     const args = new Map<string, Value>();

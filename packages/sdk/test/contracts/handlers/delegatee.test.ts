@@ -12,7 +12,7 @@ import {
     type DelegateeDefault,
 } from "../../../src";
 import { resolveUnilateralPath } from "../../../src/wallet/exit/path";
-import { defaultVariables } from "../../../src/script/delegateeTemplate";
+import { defaultVariables } from "../../../src/script/delegatee/delegateeTemplate";
 import { ArkAddress } from "../../../src/script/address";
 import vectors from "../../fixtures/delegatee/vectors.json";
 import { createMockIndexerProvider, createMockVtxo } from "../helpers";
