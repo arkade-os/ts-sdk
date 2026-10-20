@@ -44,7 +44,7 @@ style and have not been backfilled.
 
 ### Changed
 
-- **`@arkade-os/swap` needs nostr-tools 2.24 or later.** The optional peer range moves from `^2.12.0` to `^2.24.0`. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed there with `filters.map is not a function`. CI now runs the swap typecheck and unit tests against 2.24.0 and the newest 2.x, besides the locked version.
+- **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
