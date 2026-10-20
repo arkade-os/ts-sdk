@@ -515,6 +515,84 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    it("names the spender of a listed coin marked spent without one once arkd saw it confirm", async () => {
+        const record = {
+            ...coin,
+            script: boarding.script,
+            spentBy: spender,
+            spendConfirmation: { height: 301, time: 0 },
+        };
+        const { manager, walletRepository } = await setup(
+            async () => [coin],
+            undefined,
+            async () => ({ utxos: [record] }),
+        );
+        await saveVtxosForContract(walletRepository, boarding, [
+            { ...toOnchainCoinRow(coin, boarding, script), isSpent: true, spentBy: "" },
+        ]);
+        const events: string[] = [];
+        manager.onContractEvent((e) => events.push(e.type));
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+        expect(events).toEqual([]);
+        manager.dispose();
+    });
+
+    it("keeps a listed coin's stored spend while the arkd lookup fails", async () => {
+        const { manager, walletRepository } = await setup(
+            async () => [coin],
+            undefined,
+            async () => {
+                throw new Error("arkd down");
+            },
+        );
+        await saveVtxosForContract(walletRepository, boarding, [
+            { ...toOnchainCoinRow(coin, boarding, script), isSpent: true, spentBy: spender },
+        ]);
+        resetRecordedSpends(walletRepository);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+        manager.dispose();
+    });
+
+    it("follows arkd's response pages", async () => {
+        const pages = vi
+            .fn()
+            .mockResolvedValueOnce({ utxos: [], page: { current: 1, next: 2, total: 2 } })
+            .mockResolvedValueOnce({
+                utxos: [{ ...coin, script: boarding.script, spentBy: spender }],
+                page: { current: 2, next: 3, total: 2 },
+            });
+        const { manager, walletRepository, indexerProvider } = await setup(
+            async () => [],
+            undefined,
+            pages,
+        );
+        await saveVtxosForContract(walletRepository, boarding, [
+            { ...toOnchainCoinRow(coin, boarding, script), isSpent: true, spentBy: "" },
+        ]);
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+        expect(indexerProvider.getUtxos).toHaveBeenCalledTimes(2);
+        expect(indexerProvider.getUtxos).toHaveBeenLastCalledWith({
+            outpoints: [{ txid: coin.txid, vout: coin.vout }],
+            pageIndex: 2,
+        });
+        manager.dispose();
+    });
+
     it("asks arkd in query-string-sized pages", async () => {
         const { manager, walletRepository, indexerProvider } = await setup(
             async () => [],
