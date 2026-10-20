@@ -176,6 +176,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
+import { DelegateeManagerImpl, type IDelegateeManager } from "../delegatee";
 import type {
     IVtxoManager,
     MigrateDeprecatedSignerOptions,
@@ -186,6 +187,7 @@ import type {
 } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
+import { RestDelegateeProvider } from "../../providers/delegatee";
 import { getRandomId } from "../utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
 import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
@@ -449,8 +451,10 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
-    /** Optional delegation service URL. */
+    /** @deprecated Legacy pre-signed delegator URL; use delegateeUrl. */
     delegateUrl?: string;
+    /** URL of the covenant-based delegatee service. */
+    delegateeUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
      * @see DEFAULT_MESSAGE_TAG
@@ -528,6 +532,7 @@ type MessageBusInitConfig = {
         publicKey?: string;
     };
     delegateUrl?: string;
+    delegateeUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     walletMode?: ServiceWorkerWalletMode;
@@ -649,6 +654,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            delegateeUrl: options.delegateeUrl,
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
         });
@@ -1742,6 +1748,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
+    private readonly delegateeServiceUrl?: string;
     private _restoreInFlight?: Promise<void>;
 
     protected constructor(
@@ -1751,6 +1758,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        delegateeUrl?: string,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1761,6 +1769,7 @@ export class ServiceWorkerWallet
             messageTag,
         );
         this.hasDelegate = hasDelegate;
+        this.delegateeServiceUrl = delegateeUrl;
     }
 
     get assetManager(): IAssetManager {
@@ -1803,10 +1812,12 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
+            options.delegateeUrl,
         );
 
         return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            delegateeUrl: options.delegateeUrl,
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
             lazyInitialization: options.lazyInitialization,
@@ -2181,6 +2192,12 @@ export class ServiceWorkerWallet
         };
 
         return manager;
+    }
+
+    /** Runs on the page: it talks to the service over REST and sends through this wallet. */
+    async getDelegateeManager(): Promise<IDelegateeManager | undefined> {
+        if (!this.delegateeServiceUrl) return undefined;
+        return new DelegateeManagerImpl(new RestDelegateeProvider(this.delegateeServiceUrl), this);
     }
 
     async getVtxoManager(): Promise<IVtxoManager> {

@@ -1576,19 +1576,36 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({
-            withRecoverable: true,
-            genericallySpendableOnly: true,
-        });
+        const tip = now ?? (await fetchTimeHeight(this.wallet));
+        const vtxos = await this.withoutDelegated(
+            await this.wallet.getSpendableVtxos({
+                withRecoverable: true,
+                genericallySpendableOnly: true,
+            }),
+            tip,
+        );
 
         // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
         const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
 
-        return getExpiringAndRecoverableVtxos(
-            vtxos,
-            threshold,
-            getDustAmount(this.wallet),
-            now ?? (await fetchTimeHeight(this.wallet)),
+        return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
+    }
+
+    /**
+     * Coins at the wallet's delegatee contracts are the service's to renew, in place, even with
+     * delegation turned off: its watch stays registered, so renewing them too would race it.
+     * Once swept or expired the service can no longer renew them, so the wallet recovers them.
+     */
+    private async withoutDelegated(
+        vtxos: NormalizedExtendedVirtualCoin[],
+        now: TimeHeight,
+    ): Promise<NormalizedExtendedVirtualCoin[]> {
+        const manager = await this.wallet.getContractManager();
+        const delegated = new Set(
+            (await manager.getContracts({ type: ["delegatee"] })).map((c) => c.script),
+        );
+        return vtxos.filter(
+            (v) => v.script === undefined || !delegated.has(v.script) || canRecoverOnchain(v, now),
         );
     }
 
@@ -2198,7 +2215,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Classify the wallet's `default`/`delegate` contracts against the fresh signer set, splitting
+     * Classify the wallet's `default`/`delegate`/`delegatee` contracts against the fresh signer set, splitting
      * spendable VTXOs into cooperatively-migratable and cutoff-expired sets and building the
      * per-signer report. Current-signer contracts are skipped.
      */
@@ -2212,7 +2229,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const nowSeconds = Math.floor(Date.now() / 1000);
 
         const contractsWithVtxos = await cm.getContractsWithVtxos({
-            type: ["default", "delegate"],
+            type: ["default", "delegate", "delegatee"],
         });
 
         const reportsBySigner = new Map<string, DeprecatedSignerReport>();
@@ -2506,7 +2523,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const wanted = new Set(inputs.map((i) => `${i.txid}:${i.vout}`));
         const cm = await this.wallet.getContractManager();
         const contractsWithVtxos = await cm.getContractsWithVtxos({
-            type: ["default", "delegate"],
+            type: ["default", "delegate", "delegatee"],
         });
         for (const { contract, vtxos } of contractsWithVtxos) {
             const serverPubKey = contract.params.serverPubKey;

@@ -164,10 +164,9 @@ export const ROTATION_MAX_BACKOFF_MS = 60_000;
  * `wallet.ts`; `Wallet` satisfies it structurally.
  */
 export interface RotatableWallet {
-    readonly defaultContractScript: string;
     readonly network: { hrp: string };
     readonly arkServerPublicKey: Uint8Array;
-    readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+    readonly receiveTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
     /**
      * @internal Sole sanctioned write path for `offchainTapscript` after construction; called
      * once per rotation after the new display contract is persisted.
@@ -317,7 +316,7 @@ export class WalletReceiveRotator {
         const manager = await wallet.getContractManager();
         this.unsubscribe = manager.onContractEvent((event) => {
             if (event.type !== "vtxo_received") return;
-            if (event.contractScript !== wallet.defaultContractScript) return;
+            if (event.contractScript !== hex.encode(wallet.receiveTapscript.pkScript)) return;
             // Serialized but deliberately NOT deduped: one receive ⇒ one fresh address, so two
             // rapid events burn two indices.
             this.chain = this.chain
@@ -402,7 +401,7 @@ export class WalletReceiveRotator {
         // where the displayed address is unwatched.
         const descriptor = await this.provider.getNextSigningDescriptor();
         const { tapscript: newTapscript, params } = buildReceiveContract(
-            wallet.offchainTapscript,
+            wallet.receiveTapscript,
             descriptor,
             wallet.network.hrp,
             true,
