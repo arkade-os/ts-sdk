@@ -2295,6 +2295,7 @@ export class ContractManager implements IContractManager {
         // entry whose release never reached the row would leave the coin marked spent.
         const settled: string[] = [];
         const spent: ExtendedVirtualCoin[] = [];
+        const named: ExtendedVirtualCoin[] = [];
         for (const coin of coins) {
             const key = vtxoOutpoint(coin);
             const prior = stored.get(key);
@@ -2303,13 +2304,16 @@ export class ContractManager implements IContractManager {
                 prior?.isUnrolled && !isExplorerCoin(prior)
                     ? { ...prior, status: { ...prior.status, ...coin.status } }
                     : toOnchainCoinRow(coin, contract, tapscript);
-            const record = recorded.get(key);
+            const record = recorded?.get(key);
             if (record?.spendConfirmation) {
                 // arkd saw the spend confirm before the explorer did; a stored spend stays as is.
                 if (!prior?.isSpent) spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
+                else if (!prior.spentBy) named.push({ ...prior, spentBy: record.spentBy });
                 if (pending[key]) settled.push(key);
                 continue;
             }
+            // A failed lookup cannot tell a lagging explorer from a reorg: keep the stored spend.
+            if (prior?.isSpent && recorded === undefined) continue;
             const entry = pending[key];
             if (entry && (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS) {
                 rows.push({ ...row, spentBy: entry.spender });
@@ -2319,11 +2323,10 @@ export class ContractManager implements IContractManager {
             rows.push(entry && row.spentBy === entry.spender ? { ...row, spentBy: "" } : row);
         }
 
-        const named: ExtendedVirtualCoin[] = [];
         for (const row of stored.values()) {
             const key = vtxoOutpoint(row);
             if (!row.isUnrolled || live.has(key)) continue;
-            const record = recorded.get(key);
+            const record = recorded?.get(key);
             if (row.isSpent) {
                 // Already spent and announced: this only names the spender.
                 if (!row.spentBy && record) named.push({ ...row, spentBy: record.spentBy });
@@ -2375,8 +2378,11 @@ export class ContractManager implements IContractManager {
         return settled;
     }
 
-    /** arkd's record of how these onchain coins were spent, by outpoint; empty if it keeps none. */
-    private async serverSpends(rows: Outpoint[]): Promise<Map<string, IndexerUtxo>> {
+    /**
+     * arkd's record of how these onchain coins were spent, by outpoint: empty if it keeps none,
+     * undefined if the lookup failed.
+     */
+    private async serverSpends(rows: Outpoint[]): Promise<Map<string, IndexerUtxo> | undefined> {
         const { indexerProvider } = this.config;
         const found = new Map<string, IndexerUtxo>();
         if (!indexerProvider.getUtxos || rows.length === 0) return found;
@@ -2385,13 +2391,21 @@ export class ContractManager implements IContractManager {
                 const outpoints = rows
                     .slice(i, i + OUTPOINT_QUERY_CHUNK_SIZE)
                     .map(({ txid, vout }) => ({ txid, vout }));
-                const { utxos } = await indexerProvider.getUtxos({ outpoints });
-                for (const utxo of utxos) found.set(vtxoOutpoint(utxo), utxo);
+                let pageIndex: number | undefined;
+                do {
+                    const { utxos, page } = await indexerProvider.getUtxos({
+                        outpoints,
+                        pageIndex,
+                    });
+                    for (const utxo of utxos) found.set(vtxoOutpoint(utxo), utxo);
+                    const more = page && page.current < page.total && page.next > page.current;
+                    pageIndex = more ? page.next : undefined;
+                } while (pageIndex !== undefined);
             }
         } catch (e) {
-            if (!(e instanceof IndexerUtxosUnsupportedError)) {
-                console.warn("[contracts] arkd spend lookup failed; using the explorer", e);
-            }
+            if (e instanceof IndexerUtxosUnsupportedError) return found;
+            console.warn("[contracts] arkd spend lookup failed; using the explorer", e);
+            return undefined;
         }
         return found;
     }
