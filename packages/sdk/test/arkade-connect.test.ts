@@ -318,6 +318,25 @@ describe("ArkadeContract.on", () => {
         expect(ok).toHaveBeenCalledTimes(1);
     });
 
+    it("the last off() releases the manager subscription, and on() takes it again", async () => {
+        const { manager, raw, emit, callbacks } = fakeManager();
+        const ark = await connectWith(manager);
+        const c = ark.contract(multisigProgram());
+        const a = await c.on("vtxo_received", vi.fn());
+        const b = await c.on("vtxo_spent", vi.fn());
+
+        a.off();
+        expect(callbacks.size).toBe(1);
+        b.off();
+        expect(callbacks.size).toBe(0);
+
+        const received = vi.fn();
+        await c.on("vtxo_received", received);
+        expect(raw.onContractEvent).toHaveBeenCalledTimes(2);
+        emit(vtxoEvent("vtxo_received", hex.encode(c.pkScript)));
+        expect(received).toHaveBeenCalledTimes(1);
+    });
+
     it("without a manager throws", async () => {
         const ark = await connectWith();
         await expect(ark.contract(multisigProgram()).on("vtxo_spent", () => {})).rejects.toThrow(

@@ -471,7 +471,10 @@ export class Arkade {
         if (this.ownsContractManager) this.contractManager?.dispose();
     }
 
-    /** @internal Add a handle for `script`, subscribing to the manager on first use. */
+    /**
+     * @internal Add a handle for `script`, subscribing to the manager on first use; the last
+     * handle's `off()` releases the subscription.
+     */
     addEventHandle(manager: IContractManager, script: string, handle: EventHandle): () => void {
         if (this.disposed) throw new Error("ArkadeContract.on: the Arkade client is disposed");
         let set = this.handles.get(script);
@@ -488,6 +491,10 @@ export class Arkade {
             if (!current) return;
             current.delete(handle);
             if (current.size === 0) this.handles.delete(script);
+            if (this.handles.size === 0) {
+                this.unsubscribeEvents?.();
+                this.unsubscribeEvents = undefined;
+            }
         };
     }
 
