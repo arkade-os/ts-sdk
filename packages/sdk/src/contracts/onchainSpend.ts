@@ -207,6 +207,11 @@ const DEFINITE_COSIGN_REJECTIONS: ReadonlySet<string> = new Set([
     "TX_TOO_LARGE",
 ]);
 
+/** A rejection naming no error arkd raises before signing: the tx may have been broadcast. */
+export function isCosignRejectedAfterSigning(e: unknown): boolean {
+    return e instanceof OnchainCosignRejectedError && !isCosignFallback(e);
+}
+
 /** True only when the coins were definitely not spent, so paying another way is safe. */
 export function isCosignFallback(e: unknown): boolean {
     if (e instanceof OnchainCosignRejectedError) {

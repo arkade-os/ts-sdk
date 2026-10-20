@@ -212,6 +212,7 @@ import {
 } from "../contracts/types";
 import {
     OnchainCosignPreflightError,
+    isCosignRejectedAfterSigning,
     assertCosignable,
     DEFAULT_COSIGN_MARGIN_BLOCKS,
     MAX_COSIGN_INPUTS,
@@ -1783,10 +1784,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         : [],
                 );
                 const utxos = fetched[i]
-                    .filter((c) => {
-                        const key = vtxoOutpoint(c);
-                        return !spent.has(key) && !this._pendingSpendOutpoints.has(key);
-                    })
+                    .filter((c) => !spent.has(vtxoOutpoint(c)))
                     .map((utxo) => extendCoinWithTapscript(tapscript, utxo));
                 return {
                     tapscript,
@@ -1849,9 +1847,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const rows = await getVtxosForContract(this.walletRepository, contract, {
                     unspentOnly: true,
                 });
-                return onchainRows(contract, rows)
-                    .filter((v) => !this._pendingSpendOutpoints.has(vtxoOutpoint(v)))
-                    .map((v) => extendCoinWithTapscript(tapscript, v));
+                return onchainRows(contract, rows).map((v) =>
+                    extendCoinWithTapscript(tapscript, v),
+                );
             }),
         );
         return perScript.flat();
@@ -4682,7 +4680,7 @@ export class Wallet
                 console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
             }
         };
-        // Boarding reads run outside the tx lock: hide the inputs until the store marks them.
+        // In flight, as a settle's boarding inputs are: SDK picks skip them until the store marks them.
         const held = spent.map(vtxoOutpoint);
         for (const key of held) this._pendingSpendOutpoints.add(key);
         try {
@@ -4695,7 +4693,9 @@ export class Wallet
                 });
             } catch (e) {
                 // Segwit txids ignore witnesses, so the unsigned id is the one arkd may have broadcast.
-                if (e instanceof OnchainCosignAmbiguousError) await markPending(signed.id);
+                if (e instanceof OnchainCosignAmbiguousError || isCosignRejectedAfterSigning(e)) {
+                    await markPending(signed.id);
+                }
                 throw e;
             }
             await markPending(txid);

@@ -13,7 +13,11 @@ import {
     estimateOnchainCosignFee,
     needsOnchainSweep,
 } from "../../src/contracts/onchainSpend";
-import { OnchainCosignAmbiguousError, RestArkProvider } from "../../src/providers/ark";
+import {
+    OnchainCosignAmbiguousError,
+    OnchainCosignRejectedError,
+    RestArkProvider,
+} from "../../src/providers/ark";
 import { Ramps } from "../../src/wallet/ramps";
 import { convertVtxo } from "../../src/wallet/vtxo";
 import { timelockToSequence } from "../../src/utils/timelock";
@@ -134,7 +138,7 @@ describe("wallet.sendOnchain", () => {
         expect(row.spentBy).toBe(COSIGNED);
     });
 
-    it("hides the coin from boarding reads while arkd is cosigning it", async () => {
+    it("keeps the coin out of SDK picks while arkd is cosigning it", async () => {
         const { wallet, arkProvider, boardingCoin } = await makeWallet();
         let release!: () => void;
         const gate = new Promise<void>((resolve) => {
@@ -149,11 +153,13 @@ describe("wallet.sendOnchain", () => {
         });
         await vi.waitFor(() => expect(arkProvider.cosignOnchainTx).toHaveBeenCalled());
 
-        const during = await wallet.getBoardingUtxos();
+        const picks = await wallet.getSelectableBoardingUtxos();
+        const listed = await wallet.getBoardingUtxos();
         release();
         await send;
 
-        expect(during.some((c) => c.txid === boardingCoin.txid)).toBe(false);
+        expect(picks.some((c) => c.txid === boardingCoin.txid)).toBe(false);
+        expect(listed.some((c) => c.txid === boardingCoin.txid)).toBe(true);
         expect((await wallet.getBoardingUtxos()).some((c) => c.txid === boardingCoin.txid)).toBe(
             false,
         );
@@ -293,6 +299,16 @@ describe("cosign outcomes through Ramps.offboardExact", () => {
         arkdReplies(arkProvider, 500, "INTERNAL_ERROR");
         const { settle, result } = offboard(wallet);
         expect(await result).toBeInstanceOf(OnchainCosignAmbiguousError);
+        expect(settle).not.toHaveBeenCalled();
+        const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
+        expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
+    });
+
+    it("an arkd error it raises after signing rethrows and leaves the coins pending", async () => {
+        const { wallet, arkProvider, walletRepository, boardingScriptHex } = await makeWallet();
+        arkdReplies(arkProvider, 400, "SOMETHING_NEW");
+        const { settle, result } = offboard(wallet);
+        expect(await result).toBeInstanceOf(OnchainCosignRejectedError);
         expect(settle).not.toHaveBeenCalled();
         const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
         expect(row.spentBy).toBe(sentPsbt(arkProvider).id);
