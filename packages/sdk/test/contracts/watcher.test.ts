@@ -38,6 +38,24 @@ describe("ContractWatcher", () => {
         },
     );
 
+    it("requires a positive, timer-safe subscription request timeout", () => {
+        const config = {
+            indexerProvider: createMockIndexerProvider(),
+            walletRepository: new InMemoryWalletRepository(),
+        };
+        expect(
+            () => new ContractWatcher({ ...config, subscriptionRequestTimeoutMs: 1 }),
+        ).not.toThrow();
+        expect(
+            () => new ContractWatcher({ ...config, subscriptionRequestTimeoutMs: 2 ** 31 - 1 }),
+        ).not.toThrow();
+        for (const value of [0, -1, 0.5, NaN, Infinity, 2 ** 31]) {
+            expect(
+                () => new ContractWatcher({ ...config, subscriptionRequestTimeoutMs: value }),
+            ).toThrow("subscriptionRequestTimeoutMs");
+        }
+    });
+
     let watcher: ContractWatcher;
     let mockIndexer: IndexerProvider;
 

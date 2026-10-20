@@ -52,7 +52,10 @@ describe("subscription update recovery", () => {
         watchers.push(watcher);
         await watcher.addContract(contract("aa"));
         await watcher.addContract(contract("bb", "retained"));
-        await watcher.startWatching((event) => events.push(event));
+        await watcher.startWatching((event) => {
+            events.push(event);
+            if (event.type === "connection_reset") return Promise.resolve(true);
+        });
         subscribe.mockClear();
         return { watcher, subscribe, unsubscribe, listen, events, disconnect: () => disconnect() };
     }
@@ -69,6 +72,22 @@ describe("subscription update recovery", () => {
         expect(events.filter((event) => event.type === "connection_reset")).toHaveLength(1);
         await vi.advanceTimersByTimeAsync(100);
         expect(subscribe).toHaveBeenCalledTimes(2);
+    });
+
+    it("clears stale contract state after subscription recovery succeeds", async () => {
+        const { watcher, subscribe } = await setup();
+        subscribe.mockRejectedValueOnce(new Error("POST failed"));
+        const states = (watcher as unknown as {
+            contracts: Map<string, { stale: boolean }>;
+        }).contracts;
+        const state = states.get("aa");
+        expect(state).toBeDefined();
+        state!.stale = true;
+
+        await watcher.updateContract(contract("bb"));
+        await vi.advanceTimersByTimeAsync(10);
+
+        expect(state!.stale).toBe(false);
     });
 
     it("releases queued updates after a timeout and ignores a late response for the active ID", async () => {

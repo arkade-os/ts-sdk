@@ -64,6 +64,15 @@ style and have not been backfilled.
   boarding coins; it now throws `WalletNotInitializedError`, like
   `GET_VTXOS`. (#943)
 
+### Bug Fixes
+
+- **Contract subscription recovery clears stale poll state.** Recovery now
+  uses the same connection-reset path as stream reconnection, so a successful
+  manager reconciliation re-enables failsafe polling for contracts whose
+  earlier event handling failed. Subscription request timeouts are validated
+  as portable timer delays and must be greater than zero; accepting zero
+  caused immediate timeouts and endless retries.
+
 ### Breaking Changes
 
 - Removed the deprecated `receivePkScriptFor` helper from `@arkade-os/swap/protocol`.

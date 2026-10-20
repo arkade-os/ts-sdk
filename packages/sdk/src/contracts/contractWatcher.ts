@@ -79,6 +79,7 @@ export interface ContractWatcherConfig {
      * Timeouts use the subscription retry policy without interrupting the event stream.
      *
      * @defaultValue `30_000` (30 seconds)
+     * @remarks Must be greater than zero; a subscription request needs a finite deadline.
      */
     subscriptionRequestTimeoutMs?: number;
 }
@@ -173,6 +174,10 @@ export class ContractWatcher {
         assertTimerMs("failsafePollIntervalMs", config.failsafePollIntervalMs);
         assertTimerMs("reconnectDelayMs", config.reconnectDelayMs);
         assertTimerMs("maxReconnectDelayMs", config.maxReconnectDelayMs);
+        assertTimerMs("subscriptionRequestTimeoutMs", config.subscriptionRequestTimeoutMs);
+        if (config.subscriptionRequestTimeoutMs === 0) {
+            throw new Error("subscriptionRequestTimeoutMs must be greater than 0");
+        }
         this.config = {
             ...DEFAULT_CONTRACT_WATCHER_CONFIG,
             ...config,
@@ -797,7 +802,7 @@ export class ContractWatcher {
             if (recovered) {
                 // Repository-only polling cannot discover deposits missed during
                 // the gap. Ask the manager to reconcile through its recovery path.
-                this.eventCallback?.({ type: "connection_reset", timestamp: Date.now() });
+                this.emitConnectionReset();
             }
         });
         this.subscriptionUpdate = update.catch(() => {});
