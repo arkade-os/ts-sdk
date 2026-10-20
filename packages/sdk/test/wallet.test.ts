@@ -2399,7 +2399,7 @@ describe("Wallet._settleImpl", () => {
                     getChainTip: vi.fn().mockResolvedValue({ height: 1000 }),
                 },
                 boardingTapscript: { exitScript: exitScriptHex },
-                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+                getSelectableBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
                 // The gate lives in getSpendableVtxos: the raw read carries a coin
                 // auto-selection must never reach for (and, at this value, would
                 // sort to the front of the batch if it did).

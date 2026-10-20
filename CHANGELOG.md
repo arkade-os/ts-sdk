@@ -272,6 +272,24 @@ style and have not been backfilled.
 
 ### Features
 
+- **`concurrentSpending` lets spends overlap on disjoint VTXOs, and
+  `reserveVtxos` keeps VTXOs out of SDK-chosen spends.** Opt-in
+  (`Wallet.create({ concurrentSpending: true })`): the wallet lock covers only
+  picking and reserving inputs, so a send no longer waits for another
+  operation's batch swap; amount-bearing `Ramps` exits spend only the VTXOs
+  they need; naming a VTXO another operation is spending throws
+  `VtxoReservedError`. `wallet.reserveVtxos(outpoints)` holds VTXOs out of
+  `send`, `settle()`, exits, renewal, router rails and swap funding until
+  released; renewal skips a held VTXO even once it is due, and logs a warning
+  naming it, so a long-lived hold must be spent or released before the VTXO
+  expires. `WalletBalance` gains `reserved`, so
+  `settled + preconfirmed === available + gated + intentLocked + reserved`: a
+  held VTXO's value moves from `available` to `reserved`, and without holds no
+  existing field changes value. Code that builds `WalletBalance` objects
+  (custom `IWallet` implementations, test doubles) must add `reserved`. Without
+  the setting and without holds, behavior is unchanged except for asset
+  operations, listed under Bug Fixes.
+
 - **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
   optional third argument reports `preparing` after lock acquisition and
   `registration_attempt` before intent registration, allowing backend callers
@@ -444,6 +462,14 @@ style and have not been backfilled.
   0.3.0.
 
 ### Bug Fixes
+
+- **An asset operation's inputs are no longer picked by a parallel `send`.**
+  `issue`, `reissue` and `burn` pick their coins without the wallet lock and
+  only queue for it to submit, while `getVtxos()` and every SDK pick still
+  showed those coins; a `send` that picked in that window spent the same
+  coin, and the operator refused whichever submit came second. The inputs are
+  now marked in flight from the moment the operation submits, as a `send`'s
+  are, so other picks skip them and `reserveVtxos` refuses them.
 
 - **`@arkade-os/swap`: the Nostr RFQ transport fails fast instead of waiting out its 30s reply
   timeout.** nostr-tools *resolves* a publish to a relay it could not connect to (with
