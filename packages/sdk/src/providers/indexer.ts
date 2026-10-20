@@ -272,7 +272,7 @@ export type GetUtxosOptions = PaginationOptions &
 export interface IndexerUtxo extends Outpoint {
     value: number;
     script: string;
-    /** A batch commitment, a cosigned onchain tx, or the spend of an unrolled VTXO. */
+    /** Txid of the spend: a batch commitment, a cosigned onchain tx or an unrolled VTXO's spend. */
     spentBy: string;
     /** Set once the spending tx confirms. */
     spendConfirmation?: { height: number; time: number };
@@ -1168,10 +1168,9 @@ namespace Response {
     }
 
     function isWireInt(data: unknown): boolean {
-        return (
-            (typeof data === "string" || typeof data === "number") &&
-            Number.isSafeInteger(Number(data))
-        );
+        return typeof data === "string"
+            ? /^\d+$/.test(data) && Number.isSafeInteger(Number(data))
+            : typeof data === "number" && Number.isSafeInteger(data) && data >= 0;
     }
 
     function isOptionalWireInt(data: unknown): boolean {

@@ -2173,7 +2173,8 @@ export class ContractManager implements IContractManager {
                 delete pending[key];
                 continue;
             }
-            // A failed lookup cannot tell a lagging explorer from a reorg: keep the stored spend.
+            // A failed lookup cannot tell a lagging explorer from a reorg: keep the stored spend
+            // until a lookup succeeds. A pending entry stays too and ages out as usual.
             if (prior?.isSpent && recorded === undefined) continue;
             const entry = pending[key];
             if (entry && (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS) {
@@ -2248,7 +2249,12 @@ export class ContractManager implements IContractManager {
                     .slice(i, i + OUTPOINT_QUERY_CHUNK_SIZE)
                     .map(({ txid, vout }) => ({ txid, vout }));
                 let pageIndex: number | undefined;
+                let pages = 0;
                 do {
+                    // A record per outpoint at most, so more pages means a cursor that never ends.
+                    if (++pages > outpoints.length + 1) {
+                        throw new Error("GetUtxos paging does not end");
+                    }
                     // arkd refuses a page index without a size.
                     const { utxos, page } = await indexerProvider.getUtxos({
                         outpoints,

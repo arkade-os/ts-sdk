@@ -450,6 +450,7 @@ describe("RestIndexerProvider", () => {
         it.each([
             { utxos: [{ outpoint: {} }] },
             { utxos: [wireUtxo({ confirmedAtHeight: "x" })] },
+            { utxos: [wireUtxo({ confirmedAtHeight: "" })] },
             { utxos: [{ ...wireUtxo({}), amount: "xyz" }] },
         ])("rejects a malformed answer %#", async (body) => {
             mockFetch.mockResolvedValueOnce(jsonResponse(body));

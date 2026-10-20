@@ -595,6 +595,29 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    it("gives up on a page cursor that never ends and falls back to outspends", async () => {
+        let calls = 0;
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
+        const { manager, walletRepository, indexerProvider } = await setup(
+            getCoins,
+            undefined,
+            async () => {
+                if (++calls > 100) throw new Error("runaway paging");
+                return { utxos: [], page: { current: 1, next: 2, total: 3 } };
+            },
+        );
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await manager.syncOnchain();
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: "cc".repeat(32) });
+        expect(indexerProvider.getUtxos).toHaveBeenCalledTimes(2);
+        warn.mockRestore();
+        manager.dispose();
+    });
+
     it("asks arkd in query-string-sized pages", async () => {
         const { manager, walletRepository, indexerProvider } = await setup(
             async () => [],
