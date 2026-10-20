@@ -55,6 +55,7 @@ describe("subscription update recovery", () => {
         await watcher.startWatching((event) => {
             events.push(event);
             if (event.type === "connection_reset") return Promise.resolve(true);
+            return undefined;
         });
         subscribe.mockClear();
         return { watcher, subscribe, unsubscribe, listen, events, disconnect: () => disconnect() };
