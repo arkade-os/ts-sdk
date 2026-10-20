@@ -234,7 +234,7 @@ describe("ArkadeContract.on", () => {
         expect(spentA).toHaveBeenCalledTimes(1);
         expect(receivedA).not.toHaveBeenCalled();
         expect(receivedB).not.toHaveBeenCalled();
-        // One manager subscription for every handle.
+        // A single manager subscription fans out to every handle.
         expect(raw.onContractEvent).toHaveBeenCalledTimes(1);
         expect(raw.createContract).toHaveBeenCalledTimes(3);
     });
@@ -251,6 +251,35 @@ describe("ArkadeContract.on", () => {
         emit({ type: "connection_reset", timestamp: 1 });
         expect(reset).toHaveBeenCalledWith({ type: "connection_reset", timestamp: 1 });
         expect(received).not.toHaveBeenCalled();
+    });
+
+    it("a rejecting async handler is logged and doesn't starve its siblings", async () => {
+        const { manager, emit } = fakeManager();
+        const ark = await connectWith(manager);
+        const c = ark.contract(multisigProgram());
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        const failure = new Error("boom");
+        const sibling = vi.fn();
+        await c.on("connection_reset", async () => {
+            throw failure;
+        });
+        await c.on("connection_reset", sibling);
+
+        emit({ type: "connection_reset", timestamp: 1 });
+        expect(sibling).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() =>
+            expect(error).toHaveBeenCalledWith("Error in ArkadeContract event handler:", failure),
+        );
+    });
+
+    it("on() after dispose() throws", async () => {
+        const { manager, raw } = fakeManager();
+        const ark = await connectWith(manager);
+        const c = ark.contract(multisigProgram());
+        ark.dispose();
+        await expect(c.on("vtxo_received", vi.fn())).rejects.toThrow("disposed");
+        expect(raw.onContractEvent).not.toHaveBeenCalled();
+        expect(raw.createContract).not.toHaveBeenCalled();
     });
 
     it("a handler sees events emitted during registration", async () => {

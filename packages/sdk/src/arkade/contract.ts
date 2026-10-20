@@ -306,7 +306,7 @@ export interface ArkadeContractSubscription {
 
 type EventHandle = {
     type: ArkadeContractEventType;
-    callback: (event: ArkadeContractEvent) => void;
+    callback: (event: ArkadeContractEvent) => void | Promise<void>;
 };
 
 /**
@@ -339,6 +339,7 @@ export class Arkade {
     private readonly handles = new Map<string, Set<EventHandle>>();
     /** The single `onContractEvent` subscription fanning out to {@link handles}. */
     private unsubscribeEvents?: () => void;
+    private disposed = false;
 
     private constructor(fields: {
         arkProvider: ArkadeServerProvider;
@@ -463,6 +464,7 @@ export class Arkade {
      * built the contract manager (`storage`), dispose it. A caller-passed manager keeps running.
      */
     dispose(): void {
+        this.disposed = true;
         this.unsubscribeEvents?.();
         this.unsubscribeEvents = undefined;
         this.handles.clear();
@@ -471,6 +473,7 @@ export class Arkade {
 
     /** @internal Add a handle for `script`, subscribing to the manager on first use. */
     addEventHandle(manager: IContractManager, script: string, handle: EventHandle): () => void {
+        if (this.disposed) throw new Error("ArkadeContract.on: the Arkade client is disposed");
         let set = this.handles.get(script);
         if (!set) {
             set = new Set();
@@ -501,12 +504,14 @@ export class Arkade {
         } else {
             return; // watch-only activity: not a registered contract
         }
-        // Isolated: a throwing handler can't starve its siblings.
+        const report = (error: unknown) =>
+            console.error("Error in ArkadeContract event handler:", error);
+        // Isolated: a throwing or rejecting handler can't starve its siblings.
         for (const handle of targets) {
             try {
-                handle.callback(event);
+                Promise.resolve(handle.callback(event)).catch(report);
             } catch (error) {
-                console.error("Error in ArkadeContract event handler:", error);
+                report(error);
             }
         }
     }
@@ -666,14 +671,14 @@ export class ArkadeContract<P extends Program = Program> {
      */
     async on<T extends ArkadeContractEventType>(
         type: T,
-        callback: (event: ArkadeContractEvent<T>) => void,
+        callback: (event: ArkadeContractEvent<T>) => void | Promise<void>,
     ): Promise<ArkadeContractSubscription> {
         const manager = this.requireManager("on");
         // Before registering: the watcher may emit during `register()`, and a handle added after
         // it would miss that.
         const off = this.client.addEventHandle(manager, hex.encode(this.pkScript), {
             type,
-            callback: callback as (event: ArkadeContractEvent) => void,
+            callback: callback as EventHandle["callback"],
         });
         try {
             await this.register();

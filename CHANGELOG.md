@@ -33,6 +33,8 @@ style and have not been backfilled.
   predate it are not replayed and a reconnect re-syncs silently, so recover by
   reading `getVtxos()` — every stored VTXO including spent ones, which
   `getUtxos()` hides — after subscribing and on each `connection_reset`.
+  Handlers may be async: a throw or rejection is logged without reaching the
+  other handlers. `on()` after `arkade.dispose()` throws.
 
 - **`Wallet.create` short spellings.** `service` replaces `arkProvider`/
   `indexerProvider`/`onchainProvider` (also on `ReadonlyWallet.create`), `mode`
