@@ -128,6 +128,7 @@ jobs:
             group: settlement-delegation
             test_files: >-
               test/e2e/settlement.test.ts
+              test/e2e/early-settlement-fee.test.ts
               test/e2e/boardingRotation.test.ts
               test/e2e/non-interactive-delegate.test.ts
               test/e2e/contract-params-change.test.ts

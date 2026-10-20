@@ -127,7 +127,7 @@ import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
-import { releaseIntents } from "./intentReconciliation";
+import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
@@ -3826,6 +3826,8 @@ export class Wallet
             // doesn't hit "duplicated input", and record the cancellation.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
             await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
+                // Nothing held: the server refused the registration, or already dropped it.
+                if (isNoMatchingIntentsError(e)) return;
                 console.warn(
                     `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
                     e,
