@@ -30,6 +30,10 @@ style and have not been backfilled.
   then purged. Re-running the claim on the same note resumes an interrupted
   import.
 
+- **`@arkade-os/swap/protocol` exports the RFQ claim-window and refund-retry floors.**
+  Solvers and refund callers can import `MIN_CLAIM_WINDOW_SECONDS` and
+  `REFUND_MTP_LAG_SECONDS` instead of duplicating the timing values.
+
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.

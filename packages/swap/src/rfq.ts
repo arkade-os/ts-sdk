@@ -1875,8 +1875,11 @@ const assertQuotedAmount = (quote: RfqQuote, amountSide: "from" | "to", amount: 
 
 // ── Receive corridors: the solver funds Arkade, the trader pays outside ─────
 
-/** Default floor for the window between the last moment the hold invoice can
- * be paid and the solver's refund leaf opening. */
+/**
+ * Default floor for the window between the last moment the hold invoice can
+ * be paid and the solver's refund leaf opening.
+ * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
+ */
 export const MIN_CLAIM_WINDOW_SECONDS = 30 * 60;
 
 /**
