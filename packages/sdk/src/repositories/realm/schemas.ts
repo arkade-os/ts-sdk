@@ -108,6 +108,7 @@ export const ArkContractSchema = {
         label: "string?",
         metadataJson: "string?",
         watch: { type: "string", optional: true, indexed: true },
+        scope: "string?",
     },
 } as const;
 
@@ -218,6 +219,7 @@ export const ArkExperimentalRealmSchemas = [
  *   - v5: ArkVtxo stores the canonical VTXO facts that blob used to project —
  *     `isSwept`, `isPreconfirmed`, `commitmentTxIdsJson`, `expiresAt`,
  *     `expiresAtHeight` — backfilled from it during migration.
+ *   - v6: nullable ArkContract.scope; absent scope resolves via its handler.
  *
  * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
@@ -225,7 +227,7 @@ export const ArkExperimentalRealmSchemas = [
  * intent-schema migration steps (guarded per-schema) for consumers who opt in
  * and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 5;
+export const ARK_REALM_SCHEMA_VERSION = 6;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.
