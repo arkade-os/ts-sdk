@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import {
     MessageBus,
     type MessageHandler,
@@ -330,8 +330,8 @@ describe("Worker", () => {
 describe("Worker buildServices identity hydration", () => {
     let selfMock: SelfMock;
     let listeners: Map<string, ((event: any) => void)[]>;
-    let walletCreateSpy: ReturnType<typeof vi.spyOn>;
-    let readonlyCreateSpy: ReturnType<typeof vi.spyOn>;
+    let walletCreateSpy: MockInstance<(...args: any[]) => any>;
+    let readonlyCreateSpy: MockInstance<(...args: any[]) => any>;
     let warnSpy: ReturnType<typeof vi.spyOn>;
 
     const TEST_MNEMONIC =

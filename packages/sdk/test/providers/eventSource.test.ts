@@ -27,7 +27,7 @@ const fakeFactory = (): EventSourceFactory & { urls: string[] } => {
             removeEventListener: () => {},
             close: () => {},
         };
-    }) as EventSourceFactory & { urls: string[] };
+    }) as unknown as EventSourceFactory & { urls: string[] };
     factory.urls = urls;
     return factory;
 };

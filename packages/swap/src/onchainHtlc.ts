@@ -17,6 +17,7 @@ import { hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import * as btc from "@scure/btc-signer";
+import { assertTimerMs } from "@arkade-os/sdk";
 
 // ── Guardrail constants (rfq.ts re-exports these; defined here to keep the
 //    claim path free of an rfq.ts import cycle) ───────────────────────────────
@@ -93,6 +94,7 @@ export async function pollUntil<T>(
     message: string,
 ): Promise<T> {
     const pollMs = options.pollMs ?? 5_000;
+    assertTimerMs("pollMs", pollMs);
     for (;;) {
         const value = await probe();
         if (value !== undefined) return value;
@@ -372,8 +374,12 @@ export interface ChainUtxo extends HtlcUtxo {
 export interface ChainSource {
     /** Confirmed+mempool outputs paying a script; used to detect the fill. */
     getScriptUtxos(pkScript: Uint8Array): Promise<ChainUtxo[]>;
-    /** The spend of an outpoint, if any — where P is extracted from. A
-     * provider omitting the spender txid still lists it in `pkScript`'s history. */
+    /**
+     * The spend of an outpoint, if any — where P is extracted from. A provider
+     * omitting the spender txid still lists it in `pkScript`'s history.
+     *
+     * **`txHex` MUST carry the witness**: a legacy serialization parses
+     * cleanly without one, so a stripped claim classifies as `swept`. */
     getSpendingTx(
         txid: string,
         vout: number,
@@ -457,15 +463,18 @@ export async function claimOnchainFill(
 }
 
 /** Where an onchain HTLC stands, for crash recovery. Persisting the record BEFORE funding is what
- * makes this classification (and the claim) possible after a restart. */
+ * makes this classification (and the claim) possible after a restart. Each phase names which leaf
+ * moved, never whose turn it is: the key roles swap between the legs (module header). */
 export type OnchainHtlcPhase =
     | { phase: "unfunded" }
     | { phase: "awaiting_confirmations"; utxo: ChainUtxo }
     | { phase: "claimable"; utxo: ChainUtxo }
     /**
-     * The refund leaf has matured, so the CLAIM WINDOW IS CLOSED and `claimOnchainFill` throws.
-     * Do not claim: let the counterparty's L1 refund settle and take the Arkade-side covenant
-     * refund. On a swap you expected to claim, this means the claim was missed.
+     * The refund leaf has matured. On `arkade->onchain` it is the SOLVER's leaf: the CLAIM WINDOW
+     * IS CLOSED and `claimOnchainFill` throws, so do not claim; take the Arkade-side covenant
+     * refund instead (on a swap you expected to claim, the claim was missed). On
+     * `onchain->arkade` it is the TRADER's own leaf: the act-now signal to refund, and it stays
+     * spendable.
      */
     | { phase: "refundable"; utxo: ChainUtxo }
     | { phase: "claimed"; txid: string; preimage: Uint8Array }
@@ -477,7 +486,7 @@ export type OnchainHtlcPhase =
  * already spent": without it a spent HTLC looks unfunded.
  *
  * `claimed` carries the preimage read from the spend's witness — the receipt;
- * `swept` is a spend that reveals no preimage (the counterparty's refund).
+ * `swept` is a spend that reveals no matching preimage.
  */
 export async function classifyOnchainHtlc(
     chain: ChainSource,

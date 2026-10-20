@@ -21,7 +21,6 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
     it("swaps offchain + boarding tapscripts and addresses to the new signer", async () => {
         const { wallet, contractRepository } = await makeStaticWalletForTest();
         try {
-            const oldServerHex = hex.encode(wallet.arkServerPublicKey);
             const oldAddress = await wallet.getAddress();
             const oldBoardingAddress = await wallet.getBoardingAddress();
 
@@ -136,7 +135,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
                 CSVMultisigTapscript.encode({
                     // BIP-68 seconds granularity is 512s; 512*200 = 102400 (~28.4h,
                     // above the 24h floor and distinct from mockArkInfo's 604672).
-                    timelock: { type: "seconds", value: 512 * 200 },
+                    timelock: { type: "seconds", value: 512n * 200n },
                     pubkeys: [wallet.forfeitPubkey],
                 }).script,
             );
@@ -191,7 +190,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             // agreed to.
             const foreignCheckpoint = hex.encode(
                 CSVMultisigTapscript.encode({
-                    timelock: { type: "seconds", value: 512 * 200 },
+                    timelock: { type: "seconds", value: 512n * 200n },
                     pubkeys: [hex.decode(NEW_SERVER)],
                 }).script,
             );
@@ -218,7 +217,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             // The [P720-2] attack shape: a 1-block sweep path for the new epoch.
             const sweepableCheckpoint = hex.encode(
                 CSVMultisigTapscript.encode({
-                    timelock: { type: "blocks", value: 1 },
+                    timelock: { type: "blocks", value: 1n },
                     pubkeys: [wallet.forfeitPubkey],
                 }).script,
             );

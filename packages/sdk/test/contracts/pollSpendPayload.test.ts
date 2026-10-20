@@ -69,7 +69,6 @@ describe("failsafe poll: what a vtxo_spent event carries", () => {
             {
                 ...unspent,
                 isSpent: true,
-                virtualStatus: { state: "spent" },
                 spentBy: CHECKPOINT,
                 arkTxId: ARK_TX,
             },
@@ -137,7 +136,6 @@ describe("failsafe poll: what a vtxo_spent event carries", () => {
                 ...(createMockVtxo({ script: TEST_DEFAULT_SCRIPT }) as ExtendedVirtualCoin),
                 txid: "ee".repeat(32),
                 isSpent: true,
-                virtualStatus: { state: "spent" },
                 spentBy: CHECKPOINT,
             },
         ]);

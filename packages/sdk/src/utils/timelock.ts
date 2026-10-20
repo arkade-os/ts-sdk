@@ -25,3 +25,14 @@ export function sequenceToTimelock(sequence: number): RelativeTimelock {
     }
     throw new Error(`Invalid BIP68 sequence: ${sequence}`);
 }
+
+/**
+ * Decode a BIP68 sequence, rejecting one that is not the canonical encoding of
+ * the timelock it decodes to: the disable flag, or bits outside the value and
+ * type fields, which would re-encode to different script bytes.
+ */
+export function sequenceToCanonicalTimelock(sequence: bigint): RelativeTimelock | undefined {
+    if (sequence < 0n || sequence >= 0x80000000n) return undefined;
+    const timelock = sequenceToTimelock(Number(sequence));
+    return BigInt(timelockToSequence(timelock)) === sequence ? timelock : undefined;
+}

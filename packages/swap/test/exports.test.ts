@@ -27,7 +27,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
     ADVANCED_ENTRY,
-    CLIENT_ENTRY,
     PROTOCOL_ENTRY,
     ROOT_ENTRY,
     SWAP_ROOT,
@@ -46,7 +45,6 @@ const moduleOf = (entry: string) =>
     new Map(inventory(entry).map((e) => [e.name, e.module.replaceAll("\\", "/")] as const));
 
 const root = namesOf(ROOT_ENTRY);
-const client = namesOf(CLIENT_ENTRY);
 const protocol = namesOf(PROTOCOL_ENTRY);
 const advanced = namesOf(ADVANCED_ENTRY);
 
@@ -527,6 +525,7 @@ describe("the @deprecated pointers", () => {
         "chainSourceFrom",
         "discoverMarkets",
         "DiscoverMarketsOptions",
+        "watchMarkets",
         "extractPreimage",
         "findMarket",
         "getAssetSwaps",
@@ -557,6 +556,10 @@ describe("the @deprecated pointers", () => {
         "onchainHtlcScript",
         "OnchainNetwork",
         "OnchainSendSwap",
+        "OnchainReceiveSwap",
+        "OnchainReceiveAction",
+        "OnchainReceiveNeedsChainSource",
+        "ReceiveLockupSwap",
         "paymentHashOf",
         "PreimageBlockedReason",
         "preimageForSwapRecord",
@@ -630,9 +633,11 @@ describe("the @deprecated pointers", () => {
         "lightningSendContract",
         "lockupContractParams",
         "nextOnchainAction",
+        "nextOnchainReceiveAction",
         "normalizeRfqSwapRecord",
         "offerContract",
         "onchainSendProfile",
+        "onchainReceiveProfile",
         "pushClaim",
         "pushRefundWithoutReceiver",
         "readLockupFate",
@@ -661,6 +666,7 @@ describe("the @deprecated pointers", () => {
         "LightningSendProfile",
         "onchainReceiveRequest",
         "OnchainSendProfile",
+        "OnchainReceiveProfile",
         "onchainSendRequest",
         "relayTransport",
         "rfqSecretsProfile",

@@ -117,7 +117,6 @@ function exitedVtxo(overrides?: Partial<ExtendedVirtualCoin>): ExtendedVirtualCo
         isSpent: false,
         isSwept: false,
         isPreconfirmed: false,
-        virtualStatus: { state: "settled" },
         ...overrides,
     };
 }

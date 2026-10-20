@@ -44,7 +44,7 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
-import { reconcileIntents } from "../wallet/intentReconciliation";
+import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -60,6 +60,7 @@ import {
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 import { DEFAULT_PAGE_SIZE } from "./constants";
+import { assertNonNegativeMs } from "../utils/time";
 
 /**
  * Whether two *different* contract types may share one repository row when their derived
@@ -353,7 +354,8 @@ export interface IContractManager extends Disposable {
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Update only the contract's watch state.
+     * Update only the contract's watch state. An unchanged state is a no-op (no write, no
+     * resubscribe); a missing `watch` field counts as `watched`.
      *
      * `retained` drops the script from the subscription and sweep while keeping the row (history,
      * annotation, restore). `awaiting-funds` watches only until funded, then the manager demotes
@@ -498,6 +500,9 @@ export interface ContractManagerConfig {
      */
     intentRepository?: IntentRepository;
 
+    /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
+    intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
+
     /**
      * Exit-data capture hook, fired best-effort after VTXOs are persisted so a
      * virtualTxRepository can store each one's unilateral-exit branch.
@@ -532,6 +537,12 @@ export interface ContractManagerConfig {
      * staleness a send's coin selection already has by this much.
      */
     vtxoSyncMaxAgeMs?: number;
+
+    /**
+     * How far behind the sync cursor a delta sync re-reads, in ms (default 24h). The indexer filters
+     * on arkd's clock, so this must cover how far this host's clock can run ahead of it.
+     */
+    vtxoSyncOverlapMs?: number;
 }
 
 /**
@@ -647,7 +658,10 @@ export class ContractManager implements IContractManager {
     private disposed = false;
 
     private constructor(config: ContractManagerConfig) {
-        this.config = config;
+        assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
+        assertNonNegativeMs("vtxoSyncOverlapMs", config.vtxoSyncOverlapMs);
+        // A copy, so a caller mutating its object later cannot skip the check.
+        this.config = { ...config };
 
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,
@@ -682,7 +696,14 @@ export class ContractManager implements IContractManager {
 
     /** @see ContractManagerConfig.vtxoSyncMaxAgeMs — for factory-built managers. */
     setVtxoSyncMaxAge(maxAgeMs: number): void {
+        assertNonNegativeMs("vtxoSyncMaxAgeMs", maxAgeMs);
         this.config.vtxoSyncMaxAgeMs = maxAgeMs;
+    }
+
+    /** @see ContractManagerConfig.vtxoSyncOverlapMs — for factory-built managers. */
+    setVtxoSyncOverlap(overlapMs: number): void {
+        assertNonNegativeMs("vtxoSyncOverlapMs", overlapMs);
+        this.config.vtxoSyncOverlapMs = overlapMs;
     }
 
     private markSyncOnline(): void {
@@ -805,6 +826,7 @@ export class ContractManager implements IContractManager {
         if (!this.config.intentRepository) return;
         try {
             await reconcileIntents({
+                ...this.config.intentReconciliation,
                 intentRepository: this.config.intentRepository,
                 indexerProvider: this.config.indexerProvider,
             });
@@ -1340,12 +1362,7 @@ export class ContractManager implements IContractManager {
         pageSize?: number,
         options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
-        if (
-            options?.maxSyncAgeMs !== undefined &&
-            (!Number.isSafeInteger(options.maxSyncAgeMs) || options.maxSyncAgeMs < 0)
-        ) {
-            throw new Error("maxSyncAgeMs must be a non-negative safe integer");
-        }
+        assertNonNegativeMs("maxSyncAgeMs", options?.maxSyncAgeMs);
         const contracts = await this.getContracts(filter);
         // Best-effort: a retryable failure serves repository state (no partial write or cursor move).
         if (
@@ -1533,7 +1550,8 @@ export class ContractManager implements IContractManager {
 
     private async updateExistingContract(
         script: string,
-        update: (existing: Contract) => Contract,
+        /** `undefined` means unchanged: no write, no resubscribe. */
+        update: (existing: Contract) => Contract | undefined,
     ): Promise<Contract> {
         const [existing] = await collectContracts(this.config.contractRepository, { script });
         if (!existing) {
@@ -1541,6 +1559,7 @@ export class ContractManager implements IContractManager {
         }
 
         const updated = update(existing);
+        if (!updated) return existing;
 
         await this.config.contractRepository.saveContract(updated);
         await this.watcher.updateContract(updated);
@@ -1558,7 +1577,9 @@ export class ContractManager implements IContractManager {
 
     /** @see IContractManager.setContractWatchState */
     async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
-        await this.updateContract(script, { watch });
+        await this.updateExistingContract(script, (existing) =>
+            watchStateOf(existing) === watch ? undefined : { ...existing, watch },
+        );
     }
 
     /**
@@ -1849,7 +1870,7 @@ export class ContractManager implements IContractManager {
         includeInactive?: boolean;
     }): Promise<Map<string, ExtendedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
-        const window = options.window ?? computeSyncWindow(cursor);
+        const window = options.window ?? computeSyncWindow(cursor, this.config.vtxoSyncOverlapMs);
 
         // Only a cursor-derived sync covering at least the watched set may advance the cursor;
         // subsets and explicit windows may skip data. `<=` lets the bootstrap (cursor=0,

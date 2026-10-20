@@ -128,7 +128,7 @@ describe("verifyTapscriptSignatures", async () => {
             const internalInput = txAny.inputs[0];
 
             if (internalInput.tapScriptSig && internalInput.tapScriptSig.length > 0) {
-                const [tapScriptSigData, validSignature] = internalInput.tapScriptSig[0];
+                const [tapScriptSigData] = internalInput.tapScriptSig[0];
 
                 // Create a completely fake signature (64 random bytes)
                 const fakeSignature = new Uint8Array(64);

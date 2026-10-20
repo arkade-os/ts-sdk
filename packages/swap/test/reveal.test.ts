@@ -95,6 +95,30 @@ describe("revealFieldsFromScript", () => {
 });
 
 describe("covclaimdClient", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid timeout %s at construction",
+        (timeoutMs) => {
+            expect(() => covclaimdClient("https://example.com", { timeoutMs })).toThrow(
+                "timeoutMs",
+            );
+        },
+    );
+
+    it("accepts zero without treating it as an unlimited timeout", async () => {
+        let signal: AbortSignal | null | undefined;
+        const client = covclaimdClient("https://example.com", {
+            timeoutMs: 0,
+            fetchImpl: async (_url, init) => {
+                signal = init?.signal;
+                return new Response(infoBody);
+            },
+        });
+        await client.info();
+        expect(signal).toBeInstanceOf(AbortSignal);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(signal?.aborted).toBe(true);
+    });
+
     it("GETs the pubkey endpoint and decodes both keys", async () => {
         const { impl, calls } = stubFetch([{ body: infoBody }]);
         const info = await covclaimdClient("https://cov.example", { fetchImpl: impl }).info();
