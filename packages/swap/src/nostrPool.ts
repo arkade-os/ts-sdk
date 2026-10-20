@@ -27,7 +27,11 @@ export const IDLE_CLOSE_MS = 30_000;
 /** The largest portable timer delay: `0` means nostr-tools' 20s default, `Infinity` fires at once. */
 const NEVER_IDLE_MS = 2 ** 31 - 1;
 
-/** nostr-tools' rejection when a relay never answers an EVENT with OK. */
+/**
+ * nostr-tools' rejection when a relay never answers an EVENT with OK (`AbstractRelay.publish`,
+ * after `publishTimeout`). Matched by text, so a bump past the pinned release must keep the
+ * eviction test green: it runs the real relay code, not a mock.
+ */
 const PUBLISH_TIMED_OUT = "publish timed out";
 
 const POOL_DESTROYED = "nostr pool destroyed";
@@ -50,6 +54,7 @@ const urlKey = (url: string): string => {
  * methods only: `subscribeMap`, which every subscribe and query goes through,
  * and `publish`. A relay used behind them (`ensureRelay(url).subscribe()`) is
  * not counted, and its subscriptions end when the counted ones go idle.
+ * Upstream half: https://github.com/nbd-wtf/nostr-tools/pull/567
  */
 class SharedPool extends SimplePool {
     readonly #users = new Map<string, number>();

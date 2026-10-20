@@ -313,10 +313,10 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
                 }
                 // A card seen before fills a missed delivery; the discovery client's age check bounds it.
                 for (const author of authors) {
-                    const key = `${network}:${author}`;
+                    const seenKey = `${network}:${author}`;
                     const event = latest.get(author);
-                    if (event && isNewer(event, seen.get(key))) seen.set(key, event);
-                    const best = seen.get(key);
+                    if (event && isNewer(event, seen.get(seenKey))) seen.set(seenKey, event);
+                    const best = seen.get(seenKey);
                     if (best) latest.set(author, best);
                 }
                 const cards: TransportCard[] = [];
