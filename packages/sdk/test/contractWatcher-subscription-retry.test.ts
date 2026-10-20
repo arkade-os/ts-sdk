@@ -77,9 +77,11 @@ describe("subscription update recovery", () => {
     it("clears stale contract state after subscription recovery succeeds", async () => {
         const { watcher, subscribe } = await setup();
         subscribe.mockRejectedValueOnce(new Error("POST failed"));
-        const states = (watcher as unknown as {
-            contracts: Map<string, { stale: boolean }>;
-        }).contracts;
+        const states = (
+            watcher as unknown as {
+                contracts: Map<string, { stale: boolean }>;
+            }
+        ).contracts;
         const state = states.get("aa");
         expect(state).toBeDefined();
         state!.stale = true;
