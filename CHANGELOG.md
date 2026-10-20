@@ -433,6 +433,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`settle` no longer warns of a lingering intent the server refused.** A
+  settle that fails before commit deletes its intent so the next one doesn't
+  hit "duplicated input". When arkd had refused the registration (e.g.
+  `INTENT_INSUFFICIENT_FEE`) there was nothing to delete, and its "no
+  matching intents" answer was logged as a possibly lingering intent. That
+  answer now counts as released, as intent reconciliation already treats it.
+
 - **Swap refunds require a recognized refund spend leaf.** A claim checkpoint can be
   visible before its preimage arrives, while retaining the same transaction id. The
   lockup reader previously treated that missing witness as a refund and stopped
