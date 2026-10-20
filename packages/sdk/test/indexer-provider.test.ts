@@ -447,13 +447,16 @@ describe("RestIndexerProvider", () => {
             expect(mockFetch).toHaveBeenCalledTimes(1);
         });
 
-        it("rejects a malformed answer", async () => {
-            mockFetch.mockResolvedValueOnce(jsonResponse({ utxos: [{ outpoint: {} }] }));
-            const provider = new RestIndexerProvider("http://localhost:7070");
-            await expect(
-                provider.getUtxos({ outpoints: [{ txid: "aa".repeat(32), vout: 0 }] }),
-            ).rejects.toThrow("Invalid utxos data received");
-        });
+        it.each([{ utxos: [{ outpoint: {} }] }, { utxos: [wireUtxo({ confirmedAtHeight: "x" })] }])(
+            "rejects a malformed answer %#",
+            async (body) => {
+                mockFetch.mockResolvedValueOnce(jsonResponse(body));
+                const provider = new RestIndexerProvider("http://localhost:7070");
+                await expect(
+                    provider.getUtxos({ outpoints: [{ txid: "aa".repeat(32), vout: 0 }] }),
+                ).rejects.toThrow("Invalid utxos data received");
+            },
+        );
     });
 
     describe("getSubscription", () => {

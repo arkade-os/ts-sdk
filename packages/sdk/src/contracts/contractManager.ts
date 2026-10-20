@@ -2186,6 +2186,7 @@ export class ContractManager implements IContractManager {
             if (!row.isUnrolled || live.has(key)) continue;
             const record = recorded.get(key);
             if (row.isSpent) {
+                // Already spent and announced: this only names the spender.
                 if (!row.spentBy && record) named.push({ ...row, spentBy: record.spentBy });
                 continue;
             }
