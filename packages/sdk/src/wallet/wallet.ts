@@ -76,6 +76,7 @@ import {
     ReadonlyWalletConfig,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -83,6 +84,8 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
+import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
+import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
@@ -650,12 +653,14 @@ export class ArkadeCashCreateError extends Error {
 
 /**
  * Freshness of provider-backed sync (server-info source + indexer-sync health). Balances/VTXOs
- * are always served from the repository regardless.
+ * are always served from the repository regardless. `syncing` says a provider sync is in flight
+ * right now; optional so adding it breaks no implementer, {@link ReadonlyWallet} always sets it.
  */
 export type ProviderConnectionState =
-    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | { mode: "online"; syncing?: boolean; source: "live"; lastOnlineAt: number }
     | {
           mode: "degraded";
+          syncing?: boolean;
           source: "cache" | "repository";
           provider: ProviderKind;
           reason: string;
@@ -663,6 +668,8 @@ export type ProviderConnectionState =
       };
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    protected lazyInitialization = false;
+    private boardingLoaded = false;
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
@@ -740,9 +747,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * construct, so it is safe for readonly callers.
      */
     getProviderConnectionState(): ProviderConnectionState {
+        const syncing = this._contractManager?.getSyncState().syncing ?? false;
         if (this._serverInfoSource === "cache") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "cache",
                 provider: "arkade",
                 reason: "constructed from cached server-info; operator was unreachable at boot",
@@ -753,6 +762,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (sync?.mode === "degraded") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "repository",
                 provider: "indexer",
                 reason: sync.reason,
@@ -761,6 +771,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         return {
             mode: "online",
+            syncing,
             source: "live",
             lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
         };
@@ -1195,6 +1206,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
+        wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -1250,6 +1262,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // The bucketer drops every spent coin and the gate reads contracts only.
             this.contractSnapshot(undefined, { unspentOnly: true }),
         ]);
+        return this.balanceFromSnapshot(boardingUtxos, snapshot);
+    }
+
+    /** Cached balance; inspect connection state and boarding.loaded before displaying zeros. */
+    async getStoredBalance(): Promise<WalletBalance> {
+        const [boardingUtxos, snapshot] = await Promise.all([
+            this.getStoredBoardingUtxos(),
+            this.contractSnapshotStored(),
+        ]);
+        const balance = await this.balanceFromSnapshot(boardingUtxos, snapshot);
+        balance.boarding.loaded = this.boardingLoaded;
+        return balance;
+    }
+
+    private async balanceFromSnapshot(
+        boardingUtxos: ExtendedCoin[],
+        snapshot: ContractWithVtxos[],
+    ): Promise<WalletBalance> {
         // Explicit, not the default filter: the default drops unrolled coins,
         // and `computeOffchainBalance` cannot report a bucket it never sees.
         const vtxos = filterSnapshotVtxos(
@@ -1281,6 +1311,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return filterSnapshotVtxos(
             // Only an unrolled coin is returned spent, so no other read needs spent rows.
             await this.contractSnapshot(undefined, { unspentOnly: !filter?.withUnrolled }),
+            filter,
+            this._pendingSpendOutpoints,
+        );
+    }
+
+    /** Cached VTXOs; may be empty before the first sync. Never use for coin selection. */
+    async getStoredVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        return filterSnapshotVtxos(
+            await this.contractSnapshotStored(),
             filter,
             this._pendingSpendOutpoints,
         );
@@ -1421,6 +1460,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             unspentOnly: options?.unspentOnly,
             requireSynced: filter?.requireSynced,
         });
+    }
+
+    protected async contractSnapshotStored(): Promise<ContractWithVtxos[]> {
+        const contractManager = await this.getContractManager();
+        return contractManager.getStoredContractsWithVtxos
+            ? contractManager.getStoredContractsWithVtxos()
+            : contractManager.getContractsWithVtxos();
     }
 
     /**
@@ -1749,10 +1795,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // One write, made only once every fetch has succeeded, so a failure writes nothing.
+        // Writes start only once every fetch has succeeded, so a failure writes nothing.
         await this.walletRepository.saveUtxos(
             new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
         );
+        // `saveUtxos` merges, so prune rows the fetch no longer returns: a coin spent elsewhere
+        // would otherwise linger for `getStoredBoardingUtxos` to report. Pruning only after the
+        // save leaves the previous snapshot intact if that save fails.
+        for (const [i, group] of groups.entries()) {
+            const fresh = new Set(group.coins.map((coin) => `${coin.txid}:${coin.vout}`));
+            const cached = await collectUtxos(this.walletRepository, addresses[i]);
+            const kept = cached.filter((coin) => fresh.has(`${coin.txid}:${coin.vout}`));
+            if (kept.length === cached.length) continue;
+            await this.walletRepository.deleteUtxos(addresses[i]);
+            if (kept.length > 0) await this.walletRepository.saveUtxos(addresses[i], kept);
+        }
         return groups;
     }
 
@@ -1767,7 +1824,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
         ]);
         const groups = await this.getBoardingUtxosForSigners(currentOnly);
+        this.boardingLoaded = true;
         return groups.flatMap((g) => g.coins);
+    }
+
+    async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const tapscripts = await this.getBoardingTapscripts(currentOnly);
+        const perAddress = await Promise.all(
+            tapscripts.map((tapscript) =>
+                collectUtxos(this.walletRepository, tapscript.onchainAddress(this.network)),
+            ),
+        );
+        return perAddress.flat();
     }
 
     /**
@@ -2071,6 +2142,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
         }
         const manager = await ContractManager.create({
+            lazyInitialization: this.lazyInitialization,
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
@@ -2200,7 +2272,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 ? await this._contractManagerInitializing.catch(() => undefined)
                 : undefined);
 
-        manager?.dispose();
+        await manager?.dispose();
         this._contractManager = undefined;
         this._contractManagerInitializing = undefined;
     }
@@ -3370,6 +3442,7 @@ export class Wallet
             checkpointExitDelayOverrides,
             setup.delegateeProvider,
         );
+        wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
         // Construction validated the response, so it is now safe to refresh the cached snapshot.
         if (setup.serverInfoSource === "live") {
@@ -3489,18 +3562,27 @@ export class Wallet
      *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
+     * @param hooks - Optional phases for preparation and intent registration.
      * @returns The finalized Arkade transaction id
      */
     async settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string> {
-        return this._withTxLock(() => this._settleImpl(params, eventCallback));
+        return this._withTxLock(() => {
+            hooks?.onPhase?.("preparing");
+            const onRegistrationAttempt = hooks?.onPhase
+                ? () => hooks.onPhase?.("registration_attempt")
+                : undefined;
+            return this._settleImpl(params, eventCallback, onRegistrationAttempt);
+        });
     }
 
     private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        onRegistrationAttempt?: () => void,
     ): Promise<string> {
         if (params?.inputs) {
             for (const input of params.inputs) {
@@ -3799,6 +3881,7 @@ export class Wallet
                 yield* stream;
             })();
 
+            onRegistrationAttempt?.();
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
             await this.persistIntentSnapshot(
@@ -5126,15 +5209,19 @@ export class Wallet
      */
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const params = asSendParams(args);
+        const validUntil = captureSendDeadline(params.validUntil);
+        const inputExpiryFloor = captureInputExpiryFloor(params.inputExpiryFloor);
+        assertSendDeadline(validUntil);
         await this.syncDelegatedDefaults();
-        return this._withTxLock(() => this._sendImpl(params));
+        return this._withTxLock(() => this._sendImpl(params, validUntil, inputExpiryFloor));
     }
 
-    private async _sendImpl({
-        recipients: args,
-        selectedVtxos,
-        maxChangeFee,
-    }: SendParams): Promise<string> {
+    private async _sendImpl(
+        { recipients: args, selectedVtxos, maxChangeFee }: SendParams,
+        validUntil?: number,
+        inputExpiryFloor?: InputExpiryFloor,
+    ): Promise<string> {
+        assertSendDeadline(validUntil);
         if (args.length === 0) {
             // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
@@ -5151,6 +5238,13 @@ export class Wallet
             throw new Error("send({ maxChangeFee }): expected a non-negative safe integer");
         }
         if (selectedVtxos) {
+            if (inputExpiryFloor) selectedVtxos = selectedVtxos.map(normalizeVtxo);
+            if (
+                inputExpiryFloor &&
+                selectedVtxos.some((coin) => !meetsInputExpiryFloor(coin, inputExpiryFloor))
+            ) {
+                throw new Error("send({ selectedVtxos }): input expiry floor not met");
+            }
             // Naming inputs skips the generic-spending gate, as on `settle({ inputs })`.
             void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
         }
@@ -5179,6 +5273,11 @@ export class Wallet
                 withRecoverable: false,
                 genericallySpendableOnly: true,
             });
+            if (inputExpiryFloor) {
+                virtualCoins = virtualCoins.filter((coin) =>
+                    meetsInputExpiryFloor(coin, inputExpiryFloor),
+                );
+            }
         }
 
         // keep track of asset changes
@@ -5488,15 +5587,20 @@ export class Wallet
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        return this._submitOffchainSpend(selectedCoins, outputs, {
-            sentAmount,
-            changeAmount: BigInt(changeAmount),
-            changeVout: changeReceiver ? changeIndex : 0,
-            offchainTapscript,
-            serverPubKey,
-            serverUnrollScript,
-            changeAssets: changeReceiver?.assets,
-        });
+        return this._submitOffchainSpend(
+            selectedCoins,
+            outputs,
+            {
+                sentAmount,
+                changeAmount: BigInt(changeAmount),
+                changeVout: changeReceiver ? changeIndex : 0,
+                offchainTapscript,
+                serverPubKey,
+                serverUnrollScript,
+                changeAssets: changeReceiver?.assets,
+            },
+            { validUntil },
+        );
     }
 
     /**
@@ -5516,13 +5620,15 @@ export class Wallet
             changeAssets?: Asset[];
             recordSentHistory?: boolean;
         },
+        options?: { validUntil?: number },
     ): Promise<string> {
         this._addPendingSpends(inputs);
         try {
-            const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
+            const { arkTxid, signedCheckpointTxs } = await this._buildAndSubmitOffchainTx(
                 inputs,
                 outputs,
                 persist.serverUnrollScript,
+                options,
             );
 
             await this.updateDbAfterOffchainTx(
@@ -5642,7 +5748,23 @@ export class Wallet
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
+        options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
+        return this._withTxLock(() =>
+            this._buildAndSubmitOffchainTx(inputs, outputs, serverUnrollScript, { validUntil }),
+        );
+    }
+
+    private async _buildAndSubmitOffchainTx(
+        inputs: ExtendedVirtualCoin[],
+        outputs: TransactionOutput[],
+        serverUnrollScript: CSVMultisigTapscript.Type,
+        options?: { validUntil?: number },
+    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
         void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
         // Before anything is signed or submitted: the tx would build fine from
         // the tapscripts stored on each coin, and only `updateDbAfterOffchainTx`
@@ -5716,7 +5838,26 @@ export class Wallet
             {
                 // Mark pending before submitting — if we crash between submit and
                 // finalize, the next init recovers via finalizePendingTxs.
-                beforeSubmit: () => this.setPendingTxFlag(true),
+                beforeSubmit: async () => {
+                    const ownsPendingFlag =
+                        validUntil !== undefined && !(await this.hasPendingTxFlag());
+                    await this.setPendingTxFlag(true);
+                    try {
+                        assertSendDeadline(validUntil);
+                    } catch (error) {
+                        if (ownsPendingFlag) {
+                            try {
+                                await this.setPendingTxFlag(false);
+                            } catch (clearError) {
+                                console.error(
+                                    "Failed to clear pending tx flag after deadline expiry:",
+                                    clearError,
+                                );
+                            }
+                        }
+                        throw error;
+                    }
+                },
                 afterFinalize: async () => {
                     try {
                         await this.setPendingTxFlag(false);

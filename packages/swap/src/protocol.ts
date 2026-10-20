@@ -42,8 +42,6 @@ export {
 } from "./arkadeRefunder";
 export { chainSourceFrom } from "./chainSource";
 export {
-    awaitLockupFunding,
-    claimReceiveLockup,
     LockupAmountMismatchError,
     pushClaim,
 } from "./claim";
@@ -80,6 +78,8 @@ export {
     encodeOffer,
     fillOffer,
     type FillFunding,
+    type FillOutpoint,
+    offerVtxoScript,
     NoSpendableDepositError,
     type Offer,
     OFFER_PACKET_TYPE,
@@ -147,8 +147,6 @@ export {
     type LockupVtxo,
     pushRefundWithoutReceiver,
     readLockupFate,
-    refundIfUnresolved,
-    type RefundOutcome,
 } from "./refund";
 export {
     type RefundBlockedReason,

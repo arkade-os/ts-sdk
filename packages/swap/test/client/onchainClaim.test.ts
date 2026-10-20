@@ -268,6 +268,7 @@ const onchainSendRecord = async () => {
 const chainWithFill = (
     htlc: { pkScript: Uint8Array },
     amount: bigint,
+    feeRate?: number,
 ): { chain: object; broadcasts: string[] } => {
     const broadcasts: string[] = [];
     const chain = {
@@ -281,6 +282,7 @@ const chainWithFill = (
             return "cc".repeat(32);
         },
         getMtp: async () => realNow(),
+        ...(feeRate === undefined ? {} : { getFeeRate: async () => feeRate }),
     };
     return { chain, broadcasts };
 };
@@ -345,6 +347,36 @@ describe("the wallet-backed default claim", () => {
         expect(drive.swap("q1")?.blockedReason).toBe(
             RFQ_CONFIGURATION_REFUSAL.noClaimOnchainCallback,
         );
+        await drive.dispose();
+    });
+
+    it("builds at the live estimate when it beats the corridor's rate, and records it", async () => {
+        const { htlc, record } = await onchainSendRecord();
+        const { chain, broadcasts } = chainWithFill(htlc, 99_152n, 5);
+        const repository = memoryRepository();
+        await repository.saveSwapRecord(record);
+        const contracts = fakeContracts([SEND_LOCKUP]);
+        const corridors = fakeCorridors({ chain, claimFeeRateSatVb: 1 });
+        const { wallet } = fakeWallet({ contracts, identity: SENDER });
+        const drive = createSwapDrive({
+            wallet,
+            repository,
+            corridors,
+            network: async () => "regtest",
+            operator: fakeOperator(),
+            indexer: fakeIndexer({ vtxos: [{ txid: "99".repeat(32), vout: 0, spentBy: "" }] }),
+            contracts,
+            now: () => BEFORE,
+            pollIntervalMs: 10 * 60 * 1000,
+        });
+        await drive.ready;
+        await drive.idle();
+
+        expect(broadcasts).toHaveLength(1);
+        const stored = await repository.getSwapRecord("q1");
+        const profile = stored?.family === "rfq" ? stored.profile : undefined;
+        expect(profile?.claimFeeRateSatVb).toBe(5);
+        expect(profile?.claimTxid).toBe("cc".repeat(32));
         await drive.dispose();
     });
 

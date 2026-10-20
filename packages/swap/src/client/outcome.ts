@@ -9,6 +9,7 @@
  *
  * Ownership is read off {@link LIGHTNING_DRIVE} and {@link ONCHAIN_DRIVE}, not restated.
  */
+import { fundingWasNotSubmitted, type SwapRecord } from "./record";
 import type { AssetSwapStatus } from "../store";
 import type { LockupFate } from "../refund";
 import type { OnchainHtlcPhase } from "../onchainHtlc";
@@ -173,11 +174,15 @@ export const offerOutcome = (status: AssetSwapStatus): Outcome => OFFER_OUTCOME[
  * broadcast, then `funding` until the drive adopts it (the manager writes nothing until
  * its first pass). An offer has no live object, so past funding its record IS the state.
  */
-export const recordOutcome = (record: {
-    family: "offer" | "rfq";
-    fundingTxid?: string;
-    status?: AssetSwapStatus;
-}): Outcome => {
+export const recordOutcome = (
+    record: {
+        family: "offer" | "rfq";
+        fundingTxid?: string;
+        status?: AssetSwapStatus;
+    } & Partial<SwapRecord>,
+): Outcome => {
+    if (record.route !== undefined && fundingWasNotSubmitted(record as SwapRecord))
+        return "cancelled";
     if (record.fundingTxid === undefined) return "accepted";
     if (record.family === "rfq") return "funding";
     return record.status === undefined ? "funding" : offerOutcome(record.status);

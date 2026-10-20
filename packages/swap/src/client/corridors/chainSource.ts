@@ -13,7 +13,7 @@
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
 import { EsploraProvider, type OnchainProvider } from "@arkade-os/sdk";
-import type { ChainSource, ChainUtxo } from "../../onchainHtlc";
+import type { ChainSource, ChainUtxo, TxStatus } from "../../onchainHtlc";
 
 /** The chain tip, as the two reads that need it want it. */
 export interface L1Tip {
@@ -109,6 +109,16 @@ export const chainSourceOver = (
 
         async getMtp(): Promise<number> {
             return (await backend.tip()).mtp;
+        },
+
+        async getTxStatus(txid: string): Promise<TxStatus> {
+            return (await backend.provider.getTxStatus(txid)).confirmed
+                ? "confirmed"
+                : "unconfirmed";
+        },
+
+        getFeeRate(): Promise<number | undefined> {
+            return backend.provider.getFeeRate();
         },
     };
 };

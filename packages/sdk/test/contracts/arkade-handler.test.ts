@@ -288,6 +288,67 @@ describe("ArkadeContractHandler", () => {
             expect(path!.sequence).toBeDefined();
         });
 
+        function sequenceExitProgram(): arkade.Program {
+            return {
+                version: 0,
+                params: ["user", "exit"],
+                functions: {
+                    exit: {
+                        tapscript: {
+                            signers: ["$user"],
+                            csv: { type: "sequence", value: "$exit" },
+                        },
+                    },
+                },
+            };
+        }
+
+        it.each([
+            { sequence: 144n, heightAge: 143, secondsAge: 86_016 },
+            { sequence: 4_194_472n, heightAge: 144, secondsAge: 86_015 },
+        ])("gates an encoded CSV exit at its exact maturity: $sequence", (test) => {
+            const contract = makeContract(sequenceExitProgram(), {
+                user: TEST_PUB_KEY,
+                exit: test.sequence,
+            });
+            const script = ArkadeContractHandler.createScript(contract.params);
+            const context: PathContext = {
+                ...baseContext,
+                collaborative: false,
+                blockHeight: 100 + test.heightAge,
+                currentTime: (1_700_000_000 + test.secondsAge) * 1_000,
+                vtxo: createMockVtxo({
+                    status: { confirmed: true, block_height: 100, block_time: 1_700_000_000 },
+                }),
+            };
+            expect(ArkadeContractHandler.selectPath(script, contract, context)).toBeNull();
+            const all = ArkadeContractHandler.getAllSpendingPaths(script, contract, context);
+            expect(all).toHaveLength(1);
+            expect(all[0].sequence).toBe(Number(test.sequence));
+            const mature = {
+                ...context,
+                blockHeight: context.blockHeight! + 1,
+                currentTime: context.currentTime + 1_000,
+            };
+            const selected = ArkadeContractHandler.selectPath(script, contract, mature);
+            expect(selected?.sequence).toBe(Number(test.sequence));
+            expect(selected?.leaf).toEqual(script.compiled[0].tapLeafScript);
+        });
+
+        it.each([86_016n, 0x80000000n, -1n])(
+            "refuses malformed encoded CSV exits before path selection: %s",
+            (exit) => {
+                const params = ArkadeContractHandler.serializeParams({
+                    program: sequenceExitProgram(),
+                    args: { user: TEST_PUB_KEY, exit },
+                    ...handlerKeys(),
+                });
+                expect(() => ArkadeContractHandler.createScript(params)).toThrow(
+                    /canonical BIP68 sequence/,
+                );
+            },
+        );
+
         it("never selects covenant (arkadeScript) paths", () => {
             const contract = makeContract(htlcProgram(), htlcArgs());
             const script = ArkadeContractHandler.createScript(contract.params);

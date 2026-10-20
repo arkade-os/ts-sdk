@@ -40,7 +40,7 @@ export type { ParsedArkContract } from "./arkcontract";
 
 // Contract watcher
 export { ContractWatcher } from "./contractWatcher";
-export type { ContractWatcherConfig } from "./contractWatcher";
+export type { ContractWatcherConfig, ContractWatcherEventCallback } from "./contractWatcher";
 
 // Contract manager
 export { ContractManager } from "./contractManager";

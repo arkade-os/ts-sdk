@@ -1,3 +1,4 @@
+import { assetPaymentOf, type RecordedAssetPayment, type AssetPaymentTerms } from "./assetPayment";
 /**
  * What survives a crash, and the public shape `accept()` hands back.
  *
@@ -92,6 +93,7 @@ export type RecordedArtifact =
 
 /** The half both families carry: what `AcceptConflict` compares and no chain read can give back. */
 export interface SwapRecordCommon {
+    readonly assetPayment?: RecordedAssetPayment;
     /** The client-minted quote id — the primary key. */
     readonly id: QuoteId;
     readonly family: SwapFamily;
@@ -118,6 +120,11 @@ export interface SwapRecordCommon {
     /** The funding transaction, once known. A later best-effort write; set-where-absent is a benign
      * resume, never an `AcceptConflict`. */
     readonly fundingTxid?: string;
+    /** SDK proof that this wallet never submitted the funding transaction. */
+    readonly fundingNotSubmitted?: {
+        readonly reason: "send_deadline";
+        readonly validUntil: number;
+    };
     /** Last retryable receive-claim error; becomes the terminal failure if the claim window closes. */
     readonly claimFailure?: string;
     /** Terminal failure reason. */
@@ -199,6 +206,7 @@ export type SwapRecord = OfferSwapRecord | CorridorSwapRecord;
  * because `SwapUpdate.detail` is only the `RawState` word.
  */
 export interface Swap {
+    readonly assetPayment?: AssetPaymentTerms;
     readonly id: AssetSwapId;
     readonly family: SwapFamily;
     /** Where this swap stands, in the one vocabulary both families share. */
@@ -329,6 +337,9 @@ export const legOf = (leg: RecordedLeg): QuoteLeg => ({
  */
 export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
     id: assetSwapIdOf(record.family, record.id),
+    ...(record.assetPayment === undefined
+        ? {}
+        : { assetPayment: assetPaymentOf(record.assetPayment, record.expiresAt) }),
     family: record.family,
     outcome,
     route: {
@@ -368,3 +379,22 @@ export const swapOf = (record: SwapRecord, outcome: Outcome): Swap => ({
 export const fundsFromWallet = (route: {
     give: { instrument: Instrument | RecordedInstrument };
 }): boolean => route.give.instrument.kind === "wallet";
+
+export const fundingWasNotSubmitted = (
+    record: Pick<
+        SwapRecordCommon,
+        "fundingNotSubmitted" | "fundingTxid" | "route" | "expiresAt"
+    > & { family: SwapFamily; status?: AssetSwapStatus; state?: RfqSwapState },
+): boolean => {
+    const proof = record.fundingNotSubmitted;
+    return (
+        proof?.reason === "send_deadline" &&
+        Number.isSafeInteger(proof.validUntil) &&
+        proof.validUntil > 0 &&
+        Number.isSafeInteger(record.expiresAt) &&
+        proof.validUntil <= record.expiresAt &&
+        record.fundingTxid === undefined &&
+        record.route?.give?.instrument?.kind === "wallet" &&
+        (record.family === "offer" ? record.status === "cancelled" : record.state === "failed")
+    );
+};
