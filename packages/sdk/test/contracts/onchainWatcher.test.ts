@@ -406,7 +406,7 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
-    it("marks a coin spent once arkd saw the spend confirm, though the explorer lags", async () => {
+    it("marks a pending coin spent once arkd saw the spend confirm, though the explorer lags", async () => {
         const record = {
             ...coin,
             script: boarding.script,
@@ -420,6 +420,7 @@ describe("ContractManager.syncOnchain", () => {
             async () => ({ utxos: arkdKnows ? [record] : [] }),
         );
         await manager.syncOnchain();
+        await manager.markOnchainSpendPending([coin], record.spentBy);
         arkdKnows = true;
 
         await manager.syncOnchain();
@@ -429,14 +430,32 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
-    it("leaves a listed coin visible while arkd's spend of it is unconfirmed", async () => {
+    it("does not ask arkd about a listed coin nobody is spending", async () => {
+        const { manager, walletRepository, indexerProvider } = await setup(
+            async () => [coin],
+            undefined,
+            async () => ({ utxos: [] }),
+        );
+        await manager.syncOnchain();
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        expect(indexerProvider.getUtxos).not.toHaveBeenCalled();
+        manager.dispose();
+    });
+
+    it("keeps the pending rule for a listed coin whose arkd spend is unconfirmed", async () => {
         const record = { ...coin, script: boarding.script, spentBy: "ee".repeat(32) };
-        const { manager, walletRepository } = await setup(
+        const { manager, walletRepository, tip } = await setup(
             async () => [coin],
             undefined,
             async () => ({ utxos: [record] }),
         );
         await manager.syncOnchain();
+        await manager.markOnchainSpendPending([coin], record.spentBy);
+        tip.height = 306;
+
         await manager.syncOnchain();
 
         const [row] = await collectScriptVtxos(walletRepository, boarding.script);

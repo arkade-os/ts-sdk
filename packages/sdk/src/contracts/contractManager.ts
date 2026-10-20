@@ -2146,10 +2146,15 @@ export class ContractManager implements IContractManager {
                 v,
             ]),
         );
-        const recorded = await this.serverSpends(
-            [...stored.values()].filter((v) => v.isUnrolled && (!v.isSpent || !v.spentBy)),
-        );
         const live = new Set(coins.map(vtxoOutpoint));
+        // Only what can change: a listed coin nobody is spending is not worth an arkd request.
+        const recorded = await this.serverSpends(
+            [...stored.values()].filter((v) => {
+                const key = vtxoOutpoint(v);
+                if (!v.isUnrolled) return false;
+                return v.isSpent ? !v.spentBy : !live.has(key) || key in pending;
+            }),
+        );
         const rows: ExtendedVirtualCoin[] = [];
         const spent: ExtendedVirtualCoin[] = [];
         for (const coin of coins) {
