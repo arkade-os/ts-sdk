@@ -207,7 +207,7 @@ export async function watchOfferSwaps<S extends OfferSwapFacts>({
             if (!persisted) continue;
             onUpdate?.(swaps.find((s) => s.id === swap.id) ?? swap);
             if (changes.status && RETIRABLE.includes(changes.status)) {
-                await retireOfferContract(manager, swaps, event.contractScript);
+                await retireOfferContract(manager, swaps, event.contractScript, { scope: wallet });
             }
         }
     };

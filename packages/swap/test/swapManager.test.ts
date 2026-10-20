@@ -29,6 +29,7 @@ import {
 
 import { lightningSendContract, lightningReceiveContract } from "../src/rfq";
 import {
+    ONCHAIN_CLAIM_BUMP_SECONDS,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
     buildHtlcClaim,
@@ -37,6 +38,7 @@ import {
     paymentHashOf,
     type ChainSource,
     type ChainUtxo,
+    type TxStatus,
 } from "../src/onchainHtlc";
 import {
     LockupNeedsRecoveryError,
@@ -212,6 +214,7 @@ interface FakeVtxo {
     arkTxId?: string;
     isSpent?: boolean;
     settledBy?: string;
+    isSwept?: boolean;
     /** Broadcast onchain by a unilateral exit. A LOCATION, not a spend: the
      * wire pairs it with `isSpent: false`, so the money is still at the lockup
      * — it is just money no offchain spend can reach. */
@@ -301,10 +304,32 @@ const fakeChain = (state: {
     spend?: { txHex: string } | null;
     mtp?: number;
     failUtxos?: boolean;
+    /** Confirmation by txid, as the OPTIONAL `getTxStatus` answers it; a txid absent
+     * from the map is one the chain does not know. No field, no method. */
+    status?: Record<string, boolean>;
+    failStatus?: boolean;
+    feeRate?: number;
 }): FakeChain => {
     const spendLookups: { txid: string; vout: number }[] = [];
     return {
         spendLookups,
+        ...(state.status === undefined
+            ? {}
+            : {
+                  async getTxStatus(txid: string): Promise<TxStatus> {
+                      if (state.failStatus) throw new Error("esplora unreachable");
+                      const confirmed = state.status?.[txid];
+                      if (confirmed === undefined) return "missing";
+                      return confirmed ? "confirmed" : "unconfirmed";
+                  },
+              }),
+        ...(state.feeRate === undefined
+            ? {}
+            : {
+                  async getFeeRate() {
+                      return state.feeRate;
+                  },
+              }),
         async getScriptUtxos() {
             if (state.failUtxos) throw new Error("esplora unreachable");
             return state.utxos ?? [];
@@ -397,7 +422,7 @@ const onchainReceiveSwap = (over: Partial<OnchainReceiveSwap> = {}): OnchainRece
 
 interface Spies {
     callbacks: RfqSwapManagerCallbacks;
-    claims: { rfqId: string; utxo: ChainUtxo }[];
+    claims: { rfqId: string; utxo: ChainUtxo; options?: { bump?: boolean } }[];
     lockupClaims: { vtxos: readonly LockupVtxo[]; partiallyClaimed: boolean }[];
     refunds: string[];
     onchainRefunds: { rfqId: string; utxo: ChainUtxo }[];
@@ -408,13 +433,13 @@ interface Spies {
 const spies = (
     over: {
         claim?: () => Promise<{ txid: string }>;
-        claimLockup?: () => Promise<{ txid: string; amount: number }>;
+        claimLockup?: () => Promise<{ txid: string; amount: number; spent?: LockupVtxo[] }>;
         refund?: () => Promise<ArkadeRefundResult>;
         refundOnchain?: () => Promise<{ txid: string }>;
         probe?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
     } = {},
 ): Spies => {
-    const claims: { rfqId: string; utxo: ChainUtxo }[] = [];
+    const claims: { rfqId: string; utxo: ChainUtxo; options?: { bump?: boolean } }[] = [];
     const onchainRefunds: { rfqId: string; utxo: ChainUtxo }[] = [];
     const lockupClaims: { vtxos: readonly LockupVtxo[]; partiallyClaimed: boolean }[] = [];
     const refunds: string[] = [];
@@ -427,8 +452,8 @@ const spies = (
         saved,
         actions: [],
         callbacks: {
-            async claimOnchain(swap, utxo) {
-                claims.push({ rfqId: swap.rfqId, utxo });
+            async claimOnchain(swap, utxo, options) {
+                claims.push({ rfqId: swap.rfqId, utxo, options });
                 return over.claim ? over.claim() : { txid: "dd".repeat(32) };
             },
             async refundOnchain(swap, utxo) {
@@ -1105,13 +1130,10 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
             finalWitness: [impostor, new Uint8Array(32).fill(9)],
         });
         const { swap } = await resolve(fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }));
-        expect(swap.state).toBe("refunded");
+        expect(swap.state).toBe("pending");
     });
 
-    it("reads a spend carrying no preimage at all as a refund", async () => {
-        // Every non-claim leaf either pays the trader's own committed address
-        // (the covenant pins it) or needs the trader's own signature, so a
-        // spend with nothing to verify means the money went back.
+    it("reads a refund leaf carrying no preimage as a refund", async () => {
         const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
         const { swap } = await resolve(fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }));
         expect(swap.state).toBe("refunded");
@@ -1124,7 +1146,24 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
         const spend = spendOfLockup({ conditionWitness: [PREIMAGE] });
         const vtxos = [{ txid: "77".repeat(32), vout: 3, spentBy: spend.txid }];
         const { swap } = await resolve(fakeIndexer({ vtxos, txs: [spend] }));
-        expect(swap.state).toBe("refunded");
+        expect(swap.state).toBe("pending");
+    });
+
+    it("keeps an incomplete claim pending and settles after its witness arrives", async () => {
+        const pending = spendOfLockup();
+        expect(pending.txid).toBe(CLAIM_SPEND.txid);
+        const state = { vtxos: spentBy(pending.txid), txs: [pending] };
+        const s = spies();
+        const swap = lightningSwap();
+        const m = manager({ indexer: fakeIndexer(state), now: SAFE_NOW, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("pending");
+
+        state.txs = [CLAIM_SPEND];
+        await m.poll();
+        expect(swap.state).toBe("settled");
+        expect(s.refunds).toHaveLength(0);
     });
 
     it("leaves an unspent lockup pending, and asks nobody", async () => {
@@ -1195,6 +1234,27 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
         const { swap, s } = await resolve(fakeIndexer({ vtxos: unspent() }), REFUND_LOCKTIME + 1);
         expect(swap.state).toBe("refunded");
         expect(s.refunds).toEqual([RFQ_ID]);
+    });
+
+    it("keeps a swap whose refund left outputs behind until a later pass takes them", async () => {
+        let left = 3;
+        const s = spies({
+            refund: async () => ({ txid: "ee".repeat(32), amount: 100_000, left }),
+        });
+        const swap = lightningSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            now: REFUND_LOCKTIME + 1,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).not.toBe("refunded");
+
+        left = 0;
+        await m.poll();
+        expect(swap.state).toBe("refunded");
+        expect(s.refunds).toEqual([RFQ_ID, RFQ_ID]);
     });
 
     it("does not let an unreachable indexer block the refund gate", async () => {
@@ -1310,7 +1370,7 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         expect(swap.refundTxid).toBe("ee".repeat(32));
     });
 
-    it("remembers the fill's outpoint, so a spent HTLC is not read back as unfunded", async () => {
+    it("remembers the fill's outpoint and value, so a spent HTLC is still claimable", async () => {
         const s = spies();
         const chain = fakeChain({ utxos: [FILL], mtp: SAFE_NOW });
         const swap = onchainSwap();
@@ -1322,7 +1382,11 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
         });
         await m.addSwap(swap);
         await m.poll();
-        expect(swap.funding).toEqual({ txid: FILL.txid, vout: FILL.vout });
+        expect(swap.funding).toEqual({
+            txid: FILL.txid,
+            vout: FILL.vout,
+            amount: Number(FILL.amount),
+        });
 
         // The fill is gone; only the remembered outpoint can tell "spent" from
         // "never funded" — classifyOnchainHtlc looks up the spend only when it
@@ -1511,6 +1575,386 @@ describe("RfqSwapManager — the onchain-send L1 half", () => {
     });
 });
 
+/** An `arkade -> onchain` send pays out on L1, and a transaction in the mempool is not
+ * a payout: the solver reads P off that claim, takes the lockup with it, and can replace
+ * the claim with its own refund once median-time-past opens its leaf — taking both sides
+ * from a trader whose wallet already said "settled". */
+describe("RfqSwapManager — an onchain-send payout that has not confirmed", () => {
+    const lockupTaken = () => fakeIndexer({ vtxos: spentBy(CLAIM_SPEND.txid), txs: [CLAIM_SPEND] });
+
+    const ourClaim = () =>
+        buildHtlcClaim({
+            htlc: htlcOf(),
+            utxo: FILL,
+            preimage: PREIMAGE,
+            payoutPkScript: PAYOUT,
+            feeRateSatVb: 1,
+            sign: async (sighash) => schnorr.sign(sighash, priv(1)),
+        });
+
+    const solversRefund = () =>
+        buildHtlcRefund({
+            htlc: htlcOf(),
+            utxo: FILL,
+            payoutPkScript: PAYOUT,
+            feeRateSatVb: 20,
+            sign: async (sighash) => schnorr.sign(sighash, priv(3)),
+        });
+
+    const claimedSwap = (over: Partial<OnchainSendSwap> = {}): OnchainSendSwap =>
+        onchainSwap({
+            state: "claimed",
+            funding: { txid: FILL.txid, vout: FILL.vout, amount: Number(FILL.amount) },
+            claimFeeRateSatVb: 1,
+            claimBroadcastAt: SAFE_NOW,
+            ...over,
+        });
+
+    it("does not settle while the trader's own claim is still in the mempool", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: claim.txid });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: false },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("claimed");
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("settles once that claim confirms", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: claim.txid });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: true },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
+        expect(await m.hasSwap(RFQ_ID)).toBe(false);
+    });
+
+    it("does not settle on a claim the record lost to a crash before its save", async () => {
+        // Fill seen, claim broadcast and spent it, process gone before the write: the record
+        // names neither, so the HTLC reads back unfunded and no txid can be asked about.
+        const swap = onchainSwap({ state: "claimable" });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({ utxos: [], mtp: SAFE_NOW, status: {} }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("settles on the solver's claim alone when the chain source cannot answer", async () => {
+        const claim = await ourClaim();
+        const swap = claimedSwap({ claimTxid: claim.txid });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({ utxos: [], spend: { txHex: claim.txHex } }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("settled");
+    });
+
+    it("does not report the payout decided while the claim is unconfirmed", async () => {
+        const claim = await ourClaim();
+        const swap = claimedSwap({ claimTxid: claim.txid });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: false },
+            }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        m["monitored"].set(swap.rfqId, swap);
+        let decided: unknown = null;
+        const waiting = m.waitForSwapCompletion(RFQ_ID).then((outcome) => (decided = outcome));
+        await m.poll();
+        await Promise.resolve();
+
+        expect(decided).toBeNull();
+        void waiting;
+    });
+
+    it("re-broadcasts a claim the chain has forgotten, while the fill is unspent again", async () => {
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW, status: {} }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].utxo.txid).toBe(FILL.txid);
+        expect(s.claims[0].options).toBeUndefined();
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+        expect(swap.state).toBe("claimed");
+    });
+
+    it("re-broadcasts a claim whose status the chain cannot read", async () => {
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW, status: {}, failStatus: true }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+    });
+
+    it("does not settle on a claim whose status the chain cannot read", async () => {
+        const claim = await ourClaim();
+        const swap = claimedSwap({ claimTxid: claim.txid });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: true },
+                failStatus: true,
+            }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("claimed");
+    });
+
+    it("re-broadcasts a forgotten claim at a higher fee when a bump is due too", async () => {
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: "ef".repeat(32),
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW, status: {} }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].options).toEqual({ bump: true });
+    });
+
+    it("re-publishes a forgotten claim past the refund leaf, racing the solver", async () => {
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            // `claim_window_closed` for a FIRST claim; this one already published P.
+            chain: fakeChain({ utxos: [FILL], mtp: HTLC_LOCKTIME + 1, status: {} }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+    });
+
+    it("replaces a claim the backend still lists, once the bump interval passes", async () => {
+        let now = SAFE_NOW;
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [FILL],
+                mtp: SAFE_NOW,
+                status: { ["ef".repeat(32)]: false },
+            }),
+            now: () => now,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(s.claims).toHaveLength(0);
+
+        now = SAFE_NOW + ONCHAIN_CLAIM_BUMP_SECONDS;
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].options).toEqual({ bump: true });
+        expect(swap.claimBroadcastAt).toBe(now);
+    });
+
+    it("settles on whichever version of the claim confirmed, not the last broadcast", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: "dd".repeat(32),
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: true },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.claimTxid).toBe(claim.txid);
+        expect(swap.state).toBe("settled");
+        expect(s.claims).toHaveLength(0);
+    });
+
+    it("leaves a claim the chain still knows alone inside the interval", async () => {
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "ef".repeat(32) });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [FILL],
+                mtp: SAFE_NOW,
+                status: { ["ef".repeat(32)]: false },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(0);
+    });
+
+    it("replaces an unconfirmed claim at a higher fee once the bump interval passes", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: claim.txid,
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: false },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].options).toEqual({ bump: true });
+        expect(s.claims[0].utxo).toMatchObject({
+            txid: FILL.txid,
+            vout: FILL.vout,
+            amount: FILL.amount,
+        });
+        expect(swap.claimTxid).toBe("dd".repeat(32));
+        expect(swap.claimBroadcastAt).toBe(SAFE_NOW);
+    });
+
+    it("leaves an unconfirmed claim alone inside the bump interval", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: claim.txid,
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS + 60,
+        });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: false },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(0);
+    });
+
+    it("never bumps a confirmed claim", async () => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: claim.txid,
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: true },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(0);
+    });
+
+    it("ends failed when the solver's refund replaced the claim and took the lockup too", async () => {
+        const refund = await solversRefund();
+        const s = spies();
+        const swap = claimedSwap({ claimTxid: "dd".repeat(32) });
+        const m = manager({
+            indexer: lockupTaken(),
+            chain: fakeChain({ utxos: [], spend: { txHex: refund.txHex }, status: {} }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("failed");
+        expect(swap.failure).toMatch(/refund/);
+    });
+});
+
 describe("RfqSwapManager — the lightning-send leg", () => {
     it("ends on the lockup's own resolution, without pushing a refund", async () => {
         const cases = [
@@ -1584,6 +2028,36 @@ describe("RfqSwapManager — the lightning-send leg", () => {
 
         expect(swap.state).toBe("failed");
         expect(swap.failure).toMatch(/FORFEIT_CLOSURE_LOCKED/);
+    });
+
+    it("retries a refund that re-spends an already-spent output, even past the window", async () => {
+        // A stale read after a restart still lists what an earlier partial refund spent.
+        let attempts = 0;
+        const failures: string[] = [];
+        const s = spies({
+            refund: async () => {
+                if (attempts++ === 0) {
+                    throw new ArkError(6, "vtxo already spent", ArkErrorName.VTXO_ALREADY_SPENT);
+                }
+                return { txid: "ee".repeat(32), amount: 100_000 };
+            },
+        });
+        const swap = lightningSwap();
+        const m = manager({
+            now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS,
+            spies: s,
+        });
+        m.onSwapFailed((_swap, error) => failures.push(error.message));
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).not.toBe("failed");
+        expect(swap.failure).toBeUndefined();
+        expect(failures).toEqual([]);
+
+        await m.poll();
+        expect(attempts).toBe(2);
+        expect(swap.state).toBe("refunded");
     });
 
     it("does not end an unreadable lockup as a refund before the lag window closes", async () => {
@@ -2087,7 +2561,56 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
 
         expect(s.lockupClaims).toHaveLength(2);
         expect(s.lockupClaims[1].partiallyClaimed).toBe(true);
-        expect(s.lockupClaims[1].vtxos).toHaveLength(2);
+        expect(s.lockupClaims[1].vtxos.map((vtxo) => vtxo.vout)).toEqual([1]);
+    });
+
+    it("re-claims the outputs a capped claim left behind", async () => {
+        const first = { ...LOCKUP_OUTPOINT, value: LOCKUP_VALUE, recoverable: false };
+        const rest = { ...LOCKUP_OUTPOINT, vout: 1, value: 330, recoverable: false };
+        let funded = [first, rest];
+        const s = spies({
+            claimLockup: async () => ({ txid: CLAIM_TXID, amount: LOCKUP_VALUE, spent: [first] }),
+        });
+        const swap = receiveSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: unspent() }),
+            contracts: fakeContracts({
+                preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                get vtxos() {
+                    return () => funded;
+                },
+            }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        funded = [rest];
+        await m.poll();
+
+        expect(s.lockupClaims).toHaveLength(2);
+        expect(s.lockupClaims[1].partiallyClaimed).toBe(true);
+        expect(s.lockupClaims[1].vtxos).toEqual([rest]);
+    });
+
+    it("settles a claim that left only a swept output behind", async () => {
+        const s = spies();
+        const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+        const m = manager({
+            indexer: fakeIndexer({
+                vtxos: [
+                    ...spentBy(CLAIM_SPEND.txid),
+                    { ...LOCKUP_OUTPOINT, vout: 1, spentBy: "", isSwept: true },
+                ],
+                txs: [CLAIM_SPEND],
+            }),
+            contracts: fundedContracts(330, { vout: 1, recoverable: true }),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("settled");
+        expect(s.lockupClaims).toHaveLength(0);
     });
 
     it("ends refunded once the solver's reclaim window has passed unobserved", async () => {

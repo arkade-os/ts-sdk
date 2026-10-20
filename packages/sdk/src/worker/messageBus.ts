@@ -169,7 +169,10 @@ type Initialize = {
         };
         delegateUrl?: string;
         settlementConfig?: SettlementConfig | false;
+        /** @see WalletConfig.concurrentSpending */
+        concurrentSpending?: boolean;
         walletMode?: "auto" | "static" | "hd";
+        lazyInitialization?: boolean;
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
@@ -544,7 +547,9 @@ export class MessageBus {
                 storage,
                 delegateProvider,
                 settlementConfig: config.settlementConfig,
+                concurrentSpending: config.concurrentSpending,
                 walletMode: config.walletMode,
+                lazyInitialization: config.lazyInitialization,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
@@ -555,6 +560,7 @@ export class MessageBus {
 
         const identity = hydrateIdentity(serialized) as ReadonlyIdentity;
         const readonlyWallet = await ReadonlyWallet.create({
+            lazyInitialization: config.lazyInitialization,
             identity,
             arkProvider,
             arkServerPublicKey: config.arkServer.publicKey,

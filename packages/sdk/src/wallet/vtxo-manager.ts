@@ -43,7 +43,7 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount } from "./utils";
+import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -174,6 +174,13 @@ export function byValueDescending<T extends { value: number }>(vtxos: T[]): T[] 
 /** {@link TimeHeight} for one expiry-driven pass; `onchainProvider` is on concrete wallets only. */
 async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
     return resolveTimeHeight((wallet as Partial<SweepCapableWallet>).onchainProvider);
+}
+
+/** VTXOs `reserveVtxos` holds, from a wallet that can hold them; `[]` for any other. */
+function heldVtxosOf(wallet: IWallet): Promise<NormalizedExtendedVirtualCoin[]> {
+    const held = (wallet as { getHeldVtxos?: () => Promise<NormalizedExtendedVirtualCoin[]> })
+        .getHeldVtxos;
+    return typeof held === "function" ? held.call(wallet) : Promise.resolve([]);
 }
 
 /**
@@ -1583,13 +1590,41 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
         const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
+        const tip = now ?? (await fetchTimeHeight(this.wallet));
 
-        return getExpiringAndRecoverableVtxos(
-            vtxos,
-            threshold,
-            getDustAmount(this.wallet),
-            now ?? (await fetchTimeHeight(this.wallet)),
-        );
+        await this.warnHeldExpiring(threshold, tip);
+        return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
+    }
+
+    /** Outpoints {@link warnHeldExpiring} last reported, so each is reported once while held. */
+    private heldExpiringWarned = new Set<string>();
+
+    /**
+     * A hold outranks renewal: renewing would change the outpoint under the holder, whose spend
+     * by name would then fail. So the VTXO is skipped, and only this warning says it is drifting
+     * toward a sweep. Best-effort: a failed read never blocks renewal.
+     */
+    private async warnHeldExpiring(threshold: number, now: TimeHeight): Promise<void> {
+        let keys: string[];
+        try {
+            const held = await heldVtxosOf(this.wallet);
+            keys = getExpiringAndRecoverableVtxos(
+                held,
+                threshold,
+                getDustAmount(this.wallet),
+                now,
+            ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`);
+        } catch {
+            return;
+        }
+        const fresh = keys.filter((key) => !this.heldExpiringWarned.has(key));
+        this.heldExpiringWarned = new Set(keys);
+        if (fresh.length > 0) {
+            console.warn(
+                `Renewal: ${fresh.length} VTXO(s) due for renewal are held by reserveVtxos and ` +
+                    `will not be renewed; spend or release them before they expire: ${fresh.join(", ")}`,
+            );
+        }
     }
 
     /**
@@ -1755,10 +1790,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
 
             const txid = await this.wallet.settle(
-                {
+                markSdkPicked({
                     inputs: vtxos,
                     outputs: amounts.map((amount) => ({ address: arkAddress, amount })),
-                },
+                }),
                 eventCallback,
             );
             return txid;
@@ -2599,6 +2634,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                                 return;
                             }
                             if (
+                                e.name === "VtxoReservedError" ||
                                 e.message.includes("VTXO_ALREADY_REGISTERED") ||
                                 e.message.includes("duplicated input")
                             ) {
@@ -2755,7 +2791,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // Otherwise every tab submits a parallel RegisterIntent for the same boarding input
             // and N-1 collide on the server's duplicated-input check.
             await runWithCrossInstanceLock(BOARDING_POLL_LOCK_NAME, async () => {
-                const boardingUtxos = await this.wallet.getBoardingUtxos();
+                // Both passes pick from it, so neither takes an input an in-flight settle holds.
+                const boardingUtxos = await getSelectableBoardingUtxos(this.wallet);
 
                 // Settle, then sweep: sequential to avoid racing for the same inputs.
                 try {
@@ -2947,22 +2984,27 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         let success = false;
-        let staleCacheSkip = false;
+        let skipWithoutBackoff = false;
         try {
             try {
-                await this.wallet.settle({
-                    inputs: [...filteredBoarding, ...filteredVtxos],
-                    outputs: [{ address: arkAddress, amount: totalAmount }],
-                });
+                await this.wallet.settle(
+                    markSdkPicked({
+                        inputs: [...filteredBoarding, ...filteredVtxos],
+                        outputs: [{ address: arkAddress, amount: totalAmount }],
+                    }),
+                );
 
                 for (const u of filteredBoarding) {
                     this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
                 }
                 success = true;
             } catch (e) {
-                if (e instanceof Error && e.message.includes("VTXO_ALREADY_SPENT")) {
+                if (e instanceof Error && e.name === "VtxoReservedError") {
+                    // A concurrent spend holds an input; nothing failed.
+                    skipWithoutBackoff = true;
+                } else if (e instanceof Error && e.message.includes("VTXO_ALREADY_SPENT")) {
                     // Stale cache, not a transient failure: refresh and skip without backoff.
-                    staleCacheSkip = true;
+                    skipWithoutBackoff = true;
                     void this.maybeRefreshAfterVtxoSpent(this.extractSpentOutpoint(e));
                 } else {
                     throw e;
@@ -2977,7 +3019,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
             if (success) {
                 this.consecutivePeriodicSettleFailures = 0;
-            } else if (!staleCacheSkip) {
+            } else if (!skipWithoutBackoff) {
                 this.consecutivePeriodicSettleFailures++;
             }
         }

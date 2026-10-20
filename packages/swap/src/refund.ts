@@ -6,7 +6,7 @@
  * `requestQuote`, `status`, `close`). "Ask first" means WATCH `status()`: a solver that gives up
  * co-signs `refund` or pushes its own `nonInteractiveRefund`, both paying the trader's committed
  * address. The fallback is the trader refunding once `refund_locktime` matures
- * ({@link refundIfUnresolved}).
+ * ({@link pushRefundWithoutReceiver}, driven by `client.recover()`).
  *
  * | leaf                              | needs                        | timelock |
  * |-----------------------------------|------------------------------|----------|
@@ -23,7 +23,6 @@ import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
-    assertTimerMs,
     ConditionWitness,
     type ArkTxInput,
     type IContractManager,
@@ -36,16 +35,18 @@ import {
     assertSubmittedArkTxid,
     assertValidServerUnrollScript,
     buildOffchainTx,
+    decodeTapscript,
     getArkPsbtFields,
     isVtxoSpent,
     matchServerCheckpoints,
     networkFromArkadeInfo,
     resolveCheckpointExitDelayPolicy,
+    scriptFromTapLeafScript,
     toXOnly,
     type IWallet,
 } from "@arkade-os/sdk";
 
-import { pollUntil, sleep } from "./onchainHtlc";
+import { pollUntil } from "./onchainHtlc";
 import { RFQ_TERMINAL_STATES, type RfqStatus, type RfqTransport } from "./rfq";
 
 /** True for the states after which the solver will report nothing further. */
@@ -61,9 +62,6 @@ export const isRfqTerminal = (state: string): boolean =>
  * refund. The VTXO lookup, not the RFQ state, decides whether anything is there.
  */
 export const RFQ_RESOLVED_STATES = ["settled", "refunded"] as const;
-
-const isResolved = (state: string): boolean =>
-    (RFQ_RESOLVED_STATES as readonly string[]).includes(state);
 
 /**
  * Poll a swap's status until it reaches a terminal state. Same conventions as
@@ -240,8 +238,7 @@ export type LockupFate =
     | { fate: "open" }
     /** Spent by a witness carrying a preimage that HASHES to the quote's `payment_hash`. */
     | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
-    /** Fully spent, and nothing that spent it revealed a matching preimage —
-     * so the money went back to the trader. See {@link readLockupFate}. */
+    /** Every lockup output was spent through a recognized refund leaf. */
     | { fate: "returned"; spends: readonly LockupSpend[] }
     /**
      * At least one output was unilaterally exited: onchain under the VHTLC script, beyond any
@@ -267,6 +264,25 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
     ...(tx.getInput(inputIndex).finalScriptWitness ?? []),
 ];
 
+const spendsRefundLeaf = (tx: Transaction, inputIndex: number): boolean => {
+    const input = tx.getInput(inputIndex);
+    const witness = input.finalScriptWitness;
+    const leaves = input.tapLeafScript ?? [];
+    const script =
+        witness && witness.length >= 2
+            ? witness[witness.length - 2]
+            : leaves.length === 1
+              ? scriptFromTapLeafScript(leaves[0])
+              : undefined;
+    if (!script) return false;
+    try {
+        const { type } = decodeTapscript(script);
+        return type === "multisig" || type === "csv-multisig" || type === "cltv-multisig";
+    } catch {
+        return false;
+    }
+};
+
 /**
  * Decide from chain data alone whether a swap lockup settled, came back, or is
  * still live.
@@ -274,14 +290,14 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  * **Decidable without asking anyone.** Only the claim leaf reveals `P`, and the counterparty only
  * legitimately obtains `P` by completing its side. Every OTHER leaf is a refund:
  * `nonInteractiveRefund` is covenant-pinned to the trader's address and the rest need the
- * trader's signature. So "spent, but not by a hash-verified claim" means the money came back.
+ * trader's signature. A refund requires a recognized non-conditional spend leaf on every output.
  *
  * **A matching witness SHAPE is not proof**: only a candidate hashing to `paymentHash` counts.
  * Being permissive would report "settled" for a swap that refunded.
  *
  * **`unknown` is not `returned`**: an empty vtxo set, an unnamed or unfetchable spend, or an
- * undecodable blob all give `unknown`, and `getVirtualTxs` may return fewer txs than asked, so the
- * observed set is counted. Treat `unknown` like `open`; the refund timelock ends the wait.
+ * undecodable blob all give `unknown`. A claim checkpoint can be visible before its preimage,
+ * without changing its txid. Missing or invalid claim witnesses also give `unknown`.
  *
  * An exit is checked first, across the whole set, so output order cannot change the answer.
  * Read fresh on every poll, never cached.
@@ -292,6 +308,9 @@ export async function readLockupFate(
         swapPkScript: Uint8Array;
         /** `sha256(P)`, hex — the quote's `payment_hash`. */
         paymentHash: string;
+        /** Read for the lockup's receiver, who holds no leaf that recovers a swept output:
+         * once a claim revealed `P`, swept outputs no longer hold the lockup `open`. */
+        receiver?: boolean;
     },
 ): Promise<LockupFate> {
     const { vtxos } = await indexer.getVtxos({ scripts: [hex.encode(input.swapPkScript)] });
@@ -308,9 +327,14 @@ export async function readLockupFate(
 
     const spentBy = new Map<string, LockupSpend>();
     let everySpendNamed = true;
+    let sweptLeft = false;
     for (const vtxo of all) {
         // Not `spentBy` alone: the wire permits `isSpent: true` with an EMPTY `spentBy`.
-        if (!isVtxoSpent(vtxo)) return { fate: "open" };
+        if (!isVtxoSpent(vtxo)) {
+            if (!(input.receiver && vtxo.isSwept)) return { fate: "open" };
+            sweptLeft = true;
+            continue;
+        }
         // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
         // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
         // checkpoint, so it is the wrong place to look).
@@ -325,7 +349,7 @@ export async function readLockupFate(
 
     const spends = [...spentBy.values()];
     const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
-    const observed = new Set<string>();
+    const refunded = new Set<string>();
     for (const raw of txs) {
         let tx: Transaction;
         try {
@@ -334,23 +358,27 @@ export async function readLockupFate(
             continue; // undecodable blob: nothing learned from it
         }
         // Bound by the PSBT's own id (witness cannot change a taproot txid), not by position.
-        if (spentBy.has(tx.id)) observed.add(tx.id);
+        if (!spentBy.has(tx.id)) continue;
         for (let i = 0; i < tx.inputsLength; i++) {
             const spent = tx.getInput(i);
             if (!spent.txid) continue;
             // Same txid convention as the indexer (cf. `assertCheckpointsMatchInputs`).
             const txid = hex.encode(spent.txid);
-            if (!all.some((vtxo) => vtxo.txid === txid && vtxo.vout === spent.index)) continue;
+            const vtxo = all.find(
+                (vtxo) => vtxo.txid === txid && vtxo.vout === spent.index && vtxo.spentBy === tx.id,
+            );
+            if (!vtxo) continue;
             for (const candidate of candidateWitnessItems(tx, i)) {
                 if (hashesTo(candidate, input.paymentHash)) {
                     return { fate: "claimed", preimage: candidate, spends };
                 }
             }
+            if (spendsRefundLeaf(tx, i)) refunded.add(`${vtxo.txid}:${vtxo.vout}`);
         }
     }
 
-    // Only a lockup whose every spend was actually seen can be called returned.
-    return everySpendNamed && observed.size === spentBy.size
+    if (sweptLeft) return { fate: "open" };
+    return everySpendNamed && all.every((vtxo) => refunded.has(`${vtxo.txid}:${vtxo.vout}`))
         ? { fate: "returned", spends }
         : { fate: "unknown" };
 }
@@ -392,6 +420,13 @@ export const operatorUnrollScript = async (
     );
 };
 
+/** The most lockup outputs one spend takes, as on the solver. Anyone can pay a lockup address, so
+ * sprayed dust would otherwise push the spend past arkd's `maxTxWeight`. */
+export const MAX_LOCKUP_SPEND_INPUTS = 16;
+
+export const boundedLockupSpend = (vtxos: readonly LockupVtxo[]): LockupVtxo[] =>
+    [...vtxos].sort((a, b) => b.value - a.value).slice(0, MAX_LOCKUP_SPEND_INPUTS);
+
 /** Every lockup output as an offchain input spending `leaf`. */
 export const lockupInputs = (
     vtxos: readonly LockupVtxo[],
@@ -409,8 +444,8 @@ export const lockupInputs = (
 };
 
 /**
- * Build, sign, and push the `refundWithoutReceiver` spend: return every funded
- * output at the lockup to the trader's refund address.
+ * Build, sign, and push the `refundWithoutReceiver` spend: return the largest funded
+ * outputs at the lockup to the trader's refund address.
  *
  * The leaf is `CLTV(refundLocktime) + <sender> + <server>`: no emulator (it co-signs only the
  * covenant leaves), so the tx is submitted SIGNED. One aggregate output, since this leaf has no
@@ -420,7 +455,7 @@ export const lockupInputs = (
  * address); overridable because this leaf genuinely permits any destination.
  *
  * **Median-time-past (BIP-113), not wall clock, decides spendability**: it trails by about an
- * hour, so an early rejection is expected; {@link refundIfUnresolved} retries.
+ * hour, so an early rejection is expected; the caller retries until `REFUND_MTP_LAG_SECONDS`.
  *
  * **Swept outputs refuse the whole push** with {@link LockupNeedsRecoveryError}: one swept input
  * would sink the aggregate tx, and silently filtering it would report success over unmoved money.
@@ -438,7 +473,7 @@ export async function pushRefundWithoutReceiver(
         /** @see operatorUnrollScript */
         network?: Network;
     },
-): Promise<{ txid: string; amount: number }> {
+): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
 
     assertNoneSwept(input.vtxos, input.contract);
@@ -454,11 +489,12 @@ export async function pushRefundWithoutReceiver(
     const serverUnrollScript = await operatorUnrollScript(operator, input.network);
 
     const leaf = input.contract.refundWithoutReceiver();
-    const amount = input.vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+    const vtxos = boundedLockupSpend(input.vtxos);
+    const amount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
     // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
     const { arkTx: tx, checkpoints } = buildOffchainTx(
-        lockupInputs(input.vtxos, input.contract, leaf),
+        lockupInputs(vtxos, input.contract, leaf),
         [{ script: refundPkScript, amount: BigInt(amount) }],
         serverUnrollScript,
     );
@@ -484,10 +520,15 @@ export async function pushRefundWithoutReceiver(
     );
 
     await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
-    return { txid: submitted.arkTxid, amount };
+    return {
+        txid: submitted.arkTxid,
+        amount,
+        left: input.vtxos.length - vtxos.length,
+        spent: vtxos,
+    };
 }
 
-// ── Ask first, then fall back ────────────────────────────────────────────────
+// ── Refund timing ────────────────────────────────────────────────────────────
 
 /**
  * How long past `refundLocktime` to keep retrying the push before surfacing the server's refusal.
@@ -495,133 +536,3 @@ export async function pushRefundWithoutReceiver(
  * of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes of the same margin.
  */
 export const REFUND_MTP_LAG_SECONDS = 2 * 60 * 60;
-
-export type RefundOutcome =
-    /** The solver resolved it — claimed (`settled`) or returned it (`refunded`). */
-    | { outcome: "resolved"; status: RfqStatus }
-    /** The trader took it back via `refundWithoutReceiver`. */
-    | { outcome: "refunded"; txid: string; amount: number; status: RfqStatus | null }
-    /** The refund window opened but the lockup holds nothing to return. */
-    | { outcome: "nothing_to_refund"; status: RfqStatus | null }
-    /**
-     * The money is still at the lockup but its batch was swept; no waiting fixes that (see
-     * {@link LockupNeedsRecoveryError}). Recover the named outpoints, then call again.
-     */
-    | {
-          outcome: "needs_recovery";
-          outpoints: string[];
-          vtxos: LockupVtxo[];
-          status: RfqStatus | null;
-      }
-    /**
-     * The lockup was unilaterally exited: its outputs sit onchain, beyond any offchain refund.
-     * Complete the unroll and spend the named outputs onchain.
-     *
-     * **`outpoints` may not be the whole lockup.** `exited` fires as soon as ANY output exited
-     * (the same rule `RfqSwapManager` uses; the two must agree), and a still-live sibling is left
-     * for the caller to pursue separately. Distinct from `needs_recovery`, whose batch-recovery
-     * remedy cannot reach an onchain output.
-     */
-    | { outcome: "exited"; outpoints: string[]; status: RfqStatus | null };
-
-/**
- * Ask first, then fall back: watch the swap for the solver to resolve it, and
- * if `refundLocktime` matures without that happening, take the lockup back
- * with `refundWithoutReceiver`.
- *
- * - **A dead negotiation does not stop the wait** (see {@link RFQ_RESOLVED_STATES}).
- * - **Early pushes may fail** while MTP catches up; retried at the poll interval until
- *   `attemptDeadline`, then the last error is rethrown.
- * - **A swept lockup returns `needs_recovery`** instead of burning the window.
- * - **An exited lockup returns `exited`**, checked first via {@link readLockupFate} (an extra
- *   indexer read per pass). A failing fate read is swallowed: it is a shortcut only.
- *
- * Safe to call late and to call again: an empty lockup is `nothing_to_refund`, not an error.
- *
- * @deprecated Use `client.recover()`. Moved off the package root to `@arkade-os/swap/protocol`.
- */
-export async function refundIfUnresolved(
-    transport: RfqTransport,
-    operator: SwapOperator,
-    contracts: LockupContractSource,
-    indexer: LockupSpendIndexer,
-    input: {
-        rfqId: string;
-        contract: InstanceType<typeof VHTLC.ScriptV2>;
-        /** @see pushRefundWithoutReceiver */
-        sender: Identity;
-        /**
-         * `sha256(P)`, hex — the quote's `payment_hash`. Not derivable from `script`, whose
-         * `preimageHash` is a `hash160`.
-         */
-        paymentHash: string;
-        /** `refund_locktime` from the quote, unix seconds. */
-        refundLocktime: number;
-        /** Defaults to the contract's own committed refund destination. */
-        refundPkScript?: Uint8Array;
-        pollMs?: number;
-        /** Stop retrying the push at this unix time, rethrowing the last
-         * error. Defaults to `refundLocktime + REFUND_MTP_LAG_SECONDS`. */
-        attemptDeadline?: number;
-        /** Injected for tests; defaults to wall clock, in unix seconds. */
-        now?: () => number;
-    },
-): Promise<RefundOutcome> {
-    const pollMs = input.pollMs ?? 5_000;
-    assertTimerMs("pollMs", pollMs);
-    const now = input.now ?? (() => Math.floor(Date.now() / 1000));
-    const attemptDeadline = input.attemptDeadline ?? input.refundLocktime + REFUND_MTP_LAG_SECONDS;
-
-    for (;;) {
-        const status = await transport.status(input.rfqId);
-        if (status && isResolved(status.state)) return { outcome: "resolved", status };
-
-        if (now() >= input.refundLocktime) {
-            // Before the refundable read, to prevent the doomed push. Guarded: a transient
-            // `getVirtualTxs` failure must not end a wait the path below can answer.
-            let fate: LockupFate = { fate: "unknown" };
-            try {
-                fate = await readLockupFate(indexer, {
-                    swapPkScript: input.contract.pkScript,
-                    paymentHash: input.paymentHash,
-                });
-            } catch {
-                // `findLockupVtxos`'s own drop still refuses the doomed push.
-            }
-            if (fate.fate === "exited") {
-                return {
-                    outcome: "exited",
-                    outpoints: fate.outpoints.map((o) => `${o.txid}:${o.vout}`),
-                    status,
-                };
-            }
-
-            const vtxos = await findLockupVtxos(contracts, input.contract.pkScript);
-            if (vtxos.length === 0) return { outcome: "nothing_to_refund", status };
-            try {
-                const pushed = await pushRefundWithoutReceiver(operator, {
-                    contract: input.contract,
-                    sender: input.sender,
-                    vtxos,
-                    refundPkScript: input.refundPkScript,
-                });
-                return { outcome: "refunded", status, ...pushed };
-            } catch (error) {
-                // Swept is "not this way", not "not yet": retrying would burn the window.
-                if (error instanceof LockupNeedsRecoveryError) {
-                    return {
-                        outcome: "needs_recovery",
-                        outpoints: error.outpoints,
-                        vtxos,
-                        status,
-                    };
-                }
-                // Expected while median-time-past has not caught up; give up
-                // only once the window closes, and surface the real reason.
-                if (now() >= attemptDeadline) throw error;
-            }
-        }
-
-        await sleep(pollMs);
-    }
-}

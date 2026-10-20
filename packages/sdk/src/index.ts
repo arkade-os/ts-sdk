@@ -123,6 +123,7 @@ import {
     Asset,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -165,6 +166,8 @@ import {
     MAX_USED_SIGNING_DESCRIPTORS_LOOK_AHEAD,
     waitForIncomingFunds,
     AbortError,
+    VtxoReservedError,
+    type VtxoReservation,
     type WaitForIncomingFundsOptions,
     IncomingFunds,
     selectVirtualCoins,
@@ -410,6 +413,11 @@ import {
 } from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
+import {
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
+} from "./wallet/sendDeadline";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
@@ -510,7 +518,10 @@ import type {
     CreateContractParams,
 } from "./contracts/contractManager";
 import { ContractWatcher } from "./contracts/contractWatcher";
-import type { ContractWatcherConfig } from "./contracts/contractWatcher";
+import type {
+    ContractWatcherConfig,
+    ContractWatcherEventCallback,
+} from "./contracts/contractWatcher";
 import { contractHandlers } from "./contracts/handlers/registry";
 import { DefaultContractHandler } from "./contracts/handlers/default";
 import type { DefaultContractParams } from "./contracts/handlers/default";
@@ -735,6 +746,8 @@ export {
     signAndSubmitOffchainTx,
     waitForIncomingFunds,
     AbortError,
+    VtxoReservedError,
+    type VtxoReservation,
     type WaitForIncomingFundsOptions,
     hasBoardingTxExpired,
     combineTapscriptSigs,
@@ -819,6 +832,9 @@ export {
     maybeArkError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
@@ -1036,6 +1052,7 @@ export type {
     Asset,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -1088,6 +1105,7 @@ export type {
     ContractManagerConfig,
     CreateContractParams,
     ContractWatcherConfig,
+    ContractWatcherEventCallback,
     ParsedArkContract,
     ExcludableVtxo,
     VtxoExclusion,

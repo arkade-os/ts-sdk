@@ -413,4 +413,9 @@ export class ExpoWallet
     get assetManager(): IAssetManager {
         return this.wallet.assetManager;
     }
+
+    /** @see WalletConfig.concurrentSpending */
+    get concurrentSpending(): boolean {
+        return this.wallet.concurrentSpending;
+    }
 }

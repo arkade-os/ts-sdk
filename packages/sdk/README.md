@@ -798,6 +798,71 @@ const exitTxid = await new Ramps(wallet).offboard(
 service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
 to the snapshot persisted at wallet construction when the server is unreachable.
 
+### Concurrent Spending & Coin Reservations
+
+By default the wallet runs one spend at a time: a `send` issued while a settle or a collaborative
+exit waits for its batch swap queues until that batch swap finalizes, and an exit with an amount
+spends every spendable VTXO. Opt in to let spends overlap on disjoint VTXOs:
+
+```typescript
+const wallet = await Wallet.create({ identity, arkProvider, concurrentSpending: true })
+```
+
+With `concurrentSpending`:
+
+- `send`, `settle` and asset operations hold the wallet lock only while they pick and reserve their
+  inputs; submitting the Arkade transaction and waiting for the batch swap run unlocked.
+- `Ramps.offboard(address, fees, amount)` and `offboardExact` spend only the VTXOs that cover the
+  amount (soonest expiry first, as `send` picks), so the rest of the balance stays spendable. A
+  full exit, and an exit that names its `vtxos`, behave as before.
+- Naming a VTXO that another operation is spending (`send({ selectedVtxos })`,
+  `settle({ inputs })`) throws `VtxoReservedError` before anything is submitted. Exits that pick
+  their own VTXOs retry the pick.
+- Boarding UTXOs a settle is spending stay in `getBoardingUtxos()` and the boarding balance, but
+  a bare `settle()`, `Ramps.onboard` without explicit UTXOs and the boarding poll skip them until
+  that settle finishes, and naming one elsewhere throws `VtxoReservedError`.
+
+Concurrency only helps when the balance sits in more than one VTXO: a wallet holding a single VTXO
+still has one operation at a time. Renewal and a bare `settle()` merge the VTXOs they spend into
+one output.
+
+#### Holding VTXOs for your own use
+
+`reserveVtxos` keeps VTXOs out of every pick the SDK makes for you — `send`, `settle()`, exits,
+renewal, payment-router rails and swap funding — until you release them. You can still spend them
+by naming them. It works with or without `concurrentSpending`.
+
+```typescript
+const hold = wallet.reserveVtxos(coinsForThisOrder)
+try {
+    await wallet.send({ recipients, selectedVtxos: coinsForThisOrder })
+} finally {
+    hold.release()
+}
+```
+
+Held VTXOs stay in `getVtxos()` and in `getBalance().total`, and move from `available` to
+`reserved`. Holding a VTXO that is held or being spent throws `VtxoReservedError`. If the SDK had
+already picked a VTXO when you hold it, that spend throws `VtxoReservedError` (`holder: "held"`)
+instead of spending it; exits and renewal pick again or retry on their own.
+
+Limits:
+
+- Reservations are in memory, per `Wallet` instance. Two processes or two `Wallet` instances on one
+  seed do not see each other's reservations; the operator refuses whichever spend loses.
+- Deprecated-signer migration and recovery name the VTXOs they move, so they can spend a held VTXO.
+- Renewal skips a held VTXO even once it is inside the renewal threshold, since renewing would
+  change the outpoint you are holding. It logs a warning naming each such VTXO; spend or release a
+  long-lived hold before the VTXO expires, or the server sweeps it and it comes back only through
+  recovery.
+- `toReadonly()` views and the service worker's balance reads do not see reservations.
+- `reserveVtxos` is on `Wallet`; the service-worker and Expo wallets accept `concurrentSpending`
+  but do not expose holds yet.
+
+If your app keeps its own reserved-outpoint set, call `reserveVtxos` where you add to it and
+`release()` where you remove, then let the SDK pick: plain `send`, router payments without
+`selectedVtxos`, and exits without `vtxos` all skip what you hold.
+
 ### Talking to the server through the wallet
 
 `getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
@@ -1090,6 +1155,37 @@ const balance = await wallet.getBalance()
 
 For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
 `ReadonlySingleKey` identity instead.
+
+### Faster startup without changing existing reads
+
+Existing `Wallet` and `ReadonlyWallet` reads (`getVtxos`, `getBalance`, and
+`getTransactionHistory`) still synchronize before answering. Retryable provider
+failures retain the existing offline fallback; terminal errors still reject.
+Contract initialization still awaits synchronization and watcher startup by default.
+
+For a returning wallet with persisted contracts, opt into `lazyInitialization: true`
+and use `getStoredVtxos()` or `getStoredBalance()` for the initial display. These
+methods return cached data and request background synchronization. They can return
+empty or stale data, so inspect `(await wallet.getContractManager()).getSyncState()`:
+an absent `lastSyncedAt` means no successful sync this session, `syncing` means work
+is in flight, and `degraded` means refresh failed. Await `manager.whenBooted()` and
+inspect that state again before treating initialization as successful. Refresh the
+display after completion; cached reads do not guarantee a change event.
+
+`getStoredBalance().boarding.loaded` is false until this wallet instance has fetched
+boarding inputs. Call `getBoardingUtxos()` to refresh them. Stored methods are for
+display, not transaction inputs; use the normal reads and spending APIs for actions.
+New contract registration, identity setup, and server-info validation can still
+require provider calls even with lazy initialization enabled.
+
+Service-worker factories expose the same `lazyInitialization` option and a separate
+`lazyBoarding: true` option. Lazy boarding defers the explorer-backed boarding and
+history refresh, reports `boarding.loaded: false`, and broadcasts `UTXO_UPDATE`
+when boarding loading completes. Both options default to false and survive worker
+reinitialization. Existing `GET_BOARDING_UTXOS` requests remain live reads.
+
+Boarding addresses are fetched concurrently in both modes, so wallets with rotated
+addresses benefit without opting into changed initialization timing.
 
 ### Worker Architecture
 

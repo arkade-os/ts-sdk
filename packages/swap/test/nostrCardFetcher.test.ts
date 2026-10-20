@@ -260,7 +260,7 @@ describe("nostrCardFetcher", () => {
         expect(subscribeMany).not.toHaveBeenCalled();
     });
 
-    it("tears an owned pool down through pool.close() alone", async () => {
+    it("shares one pool by default and closes only the subscription", async () => {
         const subscriptionClose = vi.fn();
         vi.spyOn(SimplePool.prototype, "subscribeMany").mockImplementation(
             (_relays, _filter, params) => {
@@ -274,7 +274,9 @@ describe("nostrCardFetcher", () => {
             [listed(solverKey().pubkey, ["wss://x", "wss://y"])],
             "mutinynet",
         );
-        expect(poolClose).toHaveBeenCalledWith(["wss://x", "wss://y"]);
-        expect(subscriptionClose).not.toHaveBeenCalled();
+        expect(subscriptionClose).toHaveBeenCalledTimes(1);
+        expect(poolClose).not.toHaveBeenCalled();
+        const { closeSharedNostrPool } = await import("../src/nostr");
+        closeSharedNostrPool();
     });
 });
