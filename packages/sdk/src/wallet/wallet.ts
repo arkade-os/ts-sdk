@@ -1258,6 +1258,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
     }
 
+    /**
+     * @internal The stored VTXOs {@link reserveVtxos} holds, minus any being spent: for renewal,
+     * which skips them, to report the ones it would have renewed. No sync.
+     */
+    async getHeldVtxos(): Promise<NormalizedExtendedVirtualCoin[]> {
+        if (this._heldOutpoints.size === 0) return [];
+        return (await this.getStoredVtxos()).filter((vtxo) =>
+            this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
+        );
+    }
+
     /** @inheritdoc */
     async getSpendableVtxos(
         filter?: GetSpendableVtxosFilter,

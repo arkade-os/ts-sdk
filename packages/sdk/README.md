@@ -851,6 +851,10 @@ Limits:
 - Reservations are in memory, per `Wallet` instance. Two processes or two `Wallet` instances on one
   seed do not see each other's reservations; the operator refuses whichever spend loses.
 - Deprecated-signer migration and recovery name the VTXOs they move, so they can spend a held VTXO.
+- Renewal skips a held VTXO even once it is inside the renewal threshold, since renewing would
+  change the outpoint you are holding. It logs a warning naming each such VTXO; spend or release a
+  long-lived hold before the VTXO expires, or the server sweeps it and it comes back only through
+  recovery.
 - `toReadonly()` views and the service worker's balance reads do not see reservations.
 - `reserveVtxos` is on `Wallet`; the service-worker and Expo wallets accept `concurrentSpending`
   but do not expose holds yet.

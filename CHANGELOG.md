@@ -268,7 +268,9 @@ style and have not been backfilled.
   they need; naming a VTXO another operation is spending throws
   `VtxoReservedError`. `wallet.reserveVtxos(outpoints)` holds VTXOs out of
   `send`, `settle()`, exits, renewal, router rails and swap funding until
-  released. `WalletBalance` gains `reserved`, so
+  released; renewal skips a held VTXO even once it is due, and logs a warning
+  naming it, so a long-lived hold must be spent or released before the VTXO
+  expires. `WalletBalance` gains `reserved`, so
   `settled + preconfirmed === available + gated + intentLocked + reserved`: a
   held VTXO's value moves from `available` to `reserved`, and without holds no
   existing field changes value. Code that builds `WalletBalance` objects

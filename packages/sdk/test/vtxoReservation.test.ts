@@ -81,6 +81,21 @@ describe("reserveVtxos", () => {
         await wallet.dispose();
     });
 
+    it("reports what it holds to renewal, which skips it", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { wallet, coins, outpoints } = await fundedWallet();
+        expect(await (wallet as any).getHeldVtxos()).toEqual([]);
+        const hold = wallet.reserveVtxos([coins[0]]);
+        expect((await (wallet as any).getHeldVtxos()).map(key)).toEqual([outpoints[0]]);
+
+        // 15h: coins[0] (10h out) is due, but held; coins[1] (20h) and coins[2] (30h) are not.
+        const manager = await wallet.getVtxoManager();
+        expect(await manager.getExpiringVtxos(15 * 3_600_000)).toEqual([]);
+        hold.release();
+        expect((await manager.getExpiringVtxos(15 * 3_600_000)).map(key)).toEqual([outpoints[0]]);
+        await wallet.dispose();
+    });
+
     it("accepts an empty or repeated list", async () => {
         const { wallet, coins } = await fundedWallet();
         wallet.reserveVtxos([]).release();

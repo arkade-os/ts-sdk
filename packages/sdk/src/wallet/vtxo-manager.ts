@@ -176,6 +176,13 @@ async function fetchTimeHeight(wallet: IReadonlyWallet): Promise<TimeHeight> {
     return resolveTimeHeight((wallet as Partial<SweepCapableWallet>).onchainProvider);
 }
 
+/** VTXOs `reserveVtxos` holds, from a wallet that can hold them; `[]` for any other. */
+function heldVtxosOf(wallet: IWallet): Promise<NormalizedExtendedVirtualCoin[]> {
+    const held = (wallet as { getHeldVtxos?: () => Promise<NormalizedExtendedVirtualCoin[]> })
+        .getHeldVtxos;
+    return typeof held === "function" ? held.call(wallet) : Promise.resolve([]);
+}
+
 /**
  * Whether {@link Wallet.sendSelectedVtxosToSelf} will accept this input at `now`: mirrors its two
  * rejection conditions exactly (see {@link MigrationLegReport.notSpendableOffchain}). The same
@@ -1583,13 +1590,41 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
         const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
+        const tip = now ?? (await fetchTimeHeight(this.wallet));
 
-        return getExpiringAndRecoverableVtxos(
-            vtxos,
-            threshold,
-            getDustAmount(this.wallet),
-            now ?? (await fetchTimeHeight(this.wallet)),
-        );
+        await this.warnHeldExpiring(threshold, tip);
+        return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
+    }
+
+    /** Outpoints {@link warnHeldExpiring} last reported, so each is reported once while held. */
+    private heldExpiringWarned = new Set<string>();
+
+    /**
+     * A hold outranks renewal: renewing would change the outpoint under the holder, whose spend
+     * by name would then fail. So the VTXO is skipped, and only this warning says it is drifting
+     * toward a sweep. Best-effort: a failed read never blocks renewal.
+     */
+    private async warnHeldExpiring(threshold: number, now: TimeHeight): Promise<void> {
+        let keys: string[];
+        try {
+            const held = await heldVtxosOf(this.wallet);
+            keys = getExpiringAndRecoverableVtxos(
+                held,
+                threshold,
+                getDustAmount(this.wallet),
+                now,
+            ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`);
+        } catch {
+            return;
+        }
+        const fresh = keys.filter((key) => !this.heldExpiringWarned.has(key));
+        this.heldExpiringWarned = new Set(keys);
+        if (fresh.length > 0) {
+            console.warn(
+                `Renewal: ${fresh.length} VTXO(s) due for renewal are held by reserveVtxos and ` +
+                    `will not be renewed; spend or release them before they expire: ${fresh.join(", ")}`,
+            );
+        }
     }
 
     /**

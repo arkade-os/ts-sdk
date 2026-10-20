@@ -124,3 +124,62 @@ describe("VtxoManager and a concurrent spend", () => {
         expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
     });
 });
+
+describe("VtxoManager and a held VTXO due for renewal", () => {
+    const heldVtxo = (fill: string, expiresInMs: number) => ({
+        txid: fill.repeat(32),
+        vout: 0,
+        value: 5_000,
+        createdAt: new Date(),
+        status: { confirmed: true },
+        isUnrolled: false,
+        isSpent: false,
+        isSwept: false,
+        isPreconfirmed: false,
+        spentBy: "",
+        commitmentTxIds: [],
+        expiresAt: new Date(Date.now() + expiresInMs),
+    });
+
+    it("skips it, and warns once per hold that it will not be renewed", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const due = heldVtxo("aa", 5_000);
+        const later = heldVtxo("bb", 30 * 24 * 3_600_000);
+        const wallet = {
+            getSpendableVtxos: vi.fn().mockResolvedValue([]),
+            getHeldVtxos: vi.fn().mockResolvedValue([due, later]),
+            dustAmount: 1000n,
+        } as any;
+        const manager = new VtxoManager(wallet, false);
+        manager.dispose();
+
+        expect(await manager.getExpiringVtxos(3_600_000)).toEqual([]);
+        expect(await manager.getExpiringVtxos(3_600_000)).toEqual([]);
+        const held = warn.mock.calls.filter(([m]) => String(m).includes("held by reserveVtxos"));
+        expect(held).toHaveLength(1);
+        expect(held[0]![0]).toContain(`${due.txid}:0`);
+        expect(held[0]![0]).not.toContain(later.txid);
+
+        // Released, then held again: a fresh hold is reported again.
+        wallet.getHeldVtxos.mockResolvedValueOnce([]);
+        await manager.getExpiringVtxos(3_600_000);
+        await manager.getExpiringVtxos(3_600_000);
+        expect(
+            warn.mock.calls.filter(([m]) => String(m).includes("held by reserveVtxos")),
+        ).toHaveLength(2);
+    });
+
+    it("still answers when the held read fails", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const vtxo = heldVtxo("cc", 5_000);
+        const wallet = {
+            getSpendableVtxos: vi.fn().mockResolvedValue([vtxo]),
+            getHeldVtxos: vi.fn().mockRejectedValue(new Error("store offline")),
+            dustAmount: 1000n,
+        } as any;
+        const manager = new VtxoManager(wallet, false);
+        manager.dispose();
+
+        expect(await manager.getExpiringVtxos(3_600_000)).toEqual([vtxo]);
+    });
+});
