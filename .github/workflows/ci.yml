@@ -90,6 +90,7 @@ jobs:
               test/e2e/operatorOffline.test.ts
               test/e2e/arkade-script.test.ts
               test/e2e/contractWatchState.test.ts
+              test/e2e/contractSubscriptionRecovery.test.ts
               test/e2e/lookAhead.test.ts
               test/e2e/activity.test.ts
           - package: sdk
