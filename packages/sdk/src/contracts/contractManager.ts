@@ -2249,9 +2249,11 @@ export class ContractManager implements IContractManager {
                     .map(({ txid, vout }) => ({ txid, vout }));
                 let pageIndex: number | undefined;
                 do {
+                    // arkd refuses a page index without a size.
                     const { utxos, page } = await indexerProvider.getUtxos({
                         outpoints,
                         pageIndex,
+                        pageSize: OUTPOINT_QUERY_CHUNK_SIZE,
                     });
                     for (const utxo of utxos) found.set(vtxoOutpoint(utxo), utxo);
                     const more = page && page.current < page.total && page.next > page.current;
