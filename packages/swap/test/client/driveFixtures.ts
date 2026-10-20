@@ -95,8 +95,8 @@ const MARKET: CardMarketRef = {
 
 /** A v2 corridor record, as `accept()` writes one. */
 export const corridorRecord = (over: Partial<CorridorSwapRecord> = {}): CorridorSwapRecord => {
-    const script = over.kind === "lightning_receive" ? RECEIVE_LOCKUP : SEND_LOCKUP;
-    const receive = over.kind === "lightning_receive";
+    const receive = over.kind === "lightning_receive" || over.kind === "onchain_receive";
+    const script = receive ? RECEIVE_LOCKUP : SEND_LOCKUP;
     return {
         id: "q1",
         family: "rfq",
@@ -424,7 +424,12 @@ export const fakeWallet = (
  * claim, which synthesizes nothing without it).
  */
 export const fakeCorridors = (
-    over: { chain?: unknown | null; claim?: unknown; claimFeeRateSatVb?: number } = {},
+    over: {
+        chain?: unknown | null;
+        claim?: unknown;
+        refund?: unknown;
+        claimFeeRateSatVb?: number;
+    } = {},
 ): (() => Promise<CorridorSet>) & { readonly resolved: string[] } => {
     const resolved: string[] = [];
     const set = {
@@ -436,6 +441,7 @@ export const fakeCorridors = (
                 deps: {
                     chain: over.chain ?? {},
                     ...(over.claim ? { claim: over.claim } : {}),
+                    ...(over.refund ? { refund: over.refund } : {}),
                     ...(over.claimFeeRateSatVb === undefined
                         ? {}
                         : { claimFeeRateSatVb: over.claimFeeRateSatVb }),

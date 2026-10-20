@@ -164,6 +164,22 @@ describe("arkadeRefunder", () => {
         await expect(refund(swap())).rejects.toThrow(/checkpoint exit delay rejected/);
     });
 
+    it("never re-spends what a partial refund took, however stale the next read", async () => {
+        const many = Array.from({ length: 17 }, (_, vout) => ({
+            txid: "11".repeat(32),
+            vout,
+            value: 1_000 + vout,
+            recoverable: false,
+        }));
+        const refund = await refunderWith({ contracts: fakeContracts({ unspent: many }) });
+
+        expect((await refund(swap()))?.left).toBe(1);
+        const second = await refund(swap());
+        expect(second?.amount).toBe(1_000);
+        expect(second?.left).toBe(0);
+        await expect(refund(swap())).resolves.toBeNull();
+    });
+
     it("returns null for an empty lockup, which is not a failure", async () => {
         const refund = await refunderWith({ contracts: fakeContracts() });
         await expect(refund(swap())).resolves.toBeNull();

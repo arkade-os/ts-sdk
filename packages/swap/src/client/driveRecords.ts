@@ -236,15 +236,16 @@ export const corridorRecordStore = (
 };
 
 /** A v2 offer record as the watcher and coverage read one. */
-export const offerFactsOf = (record: OfferSwapRecord): OfferSwapFacts & { id: QuoteId } => ({
+export const offerFactsOf = (
+    record: OfferSwapRecord,
+): OfferSwapFacts & { id: QuoteId; coverageId: QuoteId } => ({
     id: record.id,
+    coverageId: record.id,
     status: record.status,
     offerHex: record.offerHex,
     swapPkScript: record.swapPkScript,
     ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
     ...(record.spentTxid === undefined ? {} : { spentTxid: record.spentTxid }),
-    // milliseconds: `coverage.ts` compares against `Date.now()`, and seconds would leave every
-    // issued script outstanding for the life of the process
     createdAt: record.createdAt * 1000,
 });
 
@@ -377,6 +378,7 @@ const RESTORED_CORRIDORS = {
     lightning_send: ["arkade", "lightning"],
     lightning_receive: ["lightning", "arkade"],
     onchain_send: ["arkade", "onchain"],
+    onchain_receive: ["onchain", "arkade"],
 } as const satisfies Record<CorridorSwapRecord["kind"], readonly [Corridor, Corridor]>;
 
 /**

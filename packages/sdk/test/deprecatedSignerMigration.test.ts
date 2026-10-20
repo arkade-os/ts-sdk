@@ -217,7 +217,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
 }
 
 // Disable the background poll so migrateCore is exercised in isolation.
-const newManager = (wallet: IWallet) => new VtxoManager(wallet, undefined, false);
+const newManager = (wallet: IWallet) => new VtxoManager(wallet, undefined);
 
 describe("VtxoManager - deprecated-signer migration", () => {
     it("migrates dueNow (no cutoff) VTXOs immediately via send (not settle)", async () => {
@@ -314,7 +314,6 @@ describe("VtxoManager - deprecated-signer migration", () => {
         const script = "default-" + DEP_DUE;
         const noExpiry = makeVtxo(script, 4000);
         noExpiry.expiresAt = undefined;
-        (noExpiry.virtualStatus as { batchExpiry?: number }).batchExpiry = undefined;
         const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
             contractsWithVtxos: [cwv(DEP_DUE, [makeVtxo(script, 5000), noExpiry])],
@@ -1255,7 +1254,7 @@ describe("VtxoManager - recovery destination pins the active signer (Section 6)"
             contractsWithVtxos: [cwv(DEP_A, [makeVtxo(script, 5000, "swept")])],
         });
         // settlementConfig enabled so getExpiringVtxos pulls recoverable VTXOs.
-        const manager = new VtxoManager(wallet, undefined, {});
+        const manager = new VtxoManager(wallet, undefined);
 
         await (manager as any).runPeriodicSettle([]);
         await manager.dispose();

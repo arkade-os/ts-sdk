@@ -106,6 +106,18 @@ export interface Contract {
     metadata?: Record<string, unknown>;
 }
 
+/**
+ * True when a contract was imported solely so the wallet can recover its
+ * funds (see `Wallet.claimCash`'s server-swept branch), not as spendable
+ * wallet holdings. Such contracts are settled in their **own isolated intent**
+ * and are excluded from the wallet's own balance / renewal / recovery / coin
+ * selection, so a persistently rejected recovery input can never poison the
+ * wallet's own fund lifecycle.
+ */
+export function isRecoveryOnlyContract(contract: Contract): boolean {
+    return contract.metadata?.recoveryOnly === true;
+}
+
 /** A virtual output associated with a specific contract. */
 export type ContractVtxo = VirtualCoin &
     Partial<TapLeaves & EncodedVtxoScript> & {

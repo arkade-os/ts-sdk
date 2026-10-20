@@ -14,6 +14,7 @@ import {
     createMockIndexerProvider,
     TEST_DEFAULT_ARK_ADDRESS,
     TEST_DEFAULT_SCRIPT,
+    TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
 const baseMessage = (id: string = "1") => ({
     id,
@@ -26,16 +27,6 @@ describe("WalletMessageHandler handleMessage", () => {
     beforeEach(() => {
         updater = new WalletMessageHandler();
     });
-
-    const init = () =>
-        updater.handleMessage({
-            ...baseMessage(),
-            type: "INIT_WALLET",
-            payload: {
-                key: { publicKey: "00" },
-                arkServerUrl: "http://example.com",
-            },
-        } as any);
 
     it("initializes the wallet on INIT_WALLET", async () => {
         const initSpy = vi.fn().mockResolvedValue(undefined);
@@ -413,16 +404,64 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("handles GET_BOARDING_UTXOS messages", async () => {
-        (updater as any).readonlyWallet = {};
+    it("getVtxosFromRepo excludes recovery-only contracts, but includes them for history", async () => {
+        const repo = new InMemoryWalletRepository();
+
+        const SCRIPT_NORMAL = "5120" + "11".repeat(32);
+        const SCRIPT_RECOVERY = "5120" + "22".repeat(32);
+        const vtxo = (txid: string, script: string, state: string) =>
+            ({
+                txid: txid.repeat(64),
+                vout: 0,
+                value: 1000,
+                script,
+                status: { confirmed: true },
+                virtualStatus: { state },
+                isSpent: false,
+                createdAt: new Date(),
+            }) as any;
+
+        await repo.saveVtxos("addr-normal", [vtxo("n", SCRIPT_NORMAL, "settled")]);
+        await repo.saveVtxos("addr-recovery", [vtxo("r", SCRIPT_RECOVERY, "swept")]);
+
+        const normal = { type: "default", script: SCRIPT_NORMAL, address: "addr-normal" };
+        const recovery = {
+            type: "default",
+            script: SCRIPT_RECOVERY,
+            address: "addr-recovery",
+            metadata: { recoveryOnly: true, signingDescriptor: "tr(00)" },
+        };
+
+        (updater as any).walletRepository = repo;
+        (updater as any).readonlyWallet = {
+            getContractManager: async () => ({ getContracts: async () => [normal, recovery] }),
+            getAddress: async () => TEST_DEFAULT_ARK_ADDRESS,
+        };
+
+        // Default (balance / VTXOS / coin selection): recovery-only excluded.
+        const excluded = await (updater as any).getVtxosFromRepo();
+        expect(excluded.map((v: any) => v.script)).toEqual([SCRIPT_NORMAL]);
+
+        // History opt-in: recovery-only included (parity with non-worker).
+        const included = await (updater as any).getVtxosFromRepo({ includeRecoveryOnly: true });
+        expect(included.map((v: any) => v.script).sort()).toEqual(
+            [SCRIPT_NORMAL, SCRIPT_RECOVERY].sort(),
+        );
+    });
+
+    it("handles GET_BOARDING_UTXOS messages by asking the provider", async () => {
         const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
-        (updater as any).getAllBoardingUtxos = vi.fn().mockResolvedValue(utxos);
+        const getBoardingUtxos = vi.fn().mockResolvedValue(utxos);
+        const getStoredBoardingUtxos = vi.fn().mockResolvedValue([]);
+        (updater as any).readonlyWallet = { getBoardingUtxos, getStoredBoardingUtxos };
 
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_BOARDING_UTXOS",
         } as any);
 
+        expect(getBoardingUtxos).toHaveBeenCalled();
+        expect(getStoredBoardingUtxos).not.toHaveBeenCalled();
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "BOARDING_UTXOS",
@@ -1563,6 +1602,8 @@ describe("WalletMessageHandler handleMessage", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1706,6 +1747,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["boarding-address"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1737,7 +1780,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
@@ -1760,63 +1802,117 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
     });
 
-    it("GET_VTXOS filters out recoverable/expired/dust by default", async () => {
+    it("GET_VTXOS collects every repository page with the unspent-only read option", async () => {
         setupHandler();
-        const settled = createMockExtendedVtxo({
-            txid: "aa".repeat(32),
+        const first = createMockExtendedVtxo({
+            txid: "08".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
-        const recoverable = createMockExtendedVtxo({
-            txid: "bb".repeat(32),
+        const second = createMockExtendedVtxo({
+            txid: "09".repeat(32),
             value: 50000,
-            isSwept: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, recoverable]);
+        const readPage = vi
+            .spyOn(walletRepo, "getVtxosForScriptPage")
+            .mockResolvedValueOnce({
+                items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: first }],
+                nextCursor: {
+                    address: TEST_DEFAULT_ARK_ADDRESS,
+                    txid: first.txid,
+                    vout: first.vout,
+                },
+            })
+            .mockResolvedValueOnce({
+                items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: second }],
+            });
 
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_VTXOS",
-            payload: { filter: { withRecoverable: false } },
+            payload: {},
         } as any);
 
-        const vtxos = (response as any).payload.vtxos;
-        expect(vtxos).toHaveLength(1);
-        expect(vtxos[0].txid).toBe("aa".repeat(32));
+        expect((response as any).payload.vtxos.map((v: any) => v.txid).sort()).toEqual([
+            first.txid,
+            second.txid,
+        ]);
+        expect(readPage).toHaveBeenCalledTimes(2);
+        expect(readPage.mock.calls.map(([, , options]) => options)).toEqual([
+            { unspentOnly: true },
+            { unspentOnly: true },
+        ]);
     });
 
-    it("GET_VTXOS returns unrolled VTXOs only when asked", async () => {
+    it("GET_VTXOS applies the same per-field filter defaults as Wallet.getVtxos", async () => {
         setupHandler();
-        const settled = createMockExtendedVtxo({
-            txid: "aa".repeat(32),
+        const live = createMockExtendedVtxo({
+            txid: "01".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
-        // `isUnrolled` says where the output lives, not that it was consumed: this coin is
-        // unspent, and only the filter decides whether an exited output is in scope.
-        const unrolled = createMockExtendedVtxo({
-            txid: "bb".repeat(32),
+        const swept = createMockExtendedVtxo({
+            txid: "02".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
+            isSwept: true,
+        });
+        const expired = createMockExtendedVtxo({
+            txid: "03".repeat(32),
+            value: 50000,
+            expiresAt: new Date(Date.now() - 60_000),
+        });
+        const subdust = createMockExtendedVtxo({
+            txid: "04".repeat(32),
+            value: 100,
+        });
+        const spent = createMockExtendedVtxo({
+            txid: "05".repeat(32),
+            value: 50000,
+            isSpent: true,
+        });
+        const unrolled = createMockExtendedVtxo({
+            txid: "06".repeat(32),
+            value: 50000,
             isSpent: false,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
+        const spentUnrolled = createMockExtendedVtxo({
+            txid: "07".repeat(32),
+            value: 50000,
+            isSpent: true,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+            live,
+            swept,
+            expired,
+            subdust,
+            spent,
+            unrolled,
+            spentUnrolled,
+        ]);
 
-        const get = async (filter: Record<string, boolean>) =>
+        const txids = (...vtxos: (typeof live)[]) => vtxos.map((v) => v.txid).sort();
+        const get = async (filter?: Record<string, boolean>) =>
             (
                 (await updater.handleMessage({
                     ...baseMessage(),
                     type: "GET_VTXOS",
-                    payload: { filter },
+                    payload: filter === undefined ? {} : { filter },
                 } as any)) as any
-            ).payload.vtxos.map((v: any) => v.txid);
+            ).payload.vtxos
+                .map((v: any) => v.txid)
+                .sort();
 
-        expect(await get({ withRecoverable: true })).toEqual(["aa".repeat(32)]);
-        expect(await get({ withRecoverable: true, withUnrolled: true })).toEqual([
-            "aa".repeat(32),
-            "bb".repeat(32),
-        ]);
+        const defaultIds = txids(live, swept, expired, subdust);
+        expect(await get()).toEqual(defaultIds);
+        expect(await get({})).toEqual(defaultIds);
+        expect(await get({ withRecoverable: true })).toEqual(defaultIds);
+        expect(await get({ withRecoverable: false })).toEqual(txids(live, subdust));
+        expect(await get({ withUnrolled: true })).toEqual(
+            txids(live, swept, expired, subdust, unrolled, spentUnrolled),
+        );
+        expect(await get({ withRecoverable: false, withUnrolled: true })).toEqual(
+            txids(live, subdust, unrolled, spentUnrolled),
+        );
     });
 
     it("GET_BALANCE and GET_VTXOS read no spent rows unless unrolled coins are asked for", async () => {
@@ -1859,20 +1955,17 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const exitedSwept = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "swept" },
             isUnrolled: true,
         });
         const exitedExpired = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             expiresAt: new Date(Date.now() - 60000),
             isUnrolled: true,
         });
         const exitedSpent = createMockExtendedVtxo({
             txid: "cc".repeat(32),
             value: 50000,
-            virtualStatus: { state: "spent" },
             isSpent: true,
             isUnrolled: true,
         });
@@ -1907,7 +2000,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         const preconfirmed = createMockExtendedVtxo({
             txid: "bb".repeat(32),
@@ -1937,12 +2029,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         const unrolled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             isUnrolled: true,
         });
@@ -1973,14 +2063,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         // Swept AND exited: a batch cannot lift an output that already sits onchain, so the
         // location wins over the recovery test.
         const exitedSwept = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "swept" },
             isUnrolled: true,
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSwept]);
@@ -2008,14 +2096,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         // The completed unroll: exited, then swept onchain. The repository read is unfiltered,
         // so only the terminal-spend guard keeps this out of `unrolled` and out of `total`.
         const exitedSpent = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 50000,
-            virtualStatus: { state: "spent" },
             isSpent: true,
             isUnrolled: true,
         });
@@ -2045,12 +2131,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 100000,
-            virtualStatus: { state: "settled" },
         });
         const pendingExpired = createMockExtendedVtxo({
             txid: "cc".repeat(32),
             value: 70000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, pendingExpired]);
 
@@ -2092,7 +2176,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 txid: "dd".repeat(32),
                 value: 30000,
                 script: gatedContract.script,
-                virtualStatus: { state: "settled" },
             }),
         ]);
 
@@ -2118,7 +2201,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 100000,
-                virtualStatus: { state: "settled" },
             }),
         ]);
 
@@ -2137,7 +2219,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
             createdAt: new Date(),
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
@@ -2164,13 +2245,11 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo1 = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 10000,
-            virtualStatus: { state: "settled" },
             script: "s1",
         });
         const vtxo2 = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 20000,
-            virtualStatus: { state: "settled" },
             script: "s2",
         });
         await walletRepo.saveVtxos("contract-1", [vtxo1]);
@@ -2197,7 +2276,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 10000,
-                virtualStatus: { state: "settled" },
                 script: "s1",
             }),
         ]);
@@ -2205,7 +2283,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "bb".repeat(32),
                 value: 20000,
-                virtualStatus: { state: "settled" },
                 script: "s2",
             }),
         ]);
@@ -2236,7 +2313,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 10000,
-                virtualStatus: { state: "settled" },
                 script: "s1",
                 assets: [{ assetId: "cc".repeat(32), amount: 3n }],
             }),
@@ -2245,7 +2321,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "bb".repeat(32),
                 value: 20000,
-                virtualStatus: { state: "settled" },
                 script: "s2",
                 assets: [{ assetId: "cc".repeat(32), amount: 4n }],
             }),
@@ -2280,7 +2355,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 10000,
-                virtualStatus: { state: "settled" },
                 script: "s1",
             }),
         ]);
@@ -2343,7 +2417,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const vtxo = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 50000,
-            virtualStatus: { state: "settled" },
         });
         // Save same VTXO under both keys (contract address = wallet address)
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
@@ -2369,7 +2442,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const settled = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 30000,
-            virtualStatus: { state: "settled" },
         });
         const swept = createMockExtendedVtxo({
             txid: "cc".repeat(32),
@@ -2379,7 +2451,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const spent = createMockExtendedVtxo({
             txid: "dd".repeat(32),
             value: 10000,
-            virtualStatus: { state: "settled" },
             isSpent: true,
             spentBy: "ee".repeat(32),
         });
@@ -2400,6 +2471,177 @@ describe("WalletMessageHandler repo-backed reads", () => {
             "aa".repeat(32),
             "dd".repeat(32),
         ]);
+    });
+
+    it.each([false, true])(
+        "GET_BALANCE uses stored boarding only when lazyBoarding=%s",
+        async (lazyBoarding) => {
+            setupHandler();
+            (updater as any).lazyBoardingInit = lazyBoarding;
+            const rw = (updater as any).readonlyWallet;
+            const boardUtxo = {
+                txid: "bb".repeat(32),
+                vout: 0,
+                value: 10_000,
+                status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+            };
+            rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+            rw.getBoardingUtxos = vi.fn().mockResolvedValue([]);
+
+            const balance = await (updater as any).handleGetBalance();
+
+            expect(rw.getStoredBoardingUtxos).toHaveBeenCalledTimes(lazyBoarding ? 1 : 0);
+            expect(rw.getBoardingUtxos).toHaveBeenCalledTimes(lazyBoarding ? 0 : 1);
+            expect(balance.boarding.total).toBe(lazyBoarding ? 10_000 : 0);
+        },
+    );
+
+    /** Spin until `predicate` holds, so a test never races a background leg. */
+    const until = async (predicate: () => boolean): Promise<void> => {
+        for (let i = 0; i < 200 && !predicate(); i++) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+    };
+
+    /** One current-signer boarding group, as `getBoardingUtxosForSigners` returns it. */
+    const boardingGroup = (coins: any[]) => ({
+        tapscript: { onchainAddress: () => "boarding-address" },
+        coins,
+    });
+
+    it("lazyBoarding hands both onchain legs to the background", async () => {
+        setupHandler();
+        (updater as any).lazyBoardingInit = true;
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 7_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let releaseHistory!: () => void;
+        const historyGate = new Promise<void>((resolve) => {
+            releaseHistory = resolve;
+        });
+        rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
+            await gate;
+            return [boardingGroup([boardUtxo])];
+        });
+        rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
+            await historyGate;
+            return { boardingTxs: [], commitmentsToIgnore: new Set<string>() };
+        });
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+
+        await (updater as any).refreshCachedData({ lazyBoarding: true });
+        expect(rw.getBoardingTxs).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+        const before = await (updater as any).handleGetBalance();
+        expect(before.boarding.loaded).toBe(false);
+
+        release();
+        await until(() => (updater as any).boardingLoaded === true);
+        await until(() => rw.getBoardingTxs.mock.calls.length > 0);
+
+        const after = await (updater as any).handleGetBalance();
+        expect(after.boarding.loaded).toBe(true);
+        expect(after.boarding.total).toBe(7_000);
+
+        releaseHistory();
+    });
+
+    it("a lazy boarding refresh overtaken by clear() writes nothing", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const coin = (txid: string) =>
+            ({
+                txid,
+                vout: 0,
+                value: 1_000,
+                status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+            }) as any;
+        // A cached row the fetch no longer returns: an unchecked refresh would prune it.
+        await walletRepo.saveUtxos("boarding-address", [
+            coin("aa".repeat(32)),
+            coin("bb".repeat(32)),
+        ]);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
+            await gate;
+            return [boardingGroup([coin("aa".repeat(32))])];
+        });
+        const deleteUtxos = vi.spyOn(walletRepo, "deleteUtxos");
+        const saveTransactions = vi.spyOn(walletRepo, "saveTransactions");
+
+        await (updater as any).refreshCachedData({ lazyBoarding: true });
+        await until(() => rw.getBoardingUtxosForSigners.mock.calls.length > 0);
+        // What clear() does to the boarding generation, without wiping the fixture.
+        (updater as any).boardingEpoch++;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(deleteUtxos).not.toHaveBeenCalled();
+        expect(saveTransactions).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+    });
+
+    it("INIT_WALLET with lazyBoarding resolves with both onchain legs parked", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 7_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        let releaseBoarding!: () => void;
+        const boardingGate = new Promise<void>((resolve) => {
+            releaseBoarding = resolve;
+        });
+        let releaseHistory!: () => void;
+        const historyGate = new Promise<void>((resolve) => {
+            releaseHistory = resolve;
+        });
+        rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
+            await boardingGate;
+            return [boardingGroup([boardUtxo])];
+        });
+        rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
+            await historyGate;
+            return { boardingTxs: [], commitmentsToIgnore: new Set<string>() };
+        });
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+
+        const broadcasts: any[] = [];
+        (updater as any).channel = { broadcast: (response: any) => broadcasts.push(response) };
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "INIT_WALLET",
+            payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+        } as any);
+
+        expect(rw.getBoardingTxs).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+
+        releaseBoarding();
+        await until(() => (updater as any).boardingLoaded === true);
+        expect(broadcasts.some((response) => response?.type === "UTXO_UPDATE")).toBe(true);
+
+        releaseHistory();
     });
 
     it("RELOAD_WALLET does not re-subscribe or restart VtxoManager", async () => {
@@ -2487,7 +2729,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const initial = createMockExtendedVtxo({
             txid: "aa".repeat(32),
             value: 10000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [initial]);
 
@@ -2495,7 +2736,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const newVtxo = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 20000,
-            virtualStatus: { state: "settled" },
         });
         await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [newVtxo]);
 
@@ -2531,7 +2771,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "ee".repeat(32),
             vout: 0,
             value: 1000,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             script: "scriptB",
         });
@@ -2543,7 +2782,6 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "ee".repeat(32),
             vout: 0,
             value: 1000,
-            virtualStatus: { state: "settled" },
             isSpent: true,
             script: "scriptB",
         });
@@ -2592,6 +2830,8 @@ describe("WalletMessageHandler event-push generations", () => {
         }),
         notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+        getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
         dispose: vi.fn().mockResolvedValue(undefined),
         clear: vi.fn().mockResolvedValue(undefined),
         ...overrides,

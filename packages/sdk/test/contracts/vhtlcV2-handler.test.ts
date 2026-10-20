@@ -25,6 +25,7 @@ import {
 } from "../../src";
 import { contractHandlers } from "../../src/contracts/handlers";
 import type { PathContext } from "../../src/contracts/types";
+import type { GetSpendablePathsOptions } from "../../src/contracts/contractManager";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
 import { VHTLCV2ContractHandler } from "../../src/contracts/handlers/vhtlcV2";
 import { deriveContractTapscripts } from "../../src/wallet/utils";
@@ -248,7 +249,10 @@ describe("VHTLCV2ContractHandler", () => {
         // txid names nothing at all. Reading either as "no asset" re-derives the
         // sat-only script — exactly the silent drop above, reached by a corrupt
         // row instead of a missing feature.
-        for (const half of [{ assetTxid: ASSET_TXID }, { assetGroupIndex: "7" }]) {
+        for (const half of [{ assetTxid: ASSET_TXID }, { assetGroupIndex: "7" }] as Record<
+            string,
+            string
+        >[]) {
             expect(() => VHTLCV2ContractHandler.deserializeParams(fullParams(half))).toThrow(
                 /both be present or both absent/,
             );
@@ -630,7 +634,7 @@ describe("VHTLCV2ContractHandler", () => {
                 contractScript: contract.script,
                 collaborative: true,
                 walletDescriptor: `tr(${SENDER})`,
-            });
+            } as GetSpendablePathsOptions);
             return paths.map(leafHex).includes(script.refundWithoutReceiverScript!);
         };
 
@@ -663,7 +667,7 @@ describe("VHTLCV2ContractHandler", () => {
                     contractScript: contract.script,
                     collaborative: true,
                     walletDescriptor: `tr(${SENDER})`,
-                });
+                } as GetSpendablePathsOptions);
             const results = await Promise.all([query(), query(), query()]);
 
             expect(reads).toBe(1);
@@ -852,7 +856,7 @@ describe("VHTLCV2ContractHandler", () => {
                     contractScript: contract.script,
                     collaborative: true,
                     walletDescriptor: `tr(${SENDER})`,
-                });
+                } as GetSpendablePathsOptions);
             })();
             // Resolved, not rejected — and the height-gated leaf stays out.
             const script = VHTLCV2ContractHandler.createScript(fullParams());
@@ -880,7 +884,7 @@ describe("VHTLCV2ContractHandler", () => {
                     contractScript: contract.script,
                     collaborative: true,
                     walletDescriptor: `tr(${SENDER})`,
-                });
+                } as GetSpendablePathsOptions);
 
             vi.useFakeTimers();
             try {
@@ -916,7 +920,7 @@ describe("VHTLCV2ContractHandler", () => {
                     contractScript: contract.script,
                     collaborative: true,
                     walletDescriptor: `tr(${SENDER})`,
-                });
+                } as GetSpendablePathsOptions);
 
             expect((await query()).map(leafHex)).not.toContain(script.refundWithoutReceiverScript);
             // The transient throw must not outlive itself: the provider has

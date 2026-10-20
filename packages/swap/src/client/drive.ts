@@ -24,9 +24,12 @@ import {
     type Network,
     type SettlementEvent,
 } from "@arkade-os/sdk";
+import { fundingWasNotSubmitted } from "./record";
+import { assetPaymentOf } from "./assetPayment";
+import { retireUnsubmittedFunding } from "./fundingNotSubmitted";
 import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
-import { claimOnchainFill } from "../onchainHtlc";
+import { buildHtlcRefund, claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
 import { restoreOfferCoverage } from "../offer";
 import { LockupContractMissing, lockupContractParams } from "../lockupContract";
@@ -154,8 +157,8 @@ export interface SwapDriveConfig {
      * `accept()` keeps its own refusal. */
     readonly repository?: AssetSwapRepository;
     /**
-     * The client's corridors, for the L1 chain source and claim callback a drive pass needs.
-     * Lazy, so a client with `null` onchain deps that never drives `arkade -> onchain` never
+     * The client's corridors, for the L1 chain source and claim/refund callbacks a drive pass
+     * needs. Lazy, so a client with `null` onchain deps that never drives an onchain swap never
      * resolves them.
      */
     readonly corridors: () => Promise<CorridorSet>;
@@ -220,6 +223,13 @@ const traderClaimTxid = (swap: RfqSwap): string | undefined =>
  */
 export const readableRecord = (record: SwapRecord): boolean => {
     if (typeof record?.id !== "string" || record.route?.give === undefined) return false;
+    if (record.assetPayment !== undefined) {
+        try {
+            assetPaymentOf(record.assetPayment, record.expiresAt);
+        } catch {
+            return false;
+        }
+    }
     if (record.family === "rfq") {
         return typeof record.rfqId === "string" && typeof record.lockupAddress === "string";
     }
@@ -304,8 +314,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     /**
-     * Records this client cannot drive (an `arkade -> onchain` swap whose chain source was
-     * refused), kept out of a manager that would fail them terminally.
+     * Records this client cannot drive (an onchain swap whose chain source was refused), kept out of a manager that would fail them terminally.
      */
     const undrivable = new Set<QuoteId>();
 
@@ -344,6 +353,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const outcomeOfEntry = (record: SwapRecord, current?: RfqSwap): Outcome => {
+        if (fundingWasNotSubmitted(record)) return "cancelled";
         // Offers have no live object (the watcher works over the store): the record IS the state.
         if (record.family === "offer") return recordOutcome(record);
         if (current === undefined) {
@@ -392,7 +402,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const updateFor = (id: QuoteId): SwapUpdate | undefined => {
         const record = records.get(id);
-        if (record === undefined) return undefined;
+        if (record === undefined || !readableRecord(record)) return undefined;
         const current = live.get(id);
         const outcome = outcomeOfEntry(record, current);
         return {
@@ -465,13 +475,27 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     });
 
     /**
-     * The L1 seams, resolved the first time a swap that reads them (`arkade -> onchain`) appears.
-     * A refusal is reported and the record left undriven. `null` = refused.
+     * The L1 seams, resolved the first time a swap that reads them (either onchain direction)
+     * appears. A refusal is reported and the record left undriven. `null` = refused.
      */
     let onchainSeams:
-        | { chain: RfqSwapManagerDeps["chain"]; claim?: RfqSwapManagerCallbacks["claimOnchain"] }
+        | {
+              chain: RfqSwapManagerDeps["chain"];
+              claim?: RfqSwapManagerCallbacks["claimOnchain"];
+              refund?: RfqSwapManagerCallbacks["refundOnchain"];
+          }
         | null
         | undefined;
+
+    const liveFeeRate = async (
+        chain: NonNullable<RfqSwapManagerDeps["chain"]>,
+    ): Promise<number | undefined> => {
+        try {
+            return await chain.getFeeRate?.();
+        } catch {
+            return undefined;
+        }
+    };
 
     /**
      * The wallet-backed default L1 claim, synthesized when the caller wired none and the corridor
@@ -483,7 +507,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         chain: NonNullable<RfqSwapManagerDeps["chain"]>,
         feeRateSatVb: number,
     ): RfqSwapManagerCallbacks["claimOnchain"] => {
-        return async (swap, utxo) => {
+        return async (swap, utxo, options) => {
             const record = await corridorStore().getRfqSwap(swap.rfqId);
             if (!record) {
                 throw new Error(`rfq swap ${swap.rfqId} has no stored record to claim from`);
@@ -512,6 +536,17 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 // Optional only so older records still restore; no claim can be built without it.
                 throw new Error(`rfq swap ${swap.rfqId} carries no claim payout script`);
             }
+            // The agreed rate is the relay floor on every network — a claim that can sit
+            // unconfirmed until the solver's refund leaf replaces it.
+            const rate = nextClaimFeeRate({
+                configuredSatVb: feeRateSatVb,
+                utxoAmount: utxo.amount,
+                estimateSatVb: await liveFeeRate(chain),
+                ...(swap.claimFeeRateSatVb === undefined
+                    ? {}
+                    : { lastSatVb: swap.claimFeeRateSatVb }),
+                ...(options?.bump ? { bump: true } : {}),
+            });
             // `now` stays wall-clock: the claim's own deadline check is a consensus-margin probe,
             // not the drive's (injectable) window clock.
             // Tracked so `idle()`/`dispose()` drain this money-moving broadcast.
@@ -521,11 +556,53 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                     utxo,
                     preimage,
                     payoutPkScript: swap.payoutPkScript,
-                    feeRateSatVb,
+                    feeRateSatVb: rate,
                     sign: (sighash) => signer.signMessage(sighash, "schnorr"),
+                    ...(swap.claimTxid ? { republish: true } : {}),
                 }),
             );
-            return { txid };
+            return { txid, feeRateSatVb: rate };
+        };
+    };
+
+    /**
+     * The wallet-backed default L1 refund. Signs through the descriptor `provisionRefundKey` bound
+     * at quote time, checked against the key the HTLC was derived with, and pays the record's own
+     * `refundPkScript`. The manager calls it only once the refund leaf has matured on MTP.
+     */
+    const defaultOnchainRefund = (
+        chain: NonNullable<RfqSwapManagerDeps["chain"]>,
+        feeRateSatVb: number,
+    ): RfqSwapManagerCallbacks["refundOnchain"] => {
+        return async (swap, utxo) => {
+            const record = await corridorStore().getRfqSwap(swap.rfqId);
+            if (!record) {
+                throw new Error(`rfq swap ${swap.rfqId} has no stored record to refund from`);
+            }
+            const descriptor = record.profile.refundDescriptor;
+            if (typeof descriptor !== "string") {
+                throw new Error(
+                    `rfq swap ${swap.rfqId} carries no refund descriptor; wire the onchain ` +
+                        "corridor's refund callback to take its L1 funding back",
+                );
+            }
+            const signer = await contractSigner(wallet, descriptor);
+            const held = hex.encode(await signer.xOnlyPublicKey());
+            if (held !== record.profile.refundKey) {
+                throw new Error(
+                    `the key behind ${descriptor} is ${held}, not the refund key ` +
+                        `${String(record.profile.refundKey)} rfq swap ${swap.rfqId}'s HTLC was derived with`,
+                );
+            }
+            const { txHex } = await buildHtlcRefund({
+                htlc: swap.htlc,
+                utxo,
+                payoutPkScript: swap.refundPkScript,
+                feeRateSatVb,
+                sign: (sighash) => signer.signMessage(sighash, "schnorr"),
+            });
+            // Tracked so `idle()`/`dispose()` drain this money-moving broadcast.
+            return { txid: await track(chain.broadcast(txHex)) };
         };
     };
 
@@ -539,7 +616,16 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 (deps.claimFeeRateSatVb === undefined
                     ? undefined
                     : defaultOnchainClaim(deps.chain, deps.claimFeeRateSatVb));
-            onchainSeams = { chain: deps.chain, ...(claim ? { claim } : {}) };
+            const refund =
+                deps.refund ??
+                (deps.claimFeeRateSatVb === undefined
+                    ? undefined
+                    : defaultOnchainRefund(deps.chain, deps.claimFeeRateSatVb));
+            onchainSeams = {
+                chain: deps.chain,
+                ...(claim ? { claim } : {}),
+                ...(refund ? { refund } : {}),
+            };
             managerDeps.chain = deps.chain;
             return true;
         } catch (error) {
@@ -649,6 +735,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
             canRefundArkade,
             claimLockup,
             ...(onchainSeams?.claim ? { claimOnchain: onchainSeams.claim } : {}),
+            ...(onchainSeams?.refund ? { refundOnchain: onchainSeams.refund } : {}),
         });
     };
 
@@ -742,7 +829,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
         const registry = managerDeps.contracts;
         if (registry) {
-            await retireSettledOfferContracts(registry, [...current.values()].map(offerFactsOf));
+            await retireSettledOfferContracts(registry, [...current.values()].map(offerFactsOf), {
+                scope: wallet,
+            });
         }
         return [...current.values()];
     };
@@ -758,6 +847,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const registerCorridorSwap = async (record: CorridorSwapRecord): Promise<void> => {
+        if (fundingWasNotSubmitted(record)) return;
         // `readonly` only reports what the restore-read found; admitting a swap starts a pass.
         if (mode === "readonly") return;
         if (!(await drivable(record))) {
@@ -793,8 +883,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         if (mode === "readonly" || !startRequested) return;
         if (!repository) return;
         await contractsOf();
-        // Re-run on EVERY arm, not redundant: an early arm lacks `claimOnchain` (the seam is
-        // unresolved until an `onchain_send` record registers), and this is how it gets wired.
+        // Re-run on EVERY arm, not redundant: an early arm lacks the L1 callbacks (the seam is
+        // unresolved until an onchain record registers), and this is how they get wired.
         wireCallbacks();
         // Idempotent: `start()` no-ops when running; the watcher is rebuilt only after `stop()`.
         await manager.start();
@@ -863,7 +953,24 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
         const all = await collectSwapRecords(repository);
         const { corridor, offer } = splitRecords(all.filter(readableRecord));
-        for (const record of [...corridor, ...offer]) records.set(record.id, record);
+        const retiredScripts = new Set<string>();
+        for (const record of [...corridor, ...offer]) {
+            records.set(record.id, record);
+            if (mode !== "readonly" && fundingWasNotSubmitted(record)) {
+                const script =
+                    record.family === "offer" ? record.swapPkScript : record.lockupPkScript;
+                if (retiredScripts.has(script)) continue;
+                retiredScripts.add(script);
+                try {
+                    await retireUnsubmittedFunding(wallet, repository, record, await contractsOf());
+                } catch (error) {
+                    console.warn(
+                        `[swap] could not restore unsent coverage for ${record.id}`,
+                        error,
+                    );
+                }
+            }
+        }
 
         // Terminal records stay in `records` (readable, replayed) but are never driven.
         const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
@@ -1112,6 +1219,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         adopt: (record) => {
             if (disposed) throw new ClientDisposed("accept");
             records.set(record.id, record);
+            if (fundingWasNotSubmitted(record)) {
+                emit(record.id);
+                return swapView(record.id);
+            }
             if (record.family === "rfq") {
                 corridorStore().index(record);
                 managerDeps.repository = corridorStore();

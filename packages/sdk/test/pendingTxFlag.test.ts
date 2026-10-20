@@ -25,8 +25,16 @@ describe("the pending Arkade transaction flag", () => {
         const flag = async () =>
             (await wallet.walletRepository.getWalletState())?.settings?.hasPendingTx;
 
-        const first = wallet.buildAndSubmitOffchainTx([{ ...coins[0], tapTree }], []);
-        const second = wallet.buildAndSubmitOffchainTx([{ ...coins[1], tapTree }], []);
+        // The unlocked tail, as two overlapping concurrent spends reach it; the public method
+        // would queue the second behind the first's lock.
+        const submit = (coin: (typeof coins)[number]) =>
+            (wallet as any)._buildAndSubmitOffchainTx(
+                [{ ...coin, tapTree }],
+                [],
+                (wallet as any).serverUnrollScript,
+            );
+        const first = submit(coins[0]);
+        const second = submit(coins[1]);
         await vi.waitFor(() => expect(finalize).toHaveLength(2));
 
         finalize[0]();

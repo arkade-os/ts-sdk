@@ -1,3 +1,4 @@
+import { assertTimerMs } from "../utils/time";
 import {
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -21,8 +22,8 @@ import {
 import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
-import type { ExtendedContractVtxo } from "../contracts/types";
-import { isContractVtxoEvent } from "../contracts/types";
+import type { Contract, ExtendedContractVtxo } from "../contracts/types";
+import { isContractVtxoEvent, isRecoveryOnlyContract } from "../contracts/types";
 import {
     classifyAgainstSignerSet,
     isCooperativelyMigratable,
@@ -114,6 +115,16 @@ function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepC
  * Static: two distinct wallets on one origin just take turns, which is acceptable.
  */
 const BOARDING_POLL_LOCK_NAME = "arkade-boarding-poll";
+
+/**
+ * Web Locks name serializing imported-contract recovery (arkcash) across
+ * same-origin contexts. Separate from {@link BOARDING_POLL_LOCK_NAME} because
+ * the prompt `claimCash` kick runs this OUTSIDE the boarding-poll lock; a
+ * distinct name lets the recovery core nest safely under that lock when the
+ * poll drives it (Web Locks with `ifAvailable` never block, so no deadlock).
+ * Static for the same reason the boarding lock is: dedupe work per origin.
+ */
+const IMPORTED_RECOVERY_LOCK_NAME = "arkade-imported-recovery";
 
 /**
  * Run `fn` under an exclusive Web Lock when `navigator.locks` exists, else (Node, React Native)
@@ -299,16 +310,71 @@ function deductOffchainOutputFee(
     estimator: Estimator,
     arkAddress: string,
 ): bigint {
+    return subtotal - offchainOutputFee(subtotal, estimator, arkAddress);
+}
+
+function offchainOutputFee(amount: bigint, estimator: Estimator, arkAddress: string): bigint {
     // Mirror the estimator's early return before `ArkAddress.decode`: an operator that doesn't
     // price outputs shouldn't make a decodable address a precondition for renewing/recovering.
     if (!estimator.config.offchainOutput) {
-        return subtotal;
+        return 0n;
     }
     const outputFee = estimator.evalOffchainOutput({
-        amount: subtotal,
+        amount,
         script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
     });
-    return subtotal - BigInt(outputFee.satoshis);
+    return BigInt(outputFee.satoshis);
+}
+
+/**
+ * Run a caller's {@link RenewalSplit} and refuse a plan whose SHAPE the server
+ * would reject — count, ceiling and budget. Dust is judged by the caller, on
+ * every output whichever path produced it, so the one rule cannot drift.
+ *
+ * Refused, not corrected — a reshaped plan renews the float into a shape nobody
+ * asked for. Under-claiming is allowed only below dust: the residue is paid as
+ * fee, so anything that could have been a piece of its own is refused instead.
+ */
+function planSplitOutputs(split: RenewalSplit, context: RenewalSplitContext): bigint[] {
+    const { subtotal, outputFeeOn, maxAmount, dust, hasAssets } = context;
+    const amounts = [...split.plan(context)];
+    if (amounts.length === 0) {
+        throw new Error(`Renewal split produced no outputs for a subtotal of ${subtotal}`);
+    }
+    if (hasAssets && amounts.length > 1) {
+        throw new Error(
+            `Renewal split produced ${amounts.length} outputs while the selected inputs carry assets: ` +
+                "settle assigns every input asset to the first matching output, so they would all land on " +
+                "piece 0. Return a single piece when the split context reports hasAssets.",
+        );
+    }
+    if (amounts.length > split.maxOutputs) {
+        throw new Error(
+            `Renewal split produced ${amounts.length} outputs, more than the ${split.maxOutputs} it allows`,
+        );
+    }
+
+    let claimed = 0n;
+    for (const amount of amounts) {
+        if (maxAmount >= 0n && amount > maxAmount) {
+            throw new Error(
+                `Renewal split output ${amount} exceeds the per-output limit ${maxAmount}`,
+            );
+        }
+        claimed += amount + outputFeeOn(amount);
+    }
+    if (claimed > subtotal) {
+        throw new Error(
+            `Renewal split claims ${claimed} with fees, more than the ${subtotal} available`,
+        );
+    }
+    if (subtotal - claimed >= dust) {
+        throw new Error(
+            `Renewal split leaves ${subtotal - claimed} of ${subtotal} unclaimed, at or above ` +
+                `the dust threshold ${dust}; the operator would take it as fee`,
+        );
+    }
+    return amounts;
 }
 
 /** Default renewal threshold in seconds (3 days). */
@@ -542,6 +608,48 @@ export interface RenewVtxosOptions {
      * `SettlementConfig.vtxoThreshold` and the default (3 days).
      */
     thresholdSeconds?: number;
+    /** Give the renewal back as several outputs. Omitted, it settles into one. */
+    split?: RenewalSplit;
+}
+
+/**
+ * How a renewal divides its proceeds across outputs. The arithmetic that gets a
+ * settlement accepted stays here; this decides only the SHAPE, which is a policy
+ * the wallet cannot know.
+ *
+ * Only the call it is passed to splits: automatic renewal settles everything it
+ * selects into one output, so it merges the pieces back once they near expiry.
+ * A caller keeping the shape across cycles disables it (`settlementConfig: false`)
+ * and renews itself.
+ */
+export interface RenewalSplit {
+    /**
+     * Most outputs one renewal may create — the caller's own bound, the server
+     * bounding WEIGHT. Also raises admission to this many `vtxoMaxAmount`s.
+     */
+    maxOutputs: number;
+    plan(context: RenewalSplitContext): readonly bigint[];
+}
+
+/** What a {@link RenewalSplit} gets to decide against. */
+export interface RenewalSplitContext {
+    /** Inputs' worth net of their own intent fees, BEFORE any output fee. */
+    subtotal: bigint;
+    outputFeeOn(amount: bigint): bigint;
+    /** Server per-output ceiling; `-1n` means none. */
+    maxAmount: bigint;
+    /** Floor for each piece, and the bound on what a plan may leave unclaimed. */
+    dust: bigint;
+    /** The address every piece lands on — the wallet's own, after any signer rotation. */
+    address: string;
+    /**
+     * Whether any selected input carries assets — then a plan MUST return one
+     * piece. `Wallet.settle` bags every input asset onto the FIRST output
+     * matching the destination script, and every piece is on it, so a split
+     * would silently put the whole holding on piece 0. The SPLIT is refused
+     * rather than the renewal: an unrenewed float expires.
+     */
+    hasAssets: boolean;
 }
 
 /**
@@ -727,6 +835,43 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
     );
 }
 
+/**
+ * A wallet that can purge a contract it imported purely for recovery (see
+ * `Wallet.claimCash`): removes the contract row and the keyring key backing
+ * it. Duck-typed like {@link MigrationCapableWallet} so proxy/watch-only
+ * wallets — which never import such contracts — are simply routed away.
+ */
+interface RecoveryContractCapableWallet {
+    removeRecoveryContract(script: string): Promise<void>;
+}
+
+/** Return whether a wallet can purge its imported recovery contracts. */
+function isRecoveryContractCapable(
+    wallet: IWallet,
+): wallet is IWallet & RecoveryContractCapableWallet {
+    return (
+        typeof (wallet as Partial<RecoveryContractCapableWallet>).removeRecoveryContract ===
+        "function"
+    );
+}
+
+/**
+ * Whether a contract's server signer classifies as non-`CURRENT` against the
+ * fresh signer set. Mirrors the per-contract classification inside
+ * `anyInputUnderDeprecatedSigner` (a missing `serverPubKey` contributes
+ * `false`, matching its `continue`), for callers that already know the one
+ * contract their inputs belong to.
+ */
+function isContractUnderDeprecatedSigner(
+    contract: Contract,
+    signerSet: SignerSet,
+    nowSeconds: number,
+): boolean {
+    const serverPubKey = contract.params.serverPubKey;
+    if (!serverPubKey) return false;
+    return classifyAgainstSignerSet(serverPubKey, signerSet, nowSeconds).status !== "CURRENT";
+}
+
 /** A deprecated-signer VTXO paired with its signer classification. */
 interface ClassifiedVtxo {
     vtxo: ExtendedContractVtxo;
@@ -889,6 +1034,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private startupPollTimeoutId?: ReturnType<typeof setTimeout>;
     private static readonly MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 
+    // Serializes imported-recovery passes so the prompt claimCash kick and the
+    // poll loop can't settle the same imported (arkcash) contract twice.
+    private importedRecoveryInProgress = false;
+
     // Guards against renewal feedback loop: when renewVtxos() settles, the
     // server emits new VTXOs → vtxo_received → renewVtxos() again → infinite loop.
     private renewalInProgress = false;
@@ -920,6 +1069,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         readonly wallet: IWallet,
         settlementConfig?: SettlementConfig | false,
     ) {
+        if (settlementConfig !== false) {
+            assertTimerMs("pollIntervalMs", settlementConfig?.pollIntervalMs);
+        }
         this.settlementConfig =
             settlementConfig !== undefined ? settlementConfig : { ...DEFAULT_SETTLEMENT_CONFIG };
 
@@ -1186,6 +1338,197 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         };
     }
 
+    // ========== Imported Recovery (arkcash) ==========
+
+    /**
+     * Recover the funds of every contract imported purely for recovery (see
+     * `Wallet.claimCash`'s server-swept branch). Each imported contract is
+     * settled back to the wallet in its **own isolated intent**, so a
+     * persistently rejected input dents only its own recovery and never the
+     * wallet's own renewal/recovery bundle. Rotation-aware: a swept input
+     * minted under a now-deprecated signer re-mints under the active one.
+     *
+     * On a successful settlement the imported contract's VTXOs are spent, so
+     * the contract row and its keyring key are purged — the key at rest lives
+     * only for the recovery window.
+     *
+     * Self-contained and idempotent: safe to call repeatedly and never throws.
+     * `claimCash` kicks it promptly after an import; the poll loop retries it
+     * indefinitely on the normal cadence. Every failure is logged and retried.
+     */
+    async recoverImportedContracts(): Promise<void> {
+        const wallet = this.wallet;
+        // Only a signing wallet imports recovery contracts; proxy/watch-only
+        // wallets never have any, so there is nothing to do.
+        if (!isRecoveryContractCapable(wallet)) return;
+        // Fast per-instance skip so the prompt kick and this instance's own poll
+        // don't queue redundant passes. This is the ONLY serialization in Node/
+        // React Native, where the cross-instance lock below is a no-op.
+        if (this.importedRecoveryInProgress) return;
+        this.importedRecoveryInProgress = true;
+        try {
+            // Cross-instance serialization: the prompt `claimCash` kick and the
+            // poll loop both land here, and two tabs/workers can share one repo.
+            // Without a shared lock they submit duplicate recovery intents for
+            // the same swept VTXO, and the server's duplicated-input handling
+            // then issues a DeleteIntent that can cancel a sibling's valid
+            // recovery — the very race the boarding poll's lock prevents for its
+            // intents. `ifAvailable` never blocks (it runs or skips), so this
+            // cannot deadlock even when the poll drives it inside the boarding
+            // lock; a skipped cycle is retried by the next poll.
+            await runWithCrossInstanceLock(IMPORTED_RECOVERY_LOCK_NAME, () =>
+                this.recoverImportedContractsCore(wallet),
+            );
+        } finally {
+            this.importedRecoveryInProgress = false;
+        }
+    }
+
+    /**
+     * The recovery pass body, run under the imported-recovery cross-instance
+     * lock by {@link recoverImportedContracts}. Never throws — every failure is
+     * logged and retried on the next cycle.
+     */
+    private async recoverImportedContractsCore(
+        wallet: IWallet & RecoveryContractCapableWallet,
+    ): Promise<void> {
+        try {
+            const cm = await wallet.getContractManager();
+            // Cheap repo-only pre-check: the poll loop calls this every cycle,
+            // so avoid an indexer sync entirely when there is nothing imported.
+            const recoveryScripts = (await cm.getContracts())
+                .filter(isRecoveryOnlyContract)
+                .map((contract) => contract.script);
+            if (recoveryScripts.length === 0) return;
+
+            // Scope the VTXO sync to just the imported contracts.
+            const recoveryContracts = await cm.getContractsWithVtxos({ script: recoveryScripts });
+
+            const info = await this.getInfoProvider()?.getInfo();
+            const dustAmount = getDustAmount(wallet);
+
+            for (const { contract, vtxos } of recoveryContracts) {
+                try {
+                    await this.recoverOneImportedContract(
+                        wallet,
+                        contract,
+                        vtxos,
+                        info,
+                        dustAmount,
+                    );
+                } catch (error) {
+                    // Isolation: log and move on. A failing recovery is retried
+                    // next cycle and never touches the other contracts or the
+                    // wallet's own funds.
+                    console.error(
+                        `Imported arkcash recovery failed for contract ${contract.script}:`,
+                        error,
+                    );
+                }
+            }
+        } catch (error) {
+            // A top-level failure (e.g. the contract fetch) must not break the
+            // caller: both the poll loop and the claimCash kick rely on this
+            // being non-throwing.
+            console.error("Imported arkcash recovery pass failed:", error);
+        }
+    }
+
+    /**
+     * Settle one imported recovery contract's swept VTXOs back to the wallet,
+     * then purge the contract and its key once nothing spendable remains.
+     * Called only with a recovery-capable wallet (see
+     * {@link recoverImportedContracts}).
+     */
+    private async recoverOneImportedContract(
+        wallet: IWallet & RecoveryContractCapableWallet,
+        contract: Contract,
+        vtxos: ExtendedContractVtxo[],
+        info: ArkadeInfo | undefined,
+        dustAmount: bigint,
+    ): Promise<void> {
+        // Only swept-but-unspent VTXOs can be recovered; a re-run after a
+        // partial/complete recovery sees the rest already spent.
+        const recoverable = vtxos.filter((vtxo) => vtxo.isSwept && !isVtxoSpent(vtxo));
+
+        // Price against the intent-fee policy BEFORE capping, so an input that
+        // can't pay its own fee neither takes a viable one's slot nor joins the
+        // batch; it stays at the address (mirrors recoverVtxos). Then cap to the
+        // server's intent-size and per-output limits, highest-value first; the
+        // overflow recovers next cycle. `info` is undefined only with no ark
+        // provider wired, which prices as zero.
+        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const { payable, net } = priceSettlementInputs(recoverable, estimator);
+        const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
+        const batch =
+            payable.length > 0 ? capSettlementBatch(byValueDescending(payable), vtxoMaxAmount) : [];
+
+        if (batch.length > 0) {
+            // The output fee only lowers this, so a sub-dust net subtotal can't
+            // settle: skip before rotating, and retry on a later cycle.
+            const subtotal = subtotalOf(batch, net);
+            if (subtotal < dustAmount) return;
+
+            // Rotation guard: if a swept input is under a now-deprecated signer
+            // and the wallet's own snapshot is that old signer, pin the wallet
+            // to the active signer BEFORE reading its address, so the recovered
+            // output re-mints under the current key (mirrors recoverVtxos).
+            // Every input in `batch` belongs to `contract`, so pass it as the
+            // known owner — sparing the guard's outpoint→contract scan (an
+            // unscoped getContractsWithVtxos sync) on every pass a
+            // deprecated-snapshot wallet runs.
+            if (info && isMigrationCapable(wallet)) {
+                await this.rotateForRecoverableInputs(batch, info, contract);
+            }
+
+            // Read AFTER any rotation, so the output fee is priced against the
+            // script the recovered VTXO lands on.
+            const arkAddress = await wallet.getAddress();
+            const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
+            if (totalAmount < dustAmount) return;
+
+            await wallet.settle({
+                inputs: batch,
+                outputs: [{ address: arkAddress, amount: totalAmount }],
+            });
+        }
+
+        // Purge only on AUTHORITATIVE evidence the funds are gone — never on an
+        // empty VTXO view. `createContract` tolerates a retryable hydration
+        // failure and `getContractsWithVtxos` falls back to (possibly empty)
+        // repo state on a retryable sync failure, so a transient indexer outage
+        // yields `vtxos = []` (hence `batch = []`). Deleting the key then would
+        // strand the funds before recovery ever ran, breaking the indefinite-
+        // retry guarantee. On an empty view, do nothing and retry next cycle.
+        //
+        // A non-empty view IS authoritative enough: a `spent` status only comes
+        // from the indexer and is terminal, and a settle we just made is itself
+        // authoritative. So purge once nothing spendable remains after this
+        // batch is spent; if any spendable VTXO is still there (an un-settled
+        // overflow, or fresh funds at the address), keep the contract for a
+        // later cycle.
+        //
+        // The view cannot shrink back to empty and strand the contract here:
+        // `getContractsWithVtxos` serves repository state, and every backend's
+        // `saveVtxos` upserts (merge / put / INSERT OR REPLACE) rather than
+        // replacing a script's set, so a sync never drops a VTXO the repo has
+        // already seen. Nothing prunes them either — `deleteVtxos*` has no
+        // caller outside the repositories, and `pruneForSpentVtxo` clears exit
+        // data in the virtual-tx repository, not these rows. So a re-entry
+        // after a crashed or failed purge still sees the spent set and
+        // completes. On the happy path this guard is moot anyway: `vtxos` is
+        // the pre-settle snapshot that held the VTXO just settled.
+        if (vtxos.length === 0) return;
+
+        const spent = new Set(batch.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+        const stillSpendable = vtxos.some(
+            (vtxo) => !isVtxoSpent(vtxo) && !spent.has(`${vtxo.txid}:${vtxo.vout}`),
+        );
+        if (!stillSpendable) {
+            await wallet.removeRecoveryContract(contract.script);
+        }
+    }
+
     // ========== Renewal Methods ==========
 
     /**
@@ -1294,6 +1637,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
         }
 
+        // Same reason, and needed this early: the batch cap below multiplies by it.
+        if (options?.split !== undefined) {
+            const { maxOutputs } = options.split;
+            if (!Number.isInteger(maxOutputs) || maxOutputs < 1) {
+                throw new TypeError(
+                    `Invalid split.maxOutputs: expected a positive integer, got ${String(maxOutputs)}`,
+                );
+            }
+        }
+
         if (this.renewalInProgress) {
             throw new Error("Renewal already in progress");
         }
@@ -1332,15 +1685,29 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 );
             }
 
-            const capped = capSettlementBatch(byExpiryAscending(vtxos, now), vtxoMaxAmount);
-            if (vtxoMaxAmount >= 0n) {
-                // Unlike count-cap overflow, a VTXO alone above the ceiling can never renew here
+            // The ceiling bounds each OUTPUT, so a split carries that many ceilings' worth. By the
+            // count alone: this weighs GROSS input value against pieces paid post-fee.
+            // An asset-bearing batch must come back as ONE piece, so it keeps one ceiling — judged
+            // BEFORE the cap, so it cannot admit a batch it then strands.
+            const carriesAssets = vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0);
+            const capacity =
+                vtxoMaxAmount < 0n || !options?.split || carriesAssets
+                    ? vtxoMaxAmount
+                    : BigInt(options.split.maxOutputs) * vtxoMaxAmount;
+            // Both messages below count against `capacity`, so name the bound that actually fired.
+            const limitLabel =
+                capacity === vtxoMaxAmount
+                    ? `per-output limit ${vtxoMaxAmount}`
+                    : `combined split capacity ${capacity} (${options?.split?.maxOutputs} x ${vtxoMaxAmount})`;
+            const capped = capSettlementBatch(byExpiryAscending(vtxos, now), capacity);
+            if (capacity >= 0n) {
+                // Unlike count-cap overflow, a VTXO alone above the bound can never renew here
                 // and drifts toward a unilateral exit — surface it so operators can act.
-                const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > vtxoMaxAmount);
+                const oversized = vtxos.filter((vtxo) => BigInt(vtxo.value) > capacity);
                 if (oversized.length > 0) {
                     console.warn(
-                        `Renewal: ${oversized.length} VTXO(s) exceed the per-output limit ` +
-                            `${vtxoMaxAmount} and cannot be renewed; they risk unilateral exit`,
+                        `Renewal: ${oversized.length} VTXO(s) exceed the ${limitLabel} ` +
+                            "and cannot be renewed; they risk unilateral exit",
                     );
                 }
             }
@@ -1349,9 +1716,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 vtxos = capped;
                 if (vtxos.length === 0) {
                     // Only reachable if the server lowered the ceiling below every VTXO.
-                    throw new Error(
-                        `No VTXOs available to renew within the per-output limit ${vtxoMaxAmount}`,
-                    );
+                    throw new Error(`No VTXOs available to renew within the ${limitLabel}`);
                 }
             }
 
@@ -1367,28 +1732,32 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // the script the renewed VTXO actually lands on.
             const arkAddress = await this.wallet.getAddress();
 
-            const totalAmount = deductOffchainOutputFee(
-                subtotalOf(vtxos, net),
-                estimator,
-                arkAddress,
-            );
+            const subtotal = subtotalOf(vtxos, net);
+
+            const amounts = options?.split
+                ? planSplitOutputs(options.split, {
+                      subtotal,
+                      outputFeeOn: (amount) => offchainOutputFee(amount, estimator, arkAddress),
+                      maxAmount: vtxoMaxAmount,
+                      dust: dustAmount,
+                      address: arkAddress,
+                      // Read off the FINAL selection, so a cap that dropped the only
+                      // asset-bearing input frees the plan to split again.
+                      hasAssets: vtxos.some((vtxo) => (vtxo.assets?.length ?? 0) > 0),
+                  })
+                : [deductOffchainOutputFee(subtotal, estimator, arkAddress)];
 
             // Dust is judged on the NET output: a batch clearing dust gross can land under it.
-            if (totalAmount < dustAmount) {
-                throw new Error(
-                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`,
-                );
+            for (const amount of amounts) {
+                if (amount < dustAmount) {
+                    throw new Error(`Total amount ${amount} is below dust threshold ${dustAmount}`);
+                }
             }
 
             const txid = await this.wallet.settle(
                 markSdkPicked({
                     inputs: vtxos,
-                    outputs: [
-                        {
-                            address: arkAddress,
-                            amount: totalAmount,
-                        },
-                    ],
+                    outputs: amounts.map((amount) => ({ address: arkAddress, amount })),
                 }),
                 eventCallback,
             );
@@ -2088,10 +2457,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * deprecated-signer input — so a routine settle on a long-lived pre-rotation instance does
      * not eagerly rotate, so a recovered old-signer VTXO re-mints under the active key. Returns
      * whether a rotation was applied.
+     *
+     * Pass `owningContract` when every input belongs to one known contract (imported recovery):
+     * it is classified directly, sparing {@link anyInputUnderDeprecatedSigner}'s unscoped
+     * outpoint→contract sync on every pass.
      */
     private async rotateForRecoverableInputs(
         inputs: { txid: string; vout: number }[],
         info: ArkadeInfo,
+        owningContract?: Contract,
     ): Promise<boolean> {
         if (!isMigrationCapable(this.wallet)) return false;
 
@@ -2107,7 +2481,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return false;
         }
 
-        if (!(await this.anyInputUnderDeprecatedSigner(inputs, signerSet, nowSeconds))) {
+        const hasDeprecatedInput = owningContract
+            ? inputs.length > 0 &&
+              isContractUnderDeprecatedSigner(owningContract, signerSet, nowSeconds)
+            : await this.anyInputUnderDeprecatedSigner(inputs, signerSet, nowSeconds);
+        if (!hasDeprecatedInput) {
             return false;
         }
 
@@ -2415,6 +2793,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 if (migrationEnabled && isMigrationCapable(this.wallet)) {
                     await this.runMigrationPass();
                 }
+
+                // Recover funds of contracts imported for recovery (claimCash's
+                // server-swept branch), each in its own isolated intent.
+                // Self-serializing on its own cross-instance lock, so it stays
+                // coordinated with the prompt claimCash kick (which calls it
+                // outside this boarding lock) — the two never submit duplicate
+                // recovery intents. Self-contained (per-contract try/catch,
+                // never throws) so it neither stacks the poll backoff nor
+                // affects the wallet's own settle above.
+                await this.recoverImportedContracts();
             });
         } catch (e) {
             hadError = true;

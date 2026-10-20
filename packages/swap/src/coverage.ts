@@ -9,12 +9,12 @@ import type { IContractManager } from "@arkade-os/sdk";
 import type { RfqSwapState } from "./rfqSwapState";
 import type { AssetSwapStatus } from "./store";
 
-/** Structural so v1 and v2 offer records both fit. `createdAt` is unix **milliseconds**, the unit
- * issuance is marked in; seconds would leave every issued script outstanding forever. */
+/** Native issuance matches `id`; legacy issuance compares unix milliseconds in `createdAt`. */
 export interface CoveredSwap {
     readonly swapPkScript: string;
     readonly status: AssetSwapStatus;
     readonly createdAt: number;
+    readonly id?: string;
 }
 
 /**
@@ -32,9 +32,26 @@ export type OfferContractRetirer = Pick<IContractManager, "setContractWatchState
  *  missed its window says nothing about a covenant that can still be funded. */
 export const LOCKUP_RETIRABLE: readonly RfqSwapState[] = ["settled", "refunded"];
 
-/** Scripts whose address has been handed out, by issuance time. Cleared by the first record showing
- * the deposit landed; a stale mark would pin the script watched for the life of the process. */
-const issuedAt = new Map<string, number>();
+export interface CoverageRegistrationOptions {
+    readonly coverageId?: string;
+    /** Use the wallet object: a worker can return a fresh manager proxy on every call. */
+    readonly scope?: object;
+}
+
+const legacyScope = {};
+type OutstandingIssuance = { issuedAt?: number; ids: Set<string> };
+const issuedByScope = new WeakMap<object, Map<string, OutstandingIssuance>>();
+
+function markIssued(script: string, issued: number, options: CoverageRegistrationOptions): void {
+    const scope = options.scope ?? legacyScope;
+    const issuedAt = issuedByScope.get(scope) ?? new Map<string, OutstandingIssuance>();
+    const outstanding = issuedAt.get(script) ?? { issuedAt: undefined, ids: new Set<string>() };
+    const id = options.coverageId;
+    if (id === undefined) outstanding.issuedAt = issued;
+    else outstanding.ids.add(id);
+    issuedAt.set(script, outstanding);
+    issuedByScope.set(scope, issuedAt);
+}
 
 /** Per-script tail of in-flight coverage changes; holds only what is running. */
 const inFlight = new Map<string, Promise<void>>();
@@ -61,14 +78,21 @@ async function serialize<T>(script: string, task: () => Promise<T>): Promise<T> 
  * created since the issuance *is* that deposit (`createdAt` is the funding time); an older record
  * belongs to an earlier offer.
  */
-function addressOutstanding(swaps: readonly CoveredSwap[], script: string): boolean {
+function addressOutstanding(swaps: readonly CoveredSwap[], script: string, scope: object): boolean {
+    const issuedAt = issuedByScope.get(scope);
+    if (issuedAt === undefined) return false;
     const issued = issuedAt.get(script);
     if (issued === undefined) return false;
-    if (swaps.some((s) => s.swapPkScript === script && s.createdAt >= issued)) {
-        issuedAt.delete(script);
-        return false;
+    for (const swap of swaps) {
+        if (swap.swapPkScript !== script) continue;
+        if (swap.id !== undefined) issued.ids.delete(swap.id);
+        if (issued.issuedAt !== undefined && swap.createdAt >= issued.issuedAt) {
+            issued.issuedAt = undefined;
+        }
     }
-    return true;
+    if (issued.ids.size > 0 || issued.issuedAt !== undefined) return true;
+    issuedAt.delete(script);
+    return false;
 }
 
 /**
@@ -82,11 +106,14 @@ export async function promoteOfferContract(
     /** When the address went out. A restore passes the record's funding time, since a mark dated
      * after every record at the script would pin it watched forever. */
     issued: number = Date.now(),
+    options: CoverageRegistrationOptions & { restore?: boolean } = {},
 ): Promise<void> {
     await serialize(script, async () => {
         await manager.setContractWatchState(script, "watched");
         // after the write: a failed promotion hands out no address
-        issuedAt.set(script, issued);
+        // A restored native record is already durable, so it issues no new address.
+        if (options.restore && options.coverageId !== undefined) return;
+        markIssued(script, issued, options);
     });
 }
 
@@ -98,16 +125,19 @@ export async function promoteOfferContract(
  */
 export async function retireOfferContract(
     manager: OfferContractRetirer,
-    swaps: readonly CoveredSwap[],
+    swaps: readonly CoveredSwap[] | (() => Promise<readonly CoveredSwap[]>),
     script: string,
+    options: CoverageRegistrationOptions = {},
 ): Promise<void> {
     // both reads inside the queue, so a concurrent promotion is seen rather than overwritten
     await serialize(script, async () => {
+        const records = typeof swaps === "function" ? await swaps() : swaps;
         // NOT `!TERMINAL.includes(...)`: `recoverable` is terminal for a spend
         // and not retirable, so reading liveness off TERMINAL unwatches swept
         // funds.
-        if (swaps.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
-        if (addressOutstanding(swaps, script)) return;
+        const outstanding = addressOutstanding(records, script, options.scope ?? legacyScope);
+        if (records.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
+        if (outstanding) return;
         try {
             await manager.setContractWatchState(script, "retained");
         } catch (err) {
@@ -124,9 +154,21 @@ export async function retireOfferContract(
 export async function retireSettledOfferContracts(
     manager: OfferContractRetirer,
     swaps: readonly CoveredSwap[],
+    options: CoverageRegistrationOptions = {},
 ): Promise<void> {
     const settled = new Set(
         swaps.filter((s) => RETIRABLE.includes(s.status)).map((s) => s.swapPkScript),
     );
-    for (const script of settled) await retireOfferContract(manager, swaps, script);
+    for (const script of settled) await retireOfferContract(manager, swaps, script, options);
 }
+
+export const registerContractCoverage = async <T>(
+    script: string,
+    register: () => Promise<T>,
+    options: CoverageRegistrationOptions = {},
+): Promise<T> =>
+    serialize(script, async () => {
+        const row = await register();
+        markIssued(script, Date.now(), options);
+        return row;
+    });

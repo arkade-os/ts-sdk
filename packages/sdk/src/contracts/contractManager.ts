@@ -44,7 +44,7 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
-import { reconcileIntents } from "../wallet/intentReconciliation";
+import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -60,6 +60,7 @@ import {
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 import { DEFAULT_PAGE_SIZE } from "./constants";
+import { assertNonNegativeMs } from "../utils/time";
 
 /**
  * Whether two *different* contract types may share one repository row when their derived
@@ -251,10 +252,14 @@ export interface ScanContractsOptions {
  * Freshness of the ContractManager's provider-backed sync. `degraded` means the most recent sync
  * hit a retryable indexer/operator failure and repository state is being served; it returns to
  * `online` on the next successful sync.
+ *
+ * `syncing` says a provider sync is in flight right now, so a read can be served from the
+ * repository while the work that refreshes it runs on. Optional so adding it breaks no
+ * implementer of this public interface; {@link ContractManager} always sets it.
  */
 export type ContractSyncState =
-    | { mode: "online"; lastSyncedAt?: number }
-    | { mode: "degraded"; reason: string; lastSyncedAt?: number };
+    | { mode: "online"; syncing?: boolean; lastSyncedAt?: number }
+    | { mode: "degraded"; syncing?: boolean; reason: string; lastSyncedAt?: number };
 
 export interface IContractManager extends Disposable {
     /**
@@ -290,6 +295,21 @@ export interface IContractManager extends Disposable {
 
     /** Latest provider-sync health. See {@link ContractSyncState}. */
     getSyncState(): ContractSyncState;
+
+    /**
+     * Contracts with their repository VTXOs, answered without waiting on the indexer. A sync
+     * older than `vtxoSyncMaxAgeMs` is requested in the background (skipped while the lazy boot
+     * runs); check {@link getSyncState} before trusting the result. For display, never coin
+     * selection.
+     */
+    getStoredContractsWithVtxos?(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+
+    /**
+     * Settles when the `lazyInitialization` boot (look-ahead drain, reconcile, watcher start)
+     * finishes; immediately when there is none. Never rejects: a failed boot is reported through
+     * {@link getSyncState}.
+     */
+    whenBooted?(): Promise<void>;
 
     /**
      * Stamp raw virtual outputs with their contract's tapscripts (forfeit, intent, tap tree).
@@ -353,7 +373,8 @@ export interface IContractManager extends Disposable {
     setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Update only the contract's watch state.
+     * Update only the contract's watch state. An unchanged state is a no-op (no write, no
+     * resubscribe); a missing `watch` field counts as `watched`.
      *
      * `retained` drops the script from the subscription and sweep while keeping the row (history,
      * annotation, restore). `awaiting-funds` watches only until funded, then the manager demotes
@@ -459,8 +480,10 @@ export interface IContractManager extends Disposable {
     /** Whether the underlying watcher is currently active. */
     isWatching(): Promise<boolean>;
 
-    /** Release resources (stop watching, clear listeners). */
-    dispose(): void;
+    /**
+     * Release resources (stop watching, clear listeners) and wait for in-flight repository writes.
+     */
+    dispose(): Promise<void>;
 }
 
 /** Options for getting spendable paths. */
@@ -485,6 +508,8 @@ export type GetAllSpendingPathsOptions = {
 
 /** Configuration for the ContractManager. */
 export interface ContractManagerConfig {
+    /** Opt in to background boot; inspect getSyncState() before using cached data. */
+    lazyInitialization?: boolean;
     indexerProvider: IndexerProvider;
 
     contractRepository: ContractRepository;
@@ -497,6 +522,9 @@ export interface ContractManagerConfig {
      * indexer state (crash recovery) on boot and reconnect; see {@link reconcileIntents}.
      */
     intentRepository?: IntentRepository;
+
+    /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
+    intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
 
     /**
      * Exit-data capture hook, fired best-effort after VTXOs are persisted so a
@@ -532,6 +560,12 @@ export interface ContractManagerConfig {
      * staleness a send's coin selection already has by this much.
      */
     vtxoSyncMaxAgeMs?: number;
+
+    /**
+     * How far behind the sync cursor a delta sync re-reads, in ms (default 24h). The indexer filters
+     * on arkd's clock, so this must cover how far this host's clock can run ahead of it.
+     */
+    vtxoSyncOverlapMs?: number;
 }
 
 /**
@@ -574,6 +608,16 @@ interface LookAheadEntry {
 export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
     /** Initial state (defaults to "active") */
     state?: ContractState;
+};
+
+/** Filter set for {@link ContractManager}'s provider sync. */
+type SyncContractsOptions = {
+    contracts?: Contract[];
+    pageSize?: number;
+    // Overrides the cursor-derived window.
+    window?: { after?: number; before?: number };
+    // With no `contracts`: every repository row instead of the watched set (a superset).
+    includeInactive?: boolean;
 };
 
 /**
@@ -624,11 +668,18 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    /** Watcher events still being handled. They write VTXO rows, so {@link dispose} waits for them. */
+    private readonly inFlightEvents = new Set<Promise<unknown>>();
     /** `undefined` while online; the failure reason once a sync degrades. */
     private syncDegradedReason?: string;
     /** Epoch-ms of the last successful provider sync, if any. */
     private lastSyncedAt?: number;
     private syncedAtByScript = new Map<string, number>();
+    private syncsInFlight = 0;
+    /** The off-critical-path boot sequence, if one is running. @see runBootSequence */
+    private bootTask?: Promise<void>;
+    /** A catch-up sync requested behind a stored read. @see requestCatchUpSync */
+    private catchUpSync?: Promise<void>;
     /** Last chain tip read, with the epoch-ms it was read at. @see currentChainTip */
     private chainTipCache?: { height: number; time: number; at: number };
     /** In-flight chain tip read, so concurrent cache misses share one. */
@@ -647,7 +698,10 @@ export class ContractManager implements IContractManager {
     private disposed = false;
 
     private constructor(config: ContractManagerConfig) {
-        this.config = config;
+        assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
+        assertNonNegativeMs("vtxoSyncOverlapMs", config.vtxoSyncOverlapMs);
+        // A copy, so a caller mutating its object later cannot skip the check.
+        this.config = { ...config };
 
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,
@@ -671,18 +725,32 @@ export class ContractManager implements IContractManager {
      * {@link initialize}, {@link getContractsWithVtxos} and {@link createContract}.
      */
     getSyncState(): ContractSyncState {
+        const syncing = this.syncsInFlight > 0;
         return this.syncDegradedReason === undefined
-            ? { mode: "online", lastSyncedAt: this.lastSyncedAt }
+            ? { mode: "online", syncing, lastSyncedAt: this.lastSyncedAt }
             : {
                   mode: "degraded",
+                  syncing,
                   reason: this.syncDegradedReason,
                   lastSyncedAt: this.lastSyncedAt,
               };
     }
 
+    /** @inheritdoc */
+    whenBooted(): Promise<void> {
+        return this.bootTask ?? Promise.resolve();
+    }
+
     /** @see ContractManagerConfig.vtxoSyncMaxAgeMs — for factory-built managers. */
     setVtxoSyncMaxAge(maxAgeMs: number): void {
+        assertNonNegativeMs("vtxoSyncMaxAgeMs", maxAgeMs);
         this.config.vtxoSyncMaxAgeMs = maxAgeMs;
+    }
+
+    /** @see ContractManagerConfig.vtxoSyncOverlapMs — for factory-built managers. */
+    setVtxoSyncOverlap(overlapMs: number): void {
+        assertNonNegativeMs("vtxoSyncOverlapMs", overlapMs);
+        this.config.vtxoSyncOverlapMs = overlapMs;
     }
 
     private markSyncOnline(): void {
@@ -700,9 +768,18 @@ export class ContractManager implements IContractManager {
         const owedRefill = this.lookAheadRefillOwed
             ? "the look-ahead band is behind the allocation watermark, so a funded address inside it is not being watched yet"
             : undefined;
-        const reasons = [annotations, owedRefill].filter((r): r is string => r !== undefined);
+        const watcher =
+            this.watcherStartFailure === undefined
+                ? undefined
+                : `the contract watcher failed to start, so incoming funds are not being observed — ${this.watcherStartFailure}`;
+        const reasons = [annotations, owedRefill, watcher].filter(
+            (r): r is string => r !== undefined,
+        );
         return reasons.length === 0 ? undefined : reasons.join("; ");
     }
+
+    /** Why the lazy boot's watcher start failed; nothing retries it, so no sync may clear it. */
+    private watcherStartFailure?: string;
 
     /** Contracts a sync could not annotate, as `script → reason`. */
     private annotationFailures = new Map<string, string>();
@@ -760,27 +837,92 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
 
-        // Band BEFORE the boot sync, so new window scripts get their full-history catch-up first.
-        // A retryable failure must not end startup, but the band now lags the watermark: record
-        // an owed refill, paid by the next contract event (`handleContractEvent`).
-        try {
-            await this.scheduleLookAheadDrain();
-        } catch (err) {
-            if (!isRetryableProviderError(err)) throw err;
-            this.lookAheadRefillOwed = true;
-            this.markSyncDegraded(err);
+        if (!this.config.lazyInitialization) {
+            // Band BEFORE the boot sync, so new window scripts get their full-history catch-up first.
+            // A retryable failure must not end startup, but the band now lags the watermark: record
+            // an owed refill, paid by the next contract event (`handleContractEvent`).
+            try {
+                await this.scheduleLookAheadDrain();
+            } catch (err) {
+                if (!isRetryableProviderError(err)) throw err;
+                this.lookAheadRefillOwed = true;
+                this.markSyncDegraded(err);
+            }
+
+            // Best-effort: a retryable failure degrades; the watcher still starts and reconciles later.
+            await this.trySync(() => this.reconcileWatched());
+
+            this.initialized = true;
+
+            this.stopWatcherFn = await this.watcher.startWatching((event) =>
+                this.onWatcherEvent(event),
+            );
+            return;
         }
-
-        // Best-effort: a retryable failure degrades; the watcher still starts and reconciles later.
-        await this.trySync(() => this.reconcileWatched());
-
         this.initialized = true;
 
-        this.stopWatcherFn = await this.watcher.startWatching((event) => {
-            this.handleContractEvent(event).catch((error) => {
-                console.error("Error handling contract event:", error);
+        const boot: Promise<void> = this.runBootSequence();
+        this.bootTask = boot;
+        void boot
+            .catch(() => {})
+            .finally(() => {
+                if (this.bootTask === boot) this.bootTask = undefined;
             });
+    }
+
+    private async runBootSequence(): Promise<void> {
+        this.syncsInFlight++;
+        this.watcherStartFailure = undefined;
+        try {
+            try {
+                await this.scheduleLookAheadDrain();
+            } catch (err) {
+                // Owed for any failure, as in `requestLookAheadDrain`: the debt keeps the state
+                // degraded across later syncs, and the next contract event retries the drain.
+                this.lookAheadRefillOwed = true;
+                this.reportBackgroundFailure("look-ahead drain", err);
+            }
+
+            try {
+                await this.reconcileWatched();
+                this.markSyncOnline();
+            } catch (err) {
+                this.reportBackgroundFailure("boot sync", err);
+            }
+
+            if (this.disposed) return;
+            try {
+                const stopWatching = await this.watcher.startWatching((event) =>
+                    this.onWatcherEvent(event),
+                );
+                if (this.disposed) stopWatching();
+                else this.stopWatcherFn = stopWatching;
+            } catch (err) {
+                this.watcherStartFailure = err instanceof Error ? err.message : String(err);
+                this.reportBackgroundFailure("watcher start", err);
+            }
+        } finally {
+            this.syncsInFlight--;
+        }
+    }
+
+    /** Tracked so {@link dispose} can wait for handlers still writing. */
+    private onWatcherEvent(event: ContractEvent): Promise<boolean> {
+        const handled = this.handleContractEvent(event).catch((error) => {
+            console.error("Error handling contract event:", error);
+            return false;
         });
+        this.inFlightEvents.add(handled);
+        void handled.finally(() => this.inFlightEvents.delete(handled));
+        return handled;
+    }
+
+    /** No throw: construction returned long ago, so the state is the channel. */
+    private reportBackgroundFailure(stage: string, err: unknown): void {
+        this.markSyncDegraded(err);
+        if (!isRetryableProviderError(err)) {
+            console.error(`[contracts] background ${stage} failed`, err);
+        }
     }
 
     /**
@@ -805,6 +947,7 @@ export class ContractManager implements IContractManager {
         if (!this.config.intentRepository) return;
         try {
             await reconcileIntents({
+                ...this.config.intentReconciliation,
                 intentRepository: this.config.intentRepository,
                 indexerProvider: this.config.indexerProvider,
             });
@@ -1340,12 +1483,7 @@ export class ContractManager implements IContractManager {
         pageSize?: number,
         options?: { maxSyncAgeMs?: number; unspentOnly?: boolean; requireSynced?: boolean },
     ): Promise<ContractWithVtxos[]> {
-        if (
-            options?.maxSyncAgeMs !== undefined &&
-            (!Number.isSafeInteger(options.maxSyncAgeMs) || options.maxSyncAgeMs < 0)
-        ) {
-            throw new Error("maxSyncAgeMs must be a non-negative safe integer");
-        }
+        assertNonNegativeMs("maxSyncAgeMs", options?.maxSyncAgeMs);
         const contracts = await this.getContracts(filter);
         // Best-effort: a retryable failure serves repository state (no partial write or cursor move).
         if (
@@ -1376,6 +1514,37 @@ export class ContractManager implements IContractManager {
             contract,
             vtxos: vtxosByScript.get(contract.script)?.slice() ?? [],
         }));
+    }
+
+    async getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]> {
+        const contracts = await this.getContracts(filter);
+        if (!this.syncedWithin(contracts, this.config.vtxoSyncMaxAgeMs ?? 0)) {
+            this.requestCatchUpSync(contracts);
+        }
+        const vtxos = await this.getVtxosForContracts(contracts);
+        return contracts.map((contract) => ({
+            contract,
+            vtxos: vtxos.filter((vtxo) => vtxo.contractScript === contract.script),
+        }));
+    }
+
+    private requestCatchUpSync(contracts: Contract[]): void {
+        // The boot reconcile is already fetching the same cursor window; a parallel catch-up
+        // would repeat it (the full history, on a fresh restore) and could mark the state
+        // online before the look-ahead band is drained. The next read after boot catches up.
+        if (this.disposed || this.bootTask || this.catchUpSync || contracts.length === 0) return;
+        const run: Promise<void> = (async () => {
+            try {
+                await this.syncContracts({ contracts });
+                this.markSyncOnline();
+            } catch (err) {
+                this.reportBackgroundFailure("catch-up sync", err);
+            }
+        })();
+        this.catchUpSync = run;
+        void run.finally(() => {
+            if (this.catchUpSync === run) this.catchUpSync = undefined;
+        });
     }
 
     async annotateVtxos(
@@ -1533,7 +1702,8 @@ export class ContractManager implements IContractManager {
 
     private async updateExistingContract(
         script: string,
-        update: (existing: Contract) => Contract,
+        /** `undefined` means unchanged: no write, no resubscribe. */
+        update: (existing: Contract) => Contract | undefined,
     ): Promise<Contract> {
         const [existing] = await collectContracts(this.config.contractRepository, { script });
         if (!existing) {
@@ -1541,6 +1711,7 @@ export class ContractManager implements IContractManager {
         }
 
         const updated = update(existing);
+        if (!updated) return existing;
 
         await this.config.contractRepository.saveContract(updated);
         await this.watcher.updateContract(updated);
@@ -1558,7 +1729,9 @@ export class ContractManager implements IContractManager {
 
     /** @see IContractManager.setContractWatchState */
     async setContractWatchState(script: string, watch: ContractWatchState): Promise<void> {
-        await this.updateContract(script, { watch });
+        await this.updateExistingContract(script, (existing) =>
+            watchStateOf(existing) === watch ? undefined : { ...existing, watch },
+        );
     }
 
     /**
@@ -1775,11 +1948,15 @@ export class ContractManager implements IContractManager {
         }
     }
 
-    private async handleContractEvent(event: ContractEvent) {
+    /** Resolves `false` when the event's sync failed, so the watcher keeps its poll off. */
+    private async handleContractEvent(event: ContractEvent): Promise<boolean> {
+        // Delivered before dispose but run after it: the repositories may already be closed.
+        if (this.disposed) return true;
         // Any event proves the transport is back, so pay an owed band refill now.
         if (this.lookAheadRefillOwed) this.requestLookAheadDrain();
         // A retryable failure must degrade sync state here, not be swallowed by startWatching's
         // `.catch`, or diagnostics keep reporting online. The event is forwarded either way.
+        let synced = true;
         try {
             switch (event.type) {
                 // `isContractVtxoEvent` is the ownership boundary: watch-only scripts report these
@@ -1815,9 +1992,15 @@ export class ContractManager implements IContractManager {
         } catch (err) {
             if (!isRetryableProviderError(err)) throw err;
             this.markSyncDegraded(err);
+            synced = false;
+        }
+        // An unannotatable contract's VTXOs are dropped, so its repository rows never catch up.
+        if (isContractVtxoEvent(event) && this.annotationFailures.has(event.contract.script)) {
+            synced = false;
         }
 
         this.emitEvent(event);
+        return synced;
     }
 
     private async getVtxosForContracts(
@@ -1840,16 +2023,22 @@ export class ContractManager implements IContractManager {
     }
 
     /** Sync virtual outputs for the given contracts (default: the watched set). */
-    private async syncContracts(options: {
-        contracts?: Contract[];
-        pageSize?: number;
-        // Overrides the cursor-derived window.
-        window?: { after?: number; before?: number };
-        // With no `contracts`: every repository row instead of the watched set (a superset).
-        includeInactive?: boolean;
-    }): Promise<Map<string, ExtendedContractVtxo[]>> {
+    private async syncContracts(
+        options: SyncContractsOptions,
+    ): Promise<Map<string, ExtendedContractVtxo[]>> {
+        this.syncsInFlight++;
+        try {
+            return await this.performContractSync(options);
+        } finally {
+            this.syncsInFlight--;
+        }
+    }
+
+    private async performContractSync(
+        options: SyncContractsOptions,
+    ): Promise<Map<string, ExtendedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
-        const window = options.window ?? computeSyncWindow(cursor);
+        const window = options.window ?? computeSyncWindow(cursor, this.config.vtxoSyncOverlapMs);
 
         // Only a cursor-derived sync covering at least the watched set may advance the cursor;
         // subsets and explicit windows may skip data. `<=` lets the bootstrap (cursor=0,
@@ -2078,12 +2267,19 @@ export class ContractManager implements IContractManager {
         return { vtxosByScript: result, promoted };
     }
 
-    /** Stop the watcher, clear callbacks, and mark the manager uninitialized. */
-    dispose(): void {
+    /**
+     * Stop the watcher, clear callbacks, and mark the manager uninitialized.
+     *
+     * Teardown is synchronous. The returned promise settles once watcher events already being
+     * handled, any look-ahead drain, and any lazy boot sequence finish; after that nothing more is written to the
+     * repositories.
+     */
+    dispose(): Promise<void> {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
         // not addContract or persist catch-up VTXOs after teardown.
         this.disposed = true;
         const pendingDrain = this.lookAheadDrain;
+        const pendingBoot = this.bootTask;
 
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
@@ -2092,28 +2288,38 @@ export class ContractManager implements IContractManager {
 
         this.lookAheadEntries.clear();
         // Sweep again once the drain unwinds: its current iteration can register one last entry.
-        if (pendingDrain) {
-            void pendingDrain
-                .catch(() => {})
-                .then(() => {
-                    if (this.disposed) this.lookAheadEntries.clear();
-                });
-        }
+        const drainUnwound = pendingDrain
+            ?.catch(() => {})
+            .then(() => {
+                if (this.disposed) this.lookAheadEntries.clear();
+            });
 
         this.initialized = false;
+
+        return Promise.all([...this.inFlightEvents, drainUnwound, pendingBoot]).then(
+            () => undefined,
+        );
     }
 
     /**
-     * Symbol.dispose implementation for the `using` keyword.
+     * Symbol.dispose implementation for the `using` keyword. Teardown is immediate, but it does
+     * not wait for in-flight work; use `await using` for that.
+     */
+    [Symbol.dispose](): void {
+        void this.dispose();
+    }
+
+    /**
+     * Symbol.asyncDispose implementation for the `await using` keyword; waits like {@link dispose}.
      * @example
      * ```typescript
      * {
-     *   using manager = await wallet.getContractManager();
+     *   await using manager = await wallet.getContractManager();
      *   // ... use manager
-     * } // automatically disposed
+     * } // disposed, with in-flight events finished
      * ```
      */
-    [Symbol.dispose](): void {
-        this.dispose();
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
     }
 }

@@ -7,6 +7,34 @@ const stubNavigator = (serviceWorker: Partial<ServiceWorkerContainer>) => {
 };
 
 describe("setupServiceWorker", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid activation timeout %s before registering",
+        async (activationTimeoutMs) => {
+            const register = vi.fn();
+            stubNavigator({ register });
+            await expect(
+                setupServiceWorker({ path: "/sw.js", activationTimeoutMs }),
+            ).rejects.toThrow("activationTimeoutMs");
+            expect(register).not.toHaveBeenCalled();
+        },
+    );
+
+    it("keeps zero as an immediate activation timeout", async () => {
+        vi.useFakeTimers();
+        stubNavigator({
+            register: vi.fn().mockResolvedValue({
+                installing: { state: "installing" },
+                update: vi.fn().mockResolvedValue(undefined),
+            }),
+            ready: new Promise<ServiceWorkerRegistration>(() => {}),
+        });
+        const rejection = expect(
+            setupServiceWorker({ path: "/sw.js", activationTimeoutMs: 0 }),
+        ).rejects.toThrow("Service worker activation timed out after 0ms");
+        await vi.advanceTimersByTimeAsync(0);
+        await rejection;
+    });
+
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.useRealTimers();
@@ -24,7 +52,7 @@ describe("setupServiceWorker", () => {
 
         stubNavigator({
             register: vi.fn().mockResolvedValue({
-                installing: { state: "installing" },
+                installing: { state: "installing" } as ServiceWorker,
                 update,
             } satisfies Partial<ServiceWorkerRegistration>),
             ready,
@@ -48,7 +76,7 @@ describe("setupServiceWorker", () => {
         const update = vi.fn().mockResolvedValue(undefined);
         stubNavigator({
             register: vi.fn().mockResolvedValue({
-                installing: { state: "installing" },
+                installing: { state: "installing" } as ServiceWorker,
                 update,
             } satisfies Partial<ServiceWorkerRegistration>),
             ready: new Promise<ServiceWorkerRegistration>(() => {}),

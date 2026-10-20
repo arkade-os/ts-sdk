@@ -213,12 +213,10 @@ describe("ContractManager", () => {
         // Mock indexer to return a mix of settled and spent VTXOs
         const settledVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "aa".repeat(32),
-            virtualStatus: { state: "settled" },
         });
         const spentVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "bb".repeat(32),
             isSpent: true,
-            virtualStatus: { state: "settled" },
         });
         (mockIndexer.getVtxos as any).mockResolvedValue({
             vtxos: [settledVtxo, spentVtxo],
@@ -226,7 +224,7 @@ describe("ContractManager", () => {
 
         const walletRepo = new InMemoryWalletRepository();
         // Re-create manager with the pre-populated contract repo
-        const newManager = await ContractManager.create({
+        await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
             walletRepository: walletRepo,
@@ -259,11 +257,10 @@ describe("ContractManager", () => {
 
         const vtxo1 = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "cc".repeat(32),
-            virtualStatus: { state: "settled" },
         });
         const vtxo2 = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "dd".repeat(32),
-            virtualStatus: { state: "swept" },
+            isSwept: true,
         });
         (mockIndexer.getVtxos as any).mockResolvedValue({
             vtxos: [vtxo1, vtxo2],
@@ -277,13 +274,13 @@ describe("ContractManager", () => {
 
         const savedVtxos = await collectVtxos(walletRepo, "contract-address");
         expect(savedVtxos).toHaveLength(2);
-        const states = savedVtxos.map((v) => v.virtualStatus.state);
-        expect(states).toContain("settled");
-        expect(states).toContain("swept");
+        const swept = savedVtxos.map((v) => v.isSwept);
+        expect(swept).toContain(false);
+        expect(swept).toContain(true);
     });
 
     it("should not use spendable-only filter for getContractsWithVtxos", async () => {
-        const contract = await manager.createContract({
+        await manager.createContract({
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -303,7 +300,7 @@ describe("ContractManager", () => {
             vtxos: [spendable, spent],
         });
 
-        const result = await manager.getContractsWithVtxos();
+        await manager.getContractsWithVtxos();
 
         // getContractsWithVtxos forces a sync to retrieve all VTXOs in the time window
         const lastCall = (mockIndexer.getVtxos as any).mock.calls.at(-1);
@@ -346,7 +343,6 @@ describe("ContractManager", () => {
                 vout: 0,
                 script,
                 isSpent: false,
-                virtualStatus: { state: "settled" },
             });
         await walletRepo.saveVtxos(first.address, [
             row(first.script, "aa"),
@@ -690,6 +686,45 @@ describe("ContractManager", () => {
         });
     });
 
+    describe("event sync outcome", () => {
+        const receive = async (handlerRegistered: boolean) => {
+            const contract = await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            const incoming = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+                txid: "ab".repeat(32),
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [incoming] });
+            const get = contractHandlers.get.bind(contractHandlers);
+            const spy = vi
+                .spyOn(contractHandlers, "get")
+                .mockImplementation((type) => (handlerRegistered ? get(type) : undefined));
+            try {
+                return await (manager as any).handleContractEvent({
+                    type: "vtxo_received",
+                    contractScript: contract.script,
+                    contract,
+                    vtxos: [incoming],
+                    timestamp: Date.now(),
+                });
+            } finally {
+                spy.mockRestore();
+            }
+        };
+
+        it("reports a sync that stored the event's contract", async () => {
+            await expect(receive(true)).resolves.toBe(true);
+        });
+
+        // #1083: the watcher would resume polling a repository that never catches up.
+        it("reports an unannotatable contract as not synced", async () => {
+            await expect(receive(false)).resolves.toBe(false);
+        });
+    });
+
     describe("watch state", () => {
         const newManager = (walletRepository = new InMemoryWalletRepository()) =>
             ContractManager.create({
@@ -698,6 +733,88 @@ describe("ContractManager", () => {
                 walletRepository,
                 watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
             });
+
+        it.each([undefined, "watched", "awaiting-funds", "retained"] as const)(
+            "does not write or resubscribe when the stored watch state is %s",
+            async (watch) => {
+                try {
+                    const contract = await manager.createContract({
+                        type: "default",
+                        params: createDefaultContractParams(),
+                        script: TEST_DEFAULT_SCRIPT,
+                        address: "address-1",
+                        watch,
+                    });
+                    // Keep a watched script so an empty subscription cannot hide a POST.
+                    await manager.createContract({
+                        type: "default",
+                        params: SECOND_DEFAULT_PARAMS,
+                        script: SECOND_DEFAULT_SCRIPT,
+                        address: "address-2",
+                    });
+                    const save = vi.spyOn(repository, "saveContract");
+                    const subscribe = vi.mocked(mockIndexer.subscribeForScripts);
+                    subscribe.mockClear();
+
+                    await manager.setContractWatchState(contract.script, watch ?? "watched");
+                    await manager.setContractWatchState(contract.script, watch ?? "watched");
+
+                    expect(save).not.toHaveBeenCalled();
+                    expect(subscribe).not.toHaveBeenCalled();
+                    expect(await manager.getContracts({ script: contract.script })).toEqual([
+                        contract,
+                    ]);
+                } finally {
+                    await manager.dispose();
+                }
+            },
+        );
+
+        it("persists real transitions and resubscribes once per change", async () => {
+            try {
+                await manager.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address-1",
+                });
+                await manager.createContract({
+                    type: "default",
+                    params: SECOND_DEFAULT_PARAMS,
+                    script: SECOND_DEFAULT_SCRIPT,
+                    address: "address-2",
+                });
+                const save = vi.spyOn(repository, "saveContract");
+                const subscribe = vi.mocked(mockIndexer.subscribeForScripts);
+
+                for (const watch of ["retained", "watched", "awaiting-funds"] as const) {
+                    save.mockClear();
+                    subscribe.mockClear();
+                    await manager.setContractWatchState(TEST_DEFAULT_SCRIPT, watch);
+
+                    expect(save).toHaveBeenCalledTimes(1);
+                    expect(
+                        (await manager.getContracts({ script: TEST_DEFAULT_SCRIPT }))[0].watch,
+                    ).toBe(watch);
+                    expect(subscribe).toHaveBeenCalledTimes(1);
+                    const scripts = subscribe.mock.calls[0][0];
+                    expect(scripts).toContain(SECOND_DEFAULT_SCRIPT);
+                    expect(scripts.includes(TEST_DEFAULT_SCRIPT)).toBe(watch !== "retained");
+                }
+            } finally {
+                await manager.dispose();
+            }
+        });
+
+        it("still rejects a watch state update for a missing contract", async () => {
+            try {
+                await expect(
+                    manager.setContractWatchState(TEST_DEFAULT_SCRIPT, "watched"),
+                ).rejects.toThrow(`Contract ${TEST_DEFAULT_SCRIPT} not found`);
+            } finally {
+                await manager.dispose();
+            }
+        });
 
         it("filters by watch state through the manager, not just the repository", async () => {
             // `getContracts` rebuilds the repository filter field by field, so
@@ -1186,7 +1303,7 @@ describe("ContractManager", () => {
         // bounded it.
         const SEEDED_CURSOR = Date.now() - 60_000; // recent enough to clear OVERLAP_MS
 
-        async function makeFreshManager(): Promise<{
+        async function makeFreshManager(extra?: { vtxoSyncOverlapMs?: number }): Promise<{
             mgr: ContractManager;
             repo: InMemoryWalletRepository;
         }> {
@@ -1199,6 +1316,7 @@ describe("ContractManager", () => {
                     failsafePollIntervalMs: 1000,
                     reconnectDelayMs: 500,
                 },
+                ...extra,
             });
             // Need at least one watched contract so syncContracts has
             // something to query.
@@ -1240,6 +1358,52 @@ describe("ContractManager", () => {
             // Cursor advanced past the seeded value (the bug left it pinned).
             const stateAfter = await repo.getWalletState();
             expect((stateAfter?.lastSyncTime ?? 0) >= SEEDED_CURSOR).toBe(true);
+        });
+
+        const refreshFromSeededCursor = async (
+            mgr: ContractManager,
+            repo: InMemoryWalletRepository,
+        ) => {
+            await repo.saveWalletState({
+                lastSyncTime: SEEDED_CURSOR,
+                settings: { vtxoCursorMigrated: true },
+            });
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+            await mgr.refreshVtxos();
+            const calls: any[][] = (mockIndexer.getVtxos as any).mock.calls;
+            return [...new Set(calls.map((args) => args[0]?.after))];
+        };
+
+        it("re-reads OVERLAP_MS behind the cursor by default", async () => {
+            const { mgr, repo } = await makeFreshManager();
+            expect(await refreshFromSeededCursor(mgr, repo)).toEqual([SEEDED_CURSOR - OVERLAP_MS]);
+        });
+
+        it("re-reads only the configured overlap behind the cursor", async () => {
+            const viaConfig = await makeFreshManager({ vtxoSyncOverlapMs: 600_000 });
+            expect(await refreshFromSeededCursor(viaConfig.mgr, viaConfig.repo)).toEqual([
+                SEEDED_CURSOR - 600_000,
+            ]);
+
+            const viaSetter = await makeFreshManager();
+            viaSetter.mgr.setVtxoSyncOverlap(600_000);
+            expect(await refreshFromSeededCursor(viaSetter.mgr, viaSetter.repo)).toEqual([
+                SEEDED_CURSOR - 600_000,
+            ]);
+        });
+
+        it("rejects an overlap that is not a non-negative safe integer", async () => {
+            const { mgr } = await makeFreshManager();
+            expect(() => mgr.setVtxoSyncOverlap(0)).not.toThrow();
+            for (const bad of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+                expect(() => mgr.setVtxoSyncOverlap(bad)).toThrow(
+                    "vtxoSyncOverlapMs must be a non-negative safe integer",
+                );
+                await expect(makeFreshManager({ vtxoSyncOverlapMs: bad })).rejects.toThrow(
+                    "vtxoSyncOverlapMs must be a non-negative safe integer",
+                );
+            }
         });
 
         it("does not advance the cursor when an explicit `after` is provided", async () => {
@@ -1447,7 +1611,6 @@ describe("ContractManager", () => {
         const wrongScriptRow = createMockExtendedVtxo({
             txid: "ee".repeat(32),
             vout: 0,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             script: contractB.script,
         });
@@ -1457,7 +1620,6 @@ describe("ContractManager", () => {
         const correctRow = createMockExtendedVtxo({
             txid: "ee".repeat(32),
             vout: 0,
-            virtualStatus: { state: "settled" },
             isSpent: true,
             script: contractB.script,
         });
@@ -1483,14 +1645,12 @@ describe("ContractManager", () => {
         const indexer = createMockIndexerProvider();
         const goodVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "aa".repeat(32),
-            virtualStatus: { state: "settled" },
         });
         // A row coming back tagged with the wrong script (e.g. indexer
         // mis-routing) must be dropped, not persisted under the contract's
         // address bucket.
         const badVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "bb".repeat(32),
-            virtualStatus: { state: "settled" },
             script: "ff".repeat(34),
         });
         (indexer.getVtxos as any).mockResolvedValue({

@@ -2,6 +2,7 @@
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
+import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
 import {
@@ -126,7 +127,9 @@ type Options = {
      * `storage.intentRepository`. Same opt-in as a main-thread wallet: without
      * it the worker persists no settlement intent, reconciles none on restart,
      * and counts intent-locked VTXOs as available. Pass the same repository the
-     * main thread uses so both sides read one intent state.
+     * main thread uses so both sides read one intent state, but settle from one
+     * side only: reconciliation deletes from the server any pending intent the
+     * worker's wallet is not settling itself.
      *
      * Ignored when `buildServices` is supplied — that override owns `storage`.
      */
@@ -169,6 +172,7 @@ type Initialize = {
         /** @see WalletConfig.concurrentSpending */
         concurrentSpending?: boolean;
         walletMode?: "auto" | "static" | "hd";
+        lazyInitialization?: boolean;
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
@@ -184,6 +188,16 @@ type Initialize = {
         messageTimeouts?: Record<string, number>;
     };
 };
+
+/** A present key must carry a timeout: the bus would otherwise arm a timer of `undefined`. */
+function assertTimeoutMap(name: string, timeouts: Record<string, number> | undefined): void {
+    for (const [key, value] of Object.entries(timeouts ?? {})) {
+        if (value === undefined) {
+            throw new Error(`${name}.${key} must be a non-negative safe integer`);
+        }
+        assertTimerMs(`${name}.${key}`, value);
+    }
+}
 
 export class MessageBus {
     private handlers: Map<string, MessageHandler>;
@@ -230,6 +244,9 @@ export class MessageBus {
             buildServices,
         }: Options,
     ) {
+        assertTimerMs("tickIntervalMs", tickIntervalMs);
+        assertTimerMs("messageTimeoutMs", messageTimeoutMs);
+        assertTimeoutMap("messageTimeoutOverrides", messageTimeoutOverrides);
         this.intentRepository = intentRepository;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
@@ -454,6 +471,7 @@ export class MessageBus {
     }
 
     private async doInit(config: Initialize["config"]) {
+        assertTimeoutMap("messageTimeouts", config.messageTimeouts);
         // Cancel any tick scheduled by a previous init so it cannot fire while
         // handlers are stopped or rebuilt.
         if (this.tickTimeout !== null) {
@@ -531,6 +549,7 @@ export class MessageBus {
                 settlementConfig: config.settlementConfig,
                 concurrentSpending: config.concurrentSpending,
                 walletMode: config.walletMode,
+                lazyInitialization: config.lazyInitialization,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
@@ -541,6 +560,7 @@ export class MessageBus {
 
         const identity = hydrateIdentity(serialized) as ReadonlyIdentity;
         const readonlyWallet = await ReadonlyWallet.create({
+            lazyInitialization: config.lazyInitialization,
             identity,
             arkProvider,
             arkServerPublicKey: config.arkServer.publicKey,

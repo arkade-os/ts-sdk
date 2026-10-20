@@ -36,6 +36,7 @@ import { RFQ_CONFIGURATION_REFUSAL, RFQ_CONFIGURATION_REFUSALS } from "../../src
 import { REFUND_MTP_LAG_SECONDS } from "../../src/refund";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
 import type { AssetSwapRepository } from "../../src/repository";
+import { promoteOfferContract } from "../../src/coverage";
 import { rfqRecordOf } from "../../src/client/driveRecords";
 import { legacyOfferDepositsToAdopt } from "../../src/client/legacyRecords";
 import type { RfqSwapRecord } from "../../src/rfqRecord";
@@ -147,6 +148,7 @@ interface Harness {
 const build = async (
     over: {
         records?: SwapRecord[];
+        repository?: AssetSwapRepository;
         /** v1 `rfqSwaps` rows, as a 0.0.x client left them. */
         legacy?: RfqSwapRecord[];
         /** The v1 `rfqSwaps` store throws on read. */
@@ -171,7 +173,7 @@ const build = async (
         gate?: Promise<void>;
     } = {},
 ): Promise<Harness> => {
-    const repository = memoryRepository();
+    const repository = over.repository ?? memoryRepository();
     for (const record of over.records ?? []) await repository.saveSwapRecord(record);
     for (const record of over.legacy ?? []) await repository.saveRfqSwap(record);
     if (over.legacyUnreadable) {
@@ -611,6 +613,11 @@ describe("the lifecycle", () => {
     it("resolves ready through a corrupt record, and drives the rest", async () => {
         const repository = memoryRepository();
         await repository.saveSwapRecord({ id: "junk" } as unknown as SwapRecord);
+        await repository.saveSwapRecord({
+            ...signable(),
+            id: "bad-terms",
+            assetPayment: { validUntil: 0 },
+        } as unknown as SwapRecord);
         await repository.saveSwapRecord(signable({ fundingTxid: "aa".repeat(32) }));
         const contracts = fakeContracts([SEND_LOCKUP]);
         const { wallet } = fakeWallet({ contracts });
@@ -631,6 +638,7 @@ describe("the lifecycle", () => {
         // nothing else.
         expect(drive.swap("q1")).toBeDefined();
         expect(drive.swap("junk")).toBeUndefined();
+        expect(drive.swap("bad-terms")).toBeUndefined();
         await drive.dispose();
     });
 
@@ -888,12 +896,12 @@ describe("the stream", () => {
 
 describe("configuration, not recovery", () => {
     it("names exactly the sites that describe configuration rather than a swap", () => {
-        // Five messages from three block sites: no claim callback, no L1 claim
-        // callback, and no refund callback or auto-actions off. Every other
-        // block site says something about the SWAP — an exited lockup, an
-        // underfunded one, a key this wallet does not hold — and stays
-        // `needs_recovery` in every mode.
-        expect(RFQ_CONFIGURATION_REFUSALS).toHaveLength(5);
+        // Eight messages from four block sites: no claim callback, no L1 claim
+        // callback, no refund callback or auto-actions off, and the same pair
+        // for the L1 refund. Every other block site says something about the
+        // SWAP — an exited lockup, an underfunded one, a key this wallet does
+        // not hold — and stays `needs_recovery` in every mode.
+        expect(RFQ_CONFIGURATION_REFUSALS).toHaveLength(8);
         for (const reason of RFQ_CONFIGURATION_REFUSALS) {
             expect(reason).toMatch(/wired|disabled/);
         }
@@ -975,6 +983,45 @@ describe("the onchain seam", () => {
 });
 
 describe("the offer half", () => {
+    it("isolates malformed payment terms after a funded offer's restored fate changes", async () => {
+        const funding = offerFunding();
+        const record = offerRecord({
+            fundingTxid: funding.txid,
+            assetPayment: { receiveAddress: OFFER_ADDRESS, validUntil: 0 },
+        });
+        const h = await build({
+            ready: false,
+            mode: "manual",
+            records: [
+                record,
+                signable(),
+                offerRecord({
+                    id: "settled-twin",
+                    status: "fulfilled",
+                    fundingTxid: "bb".repeat(32),
+                }),
+            ],
+            history: [{ type: "SENT", arkTxid: funding.txid, createdAt: 1_700_000_000_000 }],
+            txs: [funding],
+            vtxos: [offerDeposit(funding.txid, { isSwept: true })],
+            contracts: fakeContracts([]),
+        });
+        try {
+            await expect(h.drive.ready).resolves.toBeUndefined();
+            await h.drive.idle();
+            expect(h.drive.swap("q1")).toBeDefined();
+            expect(h.drive.swap("settled-twin")?.outcome).toBe("filled");
+            expect(h.drive.swap(record.id)).toBeUndefined();
+            const stored = (await h.repository.getSwapRecord(record.id)) as OfferSwapRecord;
+            expect(stored.status).toBe("recoverable");
+            expect(stored.assetPayment).toEqual(record.assetPayment);
+            expect(h.contracts.watchStates).not.toContainEqual([OFFER_SCRIPT, "retained"]);
+            expect(h.seen.every((update) => update.swap.id !== `offer:${record.id}`)).toBe(true);
+        } finally {
+            await h.drive.dispose();
+        }
+    });
+
     it("reaches needs_recovery for a swept deposit through the construction restore", async () => {
         // The only writer of `recoverable` is `restoreAssetSwaps`, which has no
         // call site in this package, and the watcher cannot stand in for it:
@@ -1754,4 +1801,40 @@ describe("the settlement receipt", () => {
         expect(getVirtualTxs).not.toHaveBeenCalled();
         await drive.dispose();
     });
+});
+
+it("reads proven unsent funding under readonly without changing coverage", async () => {
+    const record = signable({
+        state: "failed",
+        fundingNotSubmitted: { reason: "send_deadline", validUntil: REFUND_LOCKTIME },
+    });
+    const contracts = fakeContracts([SEND_LOCKUP]);
+    const h = await build({ records: [record], mode: "readonly", contracts });
+    expect(h.drive.swap("q1")?.outcome).toBe("cancelled");
+    expect(contracts.watchStates).toEqual([]);
+    expect(await h.repository.getSwapRecord("q1")).toEqual(record);
+    await h.drive.dispose();
+});
+
+it("deduplicates restored unsent scripts while reading fresh records inside retirement", async () => {
+    const first = signable({
+        state: "failed",
+        fundingNotSubmitted: { reason: "send_deadline", validUntil: REFUND_LOCKTIME },
+    });
+    const second = { ...first, id: "q2", rfqId: "rfq2" };
+    const contracts = fakeContracts([SEND_LOCKUP]);
+    const repository = memoryRepository();
+    await repository.saveSwapRecord(first);
+    await repository.saveSwapRecord(second);
+    await promoteOfferContract(contracts, first.lockupPkScript, Date.now(), {
+        coverageId: first.id,
+    });
+    contracts.watchStates.length = 0;
+    const scan = vi.spyOn(repository, "getSwapRecordsPage");
+    const h = await build({ repository, contracts });
+    expect(h.drive.swap("q1")?.outcome).toBe("cancelled");
+    expect(h.drive.swap("q2")?.outcome).toBe("cancelled");
+    expect(contracts.watchStates.filter(([, state]) => state === "retained")).toHaveLength(1);
+    expect(scan).toHaveBeenCalledTimes(3);
+    await h.drive.dispose();
 });

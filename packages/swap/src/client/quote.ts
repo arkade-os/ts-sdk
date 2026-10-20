@@ -1,3 +1,12 @@
+export type {
+    AssetPaymentInput,
+    AssetPaymentTerms,
+    ArkadeCarrierChoice,
+    ReceiverPaidCarrierQuote,
+    TaxiIdentity,
+    VerifiedCarrierTerms,
+    RecordedAssetPayment,
+} from "./assetPayment";
 /**
  * What a quote is: the order, fully resolved, plus the provenance that says who priced it and
  * where that card came from. Types only — the quote path assembles these, `accept()` consumes
@@ -6,6 +15,7 @@
  * A `Quote` is binding terms plus the evidence for them: every field is something the caller must
  * act on or be able to audit. Nothing internal rides along (no covenant, secret or transport).
  */
+import type { AssetPaymentInput, AssetPaymentTerms } from "./assetPayment";
 import type { AssetId } from "./assetId";
 import type { AmountOn } from "./rfqAmount";
 import type { Corridor, CorridorId } from "./corridor";
@@ -29,6 +39,7 @@ export type AssetRef = AssetId | (string & {});
  * it pins, and — on receives, where no instrument exists yet — a corridor.
  */
 export interface QuoteInput {
+    assetPayment?: AssetPaymentInput;
     /** Omitted when the route determines it: the give leg is the wallet's. */
     give?: AssetRef;
     /** Omitted when `to` determines it — a corridor that carries BTC only does. */
@@ -52,16 +63,20 @@ export interface SnapshotRef {
     /** Unix ms the markets were read from their sources. */
     readonly fetchedAt: number;
     /**
-     * The registry answered in this read (cards are not replayed from local storage).
+     * The cards came from this read or from config, never replayed from local storage, so they
+     * may supply the key an addressed RFQ's responder is checked against.
      *
      * `false` is marked, not refused: a stale snapshot still prices a feed-priced quote. It cannot
-     * supply the key an addressed RFQ's responder is checked against, because cached cards are
-     * only partly revalidated (`isMarketShaped`).
+     * pin a responder, because cached cards are only partly revalidated (`isMarketShaped`).
      */
     readonly live: boolean;
-    /** How the markets were obtained. */
-    readonly source: "live" | "cache" | "injected";
-    /** The registry URL behind it, or `undefined` for an injected snapshot. */
+    /**
+     * How the markets were obtained: `live` from the registry, `cache` from local storage,
+     * `injected` from `DiscoveryConfig.snapshot`, `local` from pinned cards alone while the
+     * registry was unreachable and nothing was cached.
+     */
+    readonly source: "live" | "cache" | "injected" | "local";
+    /** The registry URL behind it; `undefined` for an injected or local snapshot. */
     readonly registry?: string;
 }
 
@@ -145,6 +160,7 @@ export interface QuoteLeg {
  * `fee` restates the spread rather than adding to it.
  */
 export interface Quote {
+    readonly assetPayment?: AssetPaymentTerms;
     readonly id: QuoteId;
     /** Both endpoints resolved, instruments included. */
     readonly route: Route;

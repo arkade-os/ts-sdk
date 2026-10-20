@@ -1,4 +1,5 @@
 import { Transaction } from "./utils/transaction";
+export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
@@ -122,6 +123,7 @@ import {
     Asset,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -173,6 +175,7 @@ import {
     type ArkadeCashClaimResult,
     type ArkadeCashUnclaimedReason,
     type ArkadeCashUnclaimedVtxo,
+    type ArkadeCashVtxoRef,
     ArkadeCashCreateError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
@@ -182,10 +185,15 @@ import { TxTree, TxTreeNode } from "./tree/txTree";
 import { SignerSession, TreeNonces, TreePartialSigs } from "./tree/signingSession";
 import { DustChangeError, OversizedChangeError, Ramps } from "./wallet/ramps";
 import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
+import { StaticDescriptorProvider } from "./identity/staticDescriptorProvider";
+import { KeyringDescriptorProvider } from "./identity/keyringDescriptorProvider";
+import type { DescriptorProvider, DescriptorSigningRequest } from "./identity/descriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type {
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     SettlementConfig,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
@@ -405,6 +413,11 @@ import {
 } from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
+import {
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
+} from "./wallet/sendDeadline";
 import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
@@ -505,7 +518,10 @@ import type {
     CreateContractParams,
 } from "./contracts/contractManager";
 import { ContractWatcher } from "./contracts/contractWatcher";
-import type { ContractWatcherConfig } from "./contracts/contractWatcher";
+import type {
+    ContractWatcherConfig,
+    ContractWatcherEventCallback,
+} from "./contracts/contractWatcher";
 import { contractHandlers } from "./contracts/handlers/registry";
 import { DefaultContractHandler } from "./contracts/handlers/default";
 import type { DefaultContractParams } from "./contracts/handlers/default";
@@ -646,6 +662,8 @@ export {
     isCooperativelyMigratable,
     toXOnlySignerHex,
     HDDescriptorProvider,
+    StaticDescriptorProvider,
+    KeyringDescriptorProvider,
     DelegateManagerImpl,
     RestDelegateProvider,
     // Providers
@@ -814,6 +832,9 @@ export {
     maybeArkError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
+    SendDeadlineExceededError,
+    assertSendDeadline,
+    captureSendDeadline,
     isRetryableProviderError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
@@ -899,6 +920,10 @@ export type {
     NewAddressType,
     WalletConfig,
     WalletMode,
+    // Referenced by WalletMode: consumers need these to name or implement
+    // a provider they pass to the wallet.
+    DescriptorProvider,
+    DescriptorSigningRequest,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
@@ -1000,9 +1025,12 @@ export type {
     ArkadeCashClaimResult,
     ArkadeCashUnclaimedReason,
     ArkadeCashUnclaimedVtxo,
+    ArkadeCashVtxoRef,
     SettlementConfig,
     IVtxoManager,
     RenewVtxosOptions,
+    RenewalSplit,
+    RenewalSplitContext,
     MigrateDeprecatedSignerOptions,
     DeprecatedSignerMigrationReport,
     DeprecatedSignerReport,
@@ -1024,6 +1052,7 @@ export type {
     Asset,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -1076,6 +1105,7 @@ export type {
     ContractManagerConfig,
     CreateContractParams,
     ContractWatcherConfig,
+    ContractWatcherEventCallback,
     ParsedArkContract,
     ExcludableVtxo,
     VtxoExclusion,

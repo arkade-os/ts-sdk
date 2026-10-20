@@ -1,5 +1,8 @@
 import { collectIntents } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
+import { ArkErrorName, isArkError } from "../providers/errors";
+import type { Intent } from "../intent";
+import type { SignedIntent } from "../providers/ark";
 import {
     ALL_INTENT_STATES,
     ArkIntent,
@@ -28,6 +31,16 @@ export type IntentReconcilerIndexer = Pick<IndexerProvider, "getVtxos">;
 export interface IntentReconciliationDeps {
     intentRepository: IntentRepository;
     indexerProvider: IntentReconcilerIndexer;
+    /**
+     * Replays an intent's stored delete proof against arkd. Absent ⇒ a submitted, unexpired
+     * intent stays locked, since arkd never expires a queued intent on its own.
+     */
+    deleteIntent?: (intent: SignedIntent<Intent.DeleteMessage>) => Promise<void>;
+    /**
+     * Whether a live settlement in this wallet is spending the outpoint. An intent with an
+     * in-flight input belongs to that settlement and is skipped.
+     */
+    isOutpointInFlight?: (outpoint: Outpoint) => boolean;
     /** Injectable clock (tests). Defaults to `Date.now`. */
     now?: () => number;
 }
@@ -55,7 +68,8 @@ function isConsumed(vtxo: VirtualCoin | undefined): boolean {
  *     (arkd never saw it, so the inputs are safe to unlock);
  *   - past `validUntil`, inputs still unspent → `cancelled` (expired);
  *   - otherwise (submitted, unspent, unexpired) → left non-terminal: it may
- *     still be a live server-held intent, so its inputs stay locked.
+ *     still be a live server-held intent, so its inputs stay locked until
+ *     {@link reconcileIntents} releases it from the server.
  */
 export async function classifyIntent(
     intent: ArkIntent,
@@ -111,6 +125,9 @@ export async function classifyIntent(
 /**
  * Reconcile every persisted non-terminal intent against authoritative indexer
  * state, persisting a terminal result for those that are provably done or dead.
+ * A submitted intent that is neither is deleted from arkd with its stored proof
+ * and cancelled once the server confirms it holds no such intent. Intents with
+ * an input in flight in this wallet are skipped.
  *
  * Belongs to the online sync path — {@link ContractManager} drives it on boot,
  * on subscription reconnect, and on delta sync. It is **not** called from
@@ -147,7 +164,10 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     const nowMs = now();
     for (const intent of intents) {
         try {
-            const next = await classifyIntent(intent, vtxosByOutpoint, nowMs);
+            if (isInFlight(intent, deps)) continue;
+            const next =
+                (await classifyIntent(intent, vtxosByOutpoint, nowMs)) ??
+                (await releaseFromServer(intent, deps, nowMs));
             if (!next) continue;
             // Freshness guard: reconciliation runs on reconnect, alongside
             // in-flight settlements. Re-read and only persist if the intent is
@@ -162,6 +182,75 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
         }
     }
+}
+
+type ReleaseDeps = Pick<
+    IntentReconciliationDeps,
+    "intentRepository" | "deleteIntent" | "isOutpointInFlight" | "now"
+>;
+
+/**
+ * Delete every non-terminal intent from arkd before its store is wiped, so no proof the server
+ * still needs is lost. True only when each is confirmed gone; without `deleteIntent`, only when
+ * there is nothing to release.
+ */
+export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
+    let intents: ArkIntent[];
+    try {
+        intents = await collectIntents(deps.intentRepository, {
+            states: [...NON_TERMINAL_INTENT_STATES],
+        });
+    } catch (e) {
+        console.error("releaseIntents: failed to read non-terminal intents", e);
+        return false;
+    }
+    const now = deps.now ?? Date.now;
+    let released = true;
+    for (const intent of intents) {
+        if (!(await releaseFromServer(intent, deps, now()))) released = false;
+    }
+    return released;
+}
+
+function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
+    const inFlight = deps.isOutpointInFlight;
+    return inFlight !== undefined && intent.intentVtxos.some((o) => inFlight(o));
+}
+
+/**
+ * Delete a submitted intent from arkd with its stored proof (`expire_at: 0`, so it needs no
+ * signer). Only a confirmed removal cancels it: any other failure leaves the inputs locked.
+ */
+async function releaseFromServer(
+    intent: ArkIntent,
+    deps: ReleaseDeps,
+    now: number,
+): Promise<ArkIntent | undefined> {
+    // Re-checked: a settle may have claimed these inputs since the loop's check.
+    if (!deps.deleteIntent || isInFlight(intent, deps)) return undefined;
+    try {
+        const message = JSON.parse(intent.deleteProofMessage) as Intent.DeleteMessage;
+        await deps.deleteIntent({ proof: intent.deleteProof, message });
+    } catch (e) {
+        if (!isNoMatchingIntentsError(e)) {
+            console.warn(`failed to delete intent ${intent.intentTxId} from the server`, e);
+            return undefined;
+        }
+    }
+    return terminal(intent, "cancelled", now, {
+        cancellationReason: "reconciliation: intent released from the server",
+    });
+}
+
+/**
+ * arkd's answer when no queued intent spends the proof's inputs. The name alone is not enough:
+ * arkd also returns it for a proof that fails verification.
+ */
+function isNoMatchingIntentsError(e: unknown): boolean {
+    return (
+        isArkError(e, ArkErrorName.INVALID_INTENT_PROOF) &&
+        e.message.includes("no matching intents found")
+    );
 }
 
 function terminal(

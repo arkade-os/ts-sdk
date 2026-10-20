@@ -117,7 +117,11 @@ export type Submit = { inputs: string[]; outputs: [string, bigint][]; finish(): 
 /** Park every Arkade-transaction submit until the test calls `finish()` on it. */
 export function stallSubmits(wallet: Wallet): Submit[] {
     const submits: Submit[] = [];
-    vi.spyOn(wallet, "buildAndSubmitOffchainTx").mockImplementation(
+    // The private tail: the public `buildAndSubmitOffchainTx` only adds the lock around it.
+    const tail = wallet as unknown as {
+        _buildAndSubmitOffchainTx: Wallet["buildAndSubmitOffchainTx"];
+    };
+    vi.spyOn(tail, "_buildAndSubmitOffchainTx").mockImplementation(
         (inputs, outputs) =>
             new Promise((resolve) => {
                 const arkTxid = String(submits.length + 1).repeat(64);

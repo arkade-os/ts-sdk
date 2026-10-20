@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/swap",
-    "version": "0.1.0-rc.21",
+    "version": "0.1.0-rc.27",
     "type": "module",
     "description": "Client-side Arkade Intents asset swaps: state a route, get an outcome. Pay a bolt11 invoice, receive over Lightning, exchange assets, or withdraw onchain.",
     "repository": {
@@ -112,7 +112,7 @@
     "license": "MIT",
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
-        "@arkade-os/solver-discovery": "0.2.7",
+        "@arkade-os/solver-discovery": "0.3.0",
         "@noble/ciphers": "2.1.1",
         "@noble/curves": "2.4.0",
         "@noble/hashes": "2.4.0",

@@ -28,6 +28,7 @@ import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
     ArkAddress,
+    assertTimerMs,
     VHTLC,
     asset,
     networkFromArkadeInfo,
@@ -64,7 +65,9 @@ import {
 } from "@arkade-os/sdk";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
-import { ASSET_CARRIER_SATS, createOffer } from "./offer";
+// Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
+import type { EvmRfqQuote } from "./evmRfq";
+import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -539,9 +542,10 @@ const matchQuotedLockup = (
  *
  * The lightning-receive leg uses {@link assertReceivable} instead: `refund_locktime` is the
  * SOLVER's there and the hold invoice is the clock that runs out. Onchain-receive stays here,
- * where the headroom check is over-strict but never unsafe. */
+ * where the headroom check is over-strict but never unsafe. EVM pairs fail closed: their
+ * contract, finality and deadline checks are not implemented yet. */
 export const assertFundable = (input: {
-    quote: RfqQuote;
+    quote: RfqQuote | EvmRfqQuote;
     invoiceExpiresAt?: number;
     now: number;
     onchain?: {
@@ -568,6 +572,12 @@ export const assertFundable = (input: {
     const fail = (reason: string, message: string): never => {
         throw gateError(reason, message);
     };
+    if (input.quote.pair.split("->").some((leg) => leg.startsWith("ethereum:"))) {
+        fail(
+            "evm_funding_unavailable",
+            "EVM funding is unavailable until local contract, finality, and deadline verification is implemented",
+        );
+    }
     // `valid_until` feeds the expiry gate AND the v2 TTL floor; absent or NaN it deletes both.
     if (input.quote.valid_until === undefined) {
         fail("quote_malformed", "quote carries no valid_until");
@@ -791,6 +801,7 @@ export const relayTransport = (
     },
 ): RfqTransport => {
     const timeoutMs = options.timeoutMs ?? 30_000;
+    assertTimerMs("timeoutMs", timeoutMs);
     const Ctor =
         options.WebSocketCtor ?? (WebSocket as unknown as new (url: string) => RelaySocket);
     const pending = new Map<string, (payload: unknown) => void>();
@@ -1231,7 +1242,9 @@ export async function requestLightningSend(
     });
 
     // Last, so a refused quote leaves no row, but before the caller holds an address to fund.
-    await registerLockupContract(await wallet.getContractManager(), script, address);
+    await registerLockupContract(await wallet.getContractManager(), script, address, {
+        scope: wallet,
+    });
 
     return {
         rfqId,
@@ -1364,6 +1377,8 @@ export async function requestArkadeSwap(
         rfqId?: string;
         /** Co-signer key override (33-byte compressed hex); see `createOffer`. */
         emulatorPubkey?: string;
+        /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
+        receiveAddress?: string;
         now?: number;
     },
 ): Promise<{
@@ -1390,11 +1405,25 @@ export async function requestArkadeSwap(
     }
     const rfqId = params.rfqId ?? newRfqId();
     const amountSide = params.amountSide ?? "from";
+    const receiveAddress = params.receiveAddress;
     const [makerAddress, makerPublicKey] = await Promise.all([
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const ownPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const info =
+        receiveAddress === undefined
+            ? undefined
+            : await wallet.getArkadeInfo({ requireLive: true });
+    const makerPkScript =
+        info === undefined
+            ? ownPkScript
+            : resolveReceivePkScript(
+                  receiveAddress,
+                  ownPkScript,
+                  networkFromArkadeInfo(info).hrp,
+                  toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+              );
     const pair = rfqPair(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
         params.wantAsset ? arkadeAssetLeg(params.wantAsset) : ARKADE_BTC,
@@ -1443,6 +1472,9 @@ export async function requestArkadeSwap(
         }
     }
     const offer = await createOffer(wallet, {
+        maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
+        ...(info === undefined ? {} : { info }),
+        ...(receiveAddress === undefined ? {} : { receiveAddress }),
         wantAmount: terms.wantAmount,
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
@@ -1801,6 +1833,7 @@ export async function requestOnchainSend(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {
@@ -2118,10 +2151,33 @@ const provisionReceive = async (
 };
 
 /**
+ * {@link provisionReceive}, then the quote. A receive's hash is ours, so `quote_conflict` means the
+ * solver already holds it: another wallet on this seed, with its own HD watermark, used this index.
+ * One retry on the next index gets past a lagging watermark; more would only burn indices.
+ */
+const quoteReceive = async (
+    wallet: IWallet,
+    transport: RfqTransport,
+    covclaimdPubkey: Uint8Array | undefined,
+    persistBefore: "paying" | "funding",
+    request: (provisioned: Awaited<ReturnType<typeof provisionReceive>>) => Record<string, unknown>,
+) => {
+    for (let attempt = 0; ; attempt++) {
+        const provisioned = await provisionReceive(wallet, covclaimdPubkey, persistBefore);
+        try {
+            return { ...provisioned, quote: await transport.requestQuote(request(provisioned)) };
+        } catch (error) {
+            const conflict = error instanceof SwapRefusal && error.reason === "quote_conflict";
+            if (!conflict || attempt >= 1) throw error;
+        }
+    }
+};
+
+/**
  * The `lightning:BTC->arkade:BTC` user flow: quote → derive the covenant locally → verify → gate.
  * Returns the solver's hold invoice (already checked by {@link verifyReceiveInvoice}) for the
  * trader's own Lightning wallet to PAY before `invoiceExpiresAt`. Once the HTLC is held the solver
- * funds the lockup and the trader claims it with its own `P` ({@link claimReceiveLockup}).
+ * funds the lockup and the trader claims it with its own `P` (`pushClaim`).
  *
  * Three obligations, all before the invoice is handed to a payer:
  *
@@ -2182,19 +2238,21 @@ export async function requestLightningReceive(
     contractParams: LightningReceiveContractParams;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket } =
-        await provisionReceive(wallet, params.covclaimdPubkey, "paying");
-
-    const quote = await transport.requestQuote(
-        lightningReceiveRequest({
-            rfqId,
-            paymentHash,
-            payoutAddress,
-            payoutPubkey,
-            claimPacket: claimPacket?.packet,
-            amount: params.amount,
-            amountSide: params.amountSide,
-        }),
+    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
+        wallet,
+        transport,
+        params.covclaimdPubkey,
+        "paying",
+        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
+            lightningReceiveRequest({
+                rfqId,
+                paymentHash,
+                payoutAddress,
+                payoutPubkey,
+                claimPacket: claimPacket?.packet,
+                amount: params.amount,
+                amountSide: params.amountSide,
+            }),
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
@@ -2219,6 +2277,7 @@ export async function requestLightningReceive(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {
@@ -2263,6 +2322,8 @@ export function deriveOnchainReceive(input: {
     script: InstanceType<typeof VHTLC.ScriptV2>;
     /** The L1 HTLC the trader funds, derived locally — fund only this. */
     htlc: OnchainHtlc;
+    /** The inputs {@link htlc} was derived from; a restore rebuilds it from these. */
+    htlcParams: OnchainHtlcParams;
     refundLocktime: number;
     htlcLocktime: number;
     minConfirmations: number;
@@ -2291,15 +2352,13 @@ export function deriveOnchainReceive(input: {
         solverRefundPkScriptHex,
     ).matched;
 
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash: input.paymentHash,
-            claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
-            refundKey: input.refundPubkey,
-            refundLocktime: htlcLocktime,
-        },
-        input.l1Network,
-    );
+    const htlcParams: OnchainHtlcParams = {
+        paymentHash: input.paymentHash,
+        claimKey: toXOnly(hex.decode(claimPubkey), "solver L1 claim key"),
+        refundKey: input.refundPubkey,
+        refundLocktime: htlcLocktime,
+    };
+    const htlc = onchainHtlcScript(htlcParams, input.l1Network);
     if (htlc.address !== htlcAddress) throw new AddressMismatch(htlc.address, htlcAddress);
 
     return {
@@ -2307,6 +2366,7 @@ export function deriveOnchainReceive(input: {
         swapPkScript: script.pkScript,
         script,
         htlc,
+        htlcParams,
         refundLocktime,
         htlcLocktime,
         minConfirmations,
@@ -2359,20 +2419,22 @@ export async function requestOnchainReceive(
     secrets: ProvisionedClaimSecret;
 }> {
     const rfqId = params.rfqId ?? newRfqId();
-    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket } =
-        await provisionReceive(wallet, params.covclaimdPubkey, "funding");
-
-    const quote = await transport.requestQuote(
-        onchainReceiveRequest({
-            rfqId,
-            paymentHash,
-            payoutAddress,
-            payoutPubkey,
-            refundPubkey: params.refundPubkey,
-            claimPacket: claimPacket?.packet,
-            amount: params.amount,
-            amountSide: params.amountSide,
-        }),
+    const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
+        wallet,
+        transport,
+        params.covclaimdPubkey,
+        "funding",
+        ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
+            onchainReceiveRequest({
+                rfqId,
+                paymentHash,
+                payoutAddress,
+                payoutPubkey,
+                refundPubkey: params.refundPubkey,
+                claimPacket: claimPacket?.packet,
+                amount: params.amount,
+                amountSide: params.amountSide,
+            }),
     );
     assertQuotedAmount(quote, params.amountSide, params.amount);
 
@@ -2400,6 +2462,7 @@ export async function requestOnchainReceive(
         await wallet.getContractManager(),
         derived.script,
         derived.address,
+        { scope: wallet },
     );
 
     return {

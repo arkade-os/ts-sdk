@@ -76,6 +76,7 @@ import {
     ReadonlyWalletConfig,
     Recipient,
     SendParams,
+    InputExpiryFloor,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -83,6 +84,8 @@ import {
     WalletConfig,
 } from ".";
 import { createAssetPacket, selectCoinsWithAsset, selectedCoinsToAssetInputs } from "./asset";
+import { assertSendDeadline, captureSendDeadline } from "./sendDeadline";
+import { captureInputExpiryFloor, meetsInputExpiryFloor } from "./sendInputExpiry";
 import { toBIP371TapTree, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { classifyAgainstSignerSet, signerSetFromInfo, toXOnlySignerHex } from "./signerRotation";
@@ -124,6 +127,7 @@ import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
+import { releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
@@ -184,12 +188,14 @@ import {
 } from "./walletReceiveRotator";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
+import { KeyringDescriptorProvider, unwrapKeyring } from "../identity/keyringDescriptorProvider";
 import {
     AddressAllocationCapable,
     HDWalletCapable,
     WalletCannotAllocateAddressError,
     resolveDescriptorSigner,
 } from "./hdWalletCapable";
+import { StaticDescriptorProvider } from "../identity/staticDescriptorProvider";
 import { deriveDescriptorLeafPubKey, identityDescriptor } from "../identity/descriptor";
 import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import {
@@ -199,6 +205,7 @@ import {
     DiscoveryDeps,
     GetContractsFilter,
     isContractVtxoEvent,
+    isRecoveryOnlyContract,
 } from "../contracts/types";
 import {
     gateExclusion,
@@ -358,36 +365,57 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
 /**
- * Apply {@link GetVtxosFilter} to a contract snapshot; the single definition shared by `getVtxos`
- * and {@link IReadonlyWallet.getSpendableVtxos}. No chain tip (offline-first), so height-encoded
- * expiry reads as not expired.
+ * Flatten a contract snapshot and apply the shared VTXO filtering rules used by `getVtxos` and
+ * {@link IReadonlyWallet.getSpendableVtxos}.
  */
 export function filterSnapshotVtxos(
     snapshot: readonly ContractWithVtxos[],
     filter: GetVtxosFilter | undefined,
     pendingSpendOutpoints: ReadonlySet<string>,
 ): NormalizedExtendedVirtualCoin[] {
-    const f = filter ?? { withRecoverable: true, withUnrolled: false };
+    return filterFlatVtxos(
+        // Recovery-only contracts (claimCash's server-swept arkadeCash) settle in their own
+        // isolated intent; excluding them here keeps them out of balance, renewal, recovery and
+        // coin selection, so a persistently rejected recovery input can't poison those.
+        snapshot
+            .filter(({ contract }) => !isRecoveryOnlyContract(contract))
+            .flatMap((contract) => contract.vtxos),
+        filter,
+        pendingSpendOutpoints,
+    );
+}
+
+/**
+ * Apply {@link GetVtxosFilter} to a flat VTXO list, including the wallet's in-flight spend
+ * exclusions. No chain tip (offline-first), so height-encoded expiry reads as not expired.
+ */
+export function filterFlatVtxos(
+    vtxos: readonly NormalizedExtendedVirtualCoin[],
+    filter: GetVtxosFilter | undefined,
+    pendingSpendOutpoints: ReadonlySet<string>,
+): NormalizedExtendedVirtualCoin[] {
+    const f = {
+        withRecoverable: filter?.withRecoverable ?? true,
+        withUnrolled: filter?.withUnrolled ?? false,
+    };
     const now = { timestamp: new Date() };
-    return snapshot
-        .flatMap((_) => _.vtxos)
-        .filter((vtxo) => {
-            if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
-                return false;
-            }
-            // Location before spend: `withUnrolled` is authoritative for an exited coin, even
-            // an unrolled-and-spent one.
-            if (vtxo.isUnrolled) {
-                return !!f.withUnrolled;
-            }
-            if (isVtxoSpent(vtxo)) {
-                return false;
-            }
-            if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
-                return false;
-            }
-            return true;
-        });
+    return vtxos.filter((vtxo) => {
+        if (pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+            return false;
+        }
+        // Location before spend: `withUnrolled` is authoritative for an exited coin, even
+        // an unrolled-and-spent one.
+        if (vtxo.isUnrolled) {
+            return !!f.withUnrolled;
+        }
+        if (isVtxoSpent(vtxo)) {
+            return false;
+        }
+        if (!f.withRecoverable && canRecoverOnchain(vtxo, now)) {
+            return false;
+        }
+        return true;
+    });
 }
 
 /**
@@ -530,10 +558,9 @@ export interface BoardingUtxoGroup {
 }
 
 /**
- * Why a VTXO at an arkadeCash address could not be swept by {@link Wallet.claimCash}.
+ * Why a VTXO at an arkadeCash address could neither be swept nor imported for
+ * recovery by {@link Wallet.claimCash}.
  *
- * - `swept` — the server swept the batch at expiry. Recoverable in principle,
- *   but only through a settlement, which the thin sweep cannot do.
  * - `subdust` — below dust, so it sits at an OP_RETURN script with no spendable
  *   leaf. Unspendable as cash; `createCash` prevents minting these.
  * - `already-spent` — someone else claimed it first.
@@ -541,14 +568,19 @@ export interface BoardingUtxoGroup {
  *   `Unroll.completeUnroll` is the remedy.
  * - `has-assets` — asset-bearing; the BTC-only sweep would burn the assets.
  * - `sweep-failed` — spendable, but its own sweep was rejected.
+ * - `recovery-failed` — server-swept and recoverable in principle, but the
+ *   import that hands it to the wallet's recovery machinery failed.
+ *
+ * A server-swept VTXO whose import *succeeds* is not reported here — it lands
+ * in {@link ArkadeCashClaimResult.recovering} instead.
  */
 export type ArkadeCashUnclaimedReason =
-    | "swept"
     | "subdust"
     | "already-spent"
     | "exited"
     | "has-assets"
-    | "sweep-failed";
+    | "sweep-failed"
+    | "recovery-failed";
 
 const cashReport = (
     vtxo: VirtualCoin,
@@ -560,24 +592,42 @@ const cashReport = (
     reason,
 });
 
-/** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
-export interface ArkadeCashUnclaimedVtxo {
+/** Minimal outpoint + value identifying a VTXO in a claim report. */
+export interface ArkadeCashVtxoRef {
     txid: string;
     vout: number;
     /** Value in satoshis. */
     value: number;
+}
+
+/** A VTXO {@link Wallet.claimCash} left behind, with the reason why. */
+export interface ArkadeCashUnclaimedVtxo extends ArkadeCashVtxoRef {
     reason: ArkadeCashUnclaimedReason;
 }
 
 /**
- * Outcome of {@link Wallet.claimCash}: what was swept, and what was not.
+ * Outcome of {@link Wallet.claimCash}: what was swept instantly, what was
+ * imported for background recovery, and what was left behind.
  *
- * The shape is open — further buckets may be added alongside `unclaimed` as
- * more of the non-sweepable states become claimable.
+ * The shape is open — further buckets may be added as more of the
+ * non-sweepable states become claimable.
  */
 export interface ArkadeCashClaimResult {
-    /** Satoshis swept to this wallet. */
+    /** Satoshis swept to this wallet instantly (the thin single-key sweep). */
     swept: number;
+    /**
+     * Server-swept VTXOs imported for recovery. These funds are not in the
+     * wallet yet: a swept VTXO can only move through a settlement, so
+     * `claimCash` imports it as a signable contract and hands it to the
+     * wallet's own recovery machinery, which settles it back (rotation-aware)
+     * on the normal retry cadence. The amount arrives as a fresh VTXO once
+     * that settlement finalizes.
+     */
+    recovering: {
+        /** Satoshis imported for recovery. */
+        amount: number;
+        vtxos: ArkadeCashVtxoRef[];
+    };
     unclaimed: {
         /** Satoshis left behind. */
         amount: number;
@@ -607,12 +657,14 @@ export class ArkadeCashCreateError extends Error {
 
 /**
  * Freshness of provider-backed sync (server-info source + indexer-sync health). Balances/VTXOs
- * are always served from the repository regardless.
+ * are always served from the repository regardless. `syncing` says a provider sync is in flight
+ * right now; optional so adding it breaks no implementer, {@link ReadonlyWallet} always sets it.
  */
 export type ProviderConnectionState =
-    | { mode: "online"; source: "live"; lastOnlineAt: number }
+    | { mode: "online"; syncing?: boolean; source: "live"; lastOnlineAt: number }
     | {
           mode: "degraded";
+          syncing?: boolean;
           source: "cache" | "repository";
           provider: ProviderKind;
           reason: string;
@@ -620,9 +672,16 @@ export type ProviderConnectionState =
       };
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    protected lazyInitialization = false;
+    private boardingLoaded = false;
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+    protected vtxoSyncOverlapMs?: number;
+
+    protected copySyncOverlapTo(wallet: ReadonlyWallet): void {
+        wallet.vtxoSyncOverlapMs = this.vtxoSyncOverlapMs;
+    }
 
     /** Opt-in intent-lifecycle repository; `undefined` ⇒ intent persistence is a no-op. */
     public intentRepository?: IntentRepository;
@@ -693,9 +752,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * construct, so it is safe for readonly callers.
      */
     getProviderConnectionState(): ProviderConnectionState {
+        const syncing = this._contractManager?.getSyncState().syncing ?? false;
         if (this._serverInfoSource === "cache") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "cache",
                 provider: "arkade",
                 reason: "constructed from cached server-info; operator was unreachable at boot",
@@ -706,6 +767,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (sync?.mode === "degraded") {
             return {
                 mode: "degraded",
+                syncing,
                 source: "repository",
                 provider: "indexer",
                 reason: sync.reason,
@@ -714,6 +776,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         return {
             mode: "online",
+            syncing,
             source: "live",
             lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
         };
@@ -1052,6 +1115,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @param config - Readonly wallet configuration
      * @returns A readonly wallet instance
      */
+    static create<T extends ReadonlyWallet>(
+        this: { prototype: T },
+        config: ReadonlyWalletConfig,
+    ): Promise<T>;
+    // Without this overload a subclass could not narrow the return type of its own `create`.
+    static create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet>;
     static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -1060,7 +1129,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        const wallet = new ReadonlyWallet(
+        const wallet = new this(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -1076,7 +1145,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks,
         );
+        wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
+        wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -1124,6 +1195,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // The bucketer drops every spent coin and the gate reads contracts only.
             this.contractSnapshot(undefined, { unspentOnly: true }),
         ]);
+        return this.balanceFromSnapshot(boardingUtxos, snapshot);
+    }
+
+    /** Cached balance; inspect connection state and boarding.loaded before displaying zeros. */
+    async getStoredBalance(): Promise<WalletBalance> {
+        const [boardingUtxos, snapshot] = await Promise.all([
+            this.getStoredBoardingUtxos(),
+            this.contractSnapshotStored(),
+        ]);
+        const balance = await this.balanceFromSnapshot(boardingUtxos, snapshot);
+        balance.boarding.loaded = this.boardingLoaded;
+        return balance;
+    }
+
+    private async balanceFromSnapshot(
+        boardingUtxos: ExtendedCoin[],
+        snapshot: ContractWithVtxos[],
+    ): Promise<WalletBalance> {
         // Explicit, not the default filter: the default drops unrolled coins,
         // and `computeOffchainBalance` cannot report a bucket it never sees.
         const vtxos = filterSnapshotVtxos(
@@ -1155,6 +1244,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return filterSnapshotVtxos(
             // Only an unrolled coin is returned spent, so no other read needs spent rows.
             await this.contractSnapshot(undefined, { unspentOnly: !filter?.withUnrolled }),
+            filter,
+            this._pendingSpendOutpoints,
+        );
+    }
+
+    /** Cached VTXOs; may be empty before the first sync. Never use for coin selection. */
+    async getStoredVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]> {
+        return filterSnapshotVtxos(
+            await this.contractSnapshotStored(),
             filter,
             this._pendingSpendOutpoints,
         );
@@ -1300,6 +1398,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         });
     }
 
+    protected async contractSnapshotStored(): Promise<ContractWithVtxos[]> {
+        const contractManager = await this.getContractManager();
+        return contractManager.getStoredContractsWithVtxos
+            ? contractManager.getStoredContractsWithVtxos()
+            : contractManager.getContractsWithVtxos();
+    }
+
     /**
      * The two exclusion sets the gate is made of, derived from one snapshot so
      * {@link getSpendableVtxos} and the balance answer about the same instant.
@@ -1403,13 +1508,33 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
-     * cursor, contracts). Create a fresh wallet instance afterward.
+     * cursor, contracts, intents). Create a fresh wallet instance afterward.
+     * Intents are kept while any may still be held by arkd, so a later
+     * reconciliation can release them with their stored proofs.
      */
     async clear(): Promise<void> {
         try {
             await this.dispose();
         } finally {
-            await Promise.all([this.walletRepository.clear(), this.contractRepository.clear()]);
+            await Promise.all([
+                this.walletRepository.clear(),
+                this.contractRepository.clear(),
+                this.clearIntents(),
+            ]);
+        }
+    }
+
+    private async clearIntents(): Promise<void> {
+        const intentRepository = this.intentRepository;
+        if (!intentRepository) return;
+        const released = await releaseIntents({
+            ...this.intentReconciliationConfig(),
+            intentRepository,
+        });
+        if (released) {
+            await intentRepository.clear();
+        } else {
+            console.warn("clear: kept intents that could not be released from the server");
         }
     }
     /**
@@ -1581,8 +1706,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Fetch and cache boarding UTXOs for the given signer set, grouped per address (see
-     * {@link BoardingUtxoGroup} for why). No `getInfo()`: the only network calls are the
-     * per-address `getCoins`.
+     * {@link BoardingUtxoGroup} for why), saving every group in one `saveUtxos`. No
+     * `getInfo()`: the only network calls are the per-address `getCoins`.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
@@ -1607,9 +1732,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Saved only once every fetch has succeeded, so a failure leaves no write in flight.
+        // Writes start only once every fetch has succeeded, so a failure writes nothing.
+        await this.walletRepository.saveUtxos(
+            new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
+        );
+        // `saveUtxos` merges, so prune rows the fetch no longer returns: a coin spent elsewhere
+        // would otherwise linger for `getStoredBoardingUtxos` to report. Pruning only after the
+        // save leaves the previous snapshot intact if that save fails.
         for (const [i, group] of groups.entries()) {
-            await this.walletRepository.saveUtxos(addresses[i], group.coins);
+            const fresh = new Set(group.coins.map((coin) => `${coin.txid}:${coin.vout}`));
+            const cached = await collectUtxos(this.walletRepository, addresses[i]);
+            const kept = cached.filter((coin) => fresh.has(`${coin.txid}:${coin.vout}`));
+            if (kept.length === cached.length) continue;
+            await this.walletRepository.deleteUtxos(addresses[i]);
+            if (kept.length > 0) await this.walletRepository.saveUtxos(addresses[i], kept);
         }
         return groups;
     }
@@ -1625,9 +1761,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
         ]);
         const groups = await this.getBoardingUtxosForSigners(currentOnly);
+        this.boardingLoaded = true;
         return groups
             .flatMap((g) => g.coins)
             .filter((coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`));
+    }
+
+    async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const currentOnly = new Set([
+            toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
+        ]);
+        const tapscripts = await this.getBoardingTapscripts(currentOnly);
+        const perAddress = await Promise.all(
+            tapscripts.map((tapscript) =>
+                collectUtxos(this.walletRepository, tapscript.onchainAddress(this.network)),
+            ),
+        );
+        return perAddress.flat();
     }
 
     /**
@@ -1883,6 +2033,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return undefined;
     }
 
+    /** Readonly wallets never settle, so they neither release nor own server intents. */
+    protected intentReconciliationConfig(): ContractManagerConfig["intentReconciliation"] {
+        return undefined;
+    }
+
     private async initializeContractManager(): Promise<ContractManager> {
         // When a virtualTxRepository is configured, capture each received VTXO's
         // unilateral-exit branch and prune it on spend (both best-effort).
@@ -1914,13 +2069,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
         }
         const manager = await ContractManager.create({
+            lazyInitialization: this.lazyInitialization,
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
             intentRepository: this.intentRepository,
+            intentReconciliation: this.intentReconciliationConfig(),
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
+            vtxoSyncOverlapMs: this.vtxoSyncOverlapMs,
             lookAhead: this.lookAheadConfig(),
             // Without it every height-typed CLTV reads as unsatisfied, and seconds-typed timelocks
             // would be judged against the host clock. @see ContractManagerConfig.chainTip
@@ -2041,7 +2199,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 ? await this._contractManagerInitializing.catch(() => undefined)
                 : undefined);
 
-        manager?.dispose();
+        await manager?.dispose();
         this._contractManager = undefined;
         this._contractManagerInitializing = undefined;
     }
@@ -2160,8 +2318,46 @@ export class Wallet
      */
     private readonly _descriptorProvider?: DescriptorProvider;
 
+    /**
+     * Keyring holding foreign private keys imported outside the wallet's
+     * derivation tree (see {@link KeyringDescriptorProvider}). Wraps
+     * {@link _descriptorProvider} (or a {@link StaticDescriptorProvider}
+     * over the wallet identity when there is no HD provider) and is the
+     * descriptor provider {@link _signerRouter} actually signs through, so
+     * a contract carrying `metadata.signingDescriptor` for an imported key
+     * is signable by construction.
+     *
+     * Kept separate from {@link _descriptorProvider} on purpose: the latter
+     * still gates HD boarding/receive rotation (a `!provider` check means
+     * "static wallet, no rotation"), and wrapping it with a keyring for
+     * every wallet would break that gate. The keyring is orthogonal — it
+     * only ever adds foreign signable keys, never receive addresses.
+     *
+     * Populated for every {@link Wallet.create}d wallet; the constructor's
+     * param is optional so the router degrades to {@link _descriptorProvider}
+     * if a caller ever omits it.
+     */
+    private readonly _keyring?: KeyringDescriptorProvider;
+
+    /**
+     * The built-in HD provider behind any keyring wrapping, or `undefined` when there is none.
+     * Every HD-specific branch goes through this: a wrapped HD provider (a public `walletMode`
+     * shape) fails `instanceof HDDescriptorProvider` and would silently take the non-HD path.
+     */
+    private get _hdProvider(): HDDescriptorProvider | undefined {
+        const provider = unwrapKeyring(this._descriptorProvider);
+        return provider instanceof HDDescriptorProvider ? provider : undefined;
+    }
+
     /** Per-side width of the HD look-ahead band. @see WalletConfig.lookAheadWindow */
     private readonly _lookAheadWindow: number;
+
+    protected override intentReconciliationConfig(): ContractManagerConfig["intentReconciliation"] {
+        return {
+            deleteIntent: (intent) => this.arkProvider.deleteIntent(intent),
+            isOutpointInFlight: (o) => this._settlingOutpoints.has(`${o.txid}:${o.vout}`),
+        };
+    }
 
     /**
      * Watch a band of receive scripts around the HD watermark so payments to an externally-issued
@@ -2169,8 +2365,8 @@ export class Wallet
      * band rebuilt after {@link rotateServerSigner} fans the new signer set.
      */
     protected override lookAheadConfig(): ContractManagerConfig["lookAhead"] {
-        const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider)) return undefined;
+        const provider = this._hdProvider;
+        if (!provider) return undefined;
         return {
             size: this._lookAheadWindow,
             currentWatermark: async () => (await provider.getLastIndexUsed()) ?? -1,
@@ -2334,7 +2530,7 @@ export class Wallet
         // `undefined` ("declined").
         const descriptor = !provider
             ? undefined
-            : provider instanceof HDDescriptorProvider
+            : this._hdProvider
               ? await manager.getNextSigningDescriptor()
               : await provider.getNextSigningDescriptor();
 
@@ -2488,9 +2684,7 @@ export class Wallet
      * @see HDWalletCapable.getCurrentSigningDescriptor
      */
     async getCurrentSigningDescriptor(): Promise<string | undefined> {
-        const provider = this._descriptorProvider;
-        if (!(provider instanceof HDDescriptorProvider)) return undefined;
-        return provider.getCurrentSigningDescriptor();
+        return this._hdProvider?.getCurrentSigningDescriptor();
     }
 
     /**
@@ -2500,7 +2694,7 @@ export class Wallet
      * contract manager; otherwise the identity key as `tr(pubkey)`, the same every call.
      */
     async getNextSigningDescriptor(): Promise<string | undefined> {
-        if (this._descriptorProvider instanceof HDDescriptorProvider) {
+        if (this._hdProvider) {
             return (await this.getContractManager()).getNextSigningDescriptor();
         }
         return identityDescriptor(this.identity);
@@ -2510,9 +2704,9 @@ export class Wallet
      * @see HDAllocationCapable.advanceSigningDescriptorWatermark
      */
     async advanceSigningDescriptorWatermark(descriptor: string): Promise<void> {
-        const provider = this._descriptorProvider;
+        const provider = this._hdProvider;
         // Nothing to move without an index stream, so nothing to validate.
-        if (!(provider instanceof HDDescriptorProvider)) return;
+        if (!provider) return;
         if (!provider.isOurs(descriptor)) {
             throw new Error(`descriptor is not derivable from this wallet: ${descriptor}`);
         }
@@ -2531,9 +2725,9 @@ export class Wallet
      * and descriptors persisted on contracts (covers rows a restore scan wrote).
      */
     async getUsedSigningDescriptors(opts?: { lookAhead?: number }): Promise<string[]> {
-        const provider = this._descriptorProvider;
+        const provider = this._hdProvider;
         const descriptors = new Set<string>();
-        if (provider instanceof HDDescriptorProvider) {
+        if (provider) {
             const lastIndexUsed = await provider.getLastIndexUsed();
             const requestedLookAhead = opts?.lookAhead ?? 0;
             if (!Number.isFinite(requestedLookAhead)) {
@@ -2552,6 +2746,9 @@ export class Wallet
             }
         }
         for (const contract of await collectContracts(this.contractRepository)) {
+            // A recovery-only row carries a keyring key outside the HD tree, which
+            // `signerForDescriptor` (correctly) refuses as foreign.
+            if (isRecoveryOnlyContract(contract)) continue;
             const descriptor = contract.metadata?.signingDescriptor;
             if (typeof descriptor === "string" && descriptor.length > 0) {
                 descriptors.add(descriptor);
@@ -2722,6 +2919,8 @@ export class Wallet
      * transactions for the same inputs; with `concurrentSpending`, only until inputs are reserved.
      */
     private _txLock: Promise<void> = Promise.resolve();
+    // Every input (boarding included) of an intent a live settle owns; reconciliation skips them.
+    private readonly _settlingOutpoints = new Set<string>();
 
     /** Coalesces concurrent {@link restore} calls into one scan; cleared on settle. */
     private _restoreInFlight?: Promise<void>;
@@ -2792,7 +2991,12 @@ export class Wallet
                 this._addPendingSpends(inputs);
                 release();
                 try {
-                    return await this.buildAndSubmitOffchainTx(inputs, outputs);
+                    // The unlocked tail: reserved above, so it must not queue for the lock again.
+                    return await this._buildAndSubmitOffchainTx(
+                        inputs,
+                        outputs,
+                        this.serverUnrollScript,
+                    );
                 } finally {
                     this._removePendingSpends(inputs);
                 }
@@ -2859,11 +3063,11 @@ export class Wallet
 
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
-        const provider = this._descriptorProvider;
-        // `instanceof`, not duck-typing: a non-HD provider exposing a same-named method would be
-        // mis-classified and TypeError mid-scan. Lift into a type guard if custom HD providers
-        // are ever supported.
-        const hd = provider instanceof HDDescriptorProvider;
+        // Keyring foreign keys sit outside the derivation tree the gap scan walks, so only the
+        // unwrapped HD provider counts. `instanceof` (inside the getter), not duck-typing: a
+        // non-HD provider exposing a same-named method would TypeError mid-scan.
+        const provider = this._hdProvider;
+        const hd = provider !== undefined;
 
         const staticDescriptor = hd ? undefined : await identityDescriptor(this.identity);
         const materialize = (index: number): string =>
@@ -2994,6 +3198,7 @@ export class Wallet
         walletContractTimelocks?: RelativeTimelock[],
         receiveRotator?: WalletReceiveRotator,
         descriptorProvider?: DescriptorProvider,
+        keyring?: KeyringDescriptorProvider,
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
@@ -3026,11 +3231,15 @@ export class Wallet
         this._serverUnrollScript = serverUnrollScript;
         this._receiveRotator = receiveRotator;
         this._descriptorProvider = descriptorProvider;
+        this._keyring = keyring;
         this._lookAheadWindow = lookAheadWindow ?? DEFAULT_LOOK_AHEAD_WINDOW;
         this._signerRouter = new InputSignerRouter({
             identity,
             contractRepository,
-            descriptorProvider,
+            // Sign through the keyring: it resolves the wrapped base
+            // provider's descriptors AND any imported foreign keys. Falls
+            // back to the bare base provider when no keyring was supplied.
+            descriptorProvider: keyring ?? descriptorProvider,
             boardingPkScript: boardingTapscript.pkScript,
         });
     }
@@ -3128,6 +3337,8 @@ export class Wallet
      * });
      * ```
      */
+    static create<T extends Wallet>(this: { prototype: T }, config: WalletConfig): Promise<T>;
+    static create(config: WalletConfig): Promise<Wallet>;
     static async create(config: WalletConfig): Promise<Wallet> {
         // Programmer error, not an operational one — surface it before any I/O.
         if (
@@ -3167,7 +3378,37 @@ export class Wallet
         // HD boot wiring; `getVtxoManager()` installs the rotator lazily.
         const boot = await WalletReceiveRotator.resolveBoot(config, setup);
 
-        const wallet = new Wallet(
+        // Wrap the resolved provider (or a static one over the wallet
+        // identity, for the common non-HD wallet) with a keyring so
+        // `claimCash` can import a foreign signable contract for recovery
+        // and the signer router can resolve it. This does NOT feed HD
+        // boarding/receive rotation — that still keys off `boot?.provider`
+        // below — so a static wallet keeps its single fixed address.
+        //
+        // A failure here (a corrupt persisted keyring blob fails loud in
+        // `parseSettings`) must not brick the wallet: the keyring is an
+        // auxiliary recovery feature, and every consumer already degrades
+        // without one — the router falls back to the bare provider,
+        // `claimCash` reports swept funds as `recovery-failed`, and the
+        // recovery pass never throws. Log and boot keyringless instead of
+        // making the wallet's own funds unreachable.
+        let keyring: KeyringDescriptorProvider | undefined;
+        try {
+            keyring = await KeyringDescriptorProvider.create(
+                boot?.provider ?? (await StaticDescriptorProvider.create(config.identity)),
+                setup.walletRepository,
+            );
+        } catch (error) {
+            console.error(
+                "Failed to load the keyring; arkcash recovery is unavailable this " +
+                    "session. The persisted keyring settings are likely corrupt — " +
+                    "in-flight arkcash recoveries stall until they are cleared and " +
+                    "the notes re-claimed.",
+                error,
+            );
+        }
+
+        const wallet = new this(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -3188,6 +3429,7 @@ export class Wallet
             setup.walletContractTimelocks,
             boot?.rotator,
             boot?.provider,
+            keyring,
             config.lookAheadWindow,
             // Pinned at setup rather than refetched per round.
             {
@@ -3198,6 +3440,7 @@ export class Wallet
             },
             checkpointExitDelayOverrides,
         );
+        wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
         // Construction validated the response, so it is now safe to refresh the cached snapshot.
         if (setup.serverInfoSource === "live") {
@@ -3242,6 +3485,7 @@ export class Wallet
             }
         }
 
+        wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
@@ -3289,6 +3533,7 @@ export class Wallet
             this.watcherConfig,
             this.walletContractTimelocks,
         );
+        this.copySyncOverlapTo(readonly);
         // Carry the cached deprecated-signer set (with cutoffs) so the clone's
         // boarding watch path and spendability split match the source wallet's.
         (readonly as unknown as { _deprecatedSigners: Map<string, bigint> })._deprecatedSigners =
@@ -3310,21 +3555,33 @@ export class Wallet
      *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
+     * @param hooks - Optional phases for preparation and intent registration.
      * @returns The finalized Arkade transaction id
      */
     async settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string> {
-        return this._withTxLock((release) =>
-            this._settleImpl(params, eventCallback, this._concurrentSpending ? release : undefined),
-        );
+        return this._withTxLock((release) => {
+            hooks?.onPhase?.("preparing");
+            const onRegistrationAttempt = hooks?.onPhase
+                ? () => hooks.onPhase?.("registration_attempt")
+                : undefined;
+            return this._settleImpl(
+                params,
+                eventCallback,
+                this._concurrentSpending ? release : undefined,
+                onRegistrationAttempt,
+            );
+        });
     }
 
     private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
         onReserved?: () => void,
+        onRegistrationAttempt?: () => void,
     ): Promise<string> {
         const picked = params === undefined || isSdkPicked(params);
         if (params?.inputs) {
@@ -3570,6 +3827,32 @@ export class Wallet
                 .sort()
                 .join("|");
         }
+
+        // Last check before anything leaves the wallet: `updateDbAfterSettle` re-annotates these
+        // inputs only after the batch finalized. After the cheap local validation, before the
+        // intent; arknotes and boarding inputs carry no vtxo script.
+        const settleInputVtxos = params.inputs.filter(isVirtualCoin);
+        const contractManager = await this.getContractManager();
+        await contractManager.assertAnnotatable(settleInputVtxos);
+        // Immature timelocks otherwise register fine and are refused server-side, unhelpfully.
+        // Only certain handlers answer, so a no-op for ordinary coins.
+        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
+            hex.encode(await this.identity.xOnlyPublicKey()),
+        );
+
+        // After the last await before the inputs go pending, so a hold placed during signing is
+        // caught; a throw here leaves nothing pending, so the holder can spend them.
+        if (picked) this._assertNotHeld(params.inputs);
+        // Hide the inputs from concurrent getVtxos() callers before the intent registers, and
+        // claim them before the first persist so reconciliation never races this settle.
+        this._addPendingSpends(params.inputs);
+        const boardingKeys = onReserved
+            ? coinKeys(params.inputs.filter((i) => !isVirtualCoin(i)))
+            : [];
+        for (const key of boardingKeys) this._pendingSpendOutpoints.add(key);
+        const settlingKeys = params.inputs.map((i) => `${i.txid}:${i.vout}`);
+        for (const key of settlingKeys) this._settlingOutpoints.add(key);
+        onReserved?.();
         await this.persistIntentSnapshot(
             intentTxId,
             "waiting_to_submit",
@@ -3592,29 +3875,7 @@ export class Wallet
         // the hook's terminal repo write failed, which repo state can't tell us.
         let committedTxid: string | undefined;
 
-        // Last check before anything leaves the wallet: `updateDbAfterSettle` re-annotates these
-        // inputs only after the batch finalized. After the cheap local validation, before the
-        // intent; arknotes and boarding inputs carry no vtxo script.
-        const settleInputVtxos = params.inputs.filter(isVirtualCoin);
-        const contractManager = await this.getContractManager();
-        await contractManager.assertAnnotatable(settleInputVtxos);
-        // Immature timelocks otherwise register fine and are refused server-side, unhelpfully.
-        // Only certain handlers answer, so a no-op for ordinary coins.
-        await contractManager.assertSpendableNow?.(settleInputVtxos, async () =>
-            hex.encode(await this.identity.xOnlyPublicKey()),
-        );
-
-        const boardingKeys = onReserved
-            ? coinKeys(params.inputs.filter((i) => !isVirtualCoin(i)))
-            : [];
         try {
-            // After the last await, so a hold placed during signing is caught; before the inputs
-            // go pending, so the holder can spend them while this settle unwinds.
-            if (picked) this._assertNotHeld(params.inputs);
-            // Hide the inputs from concurrent getVtxos() callers before the intent registers.
-            this._addPendingSpends(params.inputs);
-            for (const key of boardingKeys) this._pendingSpendOutpoints.add(key);
-            onReserved?.();
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
 
             // Prime the iterator so the provider opens the SSE subscription
@@ -3632,6 +3893,7 @@ export class Wallet
             })();
 
             registering = true;
+            onRegistrationAttempt?.();
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
             await this.persistIntentSnapshot(
@@ -3708,6 +3970,7 @@ export class Wallet
             // Clear first so a synchronous handler firing from abort() never sees stale state.
             this._removePendingSpends(params.inputs);
             for (const key of boardingKeys) this._pendingSpendOutpoints.delete(key);
+            for (const key of settlingKeys) this._settlingOutpoints.delete(key);
             // abort() covers a started generator; return() also releases one that never ran.
             abortController.abort();
             await stream?.return?.().catch(() => {});
@@ -4455,16 +4718,29 @@ export class Wallet
     }
 
     /**
-     * Claim an ArkadeCash bearer instrument: sweep each spendable VTXO to this wallet in its own
-     * offchain tx signed with the token's key, and report the rest in `unclaimed` with a
-     * per-VTXO reason. Nothing is persisted (no contract imported, key not stored).
+     * Claim an ArkadeCash bearer instrument: sweep what can be swept, recover what
+     * was swept by the server, report the rest.
      *
-     * The token is the recovery handle: re-running `claimCash` completes an interrupted claim by
-     * draining pending arkadeCash txs before sweeping.
+     * Every spendable VTXO at the arkadeCash address is swept to this wallet in
+     * its own offchain transaction, signed with the key carried by the arkadeCash
+     * string. A VTXO the server already swept at batch expiry cannot move
+     * through the thin sweep — only a settlement can lift it — so it is
+     * **imported** as a signable `default` contract (the arkadeCash key is filed
+     * in the keyring) and handed to the wallet's own recovery machinery, which
+     * settles it back on the normal retry cadence. That import is the only
+     * thing `claimCash` persists, and the key is purged once recovery
+     * completes. Anything neither sweepable nor recoverable — subdust, already
+     * claimed, or asset-bearing — is returned in `unclaimed` with a per-VTXO
+     * reason and otherwise ignored.
+     *
+     * The arkadeCash string is the recovery token: a claim interrupted between
+     * submit and finalize is completed by simply re-running `claimCash`, which
+     * drains any pending arkadeCash transaction on the server before sweeping.
+     * The import is idempotent, so re-running is always safe.
      *
      * @param cashStr - The encoded arkadeCash string (e.g., "arkadecash1...")
-     * @returns The swept total and the report of what was left behind. The
-     * shape is open: further buckets may be added alongside `unclaimed`.
+     * @returns What was swept instantly, what was imported for recovery, and
+     * what was left behind. The shape is open: further buckets may be added.
      */
     async claimCash(cashStr: string): Promise<ArkadeCashClaimResult> {
         const cash = ArkadeCash.fromString(cashStr);
@@ -4482,7 +4758,7 @@ export class Wallet
         }
 
         const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
-        let { spendable, unclaimed } = this.classifyCashVtxos(vtxos);
+        let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
 
         // Drain a previously registered but unfinalized sweep, keyed to the cash key so
@@ -4508,7 +4784,7 @@ export class Wallet
             if (drained.count > 0) {
                 // Re-read, or we'd re-sweep an outpoint the drain just spent.
                 vtxos = await this.fetchAllVtxos(scripts);
-                ({ spendable, unclaimed } = this.classifyCashVtxos(vtxos));
+                ({ spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos));
 
                 // Drained-to-us outpoints now read as spent but were claimed by this call;
                 // ones a drained tx paid to someone else stay reported.
@@ -4556,8 +4832,43 @@ export class Wallet
             }
         }
 
+        // Server-swept VTXOs can only move through a settlement, so import the
+        // arkadeCash key as a signable contract and let the wallet's recovery
+        // machinery settle it back. All recoverable VTXOs share the one arkadeCash
+        // script, so a single import covers them.
+        const recovering: ArkadeCashVtxoRef[] = [];
+        if (recoverable.length > 0) {
+            try {
+                await this.importArkadeCashForRecovery(
+                    cash,
+                    cashScript,
+                    cash.address(this.network.hrp),
+                );
+                for (const vtxo of recoverable) {
+                    recovering.push({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value });
+                }
+                // Kick recovery promptly rather than waiting for the poll loop.
+                // Non-blocking: recovery is a full settlement (a batch round)
+                // retried on the wallet's normal cadence, so claimCash must not
+                // await it. A kick failure is harmless — the poll loop retries.
+                void this.kickImportedRecovery();
+            } catch (error) {
+                // The import is local (keyring + contract writes) and rarely
+                // fails; if it does, report the funds rather than dropping them
+                // silently. They stay recoverable in principle by re-running.
+                console.error("Failed to import swept arkadeCash for recovery:", error);
+                for (const vtxo of recoverable) {
+                    unclaimed.push(cashReport(vtxo, "recovery-failed"));
+                }
+            }
+        }
+
         return {
             swept,
+            recovering: {
+                amount: recovering.reduce((total, vtxo) => total + vtxo.value, 0),
+                vtxos: recovering,
+            },
             unclaimed: {
                 amount: unclaimed.reduce((total, vtxo) => total + vtxo.value, 0),
                 vtxos: unclaimed,
@@ -4566,14 +4877,151 @@ export class Wallet
     }
 
     /**
-     * Split the VTXOs at an arkadeCash address into the ones the thin sweep can
-     * move and the ones it can only report.
+     * Import an arkadeCash instrument as a signable, recovery-only contract so the
+     * wallet's own recovery machinery can settle its server-swept VTXOs back.
+     *
+     * Two writes, both idempotent so a re-run (or a resumed claim) is safe:
+     * - the arkadeCash private key is filed in the keyring, returning its
+     *   `tr(<pubkey>)` descriptor;
+     * - a `default` contract for the arkadeCash script is registered carrying that
+     *   descriptor as `metadata.signingDescriptor` (so the signer router can
+     *   sign the swept inputs) and `metadata.recoveryOnly` (so the contract is
+     *   settled in its own isolated intent, never bundled into the wallet's own
+     *   renewal/recovery — a persistently rejected input then dents only its
+     *   own recovery, never the wallet's funds).
+     *
+     * A row may already exist at the script WITHOUT the recovery flags — the
+     * public `createContract` surface lets a consumer register the cash
+     * address (e.g. to watch a note it issued) — and `createContract`'s
+     * same-type idempotency keeps such a row as-is. It is then promoted:
+     * presenting the bearer key IS the authorization to claim, and left
+     * unflagged the row would feed unsignable swept VTXOs into the wallet's
+     * own settles while being invisible to both the isolated recovery pass
+     * and `removeRecoveryContract`'s purge.
+     */
+    private async importArkadeCashForRecovery(
+        cash: ArkadeCash,
+        cashScript: DefaultVtxo.Script,
+        cashAddress: ArkAddress,
+    ): Promise<void> {
+        if (!this._keyring) {
+            throw new Error("Cannot import arkadeCash for recovery: wallet has no keyring");
+        }
+        // Whether the key is already filed decides whether a failed contract
+        // write may purge it below. Read BEFORE the import, which is idempotent
+        // and would otherwise erase the distinction. Reads this instance's mirror,
+        // so a sibling context importing the same note concurrently can have its
+        // key purged; re-running `claimCash` re-imports it.
+        const preExisting = this._keyring.hasKey(`tr(${hex.encode(cash.publicKey)})`);
+        const descriptor = await this._keyring.importKey(cash.privateKey);
+
+        try {
+            const manager = await this.getContractManager();
+            const contract = await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(cash.publicKey),
+                    serverPubKey: hex.encode(cash.serverPubKey),
+                    csvTimelock: timelockToSequence(cash.csvTimelock).toString(),
+                },
+                script: hex.encode(cashScript.pkScript),
+                address: cashAddress.encode(),
+                state: "active",
+                metadata: {
+                    signingDescriptor: descriptor,
+                    recoveryOnly: true,
+                },
+            });
+
+            if (!isRecoveryOnlyContract(contract)) {
+                // Pre-existing unflagged row: promote it, preserving unrelated
+                // consumer metadata until the row's post-recovery deletion. The
+                // descriptor is overwritten unconditionally — we hold the actual
+                // key, whatever the old row claimed. `state: "active"` mirrors the
+                // fresh-import path so an inactive row cannot dodge the recovery
+                // pass.
+                await manager.updateContract(contract.script, {
+                    state: "active",
+                    metadata: {
+                        ...contract.metadata,
+                        signingDescriptor: descriptor,
+                        recoveryOnly: true,
+                    },
+                });
+            }
+        } catch (error) {
+            // Compensate: the two writes aren't atomic (separate repositories),
+            // and a key with no contract row naming it is unreachable — nothing
+            // walks the keyring, so it would sit at rest forever. Only purge a
+            // key THIS call filed: on a re-claim the row from the successful
+            // claim still needs it. Best-effort — a failed purge just leaves the
+            // pre-fix residue, and the caller's error is what matters.
+            if (!preExisting) {
+                await this._keyring.deleteKey(descriptor).catch((purgeError) => {
+                    console.error(
+                        "Failed to purge the arkadeCash key after a failed import:",
+                        purgeError,
+                    );
+                });
+            }
+            throw error;
+        }
+    }
+
+    /** Best-effort, non-blocking trigger of the isolated imported-recovery pass. */
+    private async kickImportedRecovery(): Promise<void> {
+        try {
+            const manager = await this.getVtxoManager();
+            await manager.recoverImportedContracts();
+        } catch (error) {
+            console.error("Failed to kick imported arkadeCash recovery:", error);
+        }
+    }
+
+    /**
+     * Retire a contract imported for recovery once its funds have been settled
+     * back: purge the keyring key that backed it, then delete the contract row.
+     * Ends the key-at-rest window opened by {@link importArkadeCashForRecovery}.
+     *
+     * Scoped to recovery-only contracts as a safety guard — it will not touch a
+     * regular wallet contract — and idempotent: a second call (the contract
+     * already gone) is a no-op. Invoked by the isolated recovery pass in
+     * `VtxoManager` (see its `RecoveryContractCapableWallet` capability).
+     *
+     * The write order is load-bearing; do not swap it. The two repositories
+     * cannot be written atomically, so one of them leaks on a partial failure.
+     * Purging the key first leaves a contract row with a dangling descriptor:
+     * visible, harmless, and retried to completion by the next recovery pass
+     * (its VTXOs read back spent, so nothing is signed). The reverse leaves an
+     * unencrypted key that nothing references — the descriptor lived only in
+     * the row just deleted — so no retry can ever find it, breaking the
+     * purge-on-completion bound that justifies storing it in the clear.
+     */
+    async removeRecoveryContract(script: string): Promise<void> {
+        const manager = await this.getContractManager();
+        const [contract] = await manager.getContracts({ script });
+        if (!contract || !isRecoveryOnlyContract(contract)) return;
+
+        const descriptor = contract.metadata?.signingDescriptor;
+        if (typeof descriptor === "string" && this._keyring) {
+            await this._keyring.deleteKey(descriptor);
+        }
+        await manager.deleteContract(script);
+    }
+
+    /**
+     * Split the VTXOs at an arkadeCash address into three buckets: the ones the
+     * thin sweep can move (`spendable`), the server-swept ones that must go
+     * through a recovery settlement (`recoverable`), and the ones that can
+     * only be reported (`unclaimed`).
      */
     private classifyCashVtxos(vtxos: NormalizedVirtualCoin[]): {
         spendable: NormalizedVirtualCoin[];
+        recoverable: NormalizedVirtualCoin[];
         unclaimed: ArkadeCashUnclaimedVtxo[];
     } {
         const spendable: NormalizedVirtualCoin[] = [];
+        const recoverable: NormalizedVirtualCoin[] = [];
         const unclaimed: ArkadeCashUnclaimedVtxo[] = [];
 
         for (const vtxo of vtxos) {
@@ -4586,17 +5034,28 @@ export class Wallet
                 // The indexer flags subdust swept, so it must be checked before the swept case,
                 // which would otherwise claim it is recoverable.
                 unclaimed.push(cashReport(vtxo, "subdust"));
-            } else if (vtxo.isSwept) {
-                // Bare `isSwept` on purpose: about sweptness, not past-expiry coins.
-                unclaimed.push(cashReport(vtxo, "swept"));
             } else if (vtxo.assets && vtxo.assets.length > 0) {
+                // The thin sweep builds a BTC-only output; sweeping an
+                // asset-bearing VTXO with it would burn the assets. Detected up
+                // front rather than left to a server rejection. Checked before
+                // the swept case: a swept asset VTXO must stay report-only, not
+                // ride the BTC-only recovery import.
                 unclaimed.push(cashReport(vtxo, "has-assets"));
+            } else if (vtxo.isSwept) {
+                // The server swept the batch at expiry. The funds are still
+                // owed, but only a settlement can move them — no sweep can. The
+                // caller imports these as a signable contract and hands them to
+                // the wallet's recovery machinery.
+                //
+                // Bare `isSwept`, not a recovery capability: this branch is
+                // about sweptness alone, not about past-expiry coins.
+                recoverable.push(vtxo);
             } else {
                 spendable.push(vtxo);
             }
         }
 
-        return { spendable, unclaimed };
+        return { spendable, recoverable, unclaimed };
     }
 
     /** Read every page of an unfiltered VTXO query for the given scripts. */
@@ -4765,15 +5224,26 @@ export class Wallet
      */
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const params = asSendParams(args);
+        const validUntil = captureSendDeadline(params.validUntil);
+        const inputExpiryFloor = captureInputExpiryFloor(params.inputExpiryFloor);
+        assertSendDeadline(validUntil);
         return this._withTxLock((release) =>
-            this._sendImpl(params, this._concurrentSpending ? release : undefined),
+            this._sendImpl(
+                params,
+                validUntil,
+                inputExpiryFloor,
+                this._concurrentSpending ? release : undefined,
+            ),
         );
     }
 
     private async _sendImpl(
-        { recipients: args, selectedVtxos }: SendParams,
+        { recipients: args, selectedVtxos, maxChangeFee }: SendParams,
+        validUntil?: number,
+        inputExpiryFloor?: InputExpiryFloor,
         onReserved?: () => void,
     ): Promise<string> {
+        assertSendDeadline(validUntil);
         if (args.length === 0) {
             // The variadic tuple type rules out `send()`; only a JS caller gets here.
             throw new Error("At least one receiver is required");
@@ -4783,7 +5253,20 @@ export class Wallet
             // meant to name inputs and named none is not asking the wallet to pick.
             throw new Error("send({ selectedVtxos }): no inputs");
         }
+        if (
+            maxChangeFee !== undefined &&
+            (!Number.isSafeInteger(maxChangeFee) || maxChangeFee < 0)
+        ) {
+            throw new Error("send({ maxChangeFee }): expected a non-negative safe integer");
+        }
         if (selectedVtxos) {
+            if (inputExpiryFloor) selectedVtxos = selectedVtxos.map(normalizeVtxo);
+            if (
+                inputExpiryFloor &&
+                selectedVtxos.some((coin) => !meetsInputExpiryFloor(coin, inputExpiryFloor))
+            ) {
+                throw new Error("send({ selectedVtxos }): input expiry floor not met");
+            }
             // Naming inputs skips the generic-spending gate, as on `settle({ inputs })`.
             void this.logUngatedInputs("send({ selectedVtxos })", selectedVtxos);
         }
@@ -4812,6 +5295,11 @@ export class Wallet
                 withRecoverable: false,
                 genericallySpendableOnly: true,
             });
+            if (inputExpiryFloor) {
+                virtualCoins = virtualCoins.filter((coin) =>
+                    meetsInputExpiryFloor(coin, inputExpiryFloor),
+                );
+            }
         }
 
         // keep track of asset changes
@@ -4970,15 +5458,25 @@ export class Wallet
             );
         }
 
-        const vtxoMinAmount =
+        const info =
             changeAmount > 0 || assetChanges.size > 0
-                ? ((await this.arkProvider.getInfo()).vtxoMinAmount ?? 0n)
-                : 0n;
+                ? await this.arkProvider.getInfo()
+                : undefined;
+        const vtxoMinAmount = info?.vtxoMinAmount ?? 0n;
+        const canPayChangeAsFee = () =>
+            assetChanges.size === 0 &&
+            changeAmount > 0 &&
+            BigInt(changeAmount) < vtxoMinAmount &&
+            (maxChangeFee === undefined || changeAmount <= maxChangeFee);
         if (selectedVtxos && changeAmount > 0 && BigInt(changeAmount) < vtxoMinAmount) {
-            throw new Error(
-                `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
-                    `the operator minimum of ${vtxoMinAmount} sats`,
-            );
+            if (canPayChangeAsFee()) {
+                changeAmount = 0;
+            } else {
+                throw new Error(
+                    `send({ selectedVtxos }): ${changeAmount} sats of change is below ` +
+                        `the operator minimum of ${vtxoMinAmount} sats`,
+                );
+            }
         }
 
         const selectedOutpoints = new Set(selectedCoins.map(vtxoOutpoint));
@@ -5031,6 +5529,10 @@ export class Wallet
                         changeAmount = 0;
                         break;
                     }
+                }
+                if (canPayChangeAsFee()) {
+                    changeAmount = 0;
+                    break;
                 }
                 throw new Error(`Cannot form minimum change amount of ${minimumChange} sats`);
             }
@@ -5121,6 +5623,7 @@ export class Wallet
             },
             onReserved,
             !selectedVtxos,
+            { validUntil },
         );
     }
 
@@ -5143,16 +5646,18 @@ export class Wallet
         },
         onReserved?: () => void,
         picked = false,
+        options?: { validUntil?: number },
     ): Promise<string> {
         if (picked) this._assertNotHeld(inputs);
         if (onReserved) this._assertNotInFlight(inputs);
         this._addPendingSpends(inputs);
         onReserved?.();
         try {
-            const { arkTxid, signedCheckpointTxs } = await this.buildAndSubmitOffchainTx(
+            const { arkTxid, signedCheckpointTxs } = await this._buildAndSubmitOffchainTx(
                 inputs,
                 outputs,
                 persist.serverUnrollScript,
+                options,
             );
 
             await this.updateDbAfterOffchainTx(
@@ -5276,7 +5781,23 @@ export class Wallet
         inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[],
         serverUnrollScript: CSVMultisigTapscript.Type = this.serverUnrollScript,
+        options?: { validUntil?: number },
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
+        return this._withTxLock(() =>
+            this._buildAndSubmitOffchainTx(inputs, outputs, serverUnrollScript, { validUntil }),
+        );
+    }
+
+    private async _buildAndSubmitOffchainTx(
+        inputs: ExtendedVirtualCoin[],
+        outputs: TransactionOutput[],
+        serverUnrollScript: CSVMultisigTapscript.Type,
+        options?: { validUntil?: number },
+    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const validUntil = captureSendDeadline(options?.validUntil);
+        assertSendDeadline(validUntil);
         void this.logUngatedInputs("buildAndSubmitOffchainTx", inputs);
         // Before anything is signed or submitted: the tx would build fine from
         // the tapscripts stored on each coin, and only `updateDbAfterOffchainTx`
@@ -5353,9 +5874,29 @@ export class Wallet
                     // Mark pending before submitting — if we crash between submit and
                     // finalize, the next init recovers via finalizePendingTxs.
                     beforeSubmit: async () => {
+                        const ownsPendingFlag =
+                            validUntil !== undefined && !(await this.hasPendingTxFlag());
                         this._submitsAwaitingFinalize++;
                         awaitingFinalize = true;
                         await this.setPendingTxFlag(true);
+                        try {
+                            assertSendDeadline(validUntil);
+                        } catch (error) {
+                            this._submitsAwaitingFinalize--;
+                            awaitingFinalize = false;
+                            // An overlapping submit still needs the flag if this process dies.
+                            if (ownsPendingFlag && this._submitsAwaitingFinalize === 0) {
+                                try {
+                                    await this.setPendingTxFlag(false);
+                                } catch (clearError) {
+                                    console.error(
+                                        "Failed to clear pending tx flag after deadline expiry:",
+                                        clearError,
+                                    );
+                                }
+                            }
+                            throw error;
+                        }
                     },
                     afterFinalize: async () => {
                         this._submitsAwaitingFinalize--;

@@ -12,7 +12,8 @@ import {
 } from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
-import { MultisigTapscript } from "../src/script/tapscript";
+import { VtxoScript } from "../src/script/base";
+import { CSVMultisigTapscript, MultisigTapscript } from "../src/script/tapscript";
 import { networks } from "../src/networks";
 
 const artifact: ContractArtifact = JSON.parse(
@@ -83,7 +84,7 @@ describe("reading an arkadec artifact", () => {
         expect(Object.keys(program.functions)).toEqual(["complete", "cancel", "unilateral"]);
         expect(program.functions.unilateral.tapscript).toMatchObject({
             signers: ["$partyAPk", "$partyBPk"],
-            csv: { type: "blocks", value: "$exit" },
+            csv: { type: "sequence", value: "$exit" },
         });
         const script = new ArkadeProgramScript(program, ARGS, {
             serverKey: SERVER_KEY,
@@ -142,6 +143,83 @@ describe("reading an arkadec artifact", () => {
     const csvDemo = (literal: string) =>
         demo({ functions: [{ name: "exit", leaves: [{ name: "exit", asm: csvLeaf(literal) }] }] });
 
+    const csvParamDemo = demo({
+        constructorInputs: [{ name: "exitDelay", type: "int" }],
+        functions: [{ name: "exit", leaves: [{ name: "exit", asm: csvLeaf("<exitDelay>") }] }],
+    });
+
+    it.each([0n, 144n, 65_535n, 4_194_304n, 4_194_472n, 4_259_839n])(
+        "binds canonical CSV sequence %s without changing the leaf or address",
+        (exitDelay) => {
+            const program = programFromArtifact(csvParamDemo);
+            expect(program.functions.exit.tapscript.csv).toEqual({
+                type: "sequence",
+                value: "$exitDelay",
+            });
+            const script = new ArkadeProgramScript(
+                program,
+                { exitDelay, server: SERVER_KEY },
+                { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+            );
+            const expectedLeaf = assemble(csvLeaf(exitDelay.toString()), { SERVER_KEY });
+            expect(hex.encode(script.compiled[0].leafScript)).toBe(hex.encode(expectedLeaf));
+            expect(script.address(networks.bitcoin.hrp, SERVER_KEY).encode()).toBe(
+                new VtxoScript([expectedLeaf]).address(networks.bitcoin.hrp, SERVER_KEY).encode(),
+            );
+        },
+    );
+
+    it.each([-1n, 65_536n, 86_016n, 0x800000n, 0x80000000n, 0x100000000n])(
+        "refuses noncanonical bound CSV sequence %s with parameter context",
+        (exitDelay) => {
+            expect(
+                () =>
+                    new ArkadeProgramScript(
+                        programFromArtifact(csvParamDemo),
+                        { exitDelay, server: SERVER_KEY },
+                        { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+                    ),
+            ).toThrow(/\$exitDelay.*canonical BIP68 sequence/);
+        },
+    );
+
+    it("preserves the two-owner compiler exit leaf and its address for an encoded seconds delay", () => {
+        const exitAsm = [
+            "<exitDelay>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<senderKey>",
+            "OP_CHECKSIGVERIFY",
+            "<operatorSignerKey>",
+            "OP_CHECKSIG",
+        ];
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [
+                    { name: "exitDelay", type: "int" },
+                    { name: "senderKey", type: "pubkey" },
+                    { name: "operatorSignerKey", type: "pubkey" },
+                ],
+                functions: [{ name: "exit", leaves: [{ name: "exit", asm: exitAsm }] }],
+            }),
+        );
+        const senderKey = key(0x04);
+        const operatorSignerKey = key(0x05);
+        const script = new ArkadeProgramScript(
+            program,
+            { exitDelay: 4_194_472n, senderKey, operatorSignerKey, server: SERVER_KEY },
+            { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+        );
+        const expectedLeaf = assemble(
+            exitAsm.map((token) => (token === "<exitDelay>" ? "4194472" : token)),
+            { senderKey, operatorSignerKey },
+        );
+        expect(hex.encode(script.compiled[0].leafScript)).toBe(hex.encode(expectedLeaf));
+        expect(script.address(networks.bitcoin.hrp, SERVER_KEY).encode()).toBe(
+            new VtxoScript([expectedLeaf]).address(networks.bitcoin.hrp, SERVER_KEY).encode(),
+        );
+    });
+
     it.each([
         ["a block count", "144"],
         ["512-second units (bit 22 set)", "4194314"],
@@ -156,6 +234,79 @@ describe("reading an arkadec artifact", () => {
 
     it("refuses a CSV literal that is not a canonical BIP68 sequence", () => {
         expect(() => programFromArtifact(csvDemo("70000"))).toThrow(/'exit'.*70000/);
+    });
+
+    const OWNER = key(0x07);
+    const csvOwnerParamDemo = demo({
+        constructorInputs: [
+            { name: "exitDelay", type: "int" },
+            { name: "owner", type: "pubkey" },
+        ],
+        functions: [
+            {
+                name: "exit",
+                leaves: [
+                    {
+                        name: "exit",
+                        asm: [
+                            "<exitDelay>",
+                            "OP_CHECKSEQUENCEVERIFY",
+                            "OP_DROP",
+                            "<owner>",
+                            "OP_CHECKSIG",
+                        ],
+                    },
+                ],
+            },
+        ],
+    });
+    const csvParamLeaf = (exitDelay: bigint) =>
+        new ArkadeProgramScript(
+            programFromArtifact(csvOwnerParamDemo),
+            { exitDelay, owner: OWNER, server: SERVER_KEY },
+            { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY },
+        ).compiled[0].leafScript;
+
+    it("binds a $param CSV as the BIP68 sequence the compiler pushes", () => {
+        const leaf = hex.encode(csvParamLeaf(4_194_472n));
+        expect(leaf).toBe(
+            hex.encode(
+                CSVMultisigTapscript.encode({
+                    timelock: { type: "seconds", value: 86_016n },
+                    pubkeys: [OWNER],
+                }).script,
+            ),
+        );
+        // A third party assembling the artifact's raw operand derives the same address.
+        expect(leaf).toBe(
+            hex.encode(
+                assemble(
+                    ["4194472", "OP_CHECKSEQUENCEVERIFY", "OP_DROP", "<owner>", "OP_CHECKSIG"],
+                    { owner: OWNER },
+                ),
+            ),
+        );
+    });
+
+    it.each([0n, 144n, 65_535n])(
+        "keeps the bytes a blocks-domain CSV parameter of %s already built",
+        (blocks) => {
+            expect(hex.encode(csvParamLeaf(blocks))).toBe(
+                hex.encode(
+                    CSVMultisigTapscript.encode({
+                        timelock: { type: "blocks", value: blocks },
+                        pubkeys: [OWNER],
+                    }).script,
+                ),
+            );
+        },
+    );
+
+    it.each([
+        ["bits outside the value field", 86_016n],
+        ["the disable flag", 0x80000000n],
+    ])("refuses a CSV parameter sequence carrying %s", (_, sequence) => {
+        expect(() => csvParamLeaf(sequence)).toThrow(/exitDelay.*canonical BIP68 sequence/);
     });
 
     it("reads hash conditions and flattens structs, natives, arrays, and child outputs", () => {

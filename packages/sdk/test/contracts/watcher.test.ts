@@ -2,18 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     Contract,
     ContractEvent,
-    ContractManager,
+    type ContractVtxo,
     ContractWatcher,
-    DefaultContractHandler,
-    DefaultVtxo,
     type IndexerProvider,
-    InMemoryContractRepository,
     InMemoryWalletRepository,
     EventSourceUnavailableError,
 } from "../../src";
 import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import type { SubscriptionResponse } from "../../src/providers/indexer";
-import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
@@ -27,6 +23,21 @@ import {
 } from "./helpers";
 
 describe("ContractWatcher", () => {
+    it.each(["failsafePollIntervalMs", "reconnectDelayMs", "maxReconnectDelayMs"] as const)(
+        "validates %s without rejecting zero",
+        (key) => {
+            const config = {
+                indexerProvider: createMockIndexerProvider(),
+                walletRepository: new InMemoryWalletRepository(),
+            };
+            expect(() => new ContractWatcher({ ...config, [key]: 0 })).not.toThrow();
+            expect(() => new ContractWatcher({ ...config, [key]: 2 ** 31 - 1 })).not.toThrow();
+            for (const value of [-1, 0.5, NaN, Infinity, 2 ** 31]) {
+                expect(() => new ContractWatcher({ ...config, [key]: value })).toThrow(key);
+            }
+        },
+    );
+
     let watcher: ContractWatcher;
     let mockIndexer: IndexerProvider;
 
@@ -213,7 +224,7 @@ describe("ContractWatcher", () => {
                 // succeed when called without an ID (fresh subscription).
                 const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<typeof vi.fn>;
                 subscribeMock.mockReset();
-                subscribeMock.mockImplementation((scripts: string[], existingId?: string) => {
+                subscribeMock.mockImplementation((_scripts: string[], existingId?: string) => {
                     if (existingId) {
                         return Promise.reject(new Error(message(existingId)));
                     }
@@ -358,7 +369,7 @@ describe("ContractWatcher", () => {
 
                 expect(event.contractScript).toBe(TEST_DELEGATE_SCRIPT);
                 expect(event.vtxos).toHaveLength(1);
-                const vtxo = event.vtxos[0];
+                const vtxo = event.vtxos[0] as ContractVtxo;
                 expect(vtxo.contractScript).toBe(TEST_DELEGATE_SCRIPT);
                 // The exact tapscript bytes must come from the delegate
                 // handler. A regression that fell back to the default
@@ -408,7 +419,7 @@ describe("ContractWatcher", () => {
                     throw new Error("unreachable");
                 }
                 expect(event.vtxos).toHaveLength(1);
-                const vtxo = event.vtxos[0];
+                const vtxo = event.vtxos[0] as ContractVtxo;
                 expect(vtxo.contractScript).toBe(fakeScript);
                 expect(vtxo.forfeitTapLeafScript).toBeUndefined();
                 expect(vtxo.intentTapLeafScript).toBeUndefined();
@@ -468,6 +479,8 @@ describe("ContractWatcher", () => {
                 expect(warning).toBeDefined();
                 // The remedy has to travel with the warning, not just the type.
                 expect(String(warning?.[0])).toContain("configureEventSource");
+                expect(String(warning?.[0])).not.toContain("falling back to polling");
+                expect(String(warning?.[0])).toContain("refreshVtxos()");
                 // A ReferenceError used to land here every few seconds.
                 expect(errorSpy).not.toHaveBeenCalled();
 
@@ -495,6 +508,7 @@ describe("ContractWatcher", () => {
                 ]);
                 await vi.advanceTimersByTimeAsync(2_000);
                 expect(events.map((e) => e.type)).toContain("vtxo_received");
+                expect(indexer.getVtxos).not.toHaveBeenCalled();
             } finally {
                 await watcher.stopWatching();
                 warnSpy.mockRestore();

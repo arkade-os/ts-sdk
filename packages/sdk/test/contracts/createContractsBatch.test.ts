@@ -10,7 +10,6 @@ import {
 } from "../../src";
 import type { ContractRepository } from "../../src/repositories";
 import {
-    createDefaultContractParams,
     createMockIndexerProvider,
     TEST_DELEGATE_PUB_KEY,
     TEST_PUB_KEY,
@@ -51,6 +50,7 @@ describe("ContractManager.createContracts", () => {
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
         });
+        await manager.whenBooted();
     });
 
     it("registers every contract in the set", async () => {
@@ -83,6 +83,7 @@ describe("ContractManager.createContracts", () => {
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: { failsafePollIntervalMs: 1000, reconnectDelayMs: 500 },
         });
+        await sequential.whenBooted();
         (sequentialIndexer.getVtxos as any).mockClear();
         for (const row of rows) await sequential.createContract(row);
         const oneAtATime = (sequentialIndexer.getVtxos as any).mock.calls.length;
