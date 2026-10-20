@@ -43,7 +43,7 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount, markSdkPicked } from "./utils";
+import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -2756,7 +2756,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // Otherwise every tab submits a parallel RegisterIntent for the same boarding input
             // and N-1 collide on the server's duplicated-input check.
             await runWithCrossInstanceLock(BOARDING_POLL_LOCK_NAME, async () => {
-                const boardingUtxos = await this.wallet.getBoardingUtxos();
+                // Both passes pick from it, so neither takes an input an in-flight settle holds.
+                const boardingUtxos = await getSelectableBoardingUtxos(this.wallet);
 
                 // Settle, then sweep: sequential to avoid racing for the same inputs.
                 try {

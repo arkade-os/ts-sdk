@@ -1762,9 +1762,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
         ]);
         const groups = await this.getBoardingUtxosForSigners(currentOnly);
         this.boardingLoaded = true;
-        return groups
-            .flatMap((g) => g.coins)
-            .filter((coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`));
+        return groups.flatMap((g) => g.coins);
+    }
+
+    /**
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, for SDK
+     * picks. The getter itself lists them: callers that mirror it (the worker's cache and
+     * broadcasts, balances) must not see a settle's inputs vanish, and then stay gone if it fails.
+     */
+    async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
+        return (await this.getBoardingUtxos()).filter(
+            (coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`),
+        );
     }
 
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
@@ -3606,7 +3615,7 @@ export class Wallet
                 chainTipHeight = tip.height;
             }
 
-            const boardingUtxos = (await this.getBoardingUtxos()).filter(
+            const boardingUtxos = (await this.getSelectableBoardingUtxos()).filter(
                 (utxo) =>
                     utxo.status.confirmed &&
                     !hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),

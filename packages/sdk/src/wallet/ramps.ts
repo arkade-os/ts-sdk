@@ -6,7 +6,7 @@ import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
-import { getDustAmount, markSdkPicked } from "./utils";
+import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
 import { MAX_VTXOS_PER_SETTLEMENT } from "./vtxo-manager";
 import { bySelectionOrder } from "./wallet";
 
@@ -231,7 +231,7 @@ export class Ramps {
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void,
     ): ReturnType<IWallet["settle"]> {
-        boardingUtxos = boardingUtxos ?? (await this.wallet.getBoardingUtxos());
+        boardingUtxos = boardingUtxos ?? (await getSelectableBoardingUtxos(this.wallet));
 
         // Calculate input fees and filter out boarding inputs where fee >= value.
         const estimator = new Estimator(feeInfo?.intentFee ?? {});

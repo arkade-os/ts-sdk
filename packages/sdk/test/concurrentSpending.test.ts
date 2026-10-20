@@ -240,14 +240,22 @@ describe("concurrentSpending", () => {
         await wallet.dispose();
     });
 
-    it("keeps a boarding UTXO an in-flight settle is spending out of getBoardingUtxos", async () => {
+    it("lists a boarding UTXO an in-flight settle is spending, but keeps it out of picks", async () => {
         const [spending, free] = [boardingUtxo("dd"), boardingUtxo("ee")];
         const thisArg = {
             boardingTapscript: { options: { serverPubKey: new Uint8Array(32).fill(2) } },
             getBoardingUtxosForSigners: async () => [{ coins: [spending, free] }],
             _pendingSpendOutpoints: new Set([`${spending.txid}:0`]),
+            getBoardingUtxos: () => (Wallet.prototype as any).getBoardingUtxos.call(thisArg),
         };
-        expect(await (Wallet.prototype as any).getBoardingUtxos.call(thisArg)).toEqual([free]);
+        // The getter feeds the worker's cache and balances, so a settle's inputs stay listed.
+        expect(await (Wallet.prototype as any).getBoardingUtxos.call(thisArg)).toEqual([
+            spending,
+            free,
+        ]);
+        expect(await (Wallet.prototype as any).getSelectableBoardingUtxos.call(thisArg)).toEqual([
+            free,
+        ]);
     });
 });
 

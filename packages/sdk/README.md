@@ -818,9 +818,9 @@ With `concurrentSpending`:
 - Naming a VTXO that another operation is spending (`send({ selectedVtxos })`,
   `settle({ inputs })`) throws `VtxoReservedError` before anything is submitted. Exits that pick
   their own VTXOs retry the pick.
-- Boarding UTXOs a settle is spending are treated the same way: they leave `getBoardingUtxos()`
-  (and the boarding balance) until that settle finishes, and naming one elsewhere throws
-  `VtxoReservedError`.
+- Boarding UTXOs a settle is spending stay in `getBoardingUtxos()` and the boarding balance, but
+  a bare `settle()`, `Ramps.onboard` without explicit UTXOs and the boarding poll skip them until
+  that settle finishes, and naming one elsewhere throws `VtxoReservedError`.
 
 Concurrency only helps when the balance sits in more than one VTXO: a wallet holding a single VTXO
 still has one operation at a time. Renewal and a bare `settle()` merge the VTXOs they spend into
