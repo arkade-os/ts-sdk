@@ -65,7 +65,7 @@ import {
     vtxoOutpoint,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
-import { DEFAULT_PAGE_SIZE } from "./constants";
+import { DEFAULT_PAGE_SIZE, OUTPOINT_QUERY_CHUNK_SIZE } from "./constants";
 import { assertNonNegativeMs } from "../utils/time";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
@@ -542,8 +542,6 @@ export type GetAllSpendingPathsOptions = {
 
 /** A broadcast spend still unconfirmed after this many blocks is released. */
 export const ONCHAIN_PENDING_RELEASE_BLOCKS = 6;
-/** Outpoints per `GetUtxos` request, which carries them in the query string. */
-const SERVER_SPENDS_PAGE = 100;
 const ONCHAIN_PENDING_SPENDS_KEY = "onchainPendingSpends";
 
 /** `settings.onchainPendingSpends["txid:vout"]`; `script` locates the owner without a full scan. */
@@ -2238,9 +2236,9 @@ export class ContractManager implements IContractManager {
         const found = new Map<string, IndexerUtxo>();
         if (!indexerProvider.getUtxos || rows.length === 0) return found;
         try {
-            for (let i = 0; i < rows.length; i += SERVER_SPENDS_PAGE) {
+            for (let i = 0; i < rows.length; i += OUTPOINT_QUERY_CHUNK_SIZE) {
                 const outpoints = rows
-                    .slice(i, i + SERVER_SPENDS_PAGE)
+                    .slice(i, i + OUTPOINT_QUERY_CHUNK_SIZE)
                     .map(({ txid, vout }) => ({ txid, vout }));
                 const { utxos } = await indexerProvider.getUtxos({ outpoints });
                 for (const utxo of utxos) found.set(vtxoOutpoint(utxo), utxo);

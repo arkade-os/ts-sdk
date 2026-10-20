@@ -515,6 +515,26 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    it("asks arkd in query-string-sized pages", async () => {
+        const { manager, walletRepository, indexerProvider } = await setup(
+            async () => [],
+            [],
+            async () => ({ utxos: [] }),
+        );
+        const rows = Array.from({ length: 70 }, (_, i) =>
+            toOnchainCoinRow({ ...coin, txid: i.toString(16).padStart(64, "0") }, boarding, script),
+        );
+        await saveVtxosForContract(walletRepository, boarding, rows);
+
+        await manager.syncOnchain();
+
+        const sizes = (indexerProvider.getUtxos as any).mock.calls.map(
+            ([opts]: any[]) => opts.outpoints.length,
+        );
+        expect(sizes).toEqual([64, 6]);
+        manager.dispose();
+    });
+
     it("falls back to outspends quietly on a server without GetUtxos", async () => {
         const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
         const { manager, walletRepository } = await setup(getCoins, undefined, async () => {
