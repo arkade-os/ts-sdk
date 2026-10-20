@@ -40,7 +40,7 @@ style and have not been backfilled.
   too much, breaks the ceiling, leaves dust or more unclaimed, or splits
   asset-bearing inputs is refused rather than reshaped. Automatic renewal still
   settles into one output, and `split` is refused on the service-worker wallet.
-- **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices.
+- **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices. A destroyed pool refuses to reconnect, so a transport that outlives `closeSharedNostrPool()` fails instead of opening a socket nothing can close, and concurrent card fetches are only merged when they ask the same relays.
 
 ### Changed
 
@@ -436,6 +436,16 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: the Nostr RFQ transport fails fast instead of waiting out its 30s reply
+  timeout.** nostr-tools *resolves* a publish to a relay it could not connect to (with
+  `"connection failure: …"`), and `send()` counted that as accepted, so with every relay
+  unreachable each quote waited 30s for "no solver reply". Those results now count as failures,
+  and the error lists each relay's outcome. A transport whose subscription every relay already
+  dropped rejects later requests at once with `RelayUnavailable`, and a closed one with
+  `TransportClosed`, without publishing. The pending reply is marked handled when it's created:
+  if every relay dropped while the publish was in flight, or the publish failed, it used to
+  reject with no handler attached, an unhandled rejection that ends a Node process by default.
+  A failed publish also clears the reply timer.
 - **The failsafe poll no longer reports a just-spent coin as received
   (#1083).** The stream updates the watcher at once, but the repository only
   once the event's sync lands; a poll in that gap read the stale rows and

@@ -25,6 +25,7 @@ const { FakeSocket } = vi.hoisted(() => {
         constructor() {
             FakeSocket.opened.push(this);
             setTimeout(() => {
+                if (this.readyState !== 0) return; // closed while connecting
                 this.readyState = 1;
                 this.onopen?.();
             });
@@ -130,6 +131,35 @@ describe("pool sharing", () => {
         expect(a).toEqual(b);
         expect(subscriptions).toBe(1);
         expect(pool.close).not.toHaveBeenCalled();
+    });
+
+    it("does not coalesce the same solvers asked over different relays", async () => {
+        const asked: string[][] = [];
+        const pool = {
+            subscribeMany: (
+                relays: string[],
+                _filter: unknown,
+                params: { oneose?: () => void },
+            ) => {
+                asked.push(relays);
+                queueMicrotask(() => params.oneose?.());
+                return { close: () => {} };
+            },
+        };
+        const fetcher = nostrCardFetcher({ pool: pool as never });
+        const over = (relay: string) =>
+            [
+                {
+                    name: "solver",
+                    discovery_pubkey: "11".repeat(32),
+                    transports: { nostr: { relays: [relay] } },
+                },
+            ] as never;
+        await Promise.all([
+            fetcher.fetch(over("wss://a.example"), "mutinynet"),
+            fetcher.fetch(over("wss://b.example"), "mutinynet"),
+        ]);
+        expect(asked).toEqual([["wss://a.example"], ["wss://b.example"]]);
     });
 
     it("leaves SimplePool ownership to the caller", () => {
@@ -286,6 +316,30 @@ describe("createNostrPool socket lifetime", () => {
         await vi.advanceTimersByTimeAsync(10);
         await query;
         expect(counted).toHaveBeenCalledTimes(4);
+    });
+
+    it("reconnects nothing once destroyed, failing late users instead", async () => {
+        const { pool } = await fakeRelayPool();
+        pool.destroy();
+        const lost = vi.fn();
+        pool.subscribeMany([RELAY], filter, { onclose: lost });
+        const sent = Promise.all(pool.publish([RELAY], anEvent()));
+        await vi.advanceTimersByTimeAsync(10);
+        expect(lost).toHaveBeenCalledOnce();
+        expect(await sent).toEqual([expect.stringMatching(/^connection failure: .*destroyed/)]);
+        expect(FakeSocket.opened).toHaveLength(0);
+    });
+
+    it("closes a relay still connecting when destroyed", async () => {
+        const { pool } = await fakeRelayPool();
+        const lost = vi.fn();
+        pool.subscribeMany([RELAY], filter, { onclose: lost });
+        pool.destroy(); // the socket is still opening
+        // nostr-tools reports the abandoned connect at its 3s connection timeout.
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(FakeSocket.opened).toHaveLength(1);
+        expect(FakeSocket.opened[0]!.readyState).toBe(3);
+        expect(lost).toHaveBeenCalledOnce();
     });
 
     it("does not hold a Node process open while idle", async () => {

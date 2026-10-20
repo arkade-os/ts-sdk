@@ -30,6 +30,8 @@ const NEVER_IDLE_MS = 2 ** 31 - 1;
 /** nostr-tools' rejection when a relay never answers an EVENT with OK. */
 const PUBLISH_TIMED_OUT = "publish timed out";
 
+const POOL_DESTROYED = "nostr pool destroyed";
+
 const urlKey = (url: string): string => {
     try {
         return normalizeURL(url);
@@ -52,6 +54,7 @@ const urlKey = (url: string): string => {
 class SharedPool extends SimplePool {
     readonly #users = new Map<string, number>();
     readonly #idle = new Map<string, ReturnType<typeof setTimeout>>();
+    #destroyed = false;
 
     /** Count one user on each relay; the returned release is idempotent. */
     #hold(urls: readonly string[]): () => void {
@@ -81,6 +84,17 @@ class SharedPool extends SimplePool {
                 this.#idle.set(url, timer);
             }
         };
+    }
+
+    /**
+     * A destroyed pool would otherwise reconnect for anyone still holding it (a transport that
+     * outlived closeSharedNostrPool()), opening a socket no one can close. Refused here, a
+     * subscription reports every relay lost and a publish a connection failure.
+     */
+    override async ensureRelay(...args: Parameters<SimplePool["ensureRelay"]>) {
+        // One already connecting is in the relay map, so destroy() closed it.
+        if (this.#destroyed) throw new Error(POOL_DESTROYED);
+        return super.ensureRelay(...args);
     }
 
     override subscribeMap(...[requests, params]: Parameters<SimplePool["subscribeMap"]>) {
@@ -122,6 +136,7 @@ class SharedPool extends SimplePool {
     }
 
     override destroy(): void {
+        this.#destroyed = true;
         for (const timer of this.#idle.values()) clearTimeout(timer);
         this.#idle.clear();
         this.#users.clear();
