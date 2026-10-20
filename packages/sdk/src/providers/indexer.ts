@@ -1238,6 +1238,10 @@ namespace Response {
         return typeof data === "string" || typeof data === "number";
     }
 
+    function isOptionalWireInt(data: unknown): boolean {
+        return data === undefined || (isWireInt(data) && Number.isFinite(Number(data)));
+    }
+
     function isUtxo(data: any): data is WireUtxo {
         return (
             typeof data === "object" &&
@@ -1247,7 +1251,9 @@ namespace Response {
             typeof data.script === "string" &&
             typeof data.spend === "object" &&
             data.spend !== null &&
-            isTxid(data.spend.txid)
+            isTxid(data.spend.txid) &&
+            isOptionalWireInt(data.spend.confirmedAtTime) &&
+            isOptionalWireInt(data.spend.confirmedAtHeight)
         );
     }
 
