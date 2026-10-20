@@ -376,6 +376,33 @@ describe("emulator inputs", () => {
         ]);
     });
 
+    it("hands arkd the emulator-signed input unfinalized, sigs and condition kept", async () => {
+        const tx = emulatorTx();
+        tx.addInput({ txid: hex.decode("bb".repeat(32)), index: 1 });
+        const sig = new Uint8Array(64).fill(0xaa);
+        tx.updateInput(0, {
+            tapScriptSig: [
+                [{ pubKey: keyA, leafHash: new Uint8Array(32) }, sig],
+                [{ pubKey: keyB, leafHash: new Uint8Array(32) }, sig],
+            ],
+        });
+        const signed = base64.encode(tx.toPSBT());
+        const arkProvider = { cosignOnchainTx: vi.fn(async (_: string) => "arkd-txid") };
+
+        await submitOnchainSpend(tx, new Set([1]), {
+            arkProvider,
+            emulator: { submitOnchainTx: async () => ({ signedTx: signed }) },
+            onchainProvider: { broadcastTransaction: vi.fn(), getRawTransaction: vi.fn() },
+        });
+
+        const sent = Transaction.fromPSBT(
+            base64.decode(arkProvider.cosignOnchainTx.mock.calls[0][0]),
+        );
+        expect(sent.getInput(0).finalScriptWitness).toBeUndefined();
+        expect(sent.getInput(0).tapScriptSig).toHaveLength(2);
+        expect(getArkPsbtFields(sent, 0, ConditionWitness)).toEqual([[preimage]]);
+    });
+
     it("finalizes a condition leaf on the direct broadcast path too", async () => {
         const tx = new Transaction({ version: 2 });
         tx.addInput({ txid: hex.decode(coin.txid), index: 0 });

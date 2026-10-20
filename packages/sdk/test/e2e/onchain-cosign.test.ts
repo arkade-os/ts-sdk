@@ -184,7 +184,6 @@ describe("onchain cosign", () => {
         const amount = foreignCoin.value + coin.value - FEE;
         tx.addOutputAddress(dest, BigInt(amount), networks.regtest);
         const signed = await foreign.identity.sign(tx, [0]);
-        signed.finalizeIdx(0);
 
         const txid = await wallet.cosignOnchainTx(signed);
         await confirm(txid);
@@ -213,7 +212,6 @@ describe("onchain cosign", () => {
         expect((await waitForUtxo(dest)).value).toBe(40_000);
     });
 
-    // Requires arkd #134 (cosigning unrolled VTXO outputs).
     it("sweeps an unrolled VTXO before its exit matures", { timeout: 240_000 }, async () => {
         const wallet = await createWallet();
         const boarding = await fundBoarding(wallet);
@@ -298,7 +296,6 @@ describe("onchain cosign", () => {
         tx.addOutputAddress(dest, BigInt(coin.value - FEE), networks.regtest);
         const signed = await covenantUser.sign(tx, [0]);
 
-        // If arkd rejects the finalized emulator input, this flips to a client-side rejection per spec.
         const txid = await wallet.cosignOnchainTx(signed);
         await confirm(txid);
 

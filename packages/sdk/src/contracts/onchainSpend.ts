@@ -269,8 +269,8 @@ export async function submitOnchainSpend(
         }
         const { signedTx } = await deps.emulator.submitOnchainTx(base64.encode(tx.toPSBT()));
         tx = Transaction.fromPSBT(base64.decode(signedTx));
-        for (const i of emulated) finalizeOwnedInput(tx, i);
     }
+    // arkd refuses a finalized input as unsigned, and finalizes every input itself.
     if (arkInputs.size > 0) {
         if (!deps.arkProvider) {
             throw new Error("arkd-cosigned inputs present but no arkProvider configured");

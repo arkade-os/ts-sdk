@@ -1010,7 +1010,9 @@ export interface IWallet extends IReadonlyWallet {
 
     /**
      * Fill, sign and cosign the wallet-owned onchain inputs of a PSBT through
-     * the collaborative leaf, then broadcast it. Foreign inputs are left as given.
+     * the collaborative leaf, then broadcast it. Foreign inputs are left as given:
+     * sign them but do not finalize them, since arkd refuses a finalized input and
+     * finalizes the transaction itself.
      *
      * @param psbt - Base64 PSBT or transaction
      * @returns Onchain transaction id

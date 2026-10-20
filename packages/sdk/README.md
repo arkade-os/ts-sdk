@@ -406,9 +406,9 @@ await wallet.sendOnchain({ outputs: [], sweepTo: 'bc1q...' })
 await wallet.cosignOnchainTx(psbt) // base64 string or Transaction
 ```
 
-For `cosignOnchainTx`, foreign inputs must already be signed: the wallet signs only its own inputs.
+For `cosignOnchainTx`, foreign inputs must already be signed but not finalized: the wallet signs only its own inputs, and arkd refuses a finalized input and finalizes the transaction itself.
 
-Preflight: every wallet input must be confirmed and more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). Use `isCosignFallback(e)` to decide whether paying another way is safe; the automatic paths below do exactly that:
+Preflight: a confirmed wallet input must be more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity; an unconfirmed one is accepted, since its exit cannot have matured. arkd cosigns at most 64 inputs, so a sweep takes the 64 largest coins and leaves the rest for the next one. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). Use `isCosignFallback(e)` to decide whether paying another way is safe; the automatic paths below do exactly that:
 
 ```typescript
 import { isCosignFallback, OnchainCosignAmbiguousError } from '@arkade-os/sdk'
