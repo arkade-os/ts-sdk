@@ -9,16 +9,21 @@ import {
     bestMarket,
     discover,
     isNetwork,
+    MAX_CARD_AGE_SECONDS,
     marketLegKey,
+    marketPairKey,
     registryIndexUrl,
     sideLimits,
+    stableStringify,
     type DiscoveredMarket,
     type LocalCardInput,
     type Network,
     type OfferPlan,
     type Side,
+    type SourceReport,
+    type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
-import { assertNonNegativeMs, isSubdust } from "@arkade-os/sdk";
+import { assertNonNegativeMs, assertTimerMs, isSubdust } from "@arkade-os/sdk";
 import type { AssetSwapRepository, MarketsCacheEntry } from "./repository";
 import { marketAssetId } from "./marketShape";
 import { BTC_ASSET_ID } from "./store";
@@ -93,7 +98,125 @@ export const makeCachedFeedFetch = (
 
 /** How long a discovered market set is reused. Shared with v2 discovery so the two
  * paths cannot drift into different answers. */
-export const MARKETS_CACHE_TTL_MS = 60 * 60 * 1000;
+export const MARKETS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** A pinned card always "answers", so only a registry answering may replace the cache. */
+export const registryAnswered = (sources: readonly SourceReport[]): boolean =>
+    sources.some((source) => source.sourceType === "registry" && source.ok);
+
+/** The optional `nostr-tools` peer is not installed: no card can arrive, so none is missing. */
+class CardTransportUnavailable extends Error {}
+
+/** Lazy, so `nostr-tools` stays an optional peer; one instance, so a card seen once fills a miss. */
+let nostrFetcher: TransportCardFetcher | undefined;
+const nostrCards: TransportCardFetcher = {
+    fetch: async (solvers, network) => {
+        if (!nostrFetcher) {
+            let nostr: typeof import("./nostr");
+            try {
+                nostr = await import("./nostr");
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                throw new CardTransportUnavailable(
+                    `the nostr-tools peer is not installed (${reason})`,
+                );
+            }
+            // No pool here: the fetcher resolves the shared one per fetch, surviving a reset.
+            nostrFetcher ??= nostr.nostrCardFetcher();
+        }
+        return nostrFetcher.fetch(solvers, network);
+    },
+};
+
+/** A `transportCards` option resolved: omitted means the Nostr fetcher, `null` none. */
+export const transportCardsOf = (
+    option: TransportCardFetcher | null | undefined,
+): TransportCardFetcher | undefined => (option === undefined ? nostrCards : (option ?? undefined));
+
+/**
+ * How long a listed solver whose card did not arrive keeps its cached markets. A card older than
+ * this is refused anyway, so past it the solver is taken as gone and the registry's answer
+ * replaces the cache.
+ */
+export const UNDELIVERED_CARRY_MS = MAX_CARD_AGE_SECONDS * 1000;
+
+/**
+ * How long a partial answer holds before the registry is asked again: pins answering for an
+ * unreachable registry, or a registry answer that missed the card of a solver the cache still
+ * holds.
+ */
+export const DEGRADED_RETRY_MS = 60_000;
+
+/** Carried answers per cache, so a solver whose card keeps missing costs one registry read a minute. */
+const carriedHolds = new WeakMap<
+    AssetSwapRepository,
+    Map<string, { until: number; markets: DiscoveredMarket[] }>
+>();
+
+/**
+ * `fetcher`, also telling which listed solvers it got no card from: a fetch that failed, or one
+ * that answered without that solver's key. A card that arrived and discovery then refused still
+ * counts as delivered, as the solver's own transport answered. A solver listing no transport has
+ * no card to wait for.
+ */
+export const trackDelivery = (
+    fetcher: TransportCardFetcher | undefined,
+): { fetcher: TransportCardFetcher | undefined; undelivered: () => ReadonlySet<string> } => {
+    let undelivered: ReadonlySet<string> = new Set();
+    if (!fetcher) return { fetcher, undelivered: () => undelivered };
+    return {
+        fetcher: {
+            async fetch(solvers, network) {
+                const asked = solvers.filter(
+                    (solver) => Object.keys(solver.transports ?? {}).length > 0,
+                );
+                try {
+                    const cards = await fetcher.fetch(solvers, network);
+                    const got = new Set(
+                        Array.isArray(cards) ? cards.map((card) => card?.pubkey) : [],
+                    );
+                    undelivered = new Set(
+                        asked
+                            .filter((solver) => !got.has(solver.discovery_pubkey))
+                            .map((solver) => solver.name),
+                    );
+                    return cards;
+                } catch (error) {
+                    if (!(error instanceof CardTransportUnavailable))
+                        undelivered = new Set(asked.map((solver) => solver.name));
+                    throw error;
+                }
+            },
+        },
+        undelivered: () => undelivered,
+    };
+};
+
+/**
+ * The cached markets of listed solvers whose card did not arrive and that this answer otherwise
+ * lacks. While there are any, the answer must not replace the cache, or one slow relay would
+ * drop a solver for the cache's lifetime; past {@link UNDELIVERED_CARRY_MS} there are none.
+ */
+export const undeliveredCarry = (
+    fresh: readonly DiscoveredMarket[],
+    undelivered: ReadonlySet<string>,
+    cached: { markets: readonly DiscoveredMarket[]; fetchedAt: number } | undefined,
+): DiscoveredMarket[] => {
+    if (undelivered.size === 0 || !cached) return [];
+    if (Date.now() - cached.fetchedAt >= UNDELIVERED_CARRY_MS) return [];
+    const answered = new Set(fresh.map((market) => market.solver));
+    return cached.markets.filter(
+        (market) => undelivered.has(market.solver) && !answered.has(market.solver),
+    );
+};
+
+/** Ranked as `discover()` ranks: by corridor-qualified leg pair, then fee; stable. */
+const ranked = (markets: DiscoveredMarket[]): DiscoveredMarket[] =>
+    markets.sort((a, b) => {
+        const [ka, kb] = [marketPairKey(a), marketPairKey(b)];
+        if (ka !== kb) return ka < kb ? -1 : 1;
+        return a.fee_bps - b.fee_bps;
+    });
 
 const isMarketShaped = (m: unknown): m is DiscoveredMarket => {
     const market = m as Partial<DiscoveredMarket> | null;
@@ -131,11 +254,14 @@ export interface DiscoverMarketsOptions {
     /** Overrides the network's default registry. `undefined` follows
      * `@arkade-os/solver-discovery`'s per-network default (never hardcoded here). */
     registryUrl: string | undefined;
-    /** Backs the 1-hour markets cache and its stale fallback. Omit for a
+    /** Backs the 10-minute markets cache and its stale fallback. Omit for a
      * one-shot discovery that always hits the registry. */
     repository?: AssetSwapRepository;
     /** Locally pinned solver cards to merge with the registry's markets. */
     localCards?: LocalCardInput[];
+    /** Reads the cards listed solvers publish on their own transports. Omitted means Nostr
+     * (needs the optional `nostr-tools` peer); `null` reads registry cards only. */
+    transportCards?: TransportCardFetcher | null;
     /** Receives discovery warnings (stale index, skipped cards, …). */
     logger?: (...args: unknown[]) => void;
     /** Custom fetch (tests, mobile runtimes). Defaults to global fetch.
@@ -149,7 +275,7 @@ export interface DiscoverMarketsOptions {
 }
 
 /**
- * Markets from this network's solver registry, cached for an hour, with a stale cache
+ * Markets from this network's solver registry, cached for ten minutes, with a stale cache
  * backstopping an unreachable registry. Only an unrecognised network yields [].
  */
 export const discoverMarkets = async (
@@ -172,16 +298,31 @@ export const discoverMarkets = async (
     const cached = repository && (await readMarketsCache(repository, network, registryKey));
     if (useCache && cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS)
         return cached.markets;
+    const holdKey = `${network} ${registryKey}`;
+    const hold = repository && carriedHolds.get(repository)?.get(holdKey);
+    if (useCache && hold && Date.now() < hold.until) return hold.markets;
+    const delivery = trackDelivery(transportCardsOf(options.transportCards));
     const { markets, sources, warnings } = await discover({
         registries,
         localCards,
         network,
         fetchImpl,
+        transportCards: delivery.fetcher,
     });
     if (warnings.length) logger?.("solver discovery:", ...warnings);
     // A reachable registry is authoritative even when empty.
-    const reachable = sources.some((source) => source.ok);
+    const reachable = registryAnswered(sources);
     if (!reachable && cached) return cached.markets;
+    // Not over a solver whose card merely failed to arrive: it keeps its cached markets, and
+    // the cache keeps aging toward the next full answer.
+    const carried = reachable ? undeliveredCarry(markets, delivery.undelivered(), cached) : [];
+    if (carried.length > 0 && repository) {
+        const merged = ranked([...markets, ...carried]);
+        const holds = carriedHolds.get(repository) ?? new Map();
+        holds.set(holdKey, { until: Date.now() + DEGRADED_RETRY_MS, markets: merged });
+        carriedHolds.set(repository, holds);
+        return merged;
+    }
     if (reachable && repository) {
         try {
             await repository.saveCachedMarkets(network, registryKey, {
@@ -193,6 +334,52 @@ export const discoverMarkets = async (
         }
     }
     return markets;
+};
+
+/**
+ * {@link discoverMarkets} kept current for a long-lived view: `onMarkets` gets the first read,
+ * then every read that changes the market set. Returns a stop function. Pass a `repository`
+ * so a failed read answers from the cache.
+ */
+export const watchMarkets = (
+    options: DiscoverMarketsOptions & { intervalMs?: number },
+    onMarkets: (markets: DiscoveredMarket[]) => void,
+): (() => void) => {
+    assertTimerMs("intervalMs", options.intervalMs);
+    if (options.intervalMs === 0) throw new Error("intervalMs must be positive");
+    let digest: string | undefined;
+    let reading = false;
+    let stopped = false;
+    const read = async (): Promise<void> => {
+        if (reading) return;
+        reading = true;
+        let markets: DiscoveredMarket[];
+        try {
+            markets = await discoverMarkets(options);
+        } catch (error) {
+            // a timer has nobody to throw to; the next tick reads again
+            options.logger?.("solver discovery watch:", error);
+            return;
+        } finally {
+            reading = false;
+        }
+        // Compared as a set: a re-ranking is no change.
+        const next = markets.map(stableStringify).sort().join("\n");
+        if (stopped || next === digest) return;
+        digest = next;
+        try {
+            onMarkets(markets);
+        } catch {
+            // A consumer's callback is not this watcher's correctness, nor a discovery failure.
+        }
+    };
+    void read();
+    const timer = setInterval(read, options.intervalMs ?? 5 * 60 * 1000);
+    (timer as { unref?: () => void }).unref?.();
+    return () => {
+        stopped = true;
+        clearInterval(timer);
+    };
 };
 
 /** Best market for a from/to pair, in either orientation. `give` is the side

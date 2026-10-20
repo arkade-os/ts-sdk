@@ -157,6 +157,8 @@ export interface BaseWalletConfig {
  * ```
  */
 export interface ReadonlyWalletConfig extends BaseWalletConfig {
+    /** Opt in to background contract initialization for explicit stored reads. */
+    lazyInitialization?: boolean;
     /** Readonly identity used to derive wallet addresses. */
     identity: ReadonlyIdentity;
     /**
@@ -232,6 +234,16 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `20`
      */
     lookAheadWindow?: number;
+
+    /**
+     * Let spends run concurrently on disjoint VTXOs: the wallet lock covers only picking and
+     * reserving inputs, amount-bearing `Ramps` exits spend only the VTXOs they need, and naming a
+     * VTXO another operation is spending throws `VtxoReservedError`. One `Wallet` instance is one
+     * reservation ledger; it does not coordinate across processes.
+     *
+     * @defaultValue `false`
+     */
+    concurrentSpending?: boolean;
 }
 
 /**
@@ -301,6 +313,7 @@ export interface WalletBalance {
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        loaded?: boolean;
     };
     /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
     settled: number;
@@ -308,8 +321,8 @@ export interface WalletBalance {
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would pick, so `send` never
-     * refuses it: `settled + preconfirmed - gated - intentLocked`, minus one reserved dust carrier
-     * if any of these outputs hold assets.
+     * refuses it: `settled + preconfirmed - gated - intentLocked - reserved`, minus one dust
+     * carrier kept back if any of these outputs hold assets.
      */
     available: number;
     /**
@@ -327,6 +340,8 @@ export interface WalletBalance {
      * under-reports into `available` rather than misattributing.
      */
     intentLocked: number;
+    /** Held by `Wallet.reserveVtxos`: in `settled`/`preconfirmed` and `total`, never `available`. */
+    reserved: number;
     /**
      * Subdust or expired (swept) virtual outputs recoverable in principle, including lockups that
      * refuse a spend right now. `VtxoManager.getRecoverableBalance()` gives what a batch would
@@ -432,6 +447,11 @@ export interface Recipient {
     tapTree?: Bytes;
 }
 
+export type InputExpiryFloor = {
+    readonly kind: "time" | "height";
+    readonly value: bigint;
+};
+
 /** Object form of `IWallet.send`'s arguments; the variadic form has no slot for options. */
 export interface SendParams {
     /** One or more recipients — the variadic arguments of the other form. */
@@ -445,6 +465,12 @@ export interface SendParams {
      * @see IReadonlyWallet.getVtxos
      */
     selectedVtxos?: ExtendedVirtualCoin[];
+
+    /** Refuse before provider submission at or after this UNIX timestamp in seconds. */
+    validUntil?: number;
+
+    /** Require every input's known expiry to be at least this UNIX-seconds or block-height floor. */
+    inputExpiryFloor?: InputExpiryFloor;
 
     /** Maximum sats of unavoidable change this send may pay as an offchain fee. Defaults to any change below the operator's VTXO minimum; 0 disables it. */
     maxChangeFee?: number;
@@ -1018,6 +1044,8 @@ export interface IReadonlyWallet {
 
     /** @returns The wallet's combined onchain and offchain balance. */
     getBalance(): Promise<WalletBalance>;
+    /** Cached display balance; check provider state and boarding.loaded. */
+    getStoredBalance?(): Promise<WalletBalance>;
 
     /**
      * Get virtual outputs tracked by the wallet.
@@ -1027,6 +1055,8 @@ export interface IReadonlyWallet {
      * @see GetVtxosFilter
      */
     getVtxos(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
+    /** Cached display coins; may be incomplete until synchronization finishes. */
+    getStoredVtxos?(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
      * The subset of {@link getVtxos} generic spending may select: minus gated contracts,
@@ -1040,6 +1070,13 @@ export interface IReadonlyWallet {
 
     /** @returns Onchain boarding inputs tracked by the wallet. */
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+    /**
+     * Boarding inputs as last cached, with no onchain call: stale or empty until this wallet
+     * instance has fetched them (see `WalletBalance.boarding.loaded`). For display, never coin
+     * selection.
+     */
+    getStoredBoardingUtxos?(): Promise<ExtendedCoin[]>;
 
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
     getTransactionHistory(): Promise<ArkTransaction[]>;

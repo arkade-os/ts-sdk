@@ -38,6 +38,24 @@ describe("ContractWatcher", () => {
         },
     );
 
+    it("requires a positive, timer-safe subscription request timeout", () => {
+        const config = {
+            indexerProvider: createMockIndexerProvider(),
+            walletRepository: new InMemoryWalletRepository(),
+        };
+        expect(
+            () => new ContractWatcher({ ...config, subscriptionRequestTimeoutMs: 1 }),
+        ).not.toThrow();
+        expect(
+            () => new ContractWatcher({ ...config, subscriptionRequestTimeoutMs: 2 ** 31 - 1 }),
+        ).not.toThrow();
+        for (const value of [0, -1, 0.5, NaN, Infinity, 2 ** 31]) {
+            expect(
+                () => new ContractWatcher({ ...config, subscriptionRequestTimeoutMs: value }),
+            ).toThrow("subscriptionRequestTimeoutMs");
+        }
+    });
+
     let watcher: ContractWatcher;
     let mockIndexer: IndexerProvider;
 
@@ -62,7 +80,11 @@ describe("ContractWatcher", () => {
         };
 
         await watcher.addContract(contract);
-        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith(
+            [contract.script],
+            undefined,
+            expect.any(AbortSignal),
+        );
     });
 
     it("should subscribe inactive contracts without VTXOs", async () => {
@@ -79,7 +101,11 @@ describe("ContractWatcher", () => {
         };
 
         await watcher.addContract(contract);
-        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith(
+            [contract.script],
+            undefined,
+            expect.any(AbortSignal),
+        );
     });
 
     it("should not subscribe retained contracts, but should keep them readable", async () => {
@@ -118,7 +144,11 @@ describe("ContractWatcher", () => {
         };
 
         await watcher.addContract(contract);
-        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith([contract.script], undefined);
+        expect(mockIndexer.subscribeForScripts).toHaveBeenCalledWith(
+            [contract.script],
+            undefined,
+            expect.any(AbortSignal),
+        );
     });
 
     it("should unsubscribe from scripts when stopped", async () => {
@@ -259,8 +289,14 @@ describe("ContractWatcher", () => {
                     1,
                     [contract.script],
                     "mock-subscription-id",
+                    expect.any(AbortSignal),
                 );
-                expect(subscribeMock).toHaveBeenNthCalledWith(2, [contract.script]);
+                expect(subscribeMock).toHaveBeenNthCalledWith(
+                    2,
+                    [contract.script],
+                    undefined,
+                    expect.any(AbortSignal),
+                );
 
                 // Watcher recovered — not stuck in a reconnect loop
                 expect(watcher.getConnectionState()).toBe("connected");

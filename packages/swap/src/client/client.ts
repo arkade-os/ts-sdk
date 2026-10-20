@@ -6,7 +6,7 @@
  * built in a component body, and a missing dep for an unused corridor is not a construction error.
  */
 import { hex } from "@scure/base";
-import type { IWallet } from "@arkade-os/sdk";
+import { captureSendDeadline, type IWallet } from "@arkade-os/sdk";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
 import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
@@ -35,6 +35,7 @@ import {
 import type { CorridorId } from "./corridor";
 import type { SwapPolicy } from "./policy";
 import { feedFetch, quoteFromFeed, type FeedFetch } from "./quoteOffer";
+import { captureAssetPayment } from "./assetPayment";
 import { quoteViaRfq } from "./quoteRfq";
 import type { Quote, QuoteId, QuoteInput, RouteResolution } from "./quote";
 import { resolveRoute, type ResolvedRoute } from "./resolve";
@@ -75,6 +76,11 @@ export interface SwapClientConfig {
     /** How a card's rendezvous is opened. Defaults to the card's Nostr transport, the only shipped
      * one that attests who answered; a transport that attests nobody fails the responder check. */
     readonly transportFor?: RfqTransportFactory;
+}
+
+export interface AcceptOptions {
+    /** Final funding submission deadline, Unix seconds, capped by the quote expiry. */
+    readonly validUntil?: number;
 }
 
 export interface SwapClient {
@@ -175,7 +181,7 @@ export interface SwapClient {
      * @throws {AcceptConflict} when a record for this quote id contradicts it.
      * @throws {MissingCorridorDep} when the client was given no repository.
      */
-    accept(quote: Quote): Promise<Swap>;
+    accept(quote: Quote, options?: AcceptOptions): Promise<Swap>;
     /**
      * Pay a bolt11, a `bc1…`, or a plain Arkade address: `quote` → fee ceiling → `accept`, the amount
      * being what the recipient gets. A plain Arkade address is **not** a swap: it settles through
@@ -307,6 +313,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         },
 
         quote: async (input) => {
+            const assetPayment = captureAssetPayment(input.assetPayment);
             ensureLive("quote");
             const { corridors, discovery } = await resolved();
             let resolvedRoute = await route(input, "quote");
@@ -351,6 +358,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             // the formula it advertises. Never a client switch — see
             // `marketBackendOf`.
             if (market.backend === "feed") {
+                if (assetPayment !== undefined)
+                    throw new Error("assetPayment needs a negotiated BTC-to-asset market");
                 const { quote, preparation } = await quoteFromFeed({
                     quoteId,
                     candidate: market,
@@ -383,6 +392,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 const { quote, preparation } = await quoteViaRfq({
                     quoteId,
                     route: resolvedRoute.pair,
+                    ...(assetPayment === undefined ? {} : { assetPayment }),
                     candidate: market,
                     market: marketRef,
                     legs: resolvedRoute.legs,
@@ -404,7 +414,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             }
         },
 
-        accept: async (quote) => {
+        accept: async (quote, options) => {
+            const validUntil = captureSendDeadline(options?.validUntil);
             ensureLive("accept");
             const { corridors } = await resolved();
             const drive = driving();
@@ -414,6 +425,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             const preparation = preparations.get(quote.id);
             return acceptQuote({
                 quote,
+                ...(validUntil === undefined ? {} : { validUntil }),
                 ...(preparation === undefined ? {} : { preparation }),
                 wallet,
                 repository: config.repository,

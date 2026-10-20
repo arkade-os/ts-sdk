@@ -14,6 +14,7 @@ import {
     createMockIndexerProvider,
     TEST_DEFAULT_ARK_ADDRESS,
     TEST_DEFAULT_SCRIPT,
+    TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
 const baseMessage = (id: string = "1") => ({
     id,
@@ -448,16 +449,19 @@ describe("WalletMessageHandler handleMessage", () => {
         );
     });
 
-    it("handles GET_BOARDING_UTXOS messages", async () => {
-        (updater as any).readonlyWallet = {};
+    it("handles GET_BOARDING_UTXOS messages by asking the provider", async () => {
         const utxos = [{ txid: "tx", vout: 0, value: 1, status: { confirmed: true } }];
-        (updater as any).getAllBoardingUtxos = vi.fn().mockResolvedValue(utxos);
+        const getBoardingUtxos = vi.fn().mockResolvedValue(utxos);
+        const getStoredBoardingUtxos = vi.fn().mockResolvedValue([]);
+        (updater as any).readonlyWallet = { getBoardingUtxos, getStoredBoardingUtxos };
 
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_BOARDING_UTXOS",
         } as any);
 
+        expect(getBoardingUtxos).toHaveBeenCalled();
+        expect(getStoredBoardingUtxos).not.toHaveBeenCalled();
         expect(response).toMatchObject({
             tag: updater.messageTag,
             type: "BOARDING_UTXOS",
@@ -1598,6 +1602,8 @@ describe("WalletMessageHandler handleMessage", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -1741,6 +1747,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["boarding-address"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+            getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
                 commitmentsToIgnore: new Set(),
@@ -2465,6 +2473,177 @@ describe("WalletMessageHandler repo-backed reads", () => {
         ]);
     });
 
+    it.each([false, true])(
+        "GET_BALANCE uses stored boarding only when lazyBoarding=%s",
+        async (lazyBoarding) => {
+            setupHandler();
+            (updater as any).lazyBoardingInit = lazyBoarding;
+            const rw = (updater as any).readonlyWallet;
+            const boardUtxo = {
+                txid: "bb".repeat(32),
+                vout: 0,
+                value: 10_000,
+                status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+            };
+            rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+            rw.getBoardingUtxos = vi.fn().mockResolvedValue([]);
+
+            const balance = await (updater as any).handleGetBalance();
+
+            expect(rw.getStoredBoardingUtxos).toHaveBeenCalledTimes(lazyBoarding ? 1 : 0);
+            expect(rw.getBoardingUtxos).toHaveBeenCalledTimes(lazyBoarding ? 0 : 1);
+            expect(balance.boarding.total).toBe(lazyBoarding ? 10_000 : 0);
+        },
+    );
+
+    /** Spin until `predicate` holds, so a test never races a background leg. */
+    const until = async (predicate: () => boolean): Promise<void> => {
+        for (let i = 0; i < 200 && !predicate(); i++) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+    };
+
+    /** One current-signer boarding group, as `getBoardingUtxosForSigners` returns it. */
+    const boardingGroup = (coins: any[]) => ({
+        tapscript: { onchainAddress: () => "boarding-address" },
+        coins,
+    });
+
+    it("lazyBoarding hands both onchain legs to the background", async () => {
+        setupHandler();
+        (updater as any).lazyBoardingInit = true;
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 7_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let releaseHistory!: () => void;
+        const historyGate = new Promise<void>((resolve) => {
+            releaseHistory = resolve;
+        });
+        rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
+            await gate;
+            return [boardingGroup([boardUtxo])];
+        });
+        rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
+            await historyGate;
+            return { boardingTxs: [], commitmentsToIgnore: new Set<string>() };
+        });
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+
+        await (updater as any).refreshCachedData({ lazyBoarding: true });
+        expect(rw.getBoardingTxs).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+        const before = await (updater as any).handleGetBalance();
+        expect(before.boarding.loaded).toBe(false);
+
+        release();
+        await until(() => (updater as any).boardingLoaded === true);
+        await until(() => rw.getBoardingTxs.mock.calls.length > 0);
+
+        const after = await (updater as any).handleGetBalance();
+        expect(after.boarding.loaded).toBe(true);
+        expect(after.boarding.total).toBe(7_000);
+
+        releaseHistory();
+    });
+
+    it("a lazy boarding refresh overtaken by clear() writes nothing", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const coin = (txid: string) =>
+            ({
+                txid,
+                vout: 0,
+                value: 1_000,
+                status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+            }) as any;
+        // A cached row the fetch no longer returns: an unchecked refresh would prune it.
+        await walletRepo.saveUtxos("boarding-address", [
+            coin("aa".repeat(32)),
+            coin("bb".repeat(32)),
+        ]);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
+            await gate;
+            return [boardingGroup([coin("aa".repeat(32))])];
+        });
+        const deleteUtxos = vi.spyOn(walletRepo, "deleteUtxos");
+        const saveTransactions = vi.spyOn(walletRepo, "saveTransactions");
+
+        await (updater as any).refreshCachedData({ lazyBoarding: true });
+        await until(() => rw.getBoardingUtxosForSigners.mock.calls.length > 0);
+        // What clear() does to the boarding generation, without wiping the fixture.
+        (updater as any).boardingEpoch++;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(deleteUtxos).not.toHaveBeenCalled();
+        expect(saveTransactions).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+    });
+
+    it("INIT_WALLET with lazyBoarding resolves with both onchain legs parked", async () => {
+        setupHandler();
+        const rw = (updater as any).readonlyWallet;
+        const boardUtxo = {
+            txid: "bb".repeat(32),
+            vout: 0,
+            value: 7_000,
+            status: { confirmed: true, block_height: 1, block_hash: "cc", block_time: 1 },
+        };
+        let releaseBoarding!: () => void;
+        const boardingGate = new Promise<void>((resolve) => {
+            releaseBoarding = resolve;
+        });
+        let releaseHistory!: () => void;
+        const historyGate = new Promise<void>((resolve) => {
+            releaseHistory = resolve;
+        });
+        rw.getBoardingAddresses = vi.fn().mockResolvedValue(["boarding-address"]);
+        rw.getBoardingUtxosForSigners = vi.fn().mockImplementation(async () => {
+            await boardingGate;
+            return [boardingGroup([boardUtxo])];
+        });
+        rw.getBoardingTxs = vi.fn().mockImplementation(async () => {
+            await historyGate;
+            return { boardingTxs: [], commitmentsToIgnore: new Set<string>() };
+        });
+        rw.getStoredBoardingUtxos = vi.fn().mockResolvedValue([boardUtxo]);
+
+        const broadcasts: any[] = [];
+        (updater as any).channel = { broadcast: (response: any) => broadcasts.push(response) };
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "INIT_WALLET",
+            payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+        } as any);
+
+        expect(rw.getBoardingTxs).not.toHaveBeenCalled();
+        expect((updater as any).boardingLoaded).toBe(false);
+
+        releaseBoarding();
+        await until(() => (updater as any).boardingLoaded === true);
+        expect(broadcasts.some((response) => response?.type === "UTXO_UPDATE")).toBe(true);
+
+        releaseHistory();
+    });
+
     it("RELOAD_WALLET does not re-subscribe or restart VtxoManager", async () => {
         setupHandler();
         const notifyFundsSpy = (updater as any).readonlyWallet.notifyIncomingFunds;
@@ -2651,6 +2830,8 @@ describe("WalletMessageHandler event-push generations", () => {
         }),
         notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
         getBoardingUtxos: vi.fn().mockResolvedValue([]),
+        boardingTapscript: { options: { serverPubKey: TEST_SERVER_PUB_KEY } },
+        getBoardingUtxosForSigners: vi.fn().mockResolvedValue([]),
         dispose: vi.fn().mockResolvedValue(undefined),
         clear: vi.fn().mockResolvedValue(undefined),
         ...overrides,

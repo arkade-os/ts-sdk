@@ -13,8 +13,8 @@ import { extractPubKey } from "../../identity/descriptor";
 import {
     ArkadeProgramScript,
     deserializeArkadeContractParams,
-    resolveCsvTimelock,
     resolveTimelockValue,
+    resolveCsvTimelock,
     serializeArkadeContractParams,
     witnessRefToBytes,
     type ArkadeContractParams,

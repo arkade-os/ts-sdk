@@ -1,4 +1,4 @@
-import type { IReadonlyWallet, Recipient } from ".";
+import type { IReadonlyWallet, IWallet, Recipient } from ".";
 import {
     ArkAddress,
     type Coin,
@@ -190,6 +190,30 @@ function resolveContract(
 export function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
+}
+
+const sdkPicked = new WeakSet<object>();
+
+/** Marks settle params whose inputs the SDK picked, so `settle` refuses any held since. */
+export function markSdkPicked<T extends object>(params: T): T {
+    sdkPicked.add(params);
+    return params;
+}
+
+export function isSdkPicked(params: object | undefined): boolean {
+    return params !== undefined && sdkPicked.has(params);
+}
+
+/**
+ * Boarding UTXOs an SDK pick may take. A `Wallet` leaves out those an in-flight settle is
+ * spending; any other `IWallet` answers with its full list, and its `settle` refuses a clash.
+ */
+export function getSelectableBoardingUtxos(
+    wallet: Pick<IWallet, "getBoardingUtxos">,
+): Promise<ExtendedCoin[]> {
+    const selectable = (wallet as { getSelectableBoardingUtxos?: () => Promise<ExtendedCoin[]> })
+        .getSelectableBoardingUtxos;
+    return typeof selectable === "function" ? selectable.call(wallet) : wallet.getBoardingUtxos();
 }
 
 type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {

@@ -236,15 +236,16 @@ export const corridorRecordStore = (
 };
 
 /** A v2 offer record as the watcher and coverage read one. */
-export const offerFactsOf = (record: OfferSwapRecord): OfferSwapFacts & { id: QuoteId } => ({
+export const offerFactsOf = (
+    record: OfferSwapRecord,
+): OfferSwapFacts & { id: QuoteId; coverageId: QuoteId } => ({
     id: record.id,
+    coverageId: record.id,
     status: record.status,
     offerHex: record.offerHex,
     swapPkScript: record.swapPkScript,
     ...(record.fundingTxid === undefined ? {} : { fundingTxid: record.fundingTxid }),
     ...(record.spentTxid === undefined ? {} : { spentTxid: record.spentTxid }),
-    // milliseconds: `coverage.ts` compares against `Date.now()`, and seconds would leave every
-    // issued script outstanding for the life of the process
     createdAt: record.createdAt * 1000,
 });
 
@@ -321,11 +322,20 @@ export const withDepositFate = (
     updatedAt: now,
 });
 
+/** A deposit that left the covenant. A spend never reverts, so a later unspent read is a lagging indexer. */
+const DEPOSIT_SPENT = (status: AssetSwapStatus): boolean =>
+    status === "cancelled" || status === "fulfilled";
+
 /** Whether the fate says anything the record does not; the write it gates re-emits the swap. */
-export const fateMoved = (record: OfferSwapRecord, fate: DepositFate): boolean =>
-    record.status !== fate.status ||
-    (fate.spentTxid !== undefined && record.spentTxid !== fate.spentTxid) ||
-    (fate.completedAt !== undefined && record.completedAt !== Math.floor(fate.completedAt / 1000));
+export const fateMoved = (record: OfferSwapRecord, fate: DepositFate): boolean => {
+    if (DEPOSIT_SPENT(record.status) && !DEPOSIT_SPENT(fate.status)) return false;
+    return (
+        record.status !== fate.status ||
+        (fate.spentTxid !== undefined && record.spentTxid !== fate.spentTxid) ||
+        (fate.completedAt !== undefined &&
+            record.completedAt !== Math.floor(fate.completedAt / 1000))
+    );
+};
 
 /**
  * An offer record for a deposit the restore scan found and no record claims. Keyed on the funding
