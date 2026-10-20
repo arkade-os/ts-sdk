@@ -15,8 +15,9 @@ const { FakeSocket } = vi.hoisted(() => {
         static readonly OPEN = 1;
         static readonly opened: FakeSocket[] = [];
         readyState = 0;
-        /** Never acknowledge an EVENT, so a publish stays in flight until it times out. */
-        silent = false;
+        /** How the relay answers an EVENT: accept, refuse, or never (half-open), after a delay. */
+        ack: "ok" | "refuse" | "silent" = "ok";
+        ackDelayMs = 0;
         onopen?: () => void;
         onmessage?: (ev: { data: string }) => void;
         onerror?: () => void;
@@ -30,13 +31,15 @@ const { FakeSocket } = vi.hoisted(() => {
         }
         send(message: string) {
             const [verb, body] = JSON.parse(message) as [string, { id?: string } | string];
-            const reply =
-                verb === "REQ"
-                    ? ["EOSE", body]
-                    : verb === "EVENT" && !this.silent
-                      ? ["OK", (body as { id: string }).id, true, ""]
-                      : undefined;
-            if (reply) setTimeout(() => this.receive(reply));
+            if (verb === "REQ") setTimeout(() => this.receive(["EOSE", body]));
+            if (verb === "EVENT" && this.ack !== "silent") {
+                const id = (body as { id: string }).id;
+                const ok = this.ack === "ok";
+                setTimeout(
+                    () => this.receive(["OK", id, ok, ok ? "" : "blocked: no"]),
+                    this.ackDelayMs,
+                );
+            }
         }
         receive(frame: unknown[]) {
             this.onmessage?.({ data: JSON.stringify(frame) });
@@ -144,6 +147,8 @@ describe("pool sharing", () => {
 
 const RELAY = "wss://relay.example";
 const filter = { kinds: [1] };
+const anEvent = () =>
+    finalizeEvent({ kind: 1, created_at: 0, tags: [], content: "" }, generateSecretKey());
 
 /** A real pool over a fake socket, under fake timers; `connected` reads the pool's view. */
 const fakeRelayPool = async () => {
@@ -217,19 +222,45 @@ describe("createNostrPool socket lifetime", () => {
         const { pool, connected, socket } = await fakeRelayPool();
         pool.subscribeMany([RELAY], filter, {}).close();
         await vi.advanceTimersByTimeAsync(IDLE_CLOSE_MS - 1_000);
-        socket().silent = true;
-        const event = finalizeEvent(
-            { kind: 1, created_at: 0, tags: [], content: "" },
-            generateSecretKey(),
-        );
-        const sent = Promise.allSettled(pool.publish([RELAY], event));
-        // nostr-tools times the unanswered publish out at 4.4s; only then does the window start.
+        socket().ackDelayMs = 3_000;
+        const sent = Promise.all(pool.publish([RELAY], anEvent()));
+        await vi.advanceTimersByTimeAsync(4_000);
+        await sent;
+        // The window restarts at the OK, not at the publish: released early, it would be closed.
+        await vi.advanceTimersByTimeAsync(IDLE_CLOSE_MS - 3_000);
+        expect(connected()).toBe(true);
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(connected()).toBe(false);
+    });
+
+    it("evicts a relay that never acknowledges a publish, so the next use reconnects", async () => {
+        const { pool, connected, socket } = await fakeRelayPool();
+        const lost = vi.fn();
+        pool.subscribeMany([RELAY], filter, { onclose: lost });
+        await vi.advanceTimersByTimeAsync(10);
+        const halfOpen = socket();
+        halfOpen.ack = "silent";
+        const sent = Promise.allSettled(pool.publish([RELAY], anEvent()));
         await vi.advanceTimersByTimeAsync(5_000);
         expect((await sent)[0]!.status).toBe("rejected");
-        await vi.advanceTimersByTimeAsync(IDLE_CLOSE_MS - 2_000);
-        expect(connected()).toBe(true);
-        await vi.advanceTimersByTimeAsync(2_000);
         expect(connected()).toBe(false);
+        // Its co-tenants learn now, rather than waiting on a socket nothing answers.
+        expect(lost).toHaveBeenCalledOnce();
+        pool.subscribeMany([RELAY], filter, {});
+        await vi.advanceTimersByTimeAsync(10);
+        expect(socket()).not.toBe(halfOpen);
+        expect(connected()).toBe(true);
+    });
+
+    it("keeps a relay that answers, even with a refusal", async () => {
+        const { pool, connected, socket } = await fakeRelayPool();
+        pool.subscribeMany([RELAY], filter, {});
+        await vi.advanceTimersByTimeAsync(10);
+        socket().ack = "refuse";
+        const sent = Promise.allSettled(pool.publish([RELAY], anEvent()));
+        await vi.advanceTimersByTimeAsync(10);
+        expect((await sent)[0]!.status).toBe("rejected");
+        expect(connected()).toBe(true);
     });
 
     it("releases the relay when every relay dropped the subscription", async () => {

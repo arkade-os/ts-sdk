@@ -60,6 +60,52 @@ jobs:
       - name: Unit tests
         run: pnpm run test:unit
 
+  # nostr-tools is an optional peer of swap, so consumers bring their own version; the
+  # lockfile pins one. Check the declared floor and the newest 2.x too, since the
+  # shared pool overrides SimplePool's subscribeMap/publish and relies on their routing.
+  nostr-tools-compat:
+    name: Swap on nostr-tools ${{ matrix.nostr_tools }}
+    runs-on: ubuntu-latest
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        nostr_tools: ["2.24.0", "newest 2.x"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.25.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: ".nvmrc"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install nostr-tools ${{ matrix.nostr_tools }}
+        env:
+          SPEC: ${{ matrix.nostr_tools }}
+        run: |
+          # pnpm keeps the locked version when it satisfies a range, so name the release.
+          if [ "$SPEC" = "newest 2.x" ]; then
+            SPEC=$(npm view 'nostr-tools@^2' version --json | node -p '[].concat(JSON.parse(require("fs").readFileSync(0))).at(-1)')
+          fi
+          pnpm -C packages/swap add -D "nostr-tools@$SPEC"
+          node -p "'nostr-tools ' + require('./node_modules/nostr-tools/package.json').version"
+
+      - name: Build sdk
+        run: pnpm -C packages/sdk build
+
+      - name: Type-check swap
+        run: pnpm -C packages/swap run typecheck
+
+      - name: Swap unit tests
+        run: pnpm -C packages/swap run test:unit
+
   integration:
     name: Integration (${{ matrix.package }} / ${{ matrix.group }})
     runs-on: ubuntu-latest

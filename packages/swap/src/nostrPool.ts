@@ -27,6 +27,9 @@ export const IDLE_CLOSE_MS = 30_000;
 /** The largest portable timer delay: `0` means nostr-tools' 20s default, `Infinity` fires at once. */
 const NEVER_IDLE_MS = 2 ** 31 - 1;
 
+/** nostr-tools' rejection when a relay never answers an EVENT with OK. */
+const PUBLISH_TIMED_OUT = "publish timed out";
+
 const urlKey = (url: string): string => {
     try {
         return normalizeURL(url);
@@ -104,6 +107,16 @@ class SharedPool extends SimplePool {
     override publish(...[relays, event, params]: Parameters<SimplePool["publish"]>) {
         const release = this.#hold(relays);
         const sent = super.publish(relays, event, params);
+        // A relay that never acknowledges is a half-open socket (sleep, network change): every
+        // later use would time out the same way until the ping notices, up to ~50s. Evict it so
+        // the next use reconnects. A timeout means the socket was never closed in between (a
+        // close rejects the publish first), so the URL still names that same socket.
+        sent.forEach((publish, i) => {
+            publish.catch((error: unknown) => {
+                if (error instanceof Error && error.message === PUBLISH_TIMED_OUT)
+                    this.close([relays[i]!]);
+            });
+        });
         void Promise.allSettled(sent).then(release);
         return sent;
     }

@@ -144,7 +144,7 @@ importers:
         specifier: 6.2.5
         version: 6.2.5
       nostr-tools:
-        specifier: ^2.12.0
+        specifier: ^2.24.0
         version: 2.24.1(typescript@5.9.2)
 
 packages:
