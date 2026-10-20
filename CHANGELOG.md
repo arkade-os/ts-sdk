@@ -463,6 +463,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: a restore scan no longer reopens a cancelled or filled
+  offer.** A client starting right after a cancel scans its deposits, and the
+  indexer can still report the spent deposit as unspent. The scan wrote that
+  `pending` over the stored `cancelled`, so `swaps()` showed the offer `open`
+  until a later pass. A spent record now ignores a fate that shows no spend.
+
 - **An asset operation's inputs are no longer picked by a parallel `send`.**
   `issue`, `reissue` and `burn` pick their coins without the wallet lock and
   only queue for it to submit, while `getVtxos()` and every SDK pick still
