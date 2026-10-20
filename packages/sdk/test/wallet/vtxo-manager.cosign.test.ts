@@ -96,13 +96,15 @@ describe("VtxoManager cosign-first sweeps", () => {
     it("returns the cosign txid and builds no CSV tx", async () => {
         const sendOnchain = vi.fn().mockResolvedValue("cosign-txid");
         const wallet = makeWallet({ sendOnchain });
-        await expect(manager(wallet).sweepOnchainCoins()).resolves.toBe("cosign-txid");
+        const vtxoManager = manager(wallet);
+        await expect(vtxoManager.sweepOnchainCoins()).resolves.toBe("cosign-txid");
         expect(sendOnchain).toHaveBeenCalledWith({
             outputs: [],
             inputs: SWEEP_INPUTS,
             sweepTo: BOARDING,
         });
         expect(wallet.signOnchainBoardingTx).not.toHaveBeenCalled();
+        expect((vtxoManager as any).knownBoardingUtxos.has("cosign-txid:0")).toBe(true);
     });
 
     it("falls back to the CSV path on Unsupported, quietly", async () => {

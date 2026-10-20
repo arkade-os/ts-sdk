@@ -1,4 +1,5 @@
 import { collectScriptVtxos } from "../../src/repositories/walletRepository";
+import { collectContracts } from "../../src/repositories/contractRepository";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Address, OutScript } from "@scure/btc-signer";
@@ -87,13 +88,14 @@ async function makeWallet(
         watchAddresses: vi.fn(async () => () => {}),
     } as any;
     const walletRepository = new InMemoryWalletRepository();
+    const contractRepository = new InMemoryContractRepository();
     const wallet = await Wallet.create({
         identity: SingleKey.fromHex("1".repeat(64)),
         settlementConfig: false,
         arkProvider,
         indexerProvider,
         onchainProvider,
-        storage: { walletRepository, contractRepository: new InMemoryContractRepository() },
+        storage: { walletRepository, contractRepository },
         ...walletConfig,
     });
     const boardingAddress = wallet.boardingTapscript.onchainAddress(wallet.network);
@@ -107,6 +109,7 @@ async function makeWallet(
         arkProvider,
         onchainProvider,
         walletRepository,
+        contractRepository,
         boardingCoin,
         boardingScriptHex,
         externalScript,
@@ -394,6 +397,32 @@ describe("onchainCosignMarginBlocks", () => {
         await expect(makeWallet({}, { onchainCosignMarginBlocks: value })).rejects.toThrow(
             /onchainCosignMarginBlocks/,
         );
+    });
+});
+
+describe("wallet.getBoardingUtxosForSigners", () => {
+    it("leaves a wallet cleared during its fetch empty", async () => {
+        const { wallet, onchainProvider, walletRepository, contractRepository } =
+            await makeWallet();
+        await wallet.getContractManager();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const fetchCoins = onchainProvider.getCoins.getMockImplementation();
+        onchainProvider.getCoins.mockImplementation(async (a: string) => {
+            await gate;
+            return fetchCoins(a);
+        });
+        const read = wallet.getBoardingUtxos();
+        await vi.waitFor(() => expect(onchainProvider.getCoins).toHaveBeenCalled());
+
+        await wallet.clear();
+        release();
+        await read;
+
+        expect(await collectContracts(contractRepository)).toEqual([]);
+        expect(await walletRepository.getWalletState()).toBeNull();
     });
 });
 

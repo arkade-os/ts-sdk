@@ -1752,12 +1752,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *   fetch (passed through to {@link getBoardingTapscripts}).
      */
     async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
+        // Before the fetch: a clear() landing during it disposes this manager, so its sync writes
+        // nothing, where resolving it afterwards would build a new one on the wiped repositories.
+        const manager = await this.getContractManager();
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
         const fetched = await Promise.all(
             tapscripts.map((t) => this.onchainProvider.getCoins(t.onchainAddress(this.network))),
         );
         const scripts = tapscripts.map((t) => hex.encode(t.pkScript));
-        const manager = await this.getContractManager();
         try {
             await manager.syncOnchain(scripts);
         } catch (e) {

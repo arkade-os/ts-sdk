@@ -1859,7 +1859,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (!inputs?.length) return undefined;
         const boarding = await this.wallet.getBoardingAddress();
         try {
-            return await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
+            const txid = await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
+            // Its one output renews boarding coins; like the CSV sweep's, the poll must not settle it.
+            this.knownBoardingUtxos.add(`${txid}:0`);
+            return txid;
         } catch (e) {
             if (!isCosignFallback(e)) throw e;
             if (e instanceof OnchainCosignRejectedError) {

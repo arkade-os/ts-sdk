@@ -1739,6 +1739,7 @@ export class ContractManager implements IContractManager {
             state: filter.state,
             type: filter.type,
             watch: filter.watch,
+            scope: filter.scope,
         };
     }
 
