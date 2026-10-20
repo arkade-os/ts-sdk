@@ -288,6 +288,8 @@ describe("nostrRfqTransport", () => {
                 // no `pool`: the transport shares the process-wide pool
             });
             await transport.close();
+            // A second close must not reach the subscription: each close decrements the relay's count.
+            await transport.close();
             expect(subscriptionClose).toHaveBeenCalledTimes(1);
             expect(poolClose).not.toHaveBeenCalled();
         } finally {

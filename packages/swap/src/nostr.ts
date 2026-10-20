@@ -204,10 +204,7 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         },
 
         async close() {
-            if (closed) {
-                subscription.close();
-                return;
-            }
+            if (closed) return;
             closed = true;
             // Reject, don't just clear: otherwise each pending promise's timer fires later as
             // "no solver reply", blaming the solver for our own teardown.

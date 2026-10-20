@@ -46,7 +46,8 @@ export const attesting = <T extends RfqTransport>(
 /**
  * Build the card's Nostr rendezvous bound to one pool, so discovery, quotes, and an
  * app's own readers share one socket per relay. Pass the process-wide
- * `sharedNostrPool()` from `@arkade-os/swap/nostr`, or a pool the caller owns;
+ * `sharedNostrPool()` from `@arkade-os/swap/nostr`, or one the caller owns from
+ * `createNostrPool()` (a bare `SimplePool` lets one double close drop the shared socket);
  * omitting it keeps the shared default.
  */
 export const createNostrTransportFactory = (
