@@ -2148,11 +2148,12 @@ export class ContractManager implements IContractManager {
         );
         const live = new Set(coins.map(vtxoOutpoint));
         // Only what can change: a listed coin nobody is spending is not worth an arkd request.
+        // A listed coin already marked spent is asked again, so the explorer's lag cannot undo it.
         const recorded = await this.serverSpends(
             [...stored.values()].filter((v) => {
                 const key = vtxoOutpoint(v);
                 if (!v.isUnrolled) return false;
-                return v.isSpent ? !v.spentBy : !live.has(key) || key in pending;
+                return v.isSpent ? !v.spentBy || live.has(key) : !live.has(key) || key in pending;
             }),
         );
         const rows: ExtendedVirtualCoin[] = [];
@@ -2167,8 +2168,8 @@ export class ContractManager implements IContractManager {
                     : toOnchainCoinRow(coin, contract, tapscript);
             const record = recorded.get(key);
             if (record?.spendConfirmation) {
-                // arkd saw the spend confirm before the explorer did.
-                spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
+                // arkd saw the spend confirm before the explorer did; a stored spend stays as is.
+                if (!prior?.isSpent) spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
                 delete pending[key];
                 continue;
             }

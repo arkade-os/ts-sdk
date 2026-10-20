@@ -11,7 +11,7 @@ import {
 } from "../../src";
 import { OnchainContractWatcher } from "../../src/contracts/onchainWatcher";
 import { toOnchainCoinRow } from "../../src/contracts/onchainCoins";
-import { saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
+import { resetRecordedSpends, saveVtxosForContract } from "../../src/contracts/vtxoOwnership";
 import { updateWalletState } from "../../src/utils/syncCursors";
 import { timelockToSequence } from "../../src/utils/timelock";
 import {
@@ -427,6 +427,37 @@ describe("ContractManager.syncOnchain", () => {
 
         const [row] = await collectScriptVtxos(walletRepository, boarding.script);
         expect(row).toMatchObject({ isSpent: true, spentBy: record.spentBy });
+        manager.dispose();
+    });
+
+    it("keeps an arkd-confirmed spend while the explorer still lists the coin", async () => {
+        const record = {
+            ...coin,
+            script: boarding.script,
+            spentBy: "ee".repeat(32),
+            spendConfirmation: { height: 301, time: 0 },
+        };
+        const getCoins = vi.fn().mockResolvedValue([coin]);
+        const { manager, walletRepository } = await setup(getCoins, undefined, async () => ({
+            utxos: [record],
+        }));
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([coin], record.spentBy);
+        const events: string[] = [];
+        manager.onContractEvent((e) => events.push(e.type));
+        await manager.syncOnchain();
+        // A restart forgets the in-process spend pins.
+        resetRecordedSpends(walletRepository);
+
+        await manager.syncOnchain();
+        let [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: record.spentBy });
+
+        getCoins.mockResolvedValue([]);
+        await manager.syncOnchain();
+        [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: record.spentBy });
+        expect(events).toEqual(["vtxo_spent"]);
         manager.dispose();
     });
 
