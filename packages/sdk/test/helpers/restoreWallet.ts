@@ -12,6 +12,10 @@ import type { OnchainProvider } from "../../src/providers/onchain";
 import type { VirtualCoin } from "../../src";
 import { HDDescriptorProvider } from "../../src/wallet/hdDescriptorProvider";
 import { jsonResponse } from "./response";
+import {
+    KeyringDescriptorProvider,
+    unwrapKeyring,
+} from "../../src/identity/keyringDescriptorProvider";
 
 /**
  * Test harness for the `Wallet.restore()` suite.
@@ -288,6 +292,13 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
     hdProvider: HDDescriptorProvider;
 }
 
+export async function awaitWalletBooted(wallet: {
+    getContractManager(): Promise<{ whenBooted?(): Promise<void> }>;
+}): Promise<void> {
+    const manager = await wallet.getContractManager();
+    await manager.whenBooted?.();
+}
+
 /**
  * Build an HD-mode wallet on the standard test mnemonic. Returns the
  * resolved {@link HDDescriptorProvider} (the wallet's private
@@ -301,16 +312,28 @@ export async function makeHdWalletForTest(
     opts?: {
         /** Compressed hex; present ⇒ delegate wallet (stub delegate provider). */
         delegatePubKey?: string;
+        /**
+         * Hand `Wallet.create` a keyring-wrapped HD provider instead of
+         * `'hd'` — the public `walletMode: DescriptorProvider` shape a
+         * consumer holding imported keys would use.
+         */
+        wrapInKeyring?: boolean;
     },
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
+    const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+        isMainnet: false,
+    });
     const wallet = await Wallet.create({
-        identity: MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-            isMainnet: false,
-        }),
-        walletMode: "hd",
+        identity,
+        walletMode: opts?.wrapInKeyring
+            ? await KeyringDescriptorProvider.create(
+                  await HDDescriptorProvider.create(identity, walletRepository),
+                  walletRepository,
+              )
+            : "hd",
         arkProvider: new RestArkProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
@@ -326,7 +349,9 @@ export async function makeHdWalletForTest(
             } as unknown as Parameters<typeof Wallet.create>[0]["delegateProvider"],
         }),
     });
-    const resolved = (wallet as unknown as { _descriptorProvider?: unknown })._descriptorProvider;
+    const resolved = unwrapKeyring(
+        (wallet as unknown as { _descriptorProvider?: HDDescriptorProvider })._descriptorProvider,
+    );
     if (
         !resolved ||
         typeof (resolved as Partial<HDDescriptorProvider>).materializeDescriptorAt !== "function" ||

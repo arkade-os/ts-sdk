@@ -13,7 +13,6 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 
 import {
     AddressMismatch,
-    ARKADE_BTC,
     LIGHTNING_SEND_PAIR,
     MAX_PAIR_LENGTH,
     SOLO_REFUND_HEADROOM_SECONDS,
@@ -767,6 +766,19 @@ describe("httpTransport", () => {
 });
 
 describe("relayTransport", () => {
+    it.each([-1, 0.5, NaN, Infinity, 2 ** 31])(
+        "rejects invalid timeout %s before opening a socket",
+        (timeoutMs) => {
+            expect(() =>
+                relayTransport("ws://relay", {
+                    solverPubkey: "ab".repeat(32),
+                    clientPubkey: "cd".repeat(32),
+                    timeoutMs,
+                }),
+            ).toThrow("timeoutMs");
+        },
+    );
+
     /** A scripted solver on the other side of a fake socket: subscribes are
      * acknowledged silently; each published rfq_request gets the scripted
      * reply, addressed back like a relay would deliver it. */

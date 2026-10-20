@@ -25,12 +25,13 @@ import type { SwapPolicy } from "./policy";
 import type { PinnedAmount, QuoteInput, ResolvedEndpoint, RouteResolution } from "./quote";
 import type { Instrument, Route } from "./route";
 
-/** The four implemented corridor pairs, spelled as the route union spells them. */
+/** The five implemented corridor pairs, spelled as the route union spells them. */
 const SUPPORTED_PAIRS = [
     "arkade->arkade",
     "arkade->lightning",
     "lightning->arkade",
     "arkade->onchain",
+    "onchain->arkade",
 ] as const;
 
 type SupportedPair = (typeof SUPPORTED_PAIRS)[number];
@@ -169,12 +170,10 @@ export const resolveRoute = async (
     // 4. The corridor pair selects the route variant; refused before any disclosure.
     const pair = `${giveLeg.corridor}->${takeLeg.corridor}`;
     if (!isSupportedPair(pair)) {
-        throw new UnsupportedRoute(
-            pair === "onchain->arkade"
-                ? "onchain -> arkade is not served until the client owns the trader's L1 refund path end to end"
-                : `${pair} is not an implemented route`,
-            { give: giveLeg.corridor, take: takeLeg.corridor },
-        );
+        throw new UnsupportedRoute(`${pair} is not an implemented route`, {
+            give: giveLeg.corridor,
+            take: takeLeg.corridor,
+        });
     }
 
     // 5. Instruments: the caller supplies non-wallet TAKE ones (`to`), the quote supplies

@@ -159,7 +159,7 @@ describe("assertValidServerUnrollScript", () => {
     // would read it as seconds, letting it slip past `requireSeconds` and
     // mis-scale it against the floor.
     describe("block-typed timelocks above the 512 seconds boundary", () => {
-        const blocks = (value: number) =>
+        const blocks = (value: bigint) =>
             hex.encode(
                 CSVMultisigTapscript.encode({
                     timelock: { value, type: "blocks" },
@@ -170,7 +170,7 @@ describe("assertValidServerUnrollScript", () => {
         it("rejects them as block-typed on mainnet, even below the floor in nominal seconds", () => {
             expect(() =>
                 assertValidServerUnrollScript(
-                    blocks(1_000),
+                    blocks(1_000n),
                     resolveCheckpointExitDelayPolicy(networks.bitcoin, { minSeconds: 600n }),
                 ),
             ).toThrow(/block-typed timelocks are not accepted \(got 1000\)/);
@@ -180,7 +180,7 @@ describe("assertValidServerUnrollScript", () => {
             // 600 blocks is ~100h of nominal wall clock, far above the regtest
             // floor — but only 600 if misread as seconds.
             const result = assertValidServerUnrollScript(
-                blocks(600),
+                blocks(600n),
                 defaultCheckpointExitDelayPolicy(networks.regtest),
             );
             expect(result.params.timelock).toEqual({ value: 600n, type: "blocks" });

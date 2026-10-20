@@ -213,12 +213,10 @@ describe("ContractManager", () => {
         // Mock indexer to return a mix of settled and spent VTXOs
         const settledVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "aa".repeat(32),
-            virtualStatus: { state: "settled" },
         });
         const spentVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "bb".repeat(32),
             isSpent: true,
-            virtualStatus: { state: "settled" },
         });
         (mockIndexer.getVtxos as any).mockResolvedValue({
             vtxos: [settledVtxo, spentVtxo],
@@ -226,7 +224,7 @@ describe("ContractManager", () => {
 
         const walletRepo = new InMemoryWalletRepository();
         // Re-create manager with the pre-populated contract repo
-        const newManager = await ContractManager.create({
+        await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
             walletRepository: walletRepo,
@@ -259,11 +257,10 @@ describe("ContractManager", () => {
 
         const vtxo1 = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "cc".repeat(32),
-            virtualStatus: { state: "settled" },
         });
         const vtxo2 = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "dd".repeat(32),
-            virtualStatus: { state: "swept" },
+            isSwept: true,
         });
         (mockIndexer.getVtxos as any).mockResolvedValue({
             vtxos: [vtxo1, vtxo2],
@@ -277,13 +274,13 @@ describe("ContractManager", () => {
 
         const savedVtxos = await collectVtxos(walletRepo, "contract-address");
         expect(savedVtxos).toHaveLength(2);
-        const states = savedVtxos.map((v) => v.virtualStatus.state);
-        expect(states).toContain("settled");
-        expect(states).toContain("swept");
+        const swept = savedVtxos.map((v) => v.isSwept);
+        expect(swept).toContain(false);
+        expect(swept).toContain(true);
     });
 
     it("should not use spendable-only filter for getContractsWithVtxos", async () => {
-        const contract = await manager.createContract({
+        await manager.createContract({
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -303,7 +300,7 @@ describe("ContractManager", () => {
             vtxos: [spendable, spent],
         });
 
-        const result = await manager.getContractsWithVtxos();
+        await manager.getContractsWithVtxos();
 
         // getContractsWithVtxos forces a sync to retrieve all VTXOs in the time window
         const lastCall = (mockIndexer.getVtxos as any).mock.calls.at(-1);
@@ -346,7 +343,6 @@ describe("ContractManager", () => {
                 vout: 0,
                 script,
                 isSpent: false,
-                virtualStatus: { state: "settled" },
             });
         await walletRepo.saveVtxos(first.address, [
             row(first.script, "aa"),
@@ -687,6 +683,45 @@ describe("ContractManager", () => {
             } finally {
                 await mgr.dispose();
             }
+        });
+    });
+
+    describe("event sync outcome", () => {
+        const receive = async (handlerRegistered: boolean) => {
+            const contract = await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            const incoming = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+                txid: "ab".repeat(32),
+            });
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [incoming] });
+            const get = contractHandlers.get.bind(contractHandlers);
+            const spy = vi
+                .spyOn(contractHandlers, "get")
+                .mockImplementation((type) => (handlerRegistered ? get(type) : undefined));
+            try {
+                return await (manager as any).handleContractEvent({
+                    type: "vtxo_received",
+                    contractScript: contract.script,
+                    contract,
+                    vtxos: [incoming],
+                    timestamp: Date.now(),
+                });
+            } finally {
+                spy.mockRestore();
+            }
+        };
+
+        it("reports a sync that stored the event's contract", async () => {
+            await expect(receive(true)).resolves.toBe(true);
+        });
+
+        // #1083: the watcher would resume polling a repository that never catches up.
+        it("reports an unannotatable contract as not synced", async () => {
+            await expect(receive(false)).resolves.toBe(false);
         });
     });
 
@@ -1576,7 +1611,6 @@ describe("ContractManager", () => {
         const wrongScriptRow = createMockExtendedVtxo({
             txid: "ee".repeat(32),
             vout: 0,
-            virtualStatus: { state: "settled" },
             isSpent: false,
             script: contractB.script,
         });
@@ -1586,7 +1620,6 @@ describe("ContractManager", () => {
         const correctRow = createMockExtendedVtxo({
             txid: "ee".repeat(32),
             vout: 0,
-            virtualStatus: { state: "settled" },
             isSpent: true,
             script: contractB.script,
         });
@@ -1612,14 +1645,12 @@ describe("ContractManager", () => {
         const indexer = createMockIndexerProvider();
         const goodVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "aa".repeat(32),
-            virtualStatus: { state: "settled" },
         });
         // A row coming back tagged with the wrong script (e.g. indexer
         // mis-routing) must be dropped, not persisted under the contract's
         // address bucket.
         const badVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "bb".repeat(32),
-            virtualStatus: { state: "settled" },
             script: "ff".repeat(34),
         });
         (indexer.getVtxos as any).mockResolvedValue({

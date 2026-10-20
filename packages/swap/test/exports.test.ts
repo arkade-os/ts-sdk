@@ -27,7 +27,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
     ADVANCED_ENTRY,
-    CLIENT_ENTRY,
     PROTOCOL_ENTRY,
     ROOT_ENTRY,
     SWAP_ROOT,
@@ -46,7 +45,6 @@ const moduleOf = (entry: string) =>
     new Map(inventory(entry).map((e) => [e.name, e.module.replaceAll("\\", "/")] as const));
 
 const root = namesOf(ROOT_ENTRY);
-const client = namesOf(CLIENT_ENTRY);
 const protocol = namesOf(PROTOCOL_ENTRY);
 const advanced = namesOf(ADVANCED_ENTRY);
 
@@ -55,6 +53,19 @@ const advanced = namesOf(ADVANCED_ENTRY);
  * moving between groups reads as the curation changing, not as noise.
  */
 const CURATED_ROOT: readonly string[] = [
+    "buildOfferFillPlan",
+    "verifyOfferFillPlan",
+    "OFFER_FILL_TEMPLATE",
+    "OFFER_FILL_OWNERS",
+    "BuildOfferFillPlanOpts",
+    "FillSponsor",
+    "FillSponsorFare",
+    "deepFreeze",
+    "digestJointGraph",
+    "unsignedPsbtBytes",
+    "verifyJointGraph",
+    "JointGraph",
+
     // Solver-side claim packet stamping and classification.
     "appendArkadeScript",
     "CLAIM_PACKET_TYPE",
@@ -64,6 +75,7 @@ const CURATED_ROOT: readonly string[] = [
     // The client: factory, object, config, and the config's field types.
     "createSwapClient",
     "SwapClient",
+    "AcceptOptions",
     "SwapClientConfig",
     "SwapFilter",
     "DiscoveryConfig",
@@ -100,6 +112,13 @@ const CURATED_ROOT: readonly string[] = [
     "QuoteInput",
     "QuoteId",
     "QuoteLeg",
+    "AssetPaymentInput",
+    "AssetPaymentTerms",
+    "ArkadeCarrierChoice",
+    "ReceiverPaidCarrierQuote",
+    "TaxiIdentity",
+    "VerifiedCarrierTerms",
+    "RecordedAssetPayment",
     "AssetRef",
     "PinnedAmount",
     "MarketRef",
@@ -220,6 +239,7 @@ const CURATED_ROOT: readonly string[] = [
     "AssetSwap",
     "InvoiceFacts",
     "ChainSource",
+    "TxStatus",
     "LockupRegistrationFailed",
     "LockupSpendIndexer",
     "SwapContractRegistry",
@@ -527,6 +547,7 @@ describe("the @deprecated pointers", () => {
         "chainSourceFrom",
         "discoverMarkets",
         "DiscoverMarketsOptions",
+        "watchMarkets",
         "extractPreimage",
         "findMarket",
         "getAssetSwaps",
@@ -557,12 +578,15 @@ describe("the @deprecated pointers", () => {
         "onchainHtlcScript",
         "OnchainNetwork",
         "OnchainSendSwap",
+        "OnchainReceiveSwap",
+        "OnchainReceiveAction",
+        "OnchainReceiveNeedsChainSource",
+        "ReceiveLockupSwap",
         "paymentHashOf",
         "PreimageBlockedReason",
         "preimageForSwapRecord",
         "PreimageNotRecoverableError",
         "QUOTE_OPTIONS",
-        "RefundOutcome",
         "rfqClaimSecretOf",
         "RfqQuote",
         "RfqSwapRecord",
@@ -610,10 +634,8 @@ describe("the @deprecated pointers", () => {
         "SwapActivityInput",
         "Tx",
         "arkadeRefunder",
-        "awaitLockupFunding",
         "awaitRfqResolution",
         "cancelOffer",
-        "claimReceiveLockup",
         "classifyDepositSpend",
         "classifySpend",
         "createOffer",
@@ -630,14 +652,15 @@ describe("the @deprecated pointers", () => {
         "lightningSendContract",
         "lockupContractParams",
         "nextOnchainAction",
+        "nextOnchainReceiveAction",
         "normalizeRfqSwapRecord",
         "offerContract",
         "onchainSendProfile",
+        "onchainReceiveProfile",
         "pushClaim",
         "pushRefundWithoutReceiver",
         "readLockupFate",
         "rebuildRfqSwap",
-        "refundIfUnresolved",
         "registerLockupContract",
         "requestLightningReceive",
         "requestLightningSend",
@@ -661,6 +684,7 @@ describe("the @deprecated pointers", () => {
         "LightningSendProfile",
         "onchainReceiveRequest",
         "OnchainSendProfile",
+        "OnchainReceiveProfile",
         "onchainSendRequest",
         "relayTransport",
         "rfqSecretsProfile",

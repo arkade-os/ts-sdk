@@ -222,6 +222,7 @@ const retireOfferScripts = async (
             await wallet.getContractManager(),
             offer.map(offerFactsOf),
             record.swapPkScript,
+            { scope: wallet },
         );
     } catch (error) {
         console.warn(`[swap] could not retire offer script for ${record.id}`, error);

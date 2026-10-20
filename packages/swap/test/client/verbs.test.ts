@@ -162,6 +162,17 @@ describe("receive", () => {
         expect(wallet.sent).toEqual([]);
     });
 
+    it("receives over onchain into an L1 deposit, funded from outside the wallet", async () => {
+        const { client, wallet } = await harness();
+        const request = await client.receive({ amount: 99_000n, via: "onchain" });
+
+        expect(request.artifact).toMatchObject({ kind: "deposit", corridor: "onchain" });
+        expect(request.artifact.address).toMatch(/^bcrt1p/);
+        expect(request.route.give.corridor).toBe("onchain");
+        expect(request.take.amount).toBe(99_000n);
+        expect(wallet.sent).toEqual([]);
+    });
+
     it("refuses a corridor no receive can arrive over", async () => {
         const { client } = await harness();
         await expect(client.receive({ amount: 1_000n, via: "arkade" })).rejects.toThrow(

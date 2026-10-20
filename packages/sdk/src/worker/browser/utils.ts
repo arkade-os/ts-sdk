@@ -1,3 +1,5 @@
+import { assertTimerMs } from "../../utils/time";
+
 export const DEFAULT_DB_NAME = "arkade-service-worker";
 export const DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS = 10_000;
 
@@ -11,6 +13,7 @@ function normalizeOptions(
 ): Required<SetupServiceWorkerOptions> {
     const o: SetupServiceWorkerOptions =
         typeof pathOrOptions === "string" ? { path: pathOrOptions } : pathOrOptions;
+    assertTimerMs("activationTimeoutMs", o.activationTimeoutMs);
     return {
         path: o.path,
         activationTimeoutMs: o.activationTimeoutMs ?? DEFAULT_SERVICE_WORKER_ACTIVATION_TIMEOUT_MS,

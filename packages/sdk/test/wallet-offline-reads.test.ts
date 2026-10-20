@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
     ReadonlyWallet,
     InMemoryWalletRepository,
@@ -10,6 +10,13 @@ import {
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
+
+/** Spin until `predicate` holds, so a test never races the microtask queue. */
+const until = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200 && !predicate(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+};
 
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
@@ -68,23 +75,105 @@ const healthyIndexer = () =>
 
 async function createWallet(
     indexerProvider: IndexerProvider,
-    opts?: { getInfo?: ArkProvider["getInfo"]; storage?: Storage },
+    opts?: {
+        getInfo?: ArkProvider["getInfo"];
+        storage?: Storage;
+        lazyInitialization?: boolean;
+        getCoins?: OnchainProvider["getCoins"];
+    },
 ) {
     const identity = ReadonlySingleKey.fromPublicKey(
         await SingleKey.fromHex(privKeyHex).compressedPublicKey(),
     );
     return ReadonlyWallet.create({
         identity,
+        lazyInitialization: opts?.lazyInitialization,
         arkProvider: {
             getInfo: opts?.getInfo ?? (async () => arkInfo()),
         } as Partial<ArkProvider> as ArkProvider,
         indexerProvider,
-        onchainProvider: {} as OnchainProvider,
+        onchainProvider: {
+            getCoins: opts?.getCoins ?? (async () => []),
+            getTransactions: async () => [],
+        } as unknown as OnchainProvider,
         storage: opts?.storage ?? freshStorage(),
     });
 }
 
 describe("wallet offline-first reads (Scope 4)", () => {
+    it.each(["getVtxos", "getBalance", "getTransactionHistory"] as const)(
+        "%s still awaits synchronization and propagates terminal errors",
+        async (method) => {
+            const indexer = healthyIndexer();
+            const wallet = await createWallet(indexer);
+            await wallet.getVtxos();
+            let reject!: (error: Error) => void;
+            indexer.getVtxos = vi.fn(
+                () =>
+                    new Promise<Awaited<ReturnType<IndexerProvider["getVtxos"]>>>((_, fail) => {
+                        reject = fail;
+                    }),
+            );
+            let settled = false;
+            const read = wallet[method]().finally(() => {
+                settled = true;
+            });
+            const rejected = expect(read).rejects.toThrow("schema violation");
+            await until(() => !!reject);
+            expect(settled).toBe(false);
+            reject(new Error("schema violation"));
+            await rejected;
+            await wallet.dispose();
+        },
+    );
+
+    it("a warm wallet can read cached coins and balance while lazy boot is parked", async () => {
+        const storage = freshStorage();
+        const first = await createWallet(healthyIndexer(), { storage });
+        await first.getVtxos();
+        await first.dispose();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const indexer = healthyIndexer();
+        indexer.getVtxos = vi.fn(async () => {
+            await gate;
+            return { vtxos: [] };
+        });
+        const wallet = await createWallet(indexer, { storage, lazyInitialization: true });
+        try {
+            expect(await wallet.getStoredVtxos()).toEqual([]);
+            expect((await wallet.getStoredBalance()).boarding.loaded).toBe(false);
+            expect(wallet.getProviderConnectionState().syncing).toBe(true);
+        } finally {
+            release();
+            await (await wallet.getContractManager()).whenBooted();
+            await wallet.dispose();
+        }
+    });
+
+    it("getStoredBoardingUtxos drops a boarding coin the last fetch no longer returned", async () => {
+        const coin = {
+            txid: "aa".repeat(32),
+            vout: 0,
+            value: 5_000,
+            status: { confirmed: true, block_height: 1, block_hash: "bb", block_time: 1 },
+        };
+        let coins = [coin];
+        const wallet = await createWallet(healthyIndexer(), { getCoins: async () => coins });
+        try {
+            await wallet.getBoardingUtxos();
+            expect(await wallet.getStoredBoardingUtxos()).toHaveLength(1);
+
+            coins = []; // spent elsewhere: another device, or a unilateral exit
+            await wallet.getBoardingUtxos();
+            expect(await wallet.getStoredBoardingUtxos()).toEqual([]);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
     it("getVtxos returns repository state instead of throwing when the indexer is down", async () => {
         const wallet = await createWallet(downIndexer());
         await expect(wallet.getVtxos()).resolves.toEqual([]);
@@ -141,5 +230,61 @@ describe("provider connection state (Scope 5)", () => {
             source: "repository",
             provider: "indexer",
         });
+    });
+
+    it("reports syncing while a spend read's indexer sync is in flight", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [] }),
+            subscribeForScripts: async () => "sub-1",
+            unsubscribeForScripts: async () => undefined,
+            getSubscription: async function* () {},
+        };
+        const wallet = await createWallet(indexer as Partial<IndexerProvider> as IndexerProvider);
+        await wallet.getVtxos();
+        await until(() => wallet.getProviderConnectionState().syncing === false);
+
+        indexer.getVtxos = async () => {
+            await gate;
+            return { vtxos: [] };
+        };
+
+        const read = wallet.getSpendableVtxos();
+        await until(() => wallet.getProviderConnectionState().syncing === true);
+        expect(wallet.getProviderConnectionState().syncing).toBe(true);
+
+        release();
+        await read;
+        expect(wallet.getProviderConnectionState().syncing).toBe(false);
+    });
+
+    it("answers an explicit stored read without waiting on the indexer", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const indexer = {
+            getVtxos: async () => ({ vtxos: [] }),
+            subscribeForScripts: async () => "sub-1",
+            unsubscribeForScripts: async () => undefined,
+            getSubscription: async function* () {},
+        };
+        const wallet = await createWallet(indexer as Partial<IndexerProvider> as IndexerProvider);
+        await wallet.getVtxos();
+        await until(() => wallet.getProviderConnectionState().syncing === false);
+
+        indexer.getVtxos = async () => {
+            await gate;
+            return { vtxos: [] };
+        };
+
+        await expect(wallet.getStoredVtxos()).resolves.toEqual([]);
+        expect(wallet.getProviderConnectionState().syncing).toBe(true);
+
+        release();
+        await until(() => wallet.getProviderConnectionState().syncing === false);
     });
 });

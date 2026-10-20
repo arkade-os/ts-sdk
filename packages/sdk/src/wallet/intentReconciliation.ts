@@ -246,7 +246,7 @@ async function releaseFromServer(
  * arkd's answer when no queued intent spends the proof's inputs. The name alone is not enough:
  * arkd also returns it for a proof that fails verification.
  */
-function isNoMatchingIntentsError(e: unknown): boolean {
+export function isNoMatchingIntentsError(e: unknown): boolean {
     return (
         isArkError(e, ArkErrorName.INVALID_INTENT_PROOF) &&
         e.message.includes("no matching intents found")

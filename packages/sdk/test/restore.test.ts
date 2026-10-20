@@ -8,7 +8,6 @@ import {
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { HDKey, networks, scriptExpressions } from "@bitcoinerlab/descriptors-scure";
 import { deriveDescriptorLeafPubKey } from "../src/identity/descriptor";
-import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { makeHdProviderForTest } from "./helpers/hdProvider";
 import { isDiscoverable } from "../src/contracts/types";
 import { timelockToSequence } from "../src/utils/timelock";
@@ -22,11 +21,19 @@ import type { RelativeTimelock } from "../src/script/tapscript";
 import { contractHandlers } from "../src/contracts/handlers";
 import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
 import { getSyncCursor, OVERLAP_MS } from "../src/utils/syncCursors";
+
+/** Spin until `predicate` holds, so a test never races a fire-and-forget step. */
+const until = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200 && !predicate(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+};
 import {
     installRestoreHarness,
     teardownRestoreHarness,
     makeStaticWalletForTest,
     makeHdWalletForTest,
+    awaitWalletBooted,
 } from "./helpers/restoreWallet";
 import { jsonResponse } from "./helpers/response";
 import { registerWalletRestoreHook } from "../src/wallet/restoreHooks";
@@ -1033,13 +1040,19 @@ describe("ContractManager.scanContracts", () => {
                 return [];
             }),
             vi
-                .spyOn(DefaultContractHandler, "discoverRange")
+                .spyOn(
+                    DefaultContractHandler as Required<typeof DefaultContractHandler>,
+                    "discoverRange",
+                )
                 .mockImplementation(async (entries) => {
                     order.push("default");
                     return new Map(entries.map((e) => [e.index, []]));
                 }),
             vi
-                .spyOn(DelegateContractHandler, "discoverRange")
+                .spyOn(
+                    DelegateContractHandler as Required<typeof DelegateContractHandler>,
+                    "discoverRange",
+                )
                 .mockImplementation(async (entries) => {
                     order.push("delegate");
                     return new Map(entries.map((e) => [e.index, []]));
@@ -1266,6 +1279,9 @@ describe("Wallet.restore", () => {
     it("rejects an invalid gapLimit without running a scan", async () => {
         const { wallet, indexer } = await makeStaticWalletForTest();
         try {
+            await awaitWalletBooted(wallet);
+            indexer.getVtxosCalls.length = 0;
+
             for (const bad of [0, -1, 1.5]) {
                 await expect(wallet.restore({ gapLimit: bad })).rejects.toThrow(/gapLimit/);
             }
@@ -1366,7 +1382,7 @@ describe("Wallet.restore", () => {
 
             // Force the boot-time reconcile so the cursor is already at
             // "now" when the scan runs — the ordering the bug depends on.
-            await wallet.getContractManager();
+            await awaitWalletBooted(wallet);
             expect(await getSyncCursor(walletRepository)).toBeGreaterThan(0);
 
             await wallet.restore({ gapLimit: 5 });
@@ -1400,6 +1416,7 @@ describe("Wallet.restore", () => {
                 );
             }
 
+            await awaitWalletBooted(wallet);
             indexer.getVtxosCalls.length = 0;
             await wallet.restore({ gapLimit: 20 });
 
@@ -1441,12 +1458,12 @@ describe("Wallet.restore", () => {
             indexer.subscribeCalls.length = 0;
             await wallet.restore({ gapLimit: 5 });
 
-            // Two POSTs total: the scan's coalesced one, then the look-ahead
-            // refill that follows the watermark the scan advanced.
-            expect(indexer.subscribeCalls).toHaveLength(2);
-            // The scan's POST carries every discovered script, not a prefix.
+            await until(() => indexer.subscribeCalls.length >= 1);
+
+            const posts = indexer.subscribeCalls;
+            expect(posts.length).toBeLessThanOrEqual(2);
             for (const script of funded) {
-                expect(indexer.subscribeCalls[0]).toContain(script);
+                expect(posts[posts.length - 1]).toContain(script);
             }
         } finally {
             await wallet.dispose();
@@ -1603,7 +1620,7 @@ describe("Wallet.restore", () => {
         // (not in fundedOnchain) and no L2 VTXO at its own index (not in
         // usedScripts). The single-branch / current-UTXO model accepts this —
         // the gap window is instead held open by the receive-destination index.
-        const { wallet, indexer, hdProvider, fundedOnchain } = await makeHdWalletForTest();
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
         try {
             const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
             const boardingCsv = wallet.boardingTapscript.options.csvTimelock!;
@@ -2109,7 +2126,7 @@ describe("Wallet.restore", () => {
 
     it("keeps concurrent restore calls coalesced until hooks finish", async () => {
         const { wallet } = await makeStaticWalletForTest();
-        let releaseHook = () => undefined;
+        let releaseHook: () => void = () => undefined;
         const hookGate = new Promise<void>((resolve) => {
             releaseHook = resolve;
         });

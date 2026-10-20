@@ -20,12 +20,16 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
     getCommitmentTx: vi.fn(),
     getCommitmentTxConnectors: vi.fn(),
     getCommitmentTxForfeitTxs: vi.fn(),
-    getSubscription: vi.fn(() => ({
-        [Symbol.asyncIterator]: () => ({
-            next: () => new Promise(() => {}),
-        }),
-    })),
+    getSubscription: vi.fn(
+        () =>
+            ({
+                [Symbol.asyncIterator]: () => ({
+                    next: () => new Promise(() => {}),
+                }),
+            }) as never,
+    ),
     getVirtualTxs: vi.fn(),
+    getAssetDetails: vi.fn(),
     getVtxoChain: vi.fn(),
     getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
     subscribeForScripts: vi.fn().mockResolvedValue("mock-subscription-id"),

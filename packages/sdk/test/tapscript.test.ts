@@ -217,7 +217,7 @@ describe("VtxoScript", () => {
                 fixture.scripts.map((script) => ({
                     depth: 1,
                     version: TAP_LEAF_VERSION,
-                    script: hex.decode(script),
+                    script: Uint8Array.from(hex.decode(script)),
                 })),
             );
             const script = VtxoScript.decode(taptree);

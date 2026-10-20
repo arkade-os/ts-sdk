@@ -1,3 +1,5 @@
+import { assertTimerMs } from "../../utils/time";
+
 type SetupServiceWorkerOptions = {
     path: string;
     updateViaCache?: ServiceWorkerUpdateViaCache;
@@ -30,6 +32,7 @@ function normalizeOptions(
     Pick<SetupServiceWorkerOptions, "onNeedRefresh" | "onUpdated"> {
     const o: SetupServiceWorkerOptions =
         typeof pathOrOptions === "string" ? { path: pathOrOptions } : pathOrOptions;
+    assertTimerMs("activationTimeoutMs", o.activationTimeoutMs);
     return {
         path: o.path,
         updateViaCache: o.updateViaCache ?? "none",

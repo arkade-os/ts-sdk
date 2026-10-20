@@ -223,7 +223,7 @@ describe("solverLightningRail.quote", () => {
     });
 
     it("hands the decoded invoice facts to the corridor, not the raw request", async () => {
-        const spy = vi.fn(async () => negotiated(101_500));
+        const spy = vi.fn(async (..._args: unknown[]) => negotiated(101_500));
         rfqStub = spy;
         await solverLightningRail(depsWith()).quote({ raw: `lightning:${INVOICE}` }, ctxWith());
 

@@ -1,3 +1,4 @@
+import { assertTimerMs } from "../../utils/time";
 import {
     IWallet,
     WalletBalance,
@@ -104,6 +105,8 @@ import {
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
     RequestSend,
+    RequestSendWithDeadline,
+    RequestSendWithInputExpiryFloor,
     ResponseSend,
     RequestGetAssetDetails,
     ResponseGetAssetDetails,
@@ -152,6 +155,8 @@ import {
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
+import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
+import { captureInputExpiryFloor } from "../sendInputExpiry";
 import type {
     Contract,
     ContractEventCallback,
@@ -272,6 +277,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // are treated as long-running on both sides of the bus: the values below
     // are retained only for type completeness and are never enforced.
     SEND: 50_000,
+    SEND_WITH_DEADLINE: 50_000,
+    SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
     // Broadcast: the server round-trip a spend ends in, so it belongs
     // with the writes rather than the reads above.
@@ -426,6 +433,10 @@ class ServiceWorkerAssetManager extends ServiceWorkerReadonlyAssetManager implem
  * ```
  */
 interface ServiceWorkerWalletOptions {
+    /** Start contract synchronization in the background; inspect provider connection state. */
+    lazyInitialization?: boolean;
+    /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
+    lazyBoarding?: boolean;
     /** Arkade server endpoint and optional public key. */
     arkServer?: {
         url: string;
@@ -510,6 +521,7 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 };
 
 type MessageBusInitConfig = {
+    lazyInitialization?: boolean;
     wallet: SerializedIdentity;
     arkServer: {
         url: string;
@@ -531,6 +543,7 @@ const initializeMessageBus = (
     config: MessageBusInitConfig,
     timeoutMs = 2000,
 ) => {
+    assertTimerMs("messageBusTimeoutMs", timeoutMs);
     const initCmd = {
         tag: "INITIALIZE_MESSAGE_BUS",
         id: getRandomId(),
@@ -636,6 +649,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
+            lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
         });
     }
@@ -649,18 +663,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     ): Promise<W> {
         const arkServer = options.arkServer ?? { url: DEFAULT_ARKADE_SERVER_URL };
         const initWalletPayload = {
+            lazyBoarding: options.lazyBoarding,
             arkServerUrl: arkServer.url,
             arkServerPublicKey: arkServer.publicKey,
         };
 
         // Precompute the merged timeout map so page-side waiting and
         // worker-side enforcement are derived from the same source.
-        const messageTimeouts = options.messageTimeouts
-            ? ({
-                  ...DEFAULT_MESSAGE_TIMEOUTS,
-                  ...options.messageTimeouts,
-              } as Record<RequestType, number>)
-            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+        // An undefined value means "use the default", so it must not reach the bus.
+        const overrides = Object.fromEntries(
+            Object.entries(options.messageTimeouts ?? {}).filter(([, ms]) => ms !== undefined),
+        );
+        for (const [key, value] of Object.entries(overrides)) {
+            assertTimerMs(`messageTimeouts.${key}`, value);
+        }
+        const messageTimeouts = {
+            ...DEFAULT_MESSAGE_TIMEOUTS,
+            ...overrides,
+        } as Record<RequestType, number>;
 
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
@@ -754,6 +774,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 }
 
+                if (response.type === "SEND_DEADLINE_EXCEEDED") {
+                    if (event.source !== this.serviceWorker || response.tag !== request.tag) return;
+                    cleanup();
+                    if (
+                        (request.type === "SEND_WITH_DEADLINE" ||
+                            request.type === "SEND_WITH_INPUT_EXPIRY_FLOOR") &&
+                        response.error instanceof Error &&
+                        (response.broadcast === undefined || response.broadcast === false) &&
+                        Number.isSafeInteger(response.payload?.validUntil) &&
+                        response.payload.validUntil > 0 &&
+                        response.payload.validUntil === request.payload.validUntil
+                    ) {
+                        reject(new SendDeadlineExceededError(request.payload.validUntil));
+                    } else {
+                        reject(new Error("Invalid timed-send refusal response"));
+                    }
+                    return;
+                }
                 cleanup();
                 if (response.error) {
                     reject(restoreErrorName(response));
@@ -1681,8 +1719,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            dispose(): void {
-                return;
+            async dispose(): Promise<void> {
+                // The worker owns this manager's lifecycle.
             },
 
             [Symbol.dispose](): void {
@@ -1771,6 +1809,7 @@ export class ServiceWorkerWallet
             delegateUrl: options.delegateUrl,
             settlementConfig: options.settlementConfig,
             walletMode: options.walletMode,
+            lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
@@ -2028,31 +2067,61 @@ export class ServiceWorkerWallet
 
     async send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         const [first] = args;
-        const { recipients, selectedVtxos, maxChangeFee } =
-            args.length === 1 && first && "recipients" in first
-                ? (first as SendParams)
-                : {
-                      recipients: args as [Recipient, ...Recipient[]],
-                      selectedVtxos: undefined,
-                      maxChangeFee: undefined,
-                  };
-        const message: RequestSend = {
-            tag: this.messageTag,
-            type: "SEND",
-            id: getRandomId(),
-            // Omitted rather than sent as `undefined`, so an older worker sees
-            // exactly the payload it saw before.
-            payload: {
-                recipients,
-                ...(selectedVtxos ? { selectedVtxos } : {}),
-                ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
-            },
+        const {
+            recipients,
+            selectedVtxos,
+            maxChangeFee,
+            validUntil: wireDeadline,
+            inputExpiryFloor: wireInputExpiryFloor,
+        } = args.length === 1 && first && "recipients" in first
+            ? (first as SendParams)
+            : {
+                  recipients: args as [Recipient, ...Recipient[]],
+                  selectedVtxos: undefined,
+                  maxChangeFee: undefined,
+                  validUntil: undefined,
+                  inputExpiryFloor: undefined,
+              };
+        const validUntil = captureSendDeadline(wireDeadline);
+        const inputExpiryFloor = captureInputExpiryFloor(wireInputExpiryFloor);
+        // Optional fields are omitted rather than sent as `undefined`, so an
+        // older worker sees exactly the payload it saw before.
+        const options = {
+            ...(selectedVtxos ? { selectedVtxos } : {}),
+            ...(maxChangeFee !== undefined ? { maxChangeFee } : {}),
         };
+        const message: RequestSend | RequestSendWithDeadline | RequestSendWithInputExpiryFloor =
+            inputExpiryFloor !== undefined
+                ? {
+                      tag: this.messageTag,
+                      type: "SEND_WITH_INPUT_EXPIRY_FLOOR",
+                      id: getRandomId(),
+                      payload: {
+                          recipients,
+                          ...options,
+                          inputExpiryFloor,
+                          ...(validUntil === undefined ? {} : { validUntil }),
+                      },
+                  }
+                : validUntil === undefined
+                  ? {
+                        tag: this.messageTag,
+                        type: "SEND",
+                        id: getRandomId(),
+                        payload: { recipients, ...options },
+                    }
+                  : {
+                        tag: this.messageTag,
+                        type: "SEND_WITH_DEADLINE",
+                        id: getRandomId(),
+                        payload: { recipients, ...options, validUntil },
+                    };
 
         try {
             const response = await this.sendMessage(message);
             return (response as ResponseSend).payload.txid;
         } catch (error) {
+            if (error instanceof SendDeadlineExceededError) throw error;
             throw new Error(`Send failed: ${error}`);
         }
     }
@@ -2176,6 +2245,15 @@ export class ServiceWorkerWallet
                 eventCallback?: (event: SettlementEvent) => void,
                 options?: RenewVtxosOptions,
             ): Promise<string> {
+                // `options` is posted to the worker and `split.plan` is a function,
+                // which structured clone refuses. Named rather than left to surface
+                // as a DataCloneError from inside postMessage.
+                if (options?.split) {
+                    throw new Error(
+                        "renewVtxos: split is not supported over the service worker — " +
+                            "its plan callback cannot cross the message bus",
+                    );
+                }
                 const message: RequestRenewVtxos = {
                     tag: messageTag,
                     type: "RENEW_VTXOS",

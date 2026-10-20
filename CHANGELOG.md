@@ -14,18 +14,94 @@ style and have not been backfilled.
 
 ### Added
 
+- **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
+  A covenant can read state the transaction carries — `tx.packet(type)` in the
+  spend itself, `tx.inputs[i].packet(type)` when the output is spent later —
+  but the builder only ever wrote the asset and emulator packets, so a
+  contract keeping its terms in a packet had to rebuild the extension output
+  by hand after `build()`. The caller's packet now joins those two in the one
+  extension output; a type either of them already uses is refused at build.
+
+- **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
+  note's key is imported into the wallet and recovered through the next
+  settlement, net of intent fees; the claim result reports it under the new
+  `recovering` field. The imported key is held in a keyring
+  (`KeyringDescriptorProvider`, now exported) until the recovery settles,
+  then purged. Re-running the claim on the same note resumes an interrupted
+  import.
+
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
 
+- **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
+  takes a plan that returns piece amounts against the already-priced subtotal,
+  per-piece output fee, per-output ceiling and dust floor. A plan that claims
+  too much, breaks the ceiling, leaves dust or more unclaimed, or splits
+  asset-bearing inputs is refused rather than reshaped. Automatic renewal still
+  settles into one output, and `split` is refused on the service-worker wallet.
+
 ### Changed
+
+- **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
+  cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
+  fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
+  Timer-backed settings additionally reject delays above 2,147,483,647 milliseconds
+  (the portable timer limit). Zero still disables optional timers or schedules an
+  immediate timeout/poll, depending on the existing API; reconnect caps still clamp
+  the base delay rather than requiring a particular ordering. A `messageTimeouts` key
+  set to `undefined` now falls back to its default instead of reaching the worker,
+  where it armed a timer of `undefined` and timed every such message out at once; the
+  message bus rejects such keys outright.
 
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
   no longer hide subdust outputs. Explicit filter flags, spent-output
   exclusions, and the separate spendability-gated accessor are unchanged.
 
+- **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
+  `[]` with no wallet, which a caller could not tell from a wallet with no
+  boarding coins; it now throws `WalletNotInitializedError`, like
+  `GET_VTXOS`. (#943)
+
 ### Breaking Changes
+
+- Removed the deprecated `receivePkScriptFor` helper from `@arkade-os/swap/protocol`.
+
+- **Public offchain submissions share the wallet transaction lock.**
+  `buildAndSubmitOffchainTx` waits behind `send`, `settle`, and other offchain
+  submissions. The lock is non-reentrant: do not call it from a settlement
+  callback while that settlement still holds the lock.
+
+- **`IContractManager.dispose()` returns a promise.** Implementations must
+  return `Promise<void>`; callers can await teardown, including in-flight
+  event handling and repository writes.
+
+- **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
+  the ad it named; kind 38859 now carries the signed solver card, exported
+  as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.
+- **`@arkade-os/swap`: `SnapshotRef.source` gains `"local"`.** It marks a
+  snapshot answered by pinned cards alone, while the registry is unreachable
+  and nothing is cached; such a snapshot carries no `registry`. Code with an
+  exhaustive `switch` on `source` must handle it.
+- **`@arkade-os/swap/protocol` no longer exports `refundIfUnresolved`,
+  `RefundOutcome`, `claimReceiveLockup` or `awaitLockupFunding`.** The
+  deprecated refund loop pushed one capped refund and reported `refunded`
+  while outputs past the 16-input cap stayed at the lockup, and its type hid
+  the `left` count that would have said so. `claimReceiveLockup` did the same
+  to a claim after publishing `P`, so the outputs it left went back to the
+  solver at their CLTV; `awaitLockupFunding` was its wait. `client.recover()`
+  and the drive finish both; to drive them by hand, call
+  `pushRefundWithoutReceiver` or `pushClaim` until it reports nothing `left`.
+- **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
+  `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
+  `ArkadeCashClaimResult.recovering`, and only a failed import is reported
+  as unclaimed. Code matching on `"swept"` must handle `recovering`
+  instead.
+
+- **`ArkadeCash` accepts only the `arkadecash` and `tarkadecash`
+  prefixes.** Any other HRP throws on decode and on mint. Notes minted
+  by 0.4.48-rc.0 with the `arkcash` prefix can no longer be claimed.
 
 - **Repository collection reads are replaced by bounded pages.** Custom SDK
   contract, intent, or wallet repositories and swap repositories must implement
@@ -184,6 +260,32 @@ style and have not been backfilled.
 
 ### Features
 
+- **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
+  optional third argument reports `preparing` after lock acquisition and
+  `registration_attempt` before intent registration, allowing backend callers
+  to retain reservations once registration may have been attempted. `IWallet`
+  and `ServiceWorkerWallet` retain their two-argument settlement API.
+
+- **Opt-in faster startup with repository-first reads.** Wallet
+  construction waited for the look-ahead band, the boot reconcile and the
+  watcher start, so a returning wallet showed nothing until the indexer
+  answered. `lazyInitialization: true` (on `Wallet`, `ReadonlyWallet` and
+  the service-worker factories) runs that boot in the background, and the
+  new `getStoredBalance()`, `getStoredVtxos()` and
+  `getStoredBoardingUtxos()` answer from the repository at once, requesting
+  a sync behind the read. They are for display, never coin selection, and
+  can be empty or stale: `ContractSyncState` and `ProviderConnectionState`
+  gain `syncing` (a provider sync is in flight), and
+  `ContractManager.whenBooted()` settles when the background boot is done,
+  which then reports any failure through `getSyncState()`.
+  `WalletBalance.boarding.loaded` is false until this wallet instance has
+  fetched its boarding inputs. The service-worker factories also take
+  `lazyBoarding: true`, which moves the explorer-backed boarding and
+  history refresh off `INIT_WALLET` and broadcasts `UTXO_UPDATE` when it
+  completes. Both options default to false, and the existing reads
+  (`getVtxos`, `getBalance`, `getTransactionHistory`) still sync before
+  answering. (#943)
+
 - **`vtxoSyncOverlapMs` sets how far back each delta sync re-reads.**
   Every delta sync re-read the 24 hours before the sync cursor, so a
   sync seconds after a full one still paged a day of VTXO history from
@@ -311,9 +413,120 @@ style and have not been backfilled.
   listed under Breaking Changes above. The shape is exported as
   `ArkadeServerProvider`, so a caller building a derivation-only client
   has a name to import. (#734)
+- **`@arkade-os/swap`: markets come from the cards solvers publish.** A
+  registry can list a solver by key alone; its markets come from the signed
+  card it publishes over Nostr (kind 38859, `d` = network).
+  `DiscoveryConfig.transportCards` and `discoverMarkets({ transportCards })`
+  default to `nostrCardFetcher` (`@arkade-os/swap/nostr`, optional
+  `nostr-tools` peer); `null` opts out. The fetcher fills a missed delivery
+  with the newest card it has seen, still subject to the discovery client's
+  card-age limit. A listed solver whose card still fails to arrive (a fresh
+  process whose relay is slow or dead, or a caller's own fetcher) no longer
+  drops out: for up to two hours such an answer leaves the cache alone,
+  `discoverMarkets` and `watchMarkets` keep serving the solver's cached
+  markets, and the client never mixes cached cards into a live snapshot.
+  Both ask the registry again after a minute, not on every call. A missing
+  `nostr-tools` peer is not a failed delivery. The markets cache lasts ten
+  minutes, not an hour, and `watchMarkets` (`@arkade-os/swap/protocol`)
+  keeps a long-lived view current. Needs `@arkade-os/solver-discovery`
+  0.3.0.
 
 ### Bug Fixes
 
+- **`settle` no longer warns of a lingering intent the server refused.** A
+  settle that fails before commit deletes its intent so the next one doesn't
+  hit "duplicated input". When arkd had refused the registration (e.g.
+  `INTENT_INSUFFICIENT_FEE`) there was nothing to delete, and its "no
+  matching intents" answer was logged as a possibly lingering intent. That
+  answer now counts as released, as intent reconciliation already treats it.
+
+- **Swap refunds require a recognized refund spend leaf.** A claim checkpoint can be
+  visible before its preimage arrives, while retaining the same transaction id. The
+  lockup reader previously treated that missing witness as a refund and stopped
+  watching a successful payment. Incomplete claims and unsupported spend data now
+  remain unresolved until proof arrives; refund evidence must match every lockup outpoint.
+
+- **The failsafe poll no longer reports a just-spent coin as received
+  (#1083).** The stream updates the watcher at once, but the repository only
+  once the event's sync lands; a poll in that gap read the stale rows and
+  emitted the transaction inverted (the spent coin received, the new one
+  spent), then re-emitted both on the next tick. The poll now skips a contract
+  while a handler for its events is still running or settled during the read,
+  and after a failed sync until a later event or reconnect syncs it.
+  `ContractWatcher.startWatching` accepts a callback that returns a promise
+  for this, and `ContractManager` returns its handler's.
+- **`@arkade-os/swap`: an `arkade -> onchain` send no longer settles on an
+  unconfirmed L1 claim.** The swap ended `settled` the moment the solver
+  claimed the Arkade lockup, which only proves the solver read `P` off the
+  trader's claim — not that the claim was mined. Built at the relay floor on
+  every network, that claim can sit in the mempool until the solver's refund
+  leaf matures on median-time-past and replaces it, taking both sides of the
+  trade from a wallet already reporting success; an eviction loses the same
+  money with no solver at fault, since nothing re-broadcast it. The payout now
+  waits for the claim to confirm, is re-published when the chain has forgotten
+  it, and is replaced at a higher fee while it stays unconfirmed. `ChainSource`
+  gains two optional reads for this (`getTxStatus`, `getFeeRate`), both
+  implemented by the package's Esplora sources; a chain source without
+  `getTxStatus` keeps the old behaviour, and the old exposure.
+- **Selected send inputs normalize their expiry before checking a funding floor.**
+  JSON date strings and millisecond timestamps now receive the same expiry check
+  as `Date` values, and those normalized inputs reach transaction construction.
+- **Retry deadlines stay local to the funding attempt.** A tighter deadline on
+  a retry no longer overwrites the durable bound of an earlier ambiguous send.
+  Failed non-submission proof writes preserve the original authenticated send
+  deadline error and leave the contract watched until the proof is durable.
+- **Asset-payment comparisons ignore object key order.** Equivalent restored
+  terms and recipients no longer conflict with their verified quote. Malformed
+  stored payment terms are isolated from healthy swaps during listing and restore.
+  A funded offer whose fate changes during restore remains stored and watched;
+  its malformed public projection cannot poison readiness or other updates.
+
+- **`wallet.dispose()` waits for contract events still being handled.** It
+  stopped the contract watcher but returned while an event handler could still
+  be syncing, so that handler could write to storage the caller had already
+  closed. `ContractManager.dispose()` now returns a promise that settles once
+  in-flight events and any look-ahead drain finish, `ReadonlyWallet.dispose()`
+  awaits it, and an event delivered after dispose is dropped. `ContractManager`
+  also supports `await using`.
+- **`@arkade-os/swap`: one dead relay no longer kills a Node 22 process.**
+  nostr-tools 2.25 closes a socket from its `onerror`, and Node 22's
+  WebSocket re-fires `error` synchronously from `close()` on a connecting
+  socket; the recursion overflowed the stack. Both relay pools now use a
+  socket whose `close()` runs once.
+- **`@arkade-os/swap`: a pinned card no longer stands in for an unreachable
+  registry.** A local card always counts as answering, so a registry outage
+  replaced the cached markets with the pins alone. Only a registry answering
+  now replaces the cache. With nothing cached, the client still answers from
+  the pins, as a `source: "local"` snapshot that asks the registry again
+  after a minute rather than standing for the ten-minute TTL. `resolve()`
+  answers from them too, without the network, so a payment rail still offers
+  a pinned solver; 0.1.0-rc.24 left it out.
+- **`@arkade-os/swap`: dust sent to a lockup can no longer block the trader's
+  claim or refund.** Anyone can pay a lockup address, and both spends took
+  every output there. A few dozen dust outputs pushed the transaction past
+  arkd's `maxTxWeight`, so the refund of a send-leg lockup could never be
+  built and the funds stayed stuck. `pushClaim` and
+  `pushRefundWithoutReceiver` now spend at most `MAX_LOCKUP_SPEND_INPUTS` (16)
+  outputs, the largest first. `pushClaim` also leaves swept outputs out
+  instead of refusing the whole claim: only the sender's leaf can recover
+  them. The value gate weighs every live output, not just the batch the claim
+  spends. `pushClaim` returns the outputs it `spent` and how many live
+  outputs it `left`, so the swap manager re-claims any remainder on a later
+  pass, passing only outputs no claim has taken yet.
+  `pushRefundWithoutReceiver` returns how many outputs it `left` and which it
+  `spent`, and the manager keeps the swap live until none are left;
+  `arkadeRefunder` skips outputs an earlier pass already refunded, which a
+  lagging indexer still lists. A receive swap now settles once its claim is
+  out even if swept outputs remain: `readLockupFate` takes `receiver: true`
+  for that read.
+- **`@arkade-os/swap`: a refund that worked is no longer marked `failed`.**
+  `arkadeRefunder` remembers the outputs a partial refund spent only in
+  memory, so after a restart, or with a second refunder, a read that still
+  listed them made the next push name a spent output. The manager reported
+  the `VTXO_ALREADY_SPENT` rejection as a failure and, past
+  `refundLocktime + REFUND_MTP_LAG_SECONDS`, ended the swap `failed`. It now
+  retries on the next pass, as the claim path already did, and step 1
+  settles a spend that was the solver's.
 - **A partial VTXO filter no longer drops recoverable coins.**
   `getSpendableVtxos` and `getVtxos` defaulted their filter as a whole,
   so any filter object, even one carrying only `maxSyncAgeMs`,

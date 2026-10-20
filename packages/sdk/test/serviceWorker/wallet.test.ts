@@ -445,7 +445,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("ProviderUnavailableError");
     });
 
@@ -465,7 +465,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = await wallet.getArkadeInfo().catch((e: unknown) => e as Error);
+        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("Error");
         expect((err.cause as Error).message).toBe("no cached snapshot");
     });
@@ -1027,6 +1027,25 @@ describe("ServiceWorkerWallet", () => {
         await expect(wallet.restore()).rejects.toThrow("boom");
     });
 
+    // `split.plan` is a function and the options object is posted to the worker.
+    it("refuses renewVtxos with a split rather than failing to clone it", async () => {
+        const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness();
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        const manager = await wallet.getVtxoManager();
+
+        await expect(
+            manager.renewVtxos(undefined, { split: { maxOutputs: 4, plan: () => [1000n] } }),
+        ).rejects.toThrow("split is not supported over the service worker");
+        expect(serviceWorker.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: "RENEW_VTXOS" }),
+        );
+    });
+
     it("runs local hooks after worker recovery", async () => {
         const events: string[] = [];
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) => {
@@ -1065,7 +1084,7 @@ describe("ServiceWorkerWallet", () => {
         });
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
         const wallet = createSWWallet(serviceWorker as any, messageTag);
-        let releaseHook = () => undefined;
+        let releaseHook: () => void = () => undefined;
         const hookGate = new Promise<void>((resolve) => {
             releaseHook = resolve;
         });
@@ -1866,6 +1885,26 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             type: "single-key",
             privateKey: TEST_PRIVATE_KEY_HEX,
         });
+    });
+
+    it.each([false, true])("forwards opt-in startup options for readonly=%s", async (readonly) => {
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const { serviceWorker } = await setup(identity);
+        const factory = readonly ? ServiceWorkerReadonlyWallet : ServiceWorkerWallet;
+        const wallet = await factory.create({
+            serviceWorker: serviceWorker as any,
+            arkServer: { url: "https://ark.test" },
+            identity,
+            storage: storage(),
+            lazyInitialization: true,
+            lazyBoarding: true,
+        });
+        expect(getInitializeMessage(serviceWorker).config.lazyInitialization).toBe(true);
+        expect(getInitWalletMessage(serviceWorker).payload.lazyBoarding).toBe(true);
+        serviceWorker.postMessage.mockClear();
+        await (wallet as any).reinitialize();
+        expect(getInitializeMessage(serviceWorker).config.lazyInitialization).toBe(true);
+        expect(getInitWalletMessage(serviceWorker).payload.lazyBoarding).toBe(true);
     });
 
     it("ServiceWorkerWallet.create uses the default Arkade server URL when omitted", async () => {

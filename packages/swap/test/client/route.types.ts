@@ -27,15 +27,12 @@ export const onchainBtc: Ep<"onchain"> = {
     instrument: wallet,
 };
 
-// The four implemented routes are representable.
+// The five implemented routes are representable.
 export const assetSwap: Route = { give: arkadeBtc, take: arkadeBtc };
 export const lightningSend: Route = { give: arkadeBtc, take: lightningBtc };
 export const lightningReceive: Route = { give: lightningBtc, take: arkadeBtc };
 export const onchainSend: Route = { give: arkadeBtc, take: onchainBtc };
-
-const inbound = { give: onchainBtc, take: arkadeBtc };
-// @ts-expect-error `onchain -> arkade` is outside the union until the manager owns the L1 refund path
-export const inboundOnchain: Route = inbound;
+export const onchainReceive: Route = { give: onchainBtc, take: arkadeBtc };
 
 const lightningToOnchain = { give: lightningBtc, take: onchainBtc };
 // @ts-expect-error no route crosses two non-arkade corridors

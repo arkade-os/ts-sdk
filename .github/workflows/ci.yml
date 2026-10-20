@@ -33,7 +33,7 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      - name: Type-check sdk
+      - name: Type-check sdk (src and tests)
         run: pnpm -C packages/sdk run typecheck
 
       - name: Type-check sdk type tests
@@ -42,7 +42,7 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Type-check swap
+      - name: Type-check swap (src and tests)
         run: pnpm -C packages/swap run typecheck
 
       - name: Smoke-test sdk dist
@@ -82,6 +82,7 @@ jobs:
             group: settlement-delegation
             test_files: >-
               test/e2e/settlement.test.ts
+              test/e2e/early-settlement-fee.test.ts
               test/e2e/boardingRotation.test.ts
               test/e2e/non-interactive-delegate.test.ts
               test/e2e/contract-params-change.test.ts
