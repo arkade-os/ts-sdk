@@ -202,6 +202,14 @@ export interface VtxoChain {
     page?: PageResponse;
 }
 
+/** `GetUtxos` wire shape; 64-bit integers arrive as strings, zero fields may be omitted. */
+interface WireUtxo {
+    outpoint: Outpoint;
+    amount: string | number;
+    script: string;
+    spend: { txid: string; confirmedAtTime?: string | number; confirmedAtHeight?: string | number };
+}
+
 export interface SubscriptionResponse {
     txid?: string;
     scripts: string[];
@@ -255,6 +263,28 @@ export type GetVtxosOptions = PaginationOptions & {
               scripts?: never;
           }
     );
+
+/** Filters of {@link IndexerProvider.getUtxos}: scripts or outpoints, not both. */
+export type GetUtxosOptions = PaginationOptions &
+    ({ scripts: string[]; outpoints?: never } | { outpoints: Outpoint[]; scripts?: never });
+
+/** An onchain coin whose spend the operator signed or watched, and that spend. */
+export interface IndexerUtxo extends Outpoint {
+    value: number;
+    script: string;
+    /** A batch commitment, a cosigned onchain tx, or the spend of an unrolled VTXO. */
+    spentBy: string;
+    /** Set once the spending tx confirms. */
+    spendConfirmation?: { height: number; time: number };
+}
+
+/** The Arkade server predates `GetUtxos` (arkd v0.9.22). */
+export class IndexerUtxosUnsupportedError extends Error {
+    constructor() {
+        super("Arkade server does not support GetUtxos");
+        this.name = "IndexerUtxosUnsupportedError";
+    }
+}
 
 export interface IndexerProvider {
     /**
@@ -363,6 +393,13 @@ export interface IndexerProvider {
     getVtxos(opts?: GetVtxosOptions): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
 
     /**
+     * Fetch onchain coins whose spend the operator signed or watched: boarding inputs of a
+     * batch, inputs of a cosigned onchain tx, and spent unrolled VTXOs. Optional; a server
+     * without it throws {@link IndexerUtxosUnsupportedError}.
+     */
+    getUtxos?(opts: GetUtxosOptions): Promise<{ utxos: IndexerUtxo[]; page?: PageResponse }>;
+
+    /**
      * Fetch metadata for a specific asset id.
      *
      * @param assetId - Asset identifier
@@ -405,6 +442,8 @@ export interface IndexerProvider {
 export class RestIndexerProvider implements IndexerProvider {
     /** Overrides {@link configureEventSource} for this provider's subscription. */
     protected readonly eventSource?: EventSourceFactory;
+
+    private utxosUnsupported = false;
 
     /** @see fetchVtxosJson */
     private readonly inFlightVtxoReads = new Map<
@@ -792,6 +831,34 @@ export class RestIndexerProvider implements IndexerProvider {
         }
     }
 
+    async getUtxos(opts: GetUtxosOptions): Promise<{ utxos: IndexerUtxo[]; page?: PageResponse }> {
+        const hasScripts = (opts.scripts?.length ?? 0) > 0;
+        const hasOutpoints = (opts.outpoints?.length ?? 0) > 0;
+        if (hasScripts === hasOutpoints) {
+            throw new Error("getUtxos needs either scripts or outpoints");
+        }
+        if (this.utxosUnsupported) throw new IndexerUtxosUnsupportedError();
+        const params = new URLSearchParams();
+        for (const script of opts.scripts ?? []) params.append("scripts", script);
+        for (const o of opts.outpoints ?? []) params.append("outpoints", `${o.txid}:${o.vout}`);
+        if (opts.pageIndex !== undefined) params.append("page.index", opts.pageIndex.toString());
+        if (opts.pageSize !== undefined) params.append("page.size", opts.pageSize.toString());
+        const res = await indexerFetch(`${this.serverUrl}/v1/indexer/utxos?${params.toString()}`);
+        // A valid query answers 200 even when nothing matches; 404 is a server without the route.
+        if (res.status === 404) {
+            this.utxosUnsupported = true;
+            throw new IndexerUtxosUnsupportedError();
+        }
+        if (!res.ok) {
+            throw new Error(`Failed to fetch utxos: ${res.statusText}`);
+        }
+        const data = await res.json();
+        if (!Response.isUtxosResponse(data)) {
+            throw new Error("Invalid utxos data received");
+        }
+        return { utxos: data.utxos.map(convertUtxo), page: data.page ?? undefined };
+    }
+
     async getAssetDetails(assetId: string): Promise<AssetDetails> {
         const url = `${this.serverUrl}/v1/indexer/asset/${encodeURIComponent(assetId)}`;
         const res = await indexerFetch(url);
@@ -848,6 +915,19 @@ export class RestIndexerProvider implements IndexerProvider {
             console.warn(`Failed to unsubscribe to scripts: ${errorText}`);
         }
     }
+}
+
+function convertUtxo(utxo: WireUtxo): IndexerUtxo {
+    const height = Number(utxo.spend.confirmedAtHeight ?? 0);
+    const time = Number(utxo.spend.confirmedAtTime ?? 0);
+    return {
+        txid: utxo.outpoint.txid,
+        vout: utxo.outpoint.vout,
+        value: Number(utxo.amount),
+        script: utxo.script,
+        spentBy: utxo.spend.txid,
+        ...((height > 0 || time > 0) && { spendConfirmation: { height, time } }),
+    };
 }
 
 function withPage(url: string, opts?: PaginationOptions): string {
@@ -1083,6 +1163,35 @@ namespace Response {
             typeof data === "object" &&
             Array.isArray(data.vtxos) &&
             data.vtxos.every(isVtxo) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    function isWireInt(data: unknown): boolean {
+        return typeof data === "string" || typeof data === "number";
+    }
+
+    function isUtxo(data: any): data is WireUtxo {
+        return (
+            typeof data === "object" &&
+            data !== null &&
+            isOutpoint(data.outpoint) &&
+            isWireInt(data.amount) &&
+            typeof data.script === "string" &&
+            typeof data.spend === "object" &&
+            data.spend !== null &&
+            isTxid(data.spend.txid)
+        );
+    }
+
+    export function isUtxosResponse(
+        data: any,
+    ): data is { utxos: WireUtxo[]; page?: PageResponse | null } {
+        return (
+            typeof data === "object" &&
+            data !== null &&
+            Array.isArray(data.utxos) &&
+            data.utxos.every(isUtxo) &&
             (!data.page || isPageResponse(data.page))
         );
     }

@@ -4,6 +4,7 @@ import { hex } from "@scure/base";
 import {
     ContractManager,
     DefaultVtxo,
+    IndexerUtxosUnsupportedError,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     networks,
@@ -92,6 +93,7 @@ const pendingOf = async (repo: InMemoryWalletRepository) =>
 async function setup(
     getCoins: () => Promise<any[]>,
     outspends: any[] = [{ spent: false }, { spent: true, txid: "cc".repeat(32) }],
+    getUtxos?: (opts: any) => Promise<{ utxos: any[] }>,
 ) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
@@ -103,14 +105,18 @@ async function setup(
         getChainTip: vi.fn(async () => ({ ...tip, time: 0, hash: "" })),
         watchAddresses: vi.fn(async () => () => {}),
     } as any;
+    const indexerProvider = {
+        ...createMockIndexerProvider(),
+        ...(getUtxos && { getUtxos: vi.fn(getUtxos) }),
+    };
     const manager = await ContractManager.create({
-        indexerProvider: createMockIndexerProvider(),
+        indexerProvider,
         contractRepository,
         walletRepository,
         onchainProvider,
         network: networks.regtest,
     });
-    return { manager, walletRepository, contractRepository, onchainProvider, tip };
+    return { manager, walletRepository, contractRepository, onchainProvider, tip, indexerProvider };
 }
 
 describe("ContractManager.syncOnchain", () => {
@@ -376,6 +382,113 @@ describe("ContractManager.syncOnchain", () => {
             status: { confirmed: true, block_height: 210, isLeaf: true },
         });
         expect(row.status.fromExplorer).toBeUndefined();
+        manager.dispose();
+    });
+
+    it("takes the spender of a vanished coin from arkd instead of outspends", async () => {
+        const arkdSpender = "ee".repeat(32);
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
+        const { manager, walletRepository, onchainProvider, indexerProvider } = await setup(
+            getCoins,
+            undefined,
+            async () => ({ utxos: [{ ...coin, script: boarding.script, spentBy: arkdSpender }] }),
+        );
+        await manager.syncOnchain();
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: arkdSpender });
+        expect(onchainProvider.getTxOutspends).not.toHaveBeenCalled();
+        expect(indexerProvider.getUtxos).toHaveBeenLastCalledWith({
+            outpoints: [{ txid: coin.txid, vout: coin.vout }],
+        });
+        manager.dispose();
+    });
+
+    it("marks a coin spent once arkd saw the spend confirm, though the explorer lags", async () => {
+        const record = {
+            ...coin,
+            script: boarding.script,
+            spentBy: "ee".repeat(32),
+            spendConfirmation: { height: 301, time: 0 },
+        };
+        let arkdKnows = false;
+        const { manager, walletRepository } = await setup(
+            async () => [coin],
+            undefined,
+            async () => ({ utxos: arkdKnows ? [record] : [] }),
+        );
+        await manager.syncOnchain();
+        arkdKnows = true;
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: record.spentBy });
+        manager.dispose();
+    });
+
+    it("leaves a listed coin visible while arkd's spend of it is unconfirmed", async () => {
+        const record = { ...coin, script: boarding.script, spentBy: "ee".repeat(32) };
+        const { manager, walletRepository } = await setup(
+            async () => [coin],
+            undefined,
+            async () => ({ utxos: [record] }),
+        );
+        await manager.syncOnchain();
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        manager.dispose();
+    });
+
+    it("names the spender of a coin already marked spent without one", async () => {
+        const arkdSpender = "ee".repeat(32);
+        const { manager, walletRepository } = await setup(
+            async () => [],
+            undefined,
+            async () => ({ utxos: [{ ...coin, script: boarding.script, spentBy: arkdSpender }] }),
+        );
+        await saveVtxosForContract(walletRepository, boarding, [
+            { ...toOnchainCoinRow(coin, boarding, script), isSpent: true, spentBy: "" },
+        ]);
+        const events: string[] = [];
+        manager.onContractEvent((e) => events.push(e.type));
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: arkdSpender });
+        expect(events).toEqual([]);
+        manager.dispose();
+    });
+
+    it("falls back to outspends quietly on a server without GetUtxos", async () => {
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
+        const { manager, walletRepository } = await setup(getCoins, undefined, async () => {
+            throw new IndexerUtxosUnsupportedError();
+        });
+        const warn = vi.spyOn(console, "warn");
+        await manager.syncOnchain();
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: "cc".repeat(32) });
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
+        manager.dispose();
+    });
+
+    it("uses coins the caller already fetched", async () => {
+        const { manager, walletRepository, onchainProvider } = await setup(async () => []);
+
+        await manager.syncOnchain([boarding.script], new Map([[boarding.script, [coin]]]));
+
+        expect(onchainProvider.getCoins).not.toHaveBeenCalled();
+        expect(await collectScriptVtxos(walletRepository, boarding.script)).toHaveLength(1);
         manager.dispose();
     });
 

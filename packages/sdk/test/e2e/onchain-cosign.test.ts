@@ -156,6 +156,28 @@ describe("onchain cosign", () => {
         expect(row?.spentBy).toBe(txid);
     });
 
+    it("arkd names the cosigned spend of a boarding coin, then its confirmation", {
+        timeout: 120_000,
+    }, async () => {
+        const wallet = await createWallet();
+        const coin = await fundBoarding(wallet);
+        const indexer = new RestIndexerProvider(ARK_SERVER_URL);
+        const outpoints = [{ txid: coin.txid, vout: coin.vout }];
+
+        const txid = await wallet.sendOnchain({
+            outputs: [{ address: await externalAddress(), amount: 50_000 }],
+        });
+        const [pending] = (await indexer.getUtxos({ outpoints })).utxos;
+        expect(pending).toMatchObject({ ...outpoints[0], value: coin.value, spentBy: txid });
+
+        await confirm(txid);
+        await waitFor(
+            async () =>
+                (await indexer.getUtxos({ outpoints })).utxos[0]?.spendConfirmation !== undefined,
+        );
+        expect((await storedRow(wallet, coin))?.spentBy).toBe(txid);
+    });
+
     it("cosigns an external PSBT mixing a foreign input with a boarding coin", {
         timeout: 120_000,
     }, async () => {

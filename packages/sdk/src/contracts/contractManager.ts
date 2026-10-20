@@ -1,6 +1,10 @@
 import { collectContracts } from "../repositories/contractRepository";
 import { hex } from "@scure/base";
-import { IndexerProvider } from "../providers/indexer";
+import {
+    IndexerProvider,
+    IndexerUtxosUnsupportedError,
+    type IndexerUtxo,
+} from "../providers/indexer";
 import { isRetryableProviderError } from "../providers/availability";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -28,7 +32,7 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { speculativeReceiveMetadata } from "./handlers/helpers";
-import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
+import { Coin, ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
@@ -427,10 +431,11 @@ export interface IContractManager extends Disposable {
     /**
      * Fetch onchain coins for onchain-scoped contracts (and contracts holding
      * unspent unrolled outputs), upsert them, and mark vanished ones spent.
-     * No-op without `onchainProvider` and `network`. Narrowed by `scripts`.
+     * No-op without `onchainProvider` and `network`. Narrowed by `scripts`; `fetched` holds coins
+     * the caller already fetched, by script, so they are not fetched again.
      * Optional (like {@link watchScript}): the service-worker proxy does not forward it yet.
      */
-    syncOnchain?(scripts?: string[]): Promise<void>;
+    syncOnchain?(scripts?: string[], fetched?: ReadonlyMap<string, Coin[]>): Promise<void>;
 
     /**
      * Record `txid` as the pending spender of stored onchain coins. A sync confirms it once the
@@ -537,6 +542,8 @@ export type GetAllSpendingPathsOptions = {
 
 /** A broadcast spend still unconfirmed after this many blocks is released. */
 export const ONCHAIN_PENDING_RELEASE_BLOCKS = 6;
+/** Outpoints per `GetUtxos` request, which carries them in the query string. */
+const SERVER_SPENDS_PAGE = 100;
 const ONCHAIN_PENDING_SPENDS_KEY = "onchainPendingSpends";
 
 /** `settings.onchainPendingSpends["txid:vout"]`; `script` locates the owner without a full scan. */
@@ -1998,8 +2005,8 @@ export class ContractManager implements IContractManager {
     }
 
     /** @see IContractManager.syncOnchain */
-    syncOnchain(scripts?: string[]): Promise<void> {
-        return this.inOnchainOrder(() => this.runOnchainSync(scripts));
+    syncOnchain(scripts?: string[], fetched?: ReadonlyMap<string, Coin[]>): Promise<void> {
+        return this.inOnchainOrder(() => this.runOnchainSync(scripts, fetched));
     }
 
     /**
@@ -2068,7 +2075,10 @@ export class ContractManager implements IContractManager {
         return run;
     }
 
-    private async runOnchainSync(scripts?: string[]): Promise<void> {
+    private async runOnchainSync(
+        scripts?: string[],
+        fetched?: ReadonlyMap<string, Coin[]>,
+    ): Promise<void> {
         const { onchainProvider, network } = this.config;
         if (!onchainProvider || !network || this.disposed) return;
         const contracts = await collectContracts(this.config.contractRepository);
@@ -2098,6 +2108,7 @@ export class ContractManager implements IContractManager {
                     network,
                     pending,
                     tipHeight,
+                    fetched?.get(contract.script),
                 );
             } catch (e) {
                 console.warn(`[contracts] onchain sync failed for ${contract.script}`, e);
@@ -2124,16 +2135,23 @@ export class ContractManager implements IContractManager {
         network: Network,
         pending: Record<string, OnchainPendingSpend>,
         tipHeight: () => Promise<number>,
+        prefetched?: Coin[],
     ): Promise<void> {
         const tapscript = contractHandlers.get(contract.type)!.createScript(contract.params);
-        const coins = await onchainProvider.getCoins(onchainAddressOf(contract, network));
+        const coins =
+            prefetched ?? (await onchainProvider.getCoins(onchainAddressOf(contract, network)));
         const stored = new Map(
             (await getVtxosForContract(this.config.walletRepository, contract)).map((v) => [
                 vtxoOutpoint(v),
                 v,
             ]),
         );
+        const recorded = await this.serverSpends(
+            [...stored.values()].filter((v) => v.isUnrolled && (!v.isSpent || !v.spentBy)),
+        );
+        const live = new Set(coins.map(vtxoOutpoint));
         const rows: ExtendedVirtualCoin[] = [];
+        const spent: ExtendedVirtualCoin[] = [];
         for (const coin of coins) {
             const key = vtxoOutpoint(coin);
             const prior = stored.get(key);
@@ -2142,6 +2160,13 @@ export class ContractManager implements IContractManager {
                 prior?.isUnrolled && !isExplorerCoin(prior)
                     ? { ...prior, status: { ...prior.status, ...coin.status } }
                     : toOnchainCoinRow(coin, contract, tapscript);
+            const record = recorded.get(key);
+            if (record?.spendConfirmation) {
+                // arkd saw the spend confirm before the explorer did.
+                spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
+                delete pending[key];
+                continue;
+            }
             const entry = pending[key];
             if (entry && (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS) {
                 rows.push({ ...row, spentBy: entry.spender });
@@ -2150,12 +2175,21 @@ export class ContractManager implements IContractManager {
             delete pending[key];
             rows.push(entry && row.spentBy === entry.spender ? { ...row, spentBy: "" } : row);
         }
-        const live = new Set(rows.map(vtxoOutpoint));
 
-        const spent: ExtendedVirtualCoin[] = [];
+        const named: ExtendedVirtualCoin[] = [];
         for (const row of stored.values()) {
             const key = vtxoOutpoint(row);
-            if (!row.isUnrolled || row.isSpent || live.has(key)) continue;
+            if (!row.isUnrolled || live.has(key)) continue;
+            const record = recorded.get(key);
+            if (row.isSpent) {
+                if (!row.spentBy && record) named.push({ ...row, spentBy: record.spentBy });
+                continue;
+            }
+            if (record) {
+                spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
+                delete pending[key];
+                continue;
+            }
             let outspend: { spent: boolean; txid?: string } | undefined;
             try {
                 outspend = (await onchainProvider.getTxOutspends(row.txid))[row.vout];
@@ -2171,7 +2205,7 @@ export class ContractManager implements IContractManager {
             delete pending[key];
         }
 
-        const writes = [...rows, ...spent];
+        const writes = [...rows, ...spent, ...named];
         // After dispose the repositories may belong to a successor.
         if (writes.length === 0 || this.disposed) return;
         await saveVtxosForContract(this.config.walletRepository, contract, writes);
@@ -2190,6 +2224,27 @@ export class ContractManager implements IContractManager {
             rows.filter((r) => !stored.has(vtxoOutpoint(r))),
         );
         emit("vtxo_spent", spent);
+    }
+
+    /** arkd's record of how these onchain coins were spent, by outpoint; empty if it keeps none. */
+    private async serverSpends(rows: Outpoint[]): Promise<Map<string, IndexerUtxo>> {
+        const { indexerProvider } = this.config;
+        const found = new Map<string, IndexerUtxo>();
+        if (!indexerProvider.getUtxos || rows.length === 0) return found;
+        try {
+            for (let i = 0; i < rows.length; i += SERVER_SPENDS_PAGE) {
+                const outpoints = rows
+                    .slice(i, i + SERVER_SPENDS_PAGE)
+                    .map(({ txid, vout }) => ({ txid, vout }));
+                const { utxos } = await indexerProvider.getUtxos({ outpoints });
+                for (const utxo of utxos) found.set(vtxoOutpoint(utxo), utxo);
+            }
+        } catch (e) {
+            if (!(e instanceof IndexerUtxosUnsupportedError)) {
+                console.warn("[contracts] arkd spend lookup failed; using the explorer", e);
+            }
+        }
+        return found;
     }
 
     /**
