@@ -4507,34 +4507,35 @@ export class Wallet
         if (!params.sweepTo && params.outputs.length === 0) {
             throw new OnchainCosignPreflightError("no outputs and no sweepTo");
         }
-        return this._withTxLock(async () => {
-            let tx: Transaction;
+        const build = async (sync: boolean) => {
             try {
-                tx = await this._buildOnchainSpend(params);
+                return await this._buildOnchainSpend(params, sync);
             } catch (e) {
                 if (e instanceof OnchainCosignPreflightError) throw e;
                 const reason = e instanceof Error ? e.message : String(e);
                 throw new OnchainCosignPreflightError(reason, { cause: e });
             }
-            return this._cosignOnchainTxImpl(tx);
-        });
+        };
+        // A spend the coins cannot fund fails here instead of queueing behind a settle.
+        await build(true);
+        // No second sync: the wallet's own spends while this waited are already stored.
+        return this._withTxLock(async () => this._cosignOnchainTxImpl(await build(false)));
     }
 
-    private async _buildOnchainSpend({
-        outputs,
-        inputs,
-        sweepTo,
-    }: SendOnchainParams): Promise<Transaction> {
+    private async _buildOnchainSpend(
+        { outputs, inputs, sweepTo }: SendOnchainParams,
+        sync: boolean,
+    ): Promise<Transaction> {
         const manager = await this.getContractManager();
         const named = inputs && new Set(inputs.map(vtxoOutpoint));
-        if (named) {
+        if (sync && named) {
             // Scoped, so the VtxoManager sweep does not repeat its full sync; still needed
             // because an indexer-written unrolled row carries no confirmation height.
             const owners = (await this.onchainCoins(manager))
                 .filter(({ coin }) => named.has(vtxoOutpoint(coin)))
                 .map(({ contract }) => contract.script);
             if (owners.length > 0) await manager.syncOnchain([...new Set(owners)]);
-        } else {
+        } else if (sync) {
             await manager.syncOnchain();
         }
         const [tip, locked] = await Promise.all([

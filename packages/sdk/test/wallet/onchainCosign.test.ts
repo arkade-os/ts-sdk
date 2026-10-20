@@ -165,6 +165,29 @@ describe("wallet.sendOnchain", () => {
         );
     });
 
+    it("fails a spend it cannot fund without waiting for one in flight", async () => {
+        const { wallet, arkProvider } = await makeWallet();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        arkProvider.cosignOnchainTx.mockImplementation(async () => {
+            await gate;
+            return COSIGNED;
+        });
+        const first = wallet.sendOnchain({
+            outputs: [{ address: externalAddress, amount: 1_000 }],
+        });
+        await vi.waitFor(() => expect(arkProvider.cosignOnchainTx).toHaveBeenCalled());
+
+        await expect(
+            wallet.sendOnchain({ outputs: [{ address: externalAddress, amount: 1_000 }] }),
+        ).rejects.toBeInstanceOf(OnchainCosignPreflightError);
+
+        release();
+        await first;
+    });
+
     it("spends an unconfirmed coin, which arkd cosigns", async () => {
         const { wallet, arkProvider, boardingCoin } = await makeWallet({
             status: { confirmed: false },
