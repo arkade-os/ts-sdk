@@ -433,6 +433,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap`: a restore scan no longer reopens a cancelled or filled
+  offer.** A client starting right after a cancel scans its deposits, and the
+  indexer can still report the spent deposit as unspent. The scan wrote that
+  `pending` over the stored `cancelled`, so `swaps()` showed the offer `open`
+  until a later pass. A spent record now ignores a fate that shows no spend.
+
 - **`settle` no longer warns of a lingering intent the server refused.** A
   settle that fails before commit deletes its intent so the next one doesn't
   hit "duplicated input". When arkd had refused the registration (e.g.

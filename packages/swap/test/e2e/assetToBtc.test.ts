@@ -167,6 +167,12 @@ describe("the asset -> BTC offer direction (regtest)", () => {
             swapAddress: offer.address,
         });
         expect(cancelTxid).toBeTruthy();
+        // The restore reads the spend off the indexer, which can still show the deposit unspent.
+        const script = hex.encode(offer.swapPkScript);
+        await waitFor(async () => {
+            const { vtxos } = await indexer.getVtxos({ scripts: [script] });
+            return vtxos.some((v) => v.txid === fundingTxid && v.isSpent);
+        });
 
         history.push({
             type: "received",

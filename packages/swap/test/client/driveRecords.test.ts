@@ -272,6 +272,14 @@ describe("a deposit's fate on a record", () => {
         expect(written.status).toBe("recoverable");
     });
 
+    it("never reopens a spent deposit on a lagging indexer read", () => {
+        for (const status of ["cancelled", "fulfilled"] as const) {
+            const stored = record({ status, spentTxid: "bb".repeat(32) });
+            expect(fateMoved(stored, { status: "pending" })).toBe(false);
+            expect(fateMoved(stored, { status: "recoverable" })).toBe(false);
+        }
+    });
+
     it("writes the chain's pending over a stored cancelling", () => {
         const stored = record({ status: "cancelling" });
         expect(fateMoved(stored, { status: "pending" })).toBe(true);
