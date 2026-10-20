@@ -121,7 +121,7 @@ const nostrCards: TransportCardFetcher = {
                     `the nostr-tools peer is not installed (${reason})`,
                 );
             }
-            nostrFetcher ??= nostr.nostrCardFetcher();
+            nostrFetcher ??= nostr.nostrCardFetcher({ pool: nostr.sharedNostrPool() });
         }
         return nostrFetcher.fetch(solvers, network);
     },

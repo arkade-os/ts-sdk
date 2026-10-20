@@ -267,13 +267,13 @@ describe("nostrRfqTransport", () => {
     });
 
     /**
-     * Every other test injects a pool, so this is the only coverage of the
-     * owned-pool teardown. The two assertions are one property: `pool.close()`
-     * already ends every subscription on those relays, so closing the
-     * subscription as well sends a second CLOSE frame on a socket that is
-     * already closing — the double-close this transport exists to avoid.
+     * The default pool is shared: many transports multiplex over one socket
+     * per relay, so close() ends only this transport's subscription. The
+     * socket stays for the next negotiation; teardown is explicit via
+     * closeSharedNostrPool(). Closing the pool here too would send a second
+     * CLOSE on a socket other transports still use.
      */
-    it("tears an owned pool down through pool.close() alone", async () => {
+    it("shares one pool by default and closes only the subscription", async () => {
         const subscriptionClose = vi.fn();
         const subscribeMany = vi
             .spyOn(SimplePool.prototype, "subscribeMany")
@@ -285,14 +285,16 @@ describe("nostrRfqTransport", () => {
                 relays,
                 solverPubkey: getPublicKey(generateSecretKey()),
                 secretKey: generateSecretKey(),
-                // no `pool`: the transport creates and therefore owns one
+                // no `pool`: the transport shares the process-wide pool
             });
             await transport.close();
-            expect(poolClose).toHaveBeenCalledWith(relays);
-            expect(subscriptionClose).not.toHaveBeenCalled();
+            expect(subscriptionClose).toHaveBeenCalledTimes(1);
+            expect(poolClose).not.toHaveBeenCalled();
         } finally {
             subscribeMany.mockRestore();
             poolClose.mockRestore();
+            const { closeSharedNostrPool } = await import("../src/nostr");
+            closeSharedNostrPool();
         }
     });
 

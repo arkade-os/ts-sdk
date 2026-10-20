@@ -14,7 +14,7 @@ import {
     type TransportCardFetcher,
 } from "@arkade-os/solver-discovery";
 import { expectQuote, pairOf, type RfqStatus, type RfqTransport } from "./rfq";
-import { CloseOnceWebSocket } from "./closeOnceWebSocket";
+import { sharedNostrPool } from "./nostrPool";
 import { assertTimerMs } from "@arkade-os/sdk";
 import {
     finalizeEvent,
@@ -39,13 +39,12 @@ export const RFQ_DIRECTED_KIND = 24859;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CARD_FETCH_TIMEOUT_MS = 5_000;
 
-// SimplePool forwards `websocketImplementation` at runtime; its declared options just omit it.
-const newPool = (): SimplePool =>
-    new SimplePool(
-        (CloseOnceWebSocket ? { websocketImplementation: CloseOnceWebSocket } : undefined) as
-            | ConstructorParameters<typeof SimplePool>[0]
-            | undefined,
-    );
+export {
+    closeSharedNostrPool,
+    createNostrPool,
+    sharedNostrPool,
+    type NostrPool,
+} from "./nostrPool";
 
 /**
  * Every relay dropped the subscription, so no reply can arrive on it. Distinct from a timeout:
@@ -108,8 +107,7 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
     const solverPubkey = options.solverPubkey;
     const secretKey = options.secretKey ?? generateSecretKey();
     const pubkey = getPublicKey(secretKey);
-    const pool = options.pool ?? newPool();
-    const ownsPool = !options.pool;
+    const pool = options.pool ?? sharedNostrPool();
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const conversationKey = nip44.v2.utils.getConversationKey(secretKey, solverPubkey);
 
@@ -206,16 +204,19 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
         },
 
         async close() {
+            if (closed) {
+                subscription.close();
+                return;
+            }
             closed = true;
             // Reject, don't just clear: otherwise each pending promise's timer fires later as
             // "no solver reply", blaming the solver for our own teardown.
             for (const waiter of waiters.values()) waiter.reject(new TransportClosed());
             waiters.clear();
-            // Only tear down a pool we created (a shared one may serve other swaps). An owned
-            // pool's close ends its subscriptions; closing the subscription first too makes the
-            // browser log "WebSocket is already in CLOSING or CLOSED state".
-            if (ownsPool) pool.close(relays);
-            else subscription.close();
+            // The pool is shared (or lent): many transports multiplex over one socket per
+            // relay, so only the subscription closes here. The socket stays for the next
+            // negotiation; teardown is explicit via closeSharedNostrPool().
+            subscription.close();
         },
     };
 };
@@ -242,6 +243,7 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
     assertTimerMs("timeoutMs", options.timeoutMs);
     if (options.timeoutMs === 0) throw new Error("timeoutMs must be positive");
     const seen = new Map<string, Event>();
+    const inflight = new Map<string, Promise<TransportCard[]>>();
     return {
         async fetch(solvers, network) {
             const asked = new Set(solvers.map((solver) => solver.discovery_pubkey));
@@ -250,57 +252,67 @@ export const nostrCardFetcher = (options: NostrCardFetcherOptions = {}): Transpo
                 ...new Set(solvers.flatMap((solver) => solver.transports?.nostr?.relays ?? [])),
             ];
             if (authors.length === 0 || relays.length === 0) return [];
-            const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
-            const pool = options.pool ?? newPool();
-            const latest = new Map<string, Event>();
-            let subscription: { close: () => void } | undefined;
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            try {
-                await new Promise<void>((resolve) => {
-                    timer = setTimeout(resolve, timeoutMs);
-                    subscription = pool.subscribeMany(
-                        relays,
-                        { kinds: [SOLVER_CARD_KIND], authors, "#d": [network] },
-                        {
-                            // Relays are untrusted: re-check the filter and the signature, so a stray
-                            // or forged later event cannot shadow the real card.
-                            onevent(event: Event) {
-                                if (event.kind !== SOLVER_CARD_KIND || !asked.has(event.pubkey))
-                                    return;
-                                if (!verifyEvent(event)) return;
-                                if (event.tags.find((tag) => tag[0] === "d")?.[1] !== network)
-                                    return;
-                                if (isNewer(event, latest.get(event.pubkey)))
-                                    latest.set(event.pubkey, event);
-                            },
-                            oneose: () => resolve(),
-                            onclose: () => resolve(),
-                        },
-                    );
-                });
-            } finally {
-                clearTimeout(timer);
-                if (options.pool) subscription?.close();
-                else pool.close(relays);
-            }
-            // A card seen before fills a missed delivery; the discovery client's age check bounds it.
-            for (const author of authors) {
-                const key = `${network}:${author}`;
-                const event = latest.get(author);
-                if (event && isNewer(event, seen.get(key))) seen.set(key, event);
-                const best = seen.get(key);
-                if (best) latest.set(author, best);
-            }
-            const cards: TransportCard[] = [];
-            for (const event of latest.values()) {
+            const key = network + ":" + [...asked].sort().join(",");
+            const pending = inflight.get(key);
+            if (pending) return pending;
+            const task = (async (): Promise<TransportCard[]> => {
+                const timeoutMs = options.timeoutMs ?? CARD_FETCH_TIMEOUT_MS;
+                const pool = options.pool ?? sharedNostrPool();
+                const latest = new Map<string, Event>();
+                let subscription: { close: () => void } | undefined;
+                let timer: ReturnType<typeof setTimeout> | undefined;
                 try {
-                    const card: unknown = JSON.parse(event.content);
-                    cards.push({ pubkey: event.pubkey, createdAt: event.created_at, card });
-                } catch {
-                    // Not an older card instead: the newest event is the solver's current statement.
+                    await new Promise<void>((resolve) => {
+                        timer = setTimeout(resolve, timeoutMs);
+                        subscription = pool.subscribeMany(
+                            relays,
+                            { kinds: [SOLVER_CARD_KIND], authors, "#d": [network] },
+                            {
+                                // Relays are untrusted: re-check the filter and the signature, so a stray
+                                // or forged later event cannot shadow the real card.
+                                onevent(event: Event) {
+                                    if (event.kind !== SOLVER_CARD_KIND || !asked.has(event.pubkey))
+                                        return;
+                                    if (!verifyEvent(event)) return;
+                                    if (event.tags.find((tag) => tag[0] === "d")?.[1] !== network)
+                                        return;
+                                    if (isNewer(event, latest.get(event.pubkey)))
+                                        latest.set(event.pubkey, event);
+                                },
+                                oneose: () => resolve(),
+                                onclose: () => resolve(),
+                            },
+                        );
+                    });
+                } finally {
+                    clearTimeout(timer);
+                    subscription?.close();
                 }
+                // A card seen before fills a missed delivery; the discovery client's age check bounds it.
+                for (const author of authors) {
+                    const key = `${network}:${author}`;
+                    const event = latest.get(author);
+                    if (event && isNewer(event, seen.get(key))) seen.set(key, event);
+                    const best = seen.get(key);
+                    if (best) latest.set(author, best);
+                }
+                const cards: TransportCard[] = [];
+                for (const event of latest.values()) {
+                    try {
+                        const card: unknown = JSON.parse(event.content);
+                        cards.push({ pubkey: event.pubkey, createdAt: event.created_at, card });
+                    } catch {
+                        // Not an older card instead: the newest event is the solver's current statement.
+                    }
+                }
+                return cards;
+            })();
+            inflight.set(key, task);
+            try {
+                return await task;
+            } finally {
+                if (inflight.get(key) === task) inflight.delete(key);
             }
-            return cards;
         },
     };
 };

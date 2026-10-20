@@ -40,6 +40,7 @@ style and have not been backfilled.
   too much, breaks the ceiling, leaves dust or more unclaimed, or splits
   asset-bearing inputs is refused rather than reshaped. Automatic renewal still
   settles into one output, and `split` is refused on the service-worker wallet.
+- **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`.
 
 ### Changed
 

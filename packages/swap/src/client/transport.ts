@@ -44,17 +44,30 @@ export const attesting = <T extends RfqTransport>(
 ): AttestingRfqTransport => Object.assign(transport, { attestedResponder: responder });
 
 /**
+ * Build the card's Nostr rendezvous bound to one pool, so discovery, quotes, and an
+ * app's own readers share one socket per relay. Pass the process-wide
+ * `sharedNostrPool()` from `@arkade-os/swap/nostr`, or a pool the caller owns;
+ * omitting it keeps the shared default.
+ */
+export const createNostrTransportFactory = (
+    pool?: import("nostr-tools").SimplePool,
+): RfqTransportFactory => {
+    return async (rendezvous) => {
+        const { nostrRfqTransport } = await import("../nostr");
+        return attesting(
+            nostrRfqTransport({
+                relays: [...rendezvous.relays],
+                solverPubkey: rendezvous.solverPubkey,
+                ...(pool === undefined ? {} : { pool }),
+            }),
+            rendezvous.solverPubkey,
+        );
+    };
+};
+
+/**
  * The default: the card's own Nostr rendezvous. It attests the discovery key because
  * `nostrRfqTransport` subscribes with `authors: [solverPubkey]` and decrypts against that key — any
  * other reply is filtered by the relay or fails to decrypt.
  */
-export const nostrTransportFactory: RfqTransportFactory = async (rendezvous) => {
-    const { nostrRfqTransport } = await import("../nostr");
-    return attesting(
-        nostrRfqTransport({
-            relays: [...rendezvous.relays],
-            solverPubkey: rendezvous.solverPubkey,
-        }),
-        rendezvous.solverPubkey,
-    );
-};
+export const nostrTransportFactory: RfqTransportFactory = createNostrTransportFactory();
