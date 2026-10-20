@@ -496,6 +496,7 @@ describe("ContractManager.syncOnchain", () => {
         expect(onchainProvider.getTxOutspends).not.toHaveBeenCalled();
         expect(indexerProvider.getUtxos).toHaveBeenLastCalledWith({
             outpoints: [{ txid: coin.txid, vout: coin.vout }],
+            pageSize: 64,
         });
         manager.dispose();
     });
@@ -683,6 +684,7 @@ describe("ContractManager.syncOnchain", () => {
         expect(indexerProvider.getUtxos).toHaveBeenLastCalledWith({
             outpoints: [{ txid: coin.txid, vout: coin.vout }],
             pageIndex: 2,
+            pageSize: 64,
         });
         manager.dispose();
     });

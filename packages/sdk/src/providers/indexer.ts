@@ -1235,11 +1235,14 @@ namespace Response {
     }
 
     function isWireInt(data: unknown): boolean {
-        return typeof data === "string" || typeof data === "number";
+        return (
+            (typeof data === "string" || typeof data === "number") &&
+            Number.isSafeInteger(Number(data))
+        );
     }
 
     function isOptionalWireInt(data: unknown): boolean {
-        return data === undefined || (isWireInt(data) && Number.isFinite(Number(data)));
+        return data === undefined || isWireInt(data);
     }
 
     function isUtxo(data: any): data is WireUtxo {
