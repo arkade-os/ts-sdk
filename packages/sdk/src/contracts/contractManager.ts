@@ -2088,6 +2088,7 @@ export class ContractManager implements IContractManager {
         let tip: Promise<{ height: number }> | undefined;
         const tipHeight = async () => (await (tip ??= onchainProvider.getChainTip())).height;
         for (const contract of targets) {
+            if (this.disposed) return;
             if (wanted && !wanted.has(contract.script)) continue;
             try {
                 await this.syncOnchainContract(
@@ -2108,9 +2109,12 @@ export class ContractManager implements IContractManager {
             });
         }
         if (this.disposed) return;
-        await this.onchainWatcher?.setTargets(
-            targets.map((c) => ({ script: c.script, address: onchainAddressOf(c, network) })),
-        );
+        // The coins are stored; a failed subscribe is retried by the next sync.
+        await this.onchainWatcher
+            ?.setTargets(
+                targets.map((c) => ({ script: c.script, address: onchainAddressOf(c, network) })),
+            )
+            .catch((e) => console.warn("[contracts] onchain watch failed", e));
     }
 
     private async syncOnchainContract(
@@ -2130,15 +2134,20 @@ export class ContractManager implements IContractManager {
         );
         const rows: ExtendedVirtualCoin[] = [];
         for (const coin of coins) {
-            const row = toOnchainCoinRow(coin, contract, tapscript);
-            const key = vtxoOutpoint(row);
+            const key = vtxoOutpoint(coin);
+            const prior = stored.get(key);
+            // An unrolled VTXO keeps the indexer's facts; the explorer only adds its confirmation.
+            const row: ExtendedVirtualCoin =
+                prior?.isUnrolled && !isExplorerCoin(prior)
+                    ? { ...prior, status: { ...prior.status, ...coin.status } }
+                    : toOnchainCoinRow(coin, contract, tapscript);
             const entry = pending[key];
             if (entry && (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS) {
                 rows.push({ ...row, spentBy: entry.spender });
                 continue;
             }
             delete pending[key];
-            rows.push(row);
+            rows.push(entry && row.spentBy === entry.spender ? { ...row, spentBy: "" } : row);
         }
         const live = new Set(rows.map(vtxoOutpoint));
 
@@ -2162,7 +2171,8 @@ export class ContractManager implements IContractManager {
         }
 
         const writes = [...rows, ...spent];
-        if (writes.length === 0) return;
+        // After dispose the repositories may belong to a successor.
+        if (writes.length === 0 || this.disposed) return;
         await saveVtxosForContract(this.config.walletRepository, contract, writes);
         const emit = (type: "vtxo_received" | "vtxo_spent", vtxos: ExtendedVirtualCoin[]) => {
             if (vtxos.length === 0) return;
@@ -2517,8 +2527,8 @@ export class ContractManager implements IContractManager {
      * Stop the watcher, clear callbacks, and mark the manager uninitialized.
      *
      * Teardown is synchronous. The returned promise settles once watcher events already being
-     * handled, any look-ahead drain, and any lazy boot sequence finish; after that nothing more is written to the
-     * repositories.
+     * handled, any look-ahead drain, any onchain sync and any lazy boot sequence finish; after that
+     * nothing more is written to the repositories.
      */
     dispose(): Promise<void> {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
@@ -2543,9 +2553,12 @@ export class ContractManager implements IContractManager {
 
         this.initialized = false;
 
-        return Promise.all([...this.inFlightEvents, drainUnwound, pendingBoot]).then(
-            () => undefined,
-        );
+        return Promise.all([
+            ...this.inFlightEvents,
+            drainUnwound,
+            pendingBoot,
+            this.onchainChain,
+        ]).then(() => undefined);
     }
 
     /**

@@ -322,10 +322,67 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
-    it("logs instead of rejecting when a watcher-triggered sync fails", async () => {
+    it("writes nothing after dispose, which waits for the sync", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const { manager, walletRepository, onchainProvider } = await setup(async () => {
+            await gate;
+            return [coin];
+        });
+        const sync = manager.syncOnchain();
+        await vi.waitFor(() => expect(onchainProvider.getCoins).toHaveBeenCalled());
+        let disposed = false;
+        const disposing = manager.dispose().then(() => {
+            disposed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        expect(disposed).toBe(false);
+
+        release();
+        await Promise.all([sync, disposing]);
+
+        expect(await collectScriptVtxos(walletRepository, boarding.script)).toEqual([]);
+    });
+
+    it("keeps the indexer's facts on an unrolled VTXO the explorer lists", async () => {
+        const listed = { ...coin, status: { confirmed: true, block_height: 210 } };
+        const { manager, walletRepository, contractRepository } = await setup(async () => [listed]);
+        const unrolled = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: TEST_DEFAULT_ARK_ADDRESS,
+            state: "active" as const,
+            createdAt: 0,
+        };
+        await contractRepository.saveContract(unrolled);
+        await saveVtxosForContract(walletRepository, unrolled, [
+            {
+                ...toOnchainCoinRow(coin, unrolled, testDefaultScript),
+                status: { confirmed: false, isLeaf: true },
+                commitmentTxIds: ["ee".repeat(32)],
+                arkTxId: "ff".repeat(32),
+            },
+        ]);
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, TEST_DEFAULT_SCRIPT);
+        expect(row).toMatchObject({
+            commitmentTxIds: ["ee".repeat(32)],
+            arkTxId: "ff".repeat(32),
+            status: { confirmed: true, block_height: 210, isLeaf: true },
+        });
+        expect(row.status.fromExplorer).toBeUndefined();
+        manager.dispose();
+    });
+
+    it("logs instead of rejecting when a watcher-triggered sync cannot re-subscribe", async () => {
         const unhandled = vi.fn();
         process.on("unhandledRejection", unhandled);
-        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        const error = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
             const { manager, contractRepository, onchainProvider } = await setup(async () => []);
             let push: (txs: any[]) => void = () => {};
@@ -347,7 +404,12 @@ describe("ContractManager.syncOnchain", () => {
                 script: hex.encode(other.pkScript),
             });
             push([{ txid: "t", vin: [], vout: [] }]);
-            await vi.waitFor(() => expect(error).toHaveBeenCalled());
+            await vi.waitFor(() =>
+                expect(error).toHaveBeenCalledWith(
+                    "[contracts] onchain watch failed",
+                    expect.any(Error),
+                ),
+            );
             await vi.waitFor(() => expect(onchainProvider.watchAddresses).toHaveBeenCalledTimes(2));
             await new Promise((r) => setImmediate(r));
             expect(unhandled).not.toHaveBeenCalled();
