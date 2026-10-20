@@ -419,6 +419,19 @@ describe("RestIndexerProvider", () => {
             ]);
         });
 
+        it("queries by script", async () => {
+            mockFetch.mockResolvedValueOnce(jsonResponse({ utxos: [wireUtxo({})], page: null }));
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const scripts = ["5120" + "bb".repeat(32), "5120" + "cc".repeat(32)];
+
+            const { utxos } = await provider.getUtxos({ scripts });
+
+            const url = new URL(mockFetch.mock.calls[0][0]);
+            expect(url.searchParams.getAll("scripts")).toEqual(scripts);
+            expect(url.searchParams.has("outpoints")).toBe(false);
+            expect(utxos).toHaveLength(1);
+        });
+
         it("needs exactly one of scripts and outpoints", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
             await expect(provider.getUtxos({ scripts: [] })).rejects.toThrow(/either/);

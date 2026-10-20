@@ -443,6 +443,7 @@ export class RestIndexerProvider implements IndexerProvider {
     /** Overrides {@link configureEventSource} for this provider's subscription. */
     protected readonly eventSource?: EventSourceFactory;
 
+    /** Set by a 404 for this provider's lifetime: a server upgraded meanwhile needs a new one. */
     private utxosUnsupported = false;
 
     /** @see fetchVtxosJson */
