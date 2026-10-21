@@ -301,6 +301,11 @@ export interface IContractManager extends Disposable {
      * older than `vtxoSyncMaxAgeMs` is requested in the background (skipped while the lazy boot
      * runs); check {@link getSyncState} before trusting the result. For display, never coin
      * selection.
+     *
+     * The read itself never waits, but reaching the manager can: without `lazyInitialization`
+     * its construction runs the boot sync, and a read racing it (a worker still handling
+     * `INIT_WALLET`) waits for that. Through the service worker, {@link getSyncState} is cached
+     * right after the read, so it usually reports `syncing` until the next proxy call refreshes it.
      */
     getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 

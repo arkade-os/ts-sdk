@@ -42,6 +42,15 @@ style and have not been backfilled.
   settles into one output, and `split` is refused on the service-worker wallet.
 - **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices. A destroyed pool refuses to reconnect, so a transport that outlives `closeSharedNostrPool()` fails instead of opening a socket nothing can close, and concurrent card fetches are only merged when they ask the same relays.
 
+- **`getStoredContractsWithVtxos()` is reachable through the service
+  worker.** It answers from the repository without waiting on the indexer and
+  keeps spent VTXOs, so a caller can tell whether, and by which transaction, a
+  contract's coin was spent without a server round trip:
+  `getContractsWithVtxos` keeps spent rows but syncs first, while `getVtxos`
+  reads locally but drops them. Without `lazyInitialization`, a read that
+  races the worker's `INIT_WALLET` still waits for the contract manager's
+  boot sync. (#953)
+
 ### Changed
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
@@ -89,13 +98,9 @@ style and have not been backfilled.
   return `Promise<void>`; callers can await teardown, including in-flight
   event handling and repository writes.
 
-- **`IContractManager.getStoredContractsWithVtxos()` is required and
-  reachable through the service worker.** It answers from the repository
-  without waiting on the indexer and keeps spent VTXOs, so a caller can tell
-  whether, and by which transaction, a contract's coin was spent without a
-  server round trip: `getContractsWithVtxos` keeps spent rows but syncs
-  first, while `getVtxos` reads locally but drops them. Custom
-  `IContractManager` implementations must add it. (#953)
+- **`IContractManager.getStoredContractsWithVtxos()` is required.** Custom
+  `IContractManager` implementations must add it; `Wallet` no longer falls
+  back to the syncing `getContractsWithVtxos` when it is missing. (#953)
 
 - **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
   the ad it named; kind 38859 now carries the signed solver card, exported

@@ -239,7 +239,6 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_DELEGATE_INFO: 10_000,
     IS_CONTRACT_MANAGER_WATCHING: 10_000,
     GET_CURRENT_SIGNING_DESCRIPTOR: 10_000,
-    GET_STORED_CONTRACTS_WITH_VTXOS: 10_000,
     // Allocation is a local repository write plus a fire-and-forget band
     // slide — no indexer round trip on the request path.
     GET_NEXT_SIGNING_DESCRIPTOR: 10_000,
@@ -264,6 +263,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
     GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_STORED_CONTRACTS_WITH_VTXOS: 20_000,
     GET_WATCHED_SCRIPTS: 10_000,
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
