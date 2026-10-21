@@ -1,35 +1,21 @@
 /**
- * Coverage: whether an offer's script is in the wallet's watched set.
- *
- * Both edges live here because they are one decision seen from two sides.
- * `createOffer` promotes a script the moment it hands the user an address to
- * fund ({@link promoteOfferContract}); the watcher and the restore consumer
- * retire it once nothing at that script holds funds any more
- * ({@link retireSettledOfferContracts}). Identical offers derive one script, so
- * those two can name the same row — and a demotion that lands after a promotion
- * recreates exactly the failure the promotion exists to prevent: an address the
- * user was told to fund, out of the subscription, the poll and every sync.
- *
- * Two things keep them apart:
- *
- * - **Per-script serialization.** `setContractWatchState` is a read-modify-write
- *   over the contract row, so promotion and demotion are ordered here rather
- *   than left to interleave inside the manager.
- * - **The issuance mark.** A swap record is keyed by its funding txid, so an
- *   offer that has been created but not yet funded has no record at all — it is
- *   invisible to a liveness check over records, for as long as the user takes
- *   to send. {@link promoteOfferContract} therefore records the issuance
- *   itself, and a script with an address still waiting for its deposit is never
- *   retired.
- *
- * The mark is per process: a second wallet context (another tab, a service
- * worker) issuing an offer while this one retires the same script is not
- * covered, and neither is an address issued before a restart and funded after
- * it. Both leave a funded-but-unwatched row that the restore scan still finds —
- * the same backstop every other best-effort step here relies on.
+ * Coverage: whether an offer's script is in the wallet's watched set. `createOffer` promotes; the
+ * watcher and restore consumer retire. Identical offers share one script, so a late demotion would
+ * unwatch an address the user was just told to fund. Guards: per-script serialization (the watch
+ * state is a read-modify-write), and an issuance mark for created-but-unfunded offers, which have no
+ * record yet. The mark is per process; the restore scan backstops other contexts and restarts.
  */
 import type { IContractManager } from "@arkade-os/sdk";
-import type { AssetSwap, AssetSwapStatus } from "./store";
+import type { RfqSwapState } from "./rfqSwapState";
+import type { AssetSwapStatus } from "./store";
+
+/** Native issuance matches `id`; legacy issuance compares unix milliseconds in `createdAt`. */
+export interface CoveredSwap {
+    readonly swapPkScript: string;
+    readonly status: AssetSwapStatus;
+    readonly createdAt: number;
+    readonly id?: string;
+}
 
 /**
  * Statuses after which the covenant no longer holds funds, so its contract can
@@ -41,18 +27,33 @@ export const RETIRABLE: readonly AssetSwapStatus[] = ["fulfilled", "cancelled"];
 /** The one contract-manager capability changing coverage needs. */
 export type OfferContractRetirer = Pick<IContractManager, "setContractWatchState">;
 
-/**
- * Scripts whose address has been handed out, by the time it was handed out.
- * Cleared by the first record that shows the deposit landed — from there the
- * records answer liveness, and a mark left behind would pin the script watched
- * for the life of the process.
- */
-const issuedAt = new Map<string, number>();
+/** Corridor states after which the LOCKUP no longer holds funds: both mean it
+ *  WAS SPENT. `failed` is terminal too and excluded on purpose — an action that
+ *  missed its window says nothing about a covenant that can still be funded. */
+export const LOCKUP_RETIRABLE: readonly RfqSwapState[] = ["settled", "refunded"];
 
-/**
- * Per-script tail of in-flight coverage changes. A script is dropped from the
- * map once its own chain settles, so this holds only what is running.
- */
+export interface CoverageRegistrationOptions {
+    readonly coverageId?: string;
+    /** Use the wallet object: a worker can return a fresh manager proxy on every call. */
+    readonly scope?: object;
+}
+
+const legacyScope = {};
+type OutstandingIssuance = { issuedAt?: number; ids: Set<string> };
+const issuedByScope = new WeakMap<object, Map<string, OutstandingIssuance>>();
+
+function markIssued(script: string, issued: number, options: CoverageRegistrationOptions): void {
+    const scope = options.scope ?? legacyScope;
+    const issuedAt = issuedByScope.get(scope) ?? new Map<string, OutstandingIssuance>();
+    const outstanding = issuedAt.get(script) ?? { issuedAt: undefined, ids: new Set<string>() };
+    const id = options.coverageId;
+    if (id === undefined) outstanding.issuedAt = issued;
+    else outstanding.ids.add(id);
+    issuedAt.set(script, outstanding);
+    issuedByScope.set(scope, issuedAt);
+}
+
+/** Per-script tail of in-flight coverage changes; holds only what is running. */
 const inFlight = new Map<string, Promise<void>>();
 
 /** Run `task` after every coverage change already queued for `script`. */
@@ -73,80 +74,70 @@ async function serialize<T>(script: string, task: () => Promise<T>): Promise<T> 
 }
 
 /**
- * Whether an address issued at `script` is still waiting for its deposit.
- *
- * A record at the script created since the issuance *is* that deposit landing:
- * `createdAt` is the funding time (`restoreAssetSwaps` reads it off the funding
- * transaction), so a record older than the mark belongs to an earlier offer and
- * says nothing about this one.
+ * Whether an address issued at `script` is still waiting for its deposit. A record at the script
+ * created since the issuance *is* that deposit (`createdAt` is the funding time); an older record
+ * belongs to an earlier offer.
  */
-function addressOutstanding(swaps: AssetSwap[], script: string): boolean {
+function addressOutstanding(swaps: readonly CoveredSwap[], script: string, scope: object): boolean {
+    const issuedAt = issuedByScope.get(scope);
+    if (issuedAt === undefined) return false;
     const issued = issuedAt.get(script);
     if (issued === undefined) return false;
-    if (swaps.some((s) => s.swapPkScript === script && s.createdAt >= issued)) {
-        issuedAt.delete(script);
-        return false;
+    for (const swap of swaps) {
+        if (swap.swapPkScript !== script) continue;
+        if (swap.id !== undefined) issued.ids.delete(swap.id);
+        if (issued.issuedAt !== undefined && swap.createdAt >= issued.issuedAt) {
+            issued.issuedAt = undefined;
+        }
     }
-    return true;
+    if (issued.ids.size > 0 || issued.issuedAt !== undefined) return true;
+    issuedAt.delete(script);
+    return false;
 }
 
 /**
- * Put `script` in the watched set and record that its address is outstanding.
- *
- * Unconditional, not conditional on a fresh contract row: identical offers share
- * one script and `createContract` is first-writer-wins, so re-offering a script
- * an earlier settlement retired would otherwise leave the row `retained`.
- *
- * Throws, unlike retiring: an address returned without coverage is the failure
- * this exists to prevent, and nothing is at stake yet, so the caller can retry.
+ * Put `script` in the watched set and mark its address outstanding. Unconditional, since identical
+ * offers share a script and `createContract` is first-writer-wins. Throws, unlike retiring: an
+ * address handed out without coverage is the failure this prevents, and nothing is at stake yet.
  */
 export async function promoteOfferContract(
     manager: OfferContractRetirer,
     script: string,
-    /** When the address went out. A restore passes its record's funding time:
-     * that deposit has landed, and a mark dated after every record at the
-     * script pins it watched for the life of the process. */
+    /** When the address went out. A restore passes the record's funding time, since a mark dated
+     * after every record at the script would pin it watched forever. */
     issued: number = Date.now(),
+    options: CoverageRegistrationOptions & { restore?: boolean } = {},
 ): Promise<void> {
     await serialize(script, async () => {
         await manager.setContractWatchState(script, "watched");
-        // after the write: a promotion that failed hands out no address, so
-        // there is nothing outstanding to protect
-        issuedAt.set(script, issued);
+        // after the write: a failed promotion hands out no address
+        // A restored native record is already durable, so it issues no new address.
+        if (options.restore && options.coverageId !== undefined) return;
+        markIssued(script, issued, options);
     });
 }
 
 /**
- * Drop `script` from the watched set unless something there still needs it.
- * Identical offers share one script, so the check is per script, not per record.
- *
- * `retained`, not deleted: the row is what keeps the deposit's VTXOs
- * annotatable and its history readable, while `retained` is what drops it from
- * the subscription, the failsafe poll and every sync. A user who has made
- * hundreds of offers otherwise re-subscribes to hundreds of dead scripts on
- * every wallet start.
- *
- * A `recoverable` record blocks its script for good — nothing moves a record
- * off that status — so a script that once held a swept deposit stays watched
- * for the life of the wallet. Accepted: the cost is polling, and the
- * alternative (tracking when recovery completed) buys less than it costs.
- *
- * Best-effort, exactly as core's own demotion is: a failed retire costs
- * polling, never correctness.
+ * Drop `script` from the watched set unless something there still needs it. `retained`, not
+ * deleted: the row keeps history readable but leaves the subscription and failsafe poll. A
+ * `recoverable` record pins its script watched for good (accepted: the cost is polling).
+ * Best-effort: a failed retire costs polling, not correctness.
  */
 export async function retireOfferContract(
     manager: OfferContractRetirer,
-    swaps: AssetSwap[],
+    swaps: readonly CoveredSwap[] | (() => Promise<readonly CoveredSwap[]>),
     script: string,
+    options: CoverageRegistrationOptions = {},
 ): Promise<void> {
-    // both reads happen inside the queue, so a promotion that arrives while an
-    // earlier retire was being decided is seen here rather than overwritten
+    // both reads inside the queue, so a concurrent promotion is seen rather than overwritten
     await serialize(script, async () => {
+        const records = typeof swaps === "function" ? await swaps() : swaps;
         // NOT `!TERMINAL.includes(...)`: `recoverable` is terminal for a spend
         // and not retirable, so reading liveness off TERMINAL unwatches swept
         // funds.
-        if (swaps.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
-        if (addressOutstanding(swaps, script)) return;
+        const outstanding = addressOutstanding(records, script, options.scope ?? legacyScope);
+        if (records.some((s) => s.swapPkScript === script && !RETIRABLE.includes(s.status))) return;
+        if (outstanding) return;
         try {
             await manager.setContractWatchState(script, "retained");
         } catch (err) {
@@ -156,19 +147,28 @@ export async function retireOfferContract(
 }
 
 /**
- * Retire every offer script in `swaps` that no live record still holds — the
- * batch form of what the watcher does per spend event, for a consumer that
- * applies {@link restoreAssetSwaps} results without running the watcher.
- *
- * Takes the caller's full record list: liveness is a property of all records at
- * a script, so a partial list would retire a script another record still holds.
+ * Retire every offer script in `swaps` that no live record still holds — the batch form of the
+ * watcher's per-spend retire, for consumers applying {@link restoreAssetSwaps} results without it.
+ * Pass the full record list: a partial one could retire a script another record still holds.
  */
 export async function retireSettledOfferContracts(
     manager: OfferContractRetirer,
-    swaps: AssetSwap[],
+    swaps: readonly CoveredSwap[],
+    options: CoverageRegistrationOptions = {},
 ): Promise<void> {
     const settled = new Set(
         swaps.filter((s) => RETIRABLE.includes(s.status)).map((s) => s.swapPkScript),
     );
-    for (const script of settled) await retireOfferContract(manager, swaps, script);
+    for (const script of settled) await retireOfferContract(manager, swaps, script, options);
 }
+
+export const registerContractCoverage = async <T>(
+    script: string,
+    register: () => Promise<T>,
+    options: CoverageRegistrationOptions = {},
+): Promise<T> =>
+    serialize(script, async () => {
+        const row = await register();
+        markIssued(script, Date.now(), options);
+        return row;
+    });

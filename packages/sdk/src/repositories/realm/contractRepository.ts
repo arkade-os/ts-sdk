@@ -1,0 +1,212 @@
+import { Contract, ContractState, ContractWatchState } from "../../contracts/types";
+import {
+    contractFilterMatchesNothing,
+    ContractFilter,
+    ContractRepository,
+} from "../contractRepository";
+import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
+import { RealmLike } from "./types";
+
+/**
+ * Realm-based implementation of ContractRepository.
+ *
+ * Consumers must open Realm with the schemas from `./schemas.ts` and pass
+ * the instance to the constructor.
+ *
+ * Realm handles schema creation on open, so `ensureInit()` is a no-op.
+ * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
+ */
+export class RealmContractRepository implements ContractRepository {
+    readonly version = 3 as const;
+
+    constructor(private readonly realm: RealmLike) {}
+
+    // ── Lifecycle ──────────────────────────────────────────────────────
+
+    private async ensureInit(): Promise<void> {
+        // Realm handles schema on open — nothing to initialise.
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        // no-op — consumer owns the Realm lifecycle
+    }
+
+    // ── Clear ──────────────────────────────────────────────────────────
+
+    async clear(): Promise<void> {
+        await this.ensureInit();
+        this.realm.write(() => {
+            this.realm.delete(this.realm.objects("ArkContract"));
+        });
+    }
+
+    // ── Contract management ────────────────────────────────────────────
+
+    async getContractsPage(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+    ): Promise<PageResult<Contract>> {
+        assertPageRequest(page);
+        if (contractFilterMatchesNothing(filter)) return { items: [] };
+        const toPage = (rows: RealmRow[]) =>
+            pageResult(rows.map(contractObjectToDomain), page.limit, (contract) => contract.script);
+        // Realm seeks the `watch` index only for a lone leading `watch ==`, other terms grouped
+        // behind it: an OR of states, or `type` beside it, reads every row of the type or table.
+        // So each live state gets its own query, unless a script list already narrows the read;
+        // `retained`, the bulk of the rows, keeps the other terms first.
+        if (filter?.watch === undefined || filter.script !== undefined) {
+            return toPage(this.readRows(filter, page));
+        }
+        const merged = [...new Set([filter.watch].flat())]
+            .flatMap((state) => (state === "watched" ? [state, null] : [state]))
+            .flatMap((state) =>
+                state === "retained"
+                    ? this.readRows({ ...filter, watch: state }, page)
+                    : this.readRows({ ...filter, watch: undefined }, page, state),
+            )
+            .map((row) => ({ script: row.script as string, row }))
+            .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0));
+        // Converted after the merge, so only the page's own rows pay for it.
+        return toPage(merged.slice(0, page.limit + 1).map(({ row }) => row));
+    }
+
+    /** Up to `limit + 1` rows in script order, led by `watch == leadingWatch` when one is given. */
+    private readRows(
+        filter: ContractFilter | undefined,
+        page: PageRequest,
+        leadingWatch?: string | null,
+    ): RealmRow[] {
+        let results = this.realm.objects("ArkContract");
+        const parts: string[] = [];
+        const args: unknown[] = [];
+        let argIndex = 0;
+        if (filter) {
+            argIndex = this.addFilterCondition(parts, args, "script", filter.script, argIndex);
+            argIndex = this.addFilterCondition(parts, args, "state", filter.state, argIndex);
+            argIndex = this.addFilterCondition(parts, args, "type", filter.type, argIndex);
+            argIndex = this.addWatchCondition(parts, args, filter.watch, argIndex);
+        }
+        if (page.after !== undefined) {
+            parts.push(`script > $${argIndex}`);
+            args.push(page.after);
+        }
+        let query = parts.join(" AND ");
+        if (leadingWatch !== undefined) {
+            const lead = leadingWatch === null ? "watch == null" : `watch == $${args.length}`;
+            if (leadingWatch !== null) args.push(leadingWatch);
+            query = query ? `${lead} AND (${query})` : lead;
+        }
+        if (query) results = results.filtered(query, ...args);
+        const rows: RealmRow[] = [];
+        for (const row of results.sorted("script")) {
+            rows.push(row);
+            if (rows.length > page.limit) break;
+        }
+        return rows;
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        await this.ensureInit();
+        this.realm.write(() => {
+            this.realm.create(
+                "ArkContract",
+                {
+                    script: contract.script,
+                    address: contract.address,
+                    type: contract.type,
+                    state: contract.state,
+                    paramsJson: JSON.stringify(contract.params),
+                    createdAt: contract.createdAt,
+                    label: contract.label ?? null,
+                    metadataJson: contract.metadata ? JSON.stringify(contract.metadata) : null,
+                    watch: contract.watch ?? null,
+                },
+                "modified",
+            );
+        });
+    }
+
+    async deleteContract(script: string): Promise<void> {
+        await this.ensureInit();
+        this.realm.write(() => {
+            const toDelete = this.realm.objects("ArkContract").filtered("script == $0", script);
+            this.realm.delete(toDelete);
+        });
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    private addFilterCondition(
+        parts: string[],
+        args: unknown[],
+        column: string,
+        value: string | string[] | undefined,
+        argIndex: number,
+    ): number {
+        if (value === undefined) return argIndex;
+
+        if (Array.isArray(value)) {
+            if (value.length === 0) return argIndex;
+            const conditions = value.map((_, i) => {
+                return `${column} == $${argIndex + i}`;
+            });
+            parts.push(`(${conditions.join(" OR ")})`);
+            args.push(...value);
+            return argIndex + value.length;
+        } else {
+            parts.push(`${column} == $${argIndex}`);
+            args.push(value);
+            return argIndex + 1;
+        }
+    }
+
+    /**
+     * Same as {@link addFilterCondition}, except a row predating the
+     * property stores null and must match `"watched"`.
+     */
+    private addWatchCondition(
+        parts: string[],
+        args: unknown[],
+        value: ContractWatchState | ContractWatchState[] | undefined,
+        argIndex: number,
+    ): number {
+        if (value === undefined) return argIndex;
+
+        const wanted = Array.isArray(value) ? value : [value];
+        if (wanted.length === 0) return argIndex;
+
+        const conditions = wanted.map((_, i) => `watch == $${argIndex + i}`);
+        if (wanted.includes("watched")) conditions.push("watch == null");
+        parts.push(`(${conditions.join(" OR ")})`);
+        args.push(...wanted);
+        return argIndex + wanted.length;
+    }
+}
+
+// ── Realm object → Domain converter ──────────────────────────────────────
+
+type RealmRow = Record<string, unknown>;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function contractObjectToDomain(obj: any): Contract {
+    const contract: Contract = {
+        script: obj.script,
+        address: obj.address,
+        type: obj.type,
+        state: obj.state as ContractState,
+        params: JSON.parse(obj.paramsJson),
+        createdAt: obj.createdAt,
+    };
+
+    if (obj.label !== null && obj.label !== undefined) {
+        contract.label = obj.label;
+    }
+    if (obj.metadataJson !== null && obj.metadataJson !== undefined) {
+        contract.metadata = JSON.parse(obj.metadataJson);
+    }
+    if (obj.watch !== null && obj.watch !== undefined) {
+        contract.watch = obj.watch as ContractWatchState;
+    }
+
+    return contract;
+}

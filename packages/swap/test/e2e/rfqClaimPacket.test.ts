@@ -4,7 +4,7 @@
  * tests reach only the two in TypeScript. The property: the client never calls
  * `pushClaim`, yet the money arrives. Unstamped, the lockup sits until expiry.
  */
-import { beforeAll, describe, expect, it, onTestFinished } from "vitest";
+import { beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { execSync, spawn } from "child_process";
 import { base64, hex } from "@scure/base";
 import {
@@ -12,21 +12,17 @@ import {
     Extension,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    RestArkProvider,
     RestIndexerProvider,
     SingleKey,
     Transaction,
     Wallet,
 } from "@arkade-os/sdk";
-import {
-    CLAIM_PACKET_TYPE,
-    claimPacketShape,
-    covclaimdClient,
-    httpTransport,
-    requestLightningReceive,
-    type InvoiceFacts,
-} from "../../src";
+import { CLAIM_PACKET_TYPE, claimPacketShape, type InvoiceFacts } from "../../src";
+import { covclaimdClient } from "../../src/advanced";
+import { httpTransport, requestLightningReceive } from "../../src/protocol";
 
-const ARK_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const SOLVER_URL = "http://localhost:8787";
 const COVCLAIMD_URL = "http://localhost:7271";
@@ -45,16 +41,34 @@ const execCommand = (command: string): string =>
 const lncli = (node: string, args: string): string =>
     execCommand(`docker exec -t ${node} lncli --network=regtest ${args}`);
 
-const waitFor = async (
+// vi.waitFor over expect.poll: the timeout error gets to name what never
+// happened. vi.waitFor retries ANY throw until the deadline, so a real error
+// from `fn` (LND down, covclaimd unreachable) would burn the whole timeout:
+// capture it, stop polling, rethrow at once — only a `false` (not ready yet)
+// may spin. The 2s cadence keeps Docker/LND round-trip pressure as before.
+const waitFor = (
     fn: () => Promise<boolean>,
     { timeout = 180_000, interval = 2_000, what = "condition" } = {},
 ): Promise<void> => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error(`timeout waiting for ${what}`);
+    let fatal: { err: unknown } | undefined;
+    return vi
+        .waitFor(
+            async () => {
+                if (fatal) return;
+                let ready: boolean;
+                try {
+                    ready = await fn();
+                } catch (err) {
+                    fatal = { err };
+                    return;
+                }
+                if (!ready) throw new Error(`timeout waiting for ${what}`);
+            },
+            { timeout, interval },
+        )
+        .then(() => {
+            if (fatal) throw fatal.err;
+        });
 };
 
 const decodeInvoice = (raw: string): InvoiceFacts => {
@@ -67,14 +81,14 @@ const decodeInvoice = (raw: string): InvoiceFacts => {
     };
 };
 
-const indexer = new RestIndexerProvider(ARK_URL);
+const indexer = new RestIndexerProvider(OPERATOR_URL);
 let wallet: Wallet;
 let covclaimdPubkey: Uint8Array;
 
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkServerUrl: ARK_URL,
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -95,7 +109,7 @@ describe("claim packet, end to end (regtest)", () => {
         // Nothing spendable to start: the closing assertion has one possible cause.
         expect((await wallet.getBalance()).available).toBe(0);
 
-        const receive = await requestLightningReceive(wallet, ARK_URL, httpTransport(SOLVER_URL), {
+        const receive = await requestLightningReceive(wallet, httpTransport(SOLVER_URL), {
             amount: RECEIVE_SATS,
             amountSide: "to",
             covclaimdPubkey,
@@ -118,7 +132,9 @@ describe("claim packet, end to end (regtest)", () => {
             ],
             { stdio: "ignore" },
         );
-        onTestFinished(() => payment.kill());
+        onTestFinished(() => {
+            payment.kill();
+        });
 
         const lockupScript = hex.encode(receive.swapPkScript);
         await waitFor(

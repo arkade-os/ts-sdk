@@ -8,10 +8,8 @@
  * - AES-256-GCM with the ephemeral pubkey as additional data;
  * - wire layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64.
  *
- * Byte-exactness is CONFIRMED against the reference, not self-pinned:
- * covclaimd's own `preimage.Decrypt` (at covclaimd@56cfd78) recovers exactly
- * the P behind the vector in `test/claimPacket.test.ts`, and its
- * `DeserializeClaim` accepts the TLV bodies in `test/claimPacketCodec.test.ts`.
+ * Byte-exactness is confirmed against covclaimd@56cfd78's `preimage.Decrypt` and
+ * `DeserializeClaim` via the vectors in `test/claimPacket*.test.ts`.
  */
 import { base64 } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
@@ -23,26 +21,19 @@ import { sha256 } from "@noble/hashes/sha2.js";
 const HKDF_INFO = new TextEncoder().encode("covclaimd/preimage/v1");
 
 export interface SealedClaimPacket {
-    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 — the bare sealed bytes,
-     * 93 decoded. The older of the two `claim_packet` shapes: a solver holding
-     * it can only hand it to covclaimd over the Reveal API, which needs both
-     * sides pointed at the SAME covclaimd — an agreement nothing on the wire
-     * expresses. Prefer {@link SealedClaimPacket.packet}. */
+    /** `ephPub(33) ‖ nonce(12) ‖ ciphertext`, base64 (93 bytes decoded). The legacy
+     * `claim_packet` shape: usable only via covclaimd's Reveal API, which silently
+     * needs both sides on the SAME covclaimd. Prefer {@link SealedClaimPacket.packet}. */
     ciphertext: string;
     /**
-     * covclaimd's serialised `ClaimPacket` body, base64 — TLV `0x01` ciphertext
-     * and `0x03` covclaimd_pub_key. **This is what `claim_packet` should
-     * carry** (§ 7.1.2: senders SHOULD prefer the packet shape).
-     *
-     * It is what lets the solver stamp the funding transaction as Arkade
-     * extension packet `0x04`, which covclaimd finds on the arkd stream by
-     * itself. The `0x03` TLV is what its filter selects on, so the client alone
-     * chooses which covclaimd — the solver needs none configured or reachable.
+     * covclaimd's serialised `ClaimPacket` body, base64: TLV `0x01` ciphertext and `0x03`
+     * covclaimd_pub_key. **This is what `claim_packet` should carry** (§ 7.1.2). The
+     * solver stamps it as Arkade extension packet `0x04`; covclaimd filters on `0x03`, so
+     * the client alone chooses which covclaimd.
      *
      * `0x02` arkade_script is deliberately absent: the covenant commits to
-     * `taggedHash("ArkScriptHash", script)`, so the funder holds the only copy
-     * guaranteed to match and appends it. A client deriving its own would add a
-     * way for the two to disagree and strand the claim.
+     * `taggedHash("ArkScriptHash", script)`, so only the funder's copy is guaranteed to
+     * match (see {@link appendArkadeScript}); a client-derived one could strand the claim.
      */
     packet: string;
 }
@@ -56,12 +47,8 @@ export interface ClaimPacketInput {
 /**
  * Seal a preimage to covclaimd.
  *
- * The ephemeral key and nonce are generated here and CANNOT be supplied by a
- * caller. That is the point of this signature: AES-GCM under a repeated
- * (key, nonce) pair is a total break — forgery and plaintext recovery, not a
- * degradation — so an optional `nonce` on a production export is a loaded gun
- * whatever the doc comment says. Deterministic sealing lives in the test
- * helper, where no consumer reaches it by accident.
+ * The ephemeral key and nonce CANNOT be caller-supplied: AES-GCM under a repeated
+ * (key, nonce) pair is a total break (forgery and plaintext recovery).
  */
 export async function sealClaimPacket(input: ClaimPacketInput): Promise<SealedClaimPacket> {
     return sealWithEntropy(
@@ -72,9 +59,8 @@ export async function sealClaimPacket(input: ClaimPacketInput): Promise<SealedCl
 }
 
 /**
- * @internal The sealing itself, with entropy passed in. Not re-exported from
- * the package entrypoint. Reusing `ephemeralKey`/`nonce` across two packets
- * breaks the AEAD outright — see {@link sealClaimPacket}.
+ * @internal The sealing with entropy passed in; not re-exported. Reusing
+ * `ephemeralKey`/`nonce` breaks the AEAD outright — see {@link sealClaimPacket}.
  */
 export async function sealWithEntropy(
     input: ClaimPacketInput,
@@ -95,10 +81,7 @@ export async function sealWithEntropy(
     if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
     const sealed = gcm(key, nonce, ephemeralPub).encrypt(input.preimage);
 
-    const ciphertext = new Uint8Array(33 + 12 + sealed.length);
-    ciphertext.set(ephemeralPub, 0);
-    ciphertext.set(nonce, 33);
-    ciphertext.set(sealed, 45);
+    const ciphertext = concatBytes(ephemeralPub, nonce, sealed);
     return {
         ciphertext: base64.encode(ciphertext),
         packet: base64.encode(
@@ -116,9 +99,8 @@ const TLV_COVCLAIMD_PUBKEY = 0x03;
 
 const COMPRESSED_PUBKEY_LENGTH = 33;
 
-/** `ephPub(33) ‖ nonce(12) ‖ preimage(32) ‖ GCM tag(16)` — fixed by the sealing
- * scheme, and what tells the two `claim_packet` shapes apart: a TLV body needs
- * 96 bytes to carry this much, so the two lengths cannot collide. */
+/** `ephPub(33) ‖ nonce(12) ‖ preimage(32) ‖ GCM tag(16)`. Distinguishes the two
+ * `claim_packet` shapes: a TLV body carrying it is ≥96 bytes, so lengths cannot collide. */
 export const SEALED_CIPHERTEXT_LENGTH = 93;
 
 /** The Arkade extension packet type covclaimd scans the arkd tx stream for. */
@@ -132,11 +114,8 @@ const tlv = (type: number, value: Uint8Array): Uint8Array =>
 /**
  * Stamp the covenant script into a client's packet — the solver's half.
  *
- * The covenant commits to `taggedHash("ArkScriptHash", script)`, so its funder
- * holds the only copy guaranteed to match, which is why a client never sends
- * `0x02`. Appending rather than rebuilding is safe because covclaimd's
- * `DeserializeClaim` is an order-agnostic switch: the `0x01, 0x03, 0x02` this
- * produces and its own `Serialize`'s `0x01, 0x02, 0x03` read back identically.
+ * Appending rather than rebuilding is safe: covclaimd's `DeserializeClaim` is
+ * order-agnostic, so `0x01, 0x03, 0x02` reads back like its own `0x01, 0x02, 0x03`.
  */
 export const appendArkadeScript = (body: Uint8Array, arkadeScript: Uint8Array): Uint8Array =>
     Uint8Array.from([...body, ...tlv(TLV_ARKADE_SCRIPT, arkadeScript)]);
@@ -150,10 +129,9 @@ export type ClaimPacketShape =
           needsArkadeScript: boolean;
       };
 
-/** Transcribed from covclaimd's `DeserializeClaim`, including its tolerance of
- * unknown and repeated types. It does NOT inherit the Go's requirement that
- * `0x01` and `0x02` both be present: what a partial body means is a decision
- * for {@link claimPacketShape}, which has a non-throwing contract to keep. */
+/** Transcribed from covclaimd's `DeserializeClaim` (tolerates unknown and repeated types),
+ * minus its requirement that `0x01` and `0x02` both be present: {@link claimPacketShape}
+ * decides what a partial body means. */
 const parseTlv = (
     data: Uint8Array,
 ): { ciphertextLength?: number; hasArkadeScript: boolean; pubkey?: Uint8Array } => {
@@ -188,9 +166,8 @@ const parseTlv = (
 /**
  * Which of the two `claim_packet` shapes a base64 field carries.
  *
- * Never throws: anything not unambiguously a packet reads as the legacy bare
- * ciphertext, which keeps the older Reveal-API path rather than failing a swap
- * over a field this side may simply not understand.
+ * Never throws: anything not unambiguously a packet reads as the legacy ciphertext,
+ * keeping the Reveal-API path rather than failing a swap over an unfamiliar field.
  */
 export const claimPacketShape = (b64: string): ClaimPacketShape => {
     try {
@@ -205,7 +182,7 @@ export const claimPacketShape = (b64: string): ClaimPacketShape => {
             kind: "packet",
             body: raw,
             needsArkadeScript: !hasArkadeScript,
-            ...(pubkey ? { covclaimdPubkey: pubkey } : {}),
+            covclaimdPubkey: pubkey,
         };
     } catch {
         return { kind: "ciphertext" };

@@ -8,7 +8,7 @@
 import * as btc from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import type { OnchainProvider } from "@arkade-os/sdk";
-import type { ChainSource, ChainUtxo, OnchainNetwork } from "./onchainHtlc";
+import type { ChainSource, ChainUtxo, OnchainNetwork, TxStatus } from "./onchainHtlc";
 import { L1_NETWORKS } from "./onchainHtlc";
 
 const addressOf = (pkScript: Uint8Array, network: OnchainNetwork): string =>
@@ -16,7 +16,8 @@ const addressOf = (pkScript: Uint8Array, network: OnchainNetwork): string =>
 
 /** `network` is `requestOnchainSend`'s `l1Network`, and only decodes scripts to
  *  addresses — the provider decides which chain is read, so mismatching the two
- *  yields addresses it knows nothing about rather than an error. */
+ *  yields addresses it knows nothing about rather than an error.
+ */
 export const chainSourceFrom = (
     provider: OnchainProvider,
     network: OnchainNetwork,
@@ -72,6 +73,14 @@ export const chainSourceFrom = (
 
         async getMtp(): Promise<number> {
             return (await provider.getChainTip()).time;
+        },
+
+        async getTxStatus(txid: string): Promise<TxStatus> {
+            return (await provider.getTxStatus(txid)).confirmed ? "confirmed" : "unconfirmed";
+        },
+
+        getFeeRate(): Promise<number | undefined> {
+            return provider.getFeeRate();
         },
     };
 };
