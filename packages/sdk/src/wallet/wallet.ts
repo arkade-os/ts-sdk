@@ -5926,8 +5926,8 @@ export class Wallet
                             hex.decode(h),
                         ),
                     },
+                    oneShot: this.oneShotSubmit,
                 },
-                oneShot: this.oneShotSubmit,
             );
         } finally {
             if (awaitingFinalize) this._submitsAwaitingFinalize--;

@@ -233,7 +233,7 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `true`
      */
     oneShotSubmit?: boolean;
-  
+
     /**
      * Let spends run concurrently on disjoint VTXOs: the wallet lock covers only picking and
      * reserving inputs, amount-bearing `Ramps` exits spend only the VTXOs they need, and naming a
