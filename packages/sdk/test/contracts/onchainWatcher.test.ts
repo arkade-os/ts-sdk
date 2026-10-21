@@ -89,6 +89,17 @@ const coin = {
 const spender = "dd".repeat(32);
 const pendingOf = async (repo: InMemoryWalletRepository) =>
     (await repo.getWalletState())?.settings?.onchainPendingSpends ?? {};
+/** A pending entry for `coin` without the row write `markOnchainSpendPending` makes. */
+const seedPending = (repo: InMemoryWalletRepository, height = 300) =>
+    updateWalletState(repo, (s) => ({
+        ...s,
+        settings: {
+            ...s.settings,
+            onchainPendingSpends: {
+                [`${coin.txid}:${coin.vout}`]: { spender, height, script: boarding.script },
+            },
+        },
+    }));
 
 async function setup(
     getCoins: () => Promise<any[]>,
@@ -459,6 +470,97 @@ describe("ContractManager.syncOnchain", () => {
         [row] = await collectScriptVtxos(walletRepository, boarding.script);
         expect(row).toMatchObject({ isSpent: true, spentBy: record.spentBy });
         expect(events).toEqual(["vtxo_spent"]);
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
+    it("lets the explorer decide once an arkd-held coin leaves the pending window", async () => {
+        const record = {
+            ...coin,
+            script: boarding.script,
+            spentBy: spender,
+            spendConfirmation: { height: 301, time: 0 },
+        };
+        const { manager, walletRepository, tip, onchainProvider } = await setup(
+            async () => [coin],
+            [{ spent: false }, { spent: false }],
+            async () => ({ utxos: [record] }),
+        );
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([coin], spender);
+        await manager.syncOnchain();
+        let [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+
+        tip.height = 10_000;
+        resetRecordedSpends(walletRepository);
+        await manager.syncOnchain();
+        await manager.syncOnchain();
+
+        [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        expect(await pendingOf(walletRepository)).toEqual({});
+        expect(onchainProvider.getTxOutspends).not.toHaveBeenCalled();
+        manager.dispose();
+    });
+
+    it("ignores an arkd confirmation naming another spender than the recorded one", async () => {
+        const record = {
+            ...coin,
+            script: boarding.script,
+            spentBy: "ab".repeat(32),
+            spendConfirmation: { height: 301, time: 0 },
+        };
+        const { manager, walletRepository, tip } = await setup(
+            async () => [coin],
+            undefined,
+            async () => ({ utxos: [record] }),
+        );
+        const events: string[] = [];
+        manager.onContractEvent((e) => events.push(e.type));
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([coin], spender);
+        await manager.syncOnchain();
+        let [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: spender });
+
+        tip.height = 306;
+        await manager.syncOnchain();
+
+        [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        expect(events).not.toContain("vtxo_spent");
+        manager.dispose();
+    });
+
+    it("releases an arkd-held unrolled VTXO the explorer still lists", async () => {
+        const record = {
+            ...coin,
+            script: boarding.script,
+            spentBy: spender,
+            spendConfirmation: { height: 301, time: 0 },
+        };
+        const { manager, walletRepository, tip } = await setup(
+            async () => [coin],
+            undefined,
+            async () => ({ utxos: [record] }),
+        );
+        // An indexer-written unrolled VTXO: the explorer only adds its confirmation.
+        const unrolled = toOnchainCoinRow(coin, boarding, script);
+        await saveVtxosForContract(walletRepository, boarding, [
+            { ...unrolled, status: { ...unrolled.status, fromExplorer: false } },
+        ]);
+        await manager.markOnchainSpendPending([coin], spender);
+        await manager.syncOnchain();
+        let [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+
+        tip.height = 306;
+        resetRecordedSpends(walletRepository);
+        await manager.syncOnchain();
+
+        [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
         manager.dispose();
     });
 
@@ -473,6 +575,13 @@ describe("ContractManager.syncOnchain", () => {
 
         const [row] = await collectScriptVtxos(walletRepository, boarding.script);
         expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        expect(indexerProvider.getUtxos).not.toHaveBeenCalled();
+
+        // Stored spent with no entry: arkd cannot hold it, so asking is wasted.
+        await saveVtxosForContract(walletRepository, boarding, [
+            { ...row, isSpent: true, spentBy: spender },
+        ]);
+        await manager.syncOnchain();
         expect(indexerProvider.getUtxos).not.toHaveBeenCalled();
         manager.dispose();
     });
@@ -531,6 +640,7 @@ describe("ContractManager.syncOnchain", () => {
         await saveVtxosForContract(walletRepository, boarding, [
             { ...toOnchainCoinRow(coin, boarding, script), isSpent: true, spentBy: "" },
         ]);
+        await seedPending(walletRepository);
         const events: string[] = [];
         manager.onContractEvent((e) => events.push(e.type));
 
@@ -542,8 +652,8 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
-    it("keeps a listed coin's stored spend while the arkd lookup fails", async () => {
-        const { manager, walletRepository } = await setup(
+    it("keeps a listed coin's stored spend while the arkd lookup fails, within the pending window", async () => {
+        const { manager, walletRepository, tip } = await setup(
             async () => [coin],
             undefined,
             async () => {
@@ -553,14 +663,22 @@ describe("ContractManager.syncOnchain", () => {
         await saveVtxosForContract(walletRepository, boarding, [
             { ...toOnchainCoinRow(coin, boarding, script), isSpent: true, spentBy: spender },
         ]);
+        await seedPending(walletRepository);
         resetRecordedSpends(walletRepository);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
         await manager.syncOnchain();
 
-        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        let [row] = await collectScriptVtxos(walletRepository, boarding.script);
         expect(row).toMatchObject({ isSpent: true, spentBy: spender });
         expect(warn).toHaveBeenCalled();
+
+        // An outage cannot hold the coin past the window: the explorer decides.
+        tip.height = 306;
+        await manager.syncOnchain();
+
+        [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
         warn.mockRestore();
         manager.dispose();
     });

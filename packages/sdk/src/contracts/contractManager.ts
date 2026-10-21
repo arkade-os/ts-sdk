@@ -2145,13 +2145,13 @@ export class ContractManager implements IContractManager {
             ]),
         );
         const live = new Set(coins.map(vtxoOutpoint));
-        // Only what can change: a listed coin nobody is spending is not worth an arkd request.
-        // A listed coin already marked spent is asked again, so the explorer's lag cannot undo it.
+        // Only what can change: arkd can hold a listed coin only while it is pending, and name or
+        // mark a vanished one.
         const recorded = await this.serverSpends(
             [...stored.values()].filter((v) => {
                 const key = vtxoOutpoint(v);
                 if (!v.isUnrolled) return false;
-                return v.isSpent ? !v.spentBy || live.has(key) : !live.has(key) || key in pending;
+                return live.has(key) ? key in pending : !v.isSpent || !v.spentBy;
             }),
         );
         const rows: ExtendedVirtualCoin[] = [];
@@ -2166,23 +2166,33 @@ export class ContractManager implements IContractManager {
                     ? { ...prior, status: { ...prior.status, ...coin.status } }
                     : toOnchainCoinRow(coin, contract, tapscript);
             const record = recorded?.get(key);
-            if (record?.spendConfirmation) {
-                // arkd saw the spend confirm before the explorer did; a stored spend stays as is.
+            const entry = pending[key];
+            // arkd's word holds a coin the explorer lists no longer than the pending rule would,
+            // or a confirmation it invents could hide the coin from its CSV exit for good.
+            const holding =
+                entry !== undefined &&
+                (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS;
+            if (holding && record?.spendConfirmation && record.spentBy === entry.spender) {
+                // arkd saw our spend confirm before the explorer did. The entry stays: it bounds
+                // the hold, and the release below undoes it if the explorer never agrees.
                 if (!prior?.isSpent) spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
                 else if (!prior.spentBy) named.push({ ...prior, spentBy: record.spentBy });
-                delete pending[key];
                 continue;
             }
             // A failed lookup cannot tell a lagging explorer from a reorg: keep the stored spend
-            // until a lookup succeeds. A pending entry stays too and ages out as usual.
-            if (prior?.isSpent && recorded === undefined) continue;
-            const entry = pending[key];
-            if (entry && (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS) {
+            // while the entry holds it, so it does not flap.
+            if (prior?.isSpent && recorded === undefined && holding) continue;
+            if (holding) {
                 rows.push({ ...row, spentBy: entry.spender });
                 continue;
             }
             delete pending[key];
-            rows.push(entry && row.spentBy === entry.spender ? { ...row, spentBy: "" } : row);
+            // An unrolled VTXO's row carries a spend the hold above may have set.
+            rows.push(
+                entry && row.spentBy === entry.spender
+                    ? { ...row, isSpent: false, spentBy: "" }
+                    : row,
+            );
         }
 
         for (const row of stored.values()) {
@@ -2192,6 +2202,8 @@ export class ContractManager implements IContractManager {
             if (row.isSpent) {
                 // Already spent and announced: this only names the spender.
                 if (!row.spentBy && record) named.push({ ...row, spentBy: record.spentBy });
+                // An entry left by a hold settles here.
+                delete pending[key];
                 continue;
             }
             if (record) {
