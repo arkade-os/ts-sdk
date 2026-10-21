@@ -52,8 +52,11 @@ style and have not been backfilled.
   too much, breaks the ceiling, leaves dust or more unclaimed, or splits
   asset-bearing inputs is refused rather than reshaped. Automatic renewal still
   settles into one output, and `split` is refused on the service-worker wallet.
+- **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices. A destroyed pool refuses to reconnect, so a transport that outlives `closeSharedNostrPool()` fails instead of opening a socket nothing can close, and concurrent card fetches are only merged when they ask the same relays.
 
 ### Changed
+
+- **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
@@ -75,6 +78,15 @@ style and have not been backfilled.
   `[]` with no wallet, which a caller could not tell from a wallet with no
   boarding coins; it now throws `WalletNotInitializedError`, like
   `GET_VTXOS`. (#943)
+
+### Bug Fixes
+
+- **Contract subscription recovery clears stale poll state.** Recovery now
+  uses the same connection-reset path as stream reconnection, so a successful
+  manager reconciliation re-enables failsafe polling for contracts whose
+  earlier event handling failed. Subscription request timeouts are validated
+  as portable timer delays and must be greater than zero; accepting zero
+  caused immediate timeouts and endless retries.
 
 ### Breaking Changes
 
@@ -272,6 +284,24 @@ style and have not been backfilled.
 
 ### Features
 
+- **`concurrentSpending` lets spends overlap on disjoint VTXOs, and
+  `reserveVtxos` keeps VTXOs out of SDK-chosen spends.** Opt-in
+  (`Wallet.create({ concurrentSpending: true })`): the wallet lock covers only
+  picking and reserving inputs, so a send no longer waits for another
+  operation's batch swap; amount-bearing `Ramps` exits spend only the VTXOs
+  they need; naming a VTXO another operation is spending throws
+  `VtxoReservedError`. `wallet.reserveVtxos(outpoints)` holds VTXOs out of
+  `send`, `settle()`, exits, renewal, router rails and swap funding until
+  released; renewal skips a held VTXO even once it is due, and logs a warning
+  naming it, so a long-lived hold must be spent or released before the VTXO
+  expires. `WalletBalance` gains `reserved`, so
+  `settled + preconfirmed === available + gated + intentLocked + reserved`: a
+  held VTXO's value moves from `available` to `reserved`, and without holds no
+  existing field changes value. Code that builds `WalletBalance` objects
+  (custom `IWallet` implementations, test doubles) must add `reserved`. Without
+  the setting and without holds, behavior is unchanged except for asset
+  operations, listed under Bug Fixes.
+
 - **Concrete `Wallet.settle` exposes synchronous backend phase hooks.** The
   optional third argument reports `preparing` after lock acquisition and
   `registration_attempt` before intent registration, allowing backend callers
@@ -444,6 +474,44 @@ style and have not been backfilled.
   0.3.0.
 
 ### Bug Fixes
+
+- **`@arkade-os/swap`: a restore scan no longer reopens a cancelled or filled
+  offer.** A client starting right after a cancel scans its deposits, and the
+  indexer can still report the spent deposit as unspent. The scan wrote that
+  `pending` over the stored `cancelled`, so `swaps()` showed the offer `open`
+  until a later pass. A spent record now ignores a fate that shows no spend.
+
+- **An asset operation's inputs are no longer picked by a parallel `send`.**
+  `issue`, `reissue` and `burn` pick their coins without the wallet lock and
+  only queue for it to submit, while `getVtxos()` and every SDK pick still
+  showed those coins; a `send` that picked in that window spent the same
+  coin, and the operator refused whichever submit came second. The inputs are
+  now marked in flight from the moment the operation submits, as a `send`'s
+  are, so other picks skip them and `reserveVtxos` refuses them.
+
+- **`@arkade-os/swap`: the Nostr RFQ transport fails fast instead of waiting out its 30s reply
+  timeout.** nostr-tools *resolves* a publish to a relay it could not connect to (with
+  `"connection failure: …"`), and `send()` counted that as accepted, so with every relay
+  unreachable each quote waited 30s for "no solver reply". Those results now count as failures,
+  and the error lists each relay's outcome. A transport whose subscription every relay already
+  dropped rejects later requests at once with `RelayUnavailable`, and a closed one with
+  `TransportClosed`, without publishing. The pending reply is marked handled when it's created:
+  if every relay dropped while the publish was in flight, or the publish failed, it used to
+  reject with no handler attached, an unhandled rejection that ends a Node process by default.
+  A failed publish also clears the reply timer.
+
+- **`settle` no longer warns of a lingering intent the server refused.** A
+  settle that fails before commit deletes its intent so the next one doesn't
+  hit "duplicated input". When arkd had refused the registration (e.g.
+  `INTENT_INSUFFICIENT_FEE`) there was nothing to delete, and its "no
+  matching intents" answer was logged as a possibly lingering intent. That
+  answer now counts as released, as intent reconciliation already treats it.
+
+- **Swap refunds require a recognized refund spend leaf.** A claim checkpoint can be
+  visible before its preimage arrives, while retaining the same transaction id. The
+  lockup reader previously treated that missing witness as a refund and stopped
+  watching a successful payment. Incomplete claims and unsupported spend data now
+  remain unresolved until proof arrives; refund evidence must match every lockup outpoint.
 
 - **The failsafe poll no longer reports a just-spent coin as received
   (#1083).** The stream updates the watcher at once, but the repository only

@@ -33,11 +33,14 @@ import {
     Transaction,
     VHTLC,
     assertValidServerUnrollScript,
+    buildOffchainTx,
+    decodeTapscript,
     getArkPsbtFields,
     isVtxoSpent,
     networkFromArkadeInfo,
     resolveCheckpointExitDelayPolicy,
     signAndSubmitOffchainTx,
+    scriptFromTapLeafScript,
     toXOnly,
     type IWallet,
 } from "@arkade-os/sdk";
@@ -234,8 +237,7 @@ export type LockupFate =
     | { fate: "open" }
     /** Spent by a witness carrying a preimage that HASHES to the quote's `payment_hash`. */
     | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
-    /** Fully spent, and nothing that spent it revealed a matching preimage —
-     * so the money went back to the trader. See {@link readLockupFate}. */
+    /** Every lockup output was spent through a recognized refund leaf. */
     | { fate: "returned"; spends: readonly LockupSpend[] }
     /**
      * At least one output was unilaterally exited: onchain under the VHTLC script, beyond any
@@ -261,6 +263,25 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
     ...(tx.getInput(inputIndex).finalScriptWitness ?? []),
 ];
 
+const spendsRefundLeaf = (tx: Transaction, inputIndex: number): boolean => {
+    const input = tx.getInput(inputIndex);
+    const witness = input.finalScriptWitness;
+    const leaves = input.tapLeafScript ?? [];
+    const script =
+        witness && witness.length >= 2
+            ? witness[witness.length - 2]
+            : leaves.length === 1
+              ? scriptFromTapLeafScript(leaves[0])
+              : undefined;
+    if (!script) return false;
+    try {
+        const { type } = decodeTapscript(script);
+        return type === "multisig" || type === "csv-multisig" || type === "cltv-multisig";
+    } catch {
+        return false;
+    }
+};
+
 /**
  * Decide from chain data alone whether a swap lockup settled, came back, or is
  * still live.
@@ -268,14 +289,14 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
  * **Decidable without asking anyone.** Only the claim leaf reveals `P`, and the counterparty only
  * legitimately obtains `P` by completing its side. Every OTHER leaf is a refund:
  * `nonInteractiveRefund` is covenant-pinned to the trader's address and the rest need the
- * trader's signature. So "spent, but not by a hash-verified claim" means the money came back.
+ * trader's signature. A refund requires a recognized non-conditional spend leaf on every output.
  *
  * **A matching witness SHAPE is not proof**: only a candidate hashing to `paymentHash` counts.
  * Being permissive would report "settled" for a swap that refunded.
  *
  * **`unknown` is not `returned`**: an empty vtxo set, an unnamed or unfetchable spend, or an
- * undecodable blob all give `unknown`, and `getVirtualTxs` may return fewer txs than asked, so the
- * observed set is counted. Treat `unknown` like `open`; the refund timelock ends the wait.
+ * undecodable blob all give `unknown`. A claim checkpoint can be visible before its preimage,
+ * without changing its txid. Missing or invalid claim witnesses also give `unknown`.
  *
  * An exit is checked first, across the whole set, so output order cannot change the answer.
  * Read fresh on every poll, never cached.
@@ -327,7 +348,7 @@ export async function readLockupFate(
 
     const spends = [...spentBy.values()];
     const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
-    const observed = new Set<string>();
+    const refunded = new Set<string>();
     for (const raw of txs) {
         let tx: Transaction;
         try {
@@ -336,24 +357,27 @@ export async function readLockupFate(
             continue; // undecodable blob: nothing learned from it
         }
         // Bound by the PSBT's own id (witness cannot change a taproot txid), not by position.
-        if (spentBy.has(tx.id)) observed.add(tx.id);
+        if (!spentBy.has(tx.id)) continue;
         for (let i = 0; i < tx.inputsLength; i++) {
             const spent = tx.getInput(i);
             if (!spent.txid) continue;
             // Same txid convention as the indexer (cf. `assertCheckpointsMatchInputs`).
             const txid = hex.encode(spent.txid);
-            if (!all.some((vtxo) => vtxo.txid === txid && vtxo.vout === spent.index)) continue;
+            const vtxo = all.find(
+                (vtxo) => vtxo.txid === txid && vtxo.vout === spent.index && vtxo.spentBy === tx.id,
+            );
+            if (!vtxo) continue;
             for (const candidate of candidateWitnessItems(tx, i)) {
                 if (hashesTo(candidate, input.paymentHash)) {
                     return { fate: "claimed", preimage: candidate, spends };
                 }
             }
+            if (spendsRefundLeaf(tx, i)) refunded.add(`${vtxo.txid}:${vtxo.vout}`);
         }
     }
 
     if (sweptLeft) return { fate: "open" };
-    // Only a lockup whose every spend was actually seen can be called returned.
-    return everySpendNamed && observed.size === spentBy.size
+    return everySpendNamed && all.every((vtxo) => refunded.has(`${vtxo.txid}:${vtxo.vout}`))
         ? { fate: "returned", spends }
         : { fate: "unknown" };
 }

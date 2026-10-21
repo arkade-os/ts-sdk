@@ -17,6 +17,28 @@ const wallet = (over: Record<string, unknown> = {}) =>
         ...over,
     }) as any;
 
+describe("Ramps.onboard picks only selectable boarding UTXOs", () => {
+    it("skips one a concurrent settle is spending, while the getter still lists it", async () => {
+        const w = wallet({
+            getBoardingUtxos: vi.fn().mockResolvedValue([utxo("11", 100_000), utxo("22", 50_000)]),
+            getSelectableBoardingUtxos: vi.fn().mockResolvedValue([utxo("22", 50_000)]),
+        });
+
+        await new Ramps(w).onboard({ intentFee: {} } as any);
+
+        expect(w.settle.mock.calls[0]![0].inputs).toEqual([utxo("22", 50_000)]);
+        expect(w.getBoardingUtxos).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the getter for a wallet without the selectable read", async () => {
+        const w = wallet();
+
+        await new Ramps(w).onboard({ intentFee: {} } as any);
+
+        expect(w.settle.mock.calls[0]![0].inputs).toEqual([utxo("11", 100_000)]);
+    });
+});
+
 describe("Ramps.onboard pays for the change it creates", () => {
     // 7 per input, 100 for the onboarded vtxo, 50 for the boarding change.
     const priced = {

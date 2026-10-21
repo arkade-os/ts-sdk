@@ -2162,6 +2162,75 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 
+    it.each([
+        {
+            label: "stays quiet when the server holds no intent",
+            deleteError: new ArkError(
+                23,
+                "no matching intents found for intent proof",
+                "INVALID_INTENT_PROOF",
+            ),
+            warns: false,
+        },
+        {
+            label: "warns when the delete itself fails",
+            deleteError: new Error("network down"),
+            warns: true,
+        },
+    ])("after a refused registration, $label", async ({ deleteError, warns }) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const thisArg: any = {
+            network: "mutinynet",
+            _txLock: Promise.resolve(),
+            _withTxLock: (Wallet.prototype as any)._withTxLock,
+            _settleImpl: (Wallet.prototype as any)._settleImpl,
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue({
+                    next: vi.fn(() => new Promise(() => {})),
+                    return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+                }),
+                deleteIntent: vi.fn().mockRejectedValue(deleteError),
+                registerIntent: vi
+                    .fn()
+                    .mockRejectedValue(
+                        new ArkError(31, "got 0 min expected 200", "INTENT_INSUFFICIENT_FEE"),
+                    ),
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+            }),
+            safeRegisterIntent: Wallet.prototype.safeRegisterIntent,
+            persistIntentSnapshot: vi.fn(),
+        };
+
+        try {
+            await expect(
+                Wallet.prototype.settle.call(thisArg, { inputs: [input], outputs: [] }),
+            ).rejects.toThrow("got 0 min expected 200");
+
+            expect(thisArg.arkProvider.deleteIntent).toHaveBeenCalledTimes(1);
+            const deleteWarnings = warn.mock.calls.filter((c) =>
+                String(c[0]).startsWith("Failed to delete intent"),
+            );
+            expect(deleteWarnings).toHaveLength(warns ? 1 : 0);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     it("claims its inputs for reconciliation before the first intent persist", async () => {
         const key = `${input.txid}:${input.vout}`;
         const claimedAt: Record<string, boolean> = {};
@@ -2330,7 +2399,7 @@ describe("Wallet._settleImpl", () => {
                     getChainTip: vi.fn().mockResolvedValue({ height: 1000 }),
                 },
                 boardingTapscript: { exitScript: exitScriptHex },
-                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+                getSelectableBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
                 // The gate lives in getSpendableVtxos: the raw read carries a coin
                 // auto-selection must never reach for (and, at this value, would
                 // sort to the front of the batch if it did).

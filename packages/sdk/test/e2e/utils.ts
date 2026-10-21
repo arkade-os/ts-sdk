@@ -368,16 +368,16 @@ export async function beforeEachFaucet(): Promise<void> {
 export function setFees(fees: IntentFeeConfig): void {
     let cmd = `${arkdExec} arkd fees intent`;
     if (fees.offchainInput) {
-        cmd += ` --offchain-input ${fees.offchainInput}`;
+        cmd += ` --offchain-input "${fees.offchainInput}"`;
     }
     if (fees.onchainInput) {
-        cmd += ` --onchain-input ${fees.onchainInput}`;
+        cmd += ` --onchain-input "${fees.onchainInput}"`;
     }
     if (fees.offchainOutput) {
-        cmd += ` --offchain-output ${fees.offchainOutput}`;
+        cmd += ` --offchain-output "${fees.offchainOutput}"`;
     }
     if (fees.onchainOutput) {
-        cmd += ` --onchain-output ${fees.onchainOutput}`;
+        cmd += ` --onchain-output "${fees.onchainOutput}"`;
     }
     execCommand(cmd);
 }

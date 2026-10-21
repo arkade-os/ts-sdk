@@ -233,6 +233,16 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `true`
      */
     oneShotSubmit?: boolean;
+  
+    /**
+     * Let spends run concurrently on disjoint VTXOs: the wallet lock covers only picking and
+     * reserving inputs, amount-bearing `Ramps` exits spend only the VTXOs they need, and naming a
+     * VTXO another operation is spending throws `VtxoReservedError`. One `Wallet` instance is one
+     * reservation ledger; it does not coordinate across processes.
+     *
+     * @defaultValue `false`
+     */
+    concurrentSpending?: boolean;
 }
 
 /**
@@ -310,8 +320,8 @@ export interface WalletBalance {
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would pick, so `send` never
-     * refuses it: `settled + preconfirmed - gated - intentLocked`, minus one reserved dust carrier
-     * if any of these outputs hold assets.
+     * refuses it: `settled + preconfirmed - gated - intentLocked - reserved`, minus one dust
+     * carrier kept back if any of these outputs hold assets.
      */
     available: number;
     /**
@@ -329,6 +339,8 @@ export interface WalletBalance {
      * under-reports into `available` rather than misattributing.
      */
     intentLocked: number;
+    /** Held by `Wallet.reserveVtxos`: in `settled`/`preconfirmed` and `total`, never `available`. */
+    reserved: number;
     /**
      * Subdust or expired (swept) virtual outputs recoverable in principle, including lockups that
      * refuse a spend right now. `VtxoManager.getRecoverableBalance()` gives what a batch would

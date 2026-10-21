@@ -127,13 +127,14 @@ import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
-import { releaseIntents } from "./intentReconciliation";
+import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
 import {
     assertRecipientArkadeAddress,
     extendCoinWithTapscript,
     getDustAmount,
+    isSdkPicked,
     validateRecipients,
     type RecipientArkadeAddressContext,
 } from "./utils";
@@ -173,6 +174,7 @@ import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
+    inVtxoWriteOrder,
     validateVtxosForScript,
     saveVtxosForContract,
     vtxoOutpoint,
@@ -503,6 +505,13 @@ function omittedOutpoints(
     );
 }
 
+/** `txid:vout` of each coin input, VTXO or boarding; an arknote string has none. */
+function coinKeys(inputs: readonly ExtendedCoin[]): string[] {
+    return inputs
+        .filter((input) => typeof input === "object" && input !== null)
+        .map((input) => `${input.txid}:${input.vout}`);
+}
+
 /** Drop VTXOs whose outpoint is locked by a non-terminal intent; same array when none is. */
 export function excludeLockedOutpoints<T extends { txid: string; vout: number }>(
     vtxos: T[],
@@ -692,6 +701,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     // Outpoints committed to an in-flight settle/send, filtered from getVtxos() so concurrent
     // callers can't reselect them. In-memory only: a stale entry only hides a VTXO.
     protected _pendingSpendOutpoints = new Set<string>();
+    protected _heldOutpoints = new Set<string>();
 
     /** Activity resolvers consumed by {@link getActivityHistory}. */
     readonly activity = createDefaultActivityRegistry();
@@ -1248,6 +1258,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
     }
 
+    /**
+     * @internal The stored VTXOs {@link reserveVtxos} holds, minus any being spent: for renewal,
+     * which skips them, to report the ones it would have renewed. No sync.
+     */
+    async getHeldVtxos(): Promise<NormalizedExtendedVirtualCoin[]> {
+        if (this._heldOutpoints.size === 0) return [];
+        return (await this.getStoredVtxos()).filter((vtxo) =>
+            this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
+        );
+    }
+
     /** @inheritdoc */
     async getSpendableVtxos(
         filter?: GetSpendableVtxosFilter,
@@ -1259,12 +1280,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         const selectable = vtxos.filter(
             (vtxo) =>
-                !isGatedVtxo(vtxo, gated) && !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
+                !isGatedVtxo(vtxo, gated) &&
+                !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`) &&
+                !this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
         );
         const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
         logExcludedVtxos("getSpendableVtxos", vtxos, [
             gateExclusion(gated),
             outpointExclusion(pendingRecovery, PENDING_RECOVERY_REASON),
+            outpointExclusion(this._heldOutpoints, "is held by reserveVtxos"),
             outpointExclusion(
                 omittedOutpoints(selectable, unlocked),
                 "is locked by an in-flight settlement intent",
@@ -1423,6 +1447,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             isPendingRecovery: (vtxo) => pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`),
             isGenericallySpendable: (vtxo) => !isGatedVtxo(vtxo, gated),
             isUnlocked: (vtxo) => unlocked.has(`${vtxo.txid}:${vtxo.vout}`),
+            isReserved: (vtxo) => this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
             dustCarrier: getDustAmount(this),
         };
     }
@@ -1749,6 +1774,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const groups = await this.getBoardingUtxosForSigners(currentOnly);
         this.boardingLoaded = true;
         return groups.flatMap((g) => g.coins);
+    }
+
+    /**
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, for SDK
+     * picks. The getter itself lists them: callers that mirror it (the worker's cache and
+     * broadcasts, balances) must not see a settle's inputs vanish, and then stay gone if it fails.
+     */
+    async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
+        return (await this.getBoardingUtxos()).filter(
+            (coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`),
+        );
     }
 
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
@@ -2900,7 +2936,7 @@ export class Wallet
 
     /**
      * Serializes `settle`/`send` so VtxoManager's background renewal can't race user
-     * transactions for the same inputs.
+     * transactions for the same inputs; with `concurrentSpending`, only until inputs are reserved.
      */
     private _txLock: Promise<void> = Promise.resolve();
     // Every input (boarding included) of an intent a live settle owns; reconciliation skips them.
@@ -2925,18 +2961,77 @@ export class Wallet
         }
     }
 
-    private _withTxLock<T>(fn: () => Promise<T>): Promise<T> {
+    /**
+     * Hold VTXOs so no SDK-chosen spend picks them; the holder still spends them by naming them.
+     * All-or-nothing: throws {@link VtxoReservedError} if any is held or already being spent.
+     * In-memory, for this `Wallet` instance only.
+     */
+    reserveVtxos(outpoints: readonly Outpoint[]): VtxoReservation {
+        const keys = outpoints.map((o) => `${o.txid}:${o.vout}`);
+        const inFlight = keys.filter((k) => this._pendingSpendOutpoints.has(k));
+        if (inFlight.length > 0) throw new VtxoReservedError(inFlight, "in-flight");
+        const held = keys.filter((k) => this._heldOutpoints.has(k));
+        if (held.length > 0) throw new VtxoReservedError(held, "held");
+        for (const k of keys) this._heldOutpoints.add(k);
+        let released = false;
+        return {
+            outpoints: [...outpoints],
+            release: () => {
+                if (released) return;
+                released = true;
+                for (const k of keys) this._heldOutpoints.delete(k);
+            },
+        };
+    }
+
+    /**
+     * @internal For `AssetManager`: reserves what `fn` submits, hiding it from other picks until
+     * the submit ends. With `concurrentSpending`, `fn` runs under the wallet lock, released once
+     * the inputs are reserved; otherwise `fn` runs unlocked and only the submit takes the lock.
+     */
+    withSpendLock<T>(fn: (submit: OffchainSubmit) => Promise<T>): Promise<T> {
+        const run = (release?: () => void) =>
+            fn(async (inputs, outputs) => {
+                this._assertNotHeld(inputs);
+                if (release) this._assertNotInFlight(inputs);
+                this._addPendingSpends(inputs);
+                release?.();
+                try {
+                    // Reserved above: once released, the tail must not queue for the lock again.
+                    return await (release
+                        ? this._buildAndSubmitOffchainTx(inputs, outputs, this.serverUnrollScript)
+                        : this.buildAndSubmitOffchainTx(inputs, outputs));
+                } finally {
+                    this._removePendingSpends(inputs);
+                }
+            });
+        return this._concurrentSpending ? this._withTxLock(run) : run();
+    }
+
+    private _withTxLock<T>(fn: (release: () => void) => Promise<T>): Promise<T> {
         let release!: () => void;
         const lock = new Promise<void>((r) => (release = r));
         const prev = this._txLock;
         this._txLock = lock;
         return prev.then(async () => {
             try {
-                return await fn();
+                return await fn(release);
             } finally {
                 release();
             }
         });
+    }
+
+    private _assertNotInFlight(inputs: readonly ExtendedCoin[]): void {
+        const clashing = coinKeys(inputs).filter((key) => this._pendingSpendOutpoints.has(key));
+        if (clashing.length > 0) throw new VtxoReservedError(clashing, "in-flight");
+    }
+
+    private _assertNotHeld(inputs: readonly ExtendedCoin[]): void {
+        const held = coinKeys(inputs.filter(isVirtualCoin)).filter((key) =>
+            this._heldOutpoints.has(key),
+        );
+        if (held.length > 0) throw new VtxoReservedError(held, "held");
     }
 
     /**
@@ -3058,6 +3153,14 @@ export class Wallet
     }
 
     public readonly settlementConfig: SettlementConfig | false;
+
+    private _concurrentSpending = false;
+    private _submitsAwaitingFinalize = 0;
+
+    /** @see WalletConfig.concurrentSpending */
+    get concurrentSpending(): boolean {
+        return this._concurrentSpending;
+    }
 
     /** Public here; `ReadonlyWallet` keeps it protected so a readonly view can't submit. */
     declare readonly arkProvider: ArkProvider;
@@ -3390,6 +3493,7 @@ export class Wallet
         wallet.intentRepository = config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
+        wallet._concurrentSpending = config.concurrentSpending === true;
 
         await wallet.getVtxoManager();
         return wallet;
@@ -3463,20 +3567,27 @@ export class Wallet
         eventCallback?: (event: SettlementEvent) => void,
         hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string> {
-        return this._withTxLock(() => {
+        return this._withTxLock((release) => {
             hooks?.onPhase?.("preparing");
             const onRegistrationAttempt = hooks?.onPhase
                 ? () => hooks.onPhase?.("registration_attempt")
                 : undefined;
-            return this._settleImpl(params, eventCallback, onRegistrationAttempt);
+            return this._settleImpl(
+                params,
+                eventCallback,
+                this._concurrentSpending ? release : undefined,
+                onRegistrationAttempt,
+            );
         });
     }
 
     private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        onReserved?: () => void,
         onRegistrationAttempt?: () => void,
     ): Promise<string> {
+        const picked = params === undefined || isSdkPicked(params);
         if (params?.inputs) {
             for (const input of params.inputs) {
                 // validate arknotes inputs
@@ -3518,7 +3629,7 @@ export class Wallet
                 chainTipHeight = tip.height;
             }
 
-            const boardingUtxos = (await this.getBoardingUtxos()).filter(
+            const boardingUtxos = (await this.getSelectableBoardingUtxos()).filter(
                 (utxo) =>
                     utxo.status.confirmed &&
                     !hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
@@ -3607,6 +3718,7 @@ export class Wallet
             ...params,
             inputs: await refreshSweptStateOfExpiredInputs(this, params.inputs),
         };
+        if (onReserved) this._assertNotInFlight(params.inputs);
 
         const onchainOutputIndexes: number[] = [];
         const outputs: TransactionOutput[] = [];
@@ -3732,11 +3844,19 @@ export class Wallet
             hex.encode(await this.identity.xOnlyPublicKey()),
         );
 
+        // After the last await before the inputs go pending, so a hold placed during signing is
+        // caught; a throw here leaves nothing pending, so the holder can spend them.
+        if (picked) this._assertNotHeld(params.inputs);
         // Hide the inputs from concurrent getVtxos() callers before the intent registers, and
         // claim them before the first persist so reconciliation never races this settle.
         this._addPendingSpends(params.inputs);
+        const boardingKeys = onReserved
+            ? coinKeys(params.inputs.filter((i) => !isVirtualCoin(i)))
+            : [];
+        for (const key of boardingKeys) this._pendingSpendOutpoints.add(key);
         const settlingKeys = params.inputs.map((i) => `${i.txid}:${i.vout}`);
         for (const key of settlingKeys) this._settlingOutpoints.add(key);
+        onReserved?.();
         await this.persistIntentSnapshot(
             intentTxId,
             "waiting_to_submit",
@@ -3752,6 +3872,8 @@ export class Wallet
 
         const abortController = new AbortController();
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
+        // Set just before registering: a failure earlier has no server intent to delete.
+        let registering = false;
         // Set once Batch.join returns: the batch is committed on-chain and no
         // local cleanup failure may cancel it. Authoritative in memory even if
         // the hook's terminal repo write failed, which repo state can't tell us.
@@ -3774,6 +3896,7 @@ export class Wallet
                 yield* stream;
             })();
 
+            registering = true;
             onRegistrationAttempt?.();
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
@@ -3828,12 +3951,16 @@ export class Wallet
             // Pre-commit failure: release the server intent so the next settle
             // doesn't hit "duplicated input", and record the cancellation.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
-            await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
-                console.warn(
-                    `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
-                    e,
-                );
-            });
+            if (registering) {
+                await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
+                    // Nothing held: the server refused the registration, or already dropped it.
+                    if (isNoMatchingIntentsError(e)) return;
+                    console.warn(
+                        `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                        e,
+                    );
+                });
+            }
             await this.persistIntentSnapshot(
                 intentTxId,
                 "cancelled",
@@ -3848,6 +3975,7 @@ export class Wallet
         } finally {
             // Clear first so a synchronous handler firing from abort() never sees stale state.
             this._removePendingSpends(params.inputs);
+            for (const key of boardingKeys) this._pendingSpendOutpoints.delete(key);
             for (const key of settlingKeys) this._settlingOutpoints.delete(key);
             // abort() covers a started generator; return() also releases one that never ran.
             abortController.abort();
@@ -5106,13 +5234,21 @@ export class Wallet
         const validUntil = captureSendDeadline(params.validUntil);
         const inputExpiryFloor = captureInputExpiryFloor(params.inputExpiryFloor);
         assertSendDeadline(validUntil);
-        return this._withTxLock(() => this._sendImpl(params, validUntil, inputExpiryFloor));
+        return this._withTxLock((release) =>
+            this._sendImpl(
+                params,
+                validUntil,
+                inputExpiryFloor,
+                this._concurrentSpending ? release : undefined,
+            ),
+        );
     }
 
     private async _sendImpl(
         { recipients: args, selectedVtxos, maxChangeFee }: SendParams,
         validUntil?: number,
         inputExpiryFloor?: InputExpiryFloor,
+        onReserved?: () => void,
     ): Promise<string> {
         assertSendDeadline(validUntil);
         if (args.length === 0) {
@@ -5492,6 +5628,8 @@ export class Wallet
                 serverUnrollScript,
                 changeAssets: changeReceiver?.assets,
             },
+            onReserved,
+            !selectedVtxos,
             { validUntil },
         );
     }
@@ -5513,9 +5651,14 @@ export class Wallet
             changeAssets?: Asset[];
             recordSentHistory?: boolean;
         },
+        onReserved?: () => void,
+        picked = false,
         options?: { validUntil?: number },
     ): Promise<string> {
+        if (picked) this._assertNotHeld(inputs);
+        if (onReserved) this._assertNotInFlight(inputs);
         this._addPendingSpends(inputs);
+        onReserved?.();
         try {
             const { arkTxid, signedCheckpointTxs } = await this._buildAndSubmitOffchainTx(
                 inputs,
@@ -5557,7 +5700,7 @@ export class Wallet
         if (inputs.length === 0) {
             throw new Error("sendSelectedVtxosToSelf: no inputs");
         }
-        return this._withTxLock(async () => {
+        return this._withTxLock(async (release) => {
             // Snapshot the signer epoch synchronously before any `await` (see `_sendImpl`).
             const offchainTapscript = this.offchainTapscript;
             const serverPubKey = this.arkServerPublicKey;
@@ -5615,16 +5758,21 @@ export class Wallet
                 outputs.push(Extension.create([packet]).txOut());
             }
 
-            return this._submitOffchainSpend(normalizedInputs, outputs, {
-                sentAmount: 0,
-                changeAmount: total,
-                changeVout: 0,
-                offchainTapscript,
-                serverPubKey,
-                changeAssets: selfAssets,
-                recordSentHistory: false,
-                serverUnrollScript,
-            });
+            return this._submitOffchainSpend(
+                normalizedInputs,
+                outputs,
+                {
+                    sentAmount: 0,
+                    changeAmount: total,
+                    changeVout: 0,
+                    offchainTapscript,
+                    serverPubKey,
+                    changeAssets: selfAssets,
+                    recordSentHistory: false,
+                    serverUnrollScript,
+                },
+                this._concurrentSpending ? release : undefined,
+            );
         });
     }
 
@@ -5723,53 +5871,67 @@ export class Wallet
                 ),
         };
 
-        return submitOffchainTx(
-            this.arkProvider,
-            offchainTx,
-            signer,
-            {
-                // Mark pending before submitting — if we crash between submit and
-                // finalize, the next init recovers via finalizePendingTxs.
-                beforeSubmit: async () => {
-                    const ownsPendingFlag =
-                        validUntil !== undefined && !(await this.hasPendingTxFlag());
-                    await this.setPendingTxFlag(true);
-                    try {
-                        assertSendDeadline(validUntil);
-                    } catch (error) {
-                        if (ownsPendingFlag) {
-                            try {
-                                await this.setPendingTxFlag(false);
-                            } catch (clearError) {
-                                console.error(
-                                    "Failed to clear pending tx flag after deadline expiry:",
-                                    clearError,
-                                );
+        let awaitingFinalize = false;
+        try {
+            return await submitOffchainTx(
+                this.arkProvider,
+                offchainTx,
+                signer,
+                {
+                    // Mark pending before submitting — if we crash between submit and
+                    // finalize, the next init recovers via finalizePendingTxs.
+                    beforeSubmit: async () => {
+                        const ownsPendingFlag =
+                            validUntil !== undefined && !(await this.hasPendingTxFlag());
+                        this._submitsAwaitingFinalize++;
+                        awaitingFinalize = true;
+                        await this.setPendingTxFlag(true);
+                        try {
+                            assertSendDeadline(validUntil);
+                        } catch (error) {
+                            this._submitsAwaitingFinalize--;
+                            awaitingFinalize = false;
+                            // An overlapping submit still needs the flag if this process dies.
+                            if (ownsPendingFlag && this._submitsAwaitingFinalize === 0) {
+                                try {
+                                    await this.setPendingTxFlag(false);
+                                } catch (clearError) {
+                                    console.error(
+                                        "Failed to clear pending tx flag after deadline expiry:",
+                                        clearError,
+                                    );
+                                }
                             }
+                            throw error;
                         }
-                        throw error;
-                    }
+                    },
+                    afterFinalize: async () => {
+                        this._submitsAwaitingFinalize--;
+                        awaitingFinalize = false;
+                        // An overlapping submit still needs the flag if this process dies.
+                        if (this._submitsAwaitingFinalize > 0) return;
+                        try {
+                            await this.setPendingTxFlag(false);
+                        } catch (error) {
+                            console.error("Failed to clear pending tx flag:", error);
+                        }
+                    },
                 },
-                afterFinalize: async () => {
-                    try {
-                        await this.setPendingTxFlag(false);
-                    } catch (error) {
-                        console.error("Failed to clear pending tx flag:", error);
-                    }
-                },
-            },
-            {
-                // Deprecated keys too: a vtxo built before a rotation is still
-                // spent under the signer its leaf names.
-                verifyServerSignatures: {
-                    serverPubkey: this._arkServerPublicKey,
-                    deprecatedServerPubkeys: [...this._deprecatedSigners.keys()].map((h) =>
-                        hex.decode(h),
-                    ),
+                {
+                    // Deprecated keys too: a vtxo built before a rotation is still
+                    // spent under the signer its leaf names.
+                    verifyServerSignatures: {
+                        serverPubkey: this._arkServerPublicKey,
+                        deprecatedServerPubkeys: [...this._deprecatedSigners.keys()].map((h) =>
+                            hex.decode(h),
+                        ),
+                    },
                 },
                 oneShot: this.oneShotSubmit,
-            },
-        );
+            );
+        } finally {
+            if (awaitingFinalize) this._submitsAwaitingFinalize--;
+        }
     }
 
     // Mark inputs spent and save change. `offchainTapscript`/`serverPubKey` are the caller's epoch
@@ -6015,20 +6177,40 @@ export class Wallet
                 }
             }
 
-            for (const [address, toRemove] of boardingRemovalsByAddress) {
-                const currentUtxos = await collectUtxos(this.walletRepository, address);
-                const filtered = currentUtxos.filter((u) => !toRemove.has(`${u.txid}:${u.vout}`));
-                // Clear and re-save the filtered list for this address bucket.
-                await this.walletRepository.deleteUtxos(address);
-                if (filtered.length > 0) {
-                    await this.walletRepository.saveUtxos(address, filtered);
-                }
+            if (boardingRemovalsByAddress.size > 0) {
+                await inVtxoWriteOrder(this.walletRepository, async () => {
+                    for (const [address, toRemove] of boardingRemovalsByAddress) {
+                        const currentUtxos = await collectUtxos(this.walletRepository, address);
+                        const filtered = currentUtxos.filter(
+                            (u) => !toRemove.has(`${u.txid}:${u.vout}`),
+                        );
+                        // Clear and re-save the filtered list for this address bucket.
+                        await this.walletRepository.deleteUtxos(address);
+                        if (filtered.length > 0) {
+                            await this.walletRepository.saveUtxos(address, filtered);
+                        }
+                    }
+                });
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);
             throw e;
         }
     }
+}
+
+/** Earliest expiry first, then largest value: the order {@link selectVirtualCoins} spends in. */
+export function bySelectionOrder(
+    a: NormalizedExtendedVirtualCoin,
+    b: NormalizedExtendedVirtualCoin,
+): number {
+    const expiryA = a.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
+    const expiryB = b.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
+    if (expiryA !== expiryB) {
+        return expiryA - expiryB; // Earlier expiry first
+    }
+
+    return b.value - a.value; // Larger amount first
 }
 
 /**
@@ -6044,17 +6226,9 @@ export function selectVirtualCoins(
     inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
-    // Sort virtual outputs by expiry (ascending) and amount (descending). Normalized once up
-    // front rather than per comparison, which would be O(n log n) normalizations.
-    const sortedCoins = coins.map(normalizeVtxo).sort((a, b) => {
-        const expiryA = a.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
-        const expiryB = b.expiresAt?.getTime() || Number.MAX_SAFE_INTEGER;
-        if (expiryA !== expiryB) {
-            return expiryA - expiryB; // Earlier expiry first
-        }
-
-        return b.value - a.value; // Larger amount first
-    });
+    // Normalized once up front rather than per comparison, which would be O(n log n)
+    // normalizations.
+    const sortedCoins = coins.map(normalizeVtxo).sort(bySelectionOrder);
 
     const selectedCoins: ExtendedVirtualCoin[] = [];
     let selectedAmount = 0;
@@ -6094,6 +6268,36 @@ export class AbortError extends Error {
         this.name = "AbortError";
     }
 }
+
+/**
+ * A VTXO named for a spend or a hold is held, or already being spent by another operation.
+ * Match on `name`, not `instanceof`: only the name survives the service-worker boundary.
+ */
+export class VtxoReservedError extends Error {
+    readonly name = "VtxoReservedError";
+
+    constructor(
+        readonly outpoints: readonly string[],
+        readonly holder: "in-flight" | "held",
+    ) {
+        super(
+            `${outpoints.join(", ")} ${holder === "held" ? "held by reserveVtxos" : "already being spent by another operation"}`,
+        );
+    }
+}
+
+/** A hold placed by {@link Wallet.reserveVtxos}. */
+export interface VtxoReservation {
+    readonly outpoints: readonly Outpoint[];
+    /** Idempotent. */
+    release(): void;
+}
+
+/** @internal Submits an Arkade transaction for {@link Wallet.withSpendLock}'s caller. */
+export type OffchainSubmit = (
+    inputs: ExtendedVirtualCoin[],
+    outputs: TransactionOutput[],
+) => Promise<{ arkTxid: string; signedCheckpointTxs: string[] }>;
 
 /** Options for {@link waitForIncomingFunds}. */
 export interface WaitForIncomingFundsOptions {
