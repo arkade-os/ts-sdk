@@ -1,9 +1,9 @@
+import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { collectContracts, type ContractFilter } from "../src/repositories/contractRepository";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
 import type { SQLExecutor } from "../src/repositories/sqlite/types";
 import type { Contract, ContractState } from "../src/contracts/types";
-import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 
 // ── Mock SQLExecutor ────────────────────────────────────────────────────
 // A lightweight in-memory SQL engine that supports the subset of SQL
@@ -430,6 +430,63 @@ describe("SQLiteContractRepository", () => {
             });
             expect(filtered).toHaveLength(2);
             expect(filtered.map((c) => c.type).sort()).toEqual(["default", "vhtlc"]);
+        });
+    });
+
+    describe("scope", () => {
+        it("fills a scope-filtered page past rows that do not match", async () => {
+            repository = new SQLiteContractRepository(createNodeSQLExecutor());
+            for (const script of ["a1", "a2", "a3"]) {
+                await repository.saveContract(createMockContract({ script, type: "default" }));
+            }
+            for (const script of ["b1", "b2"]) {
+                await repository.saveContract(createMockContract({ script, type: "boarding" }));
+            }
+
+            const first = await repository.getContractsPage({ scope: "onchain" }, { limit: 1 });
+            const second = await repository.getContractsPage(
+                { scope: "onchain" },
+                { limit: 1, after: first.nextCursor },
+            );
+
+            expect(first.items.map((c) => c.script)).toEqual(["b1"]);
+            expect(second.items.map((c) => c.script)).toEqual(["b2"]);
+            expect(second.nextCursor).toBeUndefined();
+        });
+
+        it("round-trips scope and filters it, resolving rows without one via the handler default", async () => {
+            repository = new SQLiteContractRepository(createNodeSQLExecutor());
+            await repository.saveContract(
+                createMockContract({ script: "both-row", type: "default", scope: "both" }),
+            );
+            await repository.saveContract(
+                createMockContract({ script: "boarding-row", type: "boarding" }),
+            );
+            await repository.saveContract(
+                createMockContract({ script: "default-row", type: "default" }),
+            );
+
+            const [both] = await collectContracts(repository, { script: "both-row" });
+            expect(both.scope).toBe("both");
+
+            const onchain = await collectContracts(repository, { scope: "onchain" });
+            expect(onchain.map((c) => c.script)).toEqual(["boarding-row"]);
+
+            const anyOnchain = await collectContracts(repository, { scope: ["onchain", "both"] });
+            expect(anyOnchain.map((c) => c.script).sort()).toEqual(["boarding-row", "both-row"]);
+            expect(await collectContracts(repository, { scope: [] })).toEqual([]);
+            const first = await repository.getContractsPage(
+                { scope: ["onchain", "both"] },
+                { limit: 1 },
+            );
+            const second = await repository.getContractsPage(
+                { scope: ["onchain", "both"] },
+                { limit: 1, after: first.nextCursor },
+            );
+            expect([...first.items, ...second.items].map((c) => c.script)).toEqual([
+                "boarding-row",
+                "both-row",
+            ]);
         });
     });
 

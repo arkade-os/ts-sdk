@@ -1,4 +1,3 @@
-import { collectUtxos } from "../repositories/walletRepository";
 import { collectIntents } from "../repositories/intentRepository";
 import { collectContracts } from "../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
@@ -20,6 +19,7 @@ import {
     ArkProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
+    OnchainCosignAmbiguousError,
     PendingTx,
     RestArkProvider,
     SettlementEvent,
@@ -75,6 +75,7 @@ import {
     Outpoint,
     ReadonlyWalletConfig,
     Recipient,
+    SendOnchainParams,
     SendParams,
     InputExpiryFloor,
     SettleParams,
@@ -170,13 +171,14 @@ import type {
     CreateContractParams,
 } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
+import { migrateLegacyUtxos, offchainSnapshot, onchainRows } from "../contracts/onchainCoins";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
-    inVtxoWriteOrder,
     validateVtxosForScript,
     saveVtxosForContract,
+    getVtxosForContract,
     vtxoOutpoint,
 } from "../contracts/vtxoOwnership";
 import {
@@ -203,10 +205,27 @@ import {
     Contract,
     ContractWithVtxos,
     DiscoveryDeps,
+    ExtendedContractVtxo,
     GetContractsFilter,
     isContractVtxoEvent,
     isRecoveryOnlyContract,
 } from "../contracts/types";
+import {
+    OnchainCosignPreflightError,
+    isCosignRejectedAfterSigning,
+    assertCosignable,
+    DEFAULT_COSIGN_MARGIN_BLOCKS,
+    MAX_COSIGN_INPUTS,
+    needsOnchainSweep,
+    exitCsvOf,
+    emulatorInputIndexes,
+    estimateOnchainCosignFee,
+    prepareOwnedInput,
+    submitOnchainSpend,
+} from "../contracts/onchainSpend";
+import { attachPrevoutTxs } from "../utils/prevoutTx";
+import { Transaction as SdkTransaction } from "../utils/transaction";
+import type { EmulatorProvider } from "../providers/emulator";
 import {
     gateExclusion,
     gatedContracts,
@@ -1367,7 +1386,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** The intent store's lock set. Fails open, like every other read of it. */
-    private async lockedOutpoints(): Promise<Set<string>> {
+    protected async lockedOutpoints(): Promise<Set<string>> {
         if (!this.intentRepository) return new Set();
         try {
             const locked = await this.intentRepository.getLockedVtxoOutpoints();
@@ -1402,18 +1421,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
             query = { ...scope, script: scripts };
         }
-        return contractManager.getContractsWithVtxos(query, undefined, {
-            maxSyncAgeMs: filter?.maxSyncAgeMs,
-            unspentOnly: options?.unspentOnly,
-            requireSynced: filter?.requireSynced,
-        });
+        return offchainSnapshot(
+            await contractManager.getContractsWithVtxos(query, undefined, {
+                maxSyncAgeMs: filter?.maxSyncAgeMs,
+                unspentOnly: options?.unspentOnly,
+                requireSynced: filter?.requireSynced,
+            }),
+        );
     }
 
     protected async contractSnapshotStored(): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
-        return contractManager.getStoredContractsWithVtxos
-            ? contractManager.getStoredContractsWithVtxos()
-            : contractManager.getContractsWithVtxos();
+        return offchainSnapshot(
+            await (contractManager.getStoredContractsWithVtxos
+                ? contractManager.getStoredContractsWithVtxos()
+                : contractManager.getContractsWithVtxos()),
+        );
     }
 
     /**
@@ -1716,20 +1739,53 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Fetch and cache boarding UTXOs for the given signer set, grouped per address (see
-     * {@link BoardingUtxoGroup} for why), saving every group in one `saveUtxos`. No
-     * `getInfo()`: the only network calls are the per-address `getCoins`.
+     * Fetch and cache onchain inputs (UTXOs) received at the boarding addresses
+     * of the given signer set, grouped per boarding address so the caller keeps
+     * the address↔signer association that {@link ExtendedCoin} cannot carry
+     * (it retains only the encoded leaves/tapTree the spend needs, not the
+     * `DefaultVtxo.Script` and its `serverPubKey`/CSV delay).
+     *
+     * Per group: `getCoins` (a failure throws), then `ContractManager.syncOnchain`,
+     * then the fetched coins minus stored-spent outpoints → {@link extendCoinWithTapscript}.
+     * It does not call `getInfo()`; the caller supplies the allowed signer set.
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
      */
     async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
+        // Before the fetch: a clear() landing during it disposes this manager, so its sync writes
+        // nothing, where resolving it afterwards would build a new one on the wiped repositories.
+        const manager = await this.getContractManager();
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const addresses = tapscripts.map((tapscript) => tapscript.onchainAddress(this.network));
-        const groups: BoardingUtxoGroup[] = await Promise.all(
+        const fetched = await Promise.all(
+            tapscripts.map((t) => this.onchainProvider.getCoins(t.onchainAddress(this.network))),
+        );
+        const scripts = tapscripts.map((t) => hex.encode(t.pkScript));
+        try {
+            await manager.syncOnchain(scripts);
+        } catch (e) {
+            console.warn("Onchain boarding sync failed; using fetched coins", e);
+        }
+        const contracts = new Map(
+            (await collectContracts(this.contractRepository, { script: scripts })).map((c) => [
+                c.script,
+                c,
+            ]),
+        );
+        return Promise.all(
             tapscripts.map(async (tapscript, i) => {
-                const coins = await this.onchainProvider.getCoins(addresses[i]);
-                const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
+                const contract = contracts.get(scripts[i]);
+                // The fetch is the coin list; stored rows only veto spent (incl. pending) outpoints.
+                const spent = new Set(
+                    contract
+                        ? (await getVtxosForContract(this.walletRepository, contract))
+                              .filter(isVtxoSpent)
+                              .map(vtxoOutpoint)
+                        : [],
+                );
+                const utxos = fetched[i]
+                    .filter((c) => !spent.has(vtxoOutpoint(c)))
+                    .map((utxo) => extendCoinWithTapscript(tapscript, utxo));
                 return {
                     tapscript,
                     // x-only regardless of how the tapscript's key was stored.
@@ -1743,22 +1799,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 };
             }),
         );
-        // Writes start only once every fetch has succeeded, so a failure writes nothing.
-        await this.walletRepository.saveUtxos(
-            new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
-        );
-        // `saveUtxos` merges, so prune rows the fetch no longer returns: a coin spent elsewhere
-        // would otherwise linger for `getStoredBoardingUtxos` to report. Pruning only after the
-        // save leaves the previous snapshot intact if that save fails.
-        for (const [i, group] of groups.entries()) {
-            const fresh = new Set(group.coins.map((coin) => `${coin.txid}:${coin.vout}`));
-            const cached = await collectUtxos(this.walletRepository, addresses[i]);
-            const kept = cached.filter((coin) => fresh.has(`${coin.txid}:${coin.vout}`));
-            if (kept.length === cached.length) continue;
-            await this.walletRepository.deleteUtxos(addresses[i]);
-            if (kept.length > 0) await this.walletRepository.saveUtxos(addresses[i], kept);
-        }
-        return groups;
     }
 
     /**
@@ -1787,17 +1827,32 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
     }
 
+    /** Boarding coins from the store, no network call; pending and confirmed spends excluded. */
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
         const currentOnly = new Set([
             toXOnlySignerHex(hex.encode(this.boardingTapscript.options.serverPubKey)),
         ]);
         const tapscripts = await this.getBoardingTapscripts(currentOnly);
-        const perAddress = await Promise.all(
-            tapscripts.map((tapscript) =>
-                collectUtxos(this.walletRepository, tapscript.onchainAddress(this.network)),
-            ),
+        const scripts = tapscripts.map((t) => hex.encode(t.pkScript));
+        const contracts = new Map(
+            (await collectContracts(this.contractRepository, { script: scripts })).map((c) => [
+                c.script,
+                c,
+            ]),
         );
-        return perAddress.flat();
+        const perScript = await Promise.all(
+            tapscripts.map(async (tapscript, i) => {
+                const contract = contracts.get(scripts[i]);
+                if (!contract) return [];
+                const rows = await getVtxosForContract(this.walletRepository, contract, {
+                    unspentOnly: true,
+                });
+                return onchainRows(contract, rows).map((v) =>
+                    extendCoinWithTapscript(tapscript, v),
+                );
+            }),
+        );
+        return perScript.flat();
     }
 
     /**
@@ -2106,6 +2161,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const { height, time } = await this.onchainProvider.getChainTip();
                 return { height, time };
             },
+            onchainProvider: this.onchainProvider,
+            network: this.network,
         });
 
         // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
@@ -2183,7 +2240,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
         // is index-independent. Same signer axis as above; only the signer fans, since the
         // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
-        // default/delegate one (degenerate equal delays) stays that type via the shared set.
+        // default one (degenerate equal delays) keeps that type and the manager widens its scope.
         const boardingCsvTimelock =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
         for (const serverPubKey of baselineSigners) {
@@ -2193,8 +2250,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 csvTimelock: boardingCsvTimelock,
             });
             const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
-            if (seenBaselineScripts.has(boardingScriptHex)) continue;
-            seenBaselineScripts.add(boardingScriptHex);
             await manager.createContract({
                 type: "boarding",
                 params: {
@@ -2206,6 +2261,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
                 state: "active",
             });
+        }
+
+        // After the baseline registrations, so an upgrade from a build that never
+        // persisted the boarding contract still finds its legacy utxos.
+        try {
+            await migrateLegacyUtxos({
+                walletRepository: this.walletRepository,
+                contractRepository: this.contractRepository,
+                network: this.network,
+            });
+        } catch (e) {
+            console.warn("Legacy utxos migration failed; retrying next boot", e);
+        }
+        // After the migration, so legacy rows that were already spent are healed.
+        try {
+            await manager.syncOnchain();
+        } catch (e) {
+            console.warn("Onchain contract sync failed; continuing with stored coins", e);
         }
 
         return manager;
@@ -2416,6 +2489,8 @@ export class Wallet
     }
 
     private readonly _signerRouter: InputSignerRouter;
+    private _emulator?: EmulatorProvider;
+    private _cosignMarginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS;
 
     /**
      * @internal Sole write path for `offchainTapscript`; called by
@@ -3341,6 +3416,15 @@ export class Wallet
     static create<T extends Wallet>(this: { prototype: T }, config: WalletConfig): Promise<T>;
     static create(config: WalletConfig): Promise<Wallet>;
     static async create(config: WalletConfig): Promise<Wallet> {
+        if (
+            config.onchainCosignMarginBlocks !== undefined &&
+            (!Number.isInteger(config.onchainCosignMarginBlocks) ||
+                config.onchainCosignMarginBlocks < 0)
+        ) {
+            throw new Error(
+                `onchainCosignMarginBlocks must be a non-negative integer (got ${String(config.onchainCosignMarginBlocks)})`,
+            );
+        }
         // Programmer error, not an operational one — surface it before any I/O.
         if (
             config.lookAheadWindow !== undefined &&
@@ -3443,7 +3527,12 @@ export class Wallet
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
-        // Construction validated the response, so it is now safe to refresh the cached snapshot.
+        wallet._emulator = config.emulator;
+        wallet._cosignMarginBlocks =
+            config.onchainCosignMarginBlocks ?? DEFAULT_COSIGN_MARGIN_BLOCKS;
+        // The response cleared construction validation — network/signer in
+        // setupWalletConfig plus the checkpoint/forfeit parsing above — so it is
+        // now safe to refresh the cached snapshot from live server-info.
         if (setup.serverInfoSource === "live") {
             const now = Date.now();
             await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
@@ -4399,6 +4488,258 @@ export class Wallet
     async signOnchainBoardingTx(tx: Transaction): Promise<Transaction> {
         const signed = await this._signerRouter.sign(tx, this.inputSigningJobsFromWitnessUtxos(tx));
         return signed as Transaction;
+    }
+
+    /** @see IWallet.cosignOnchainTx */
+    async cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        const tx = typeof psbt === "string" ? SdkTransaction.fromPSBT(base64.decode(psbt)) : psbt;
+        return this._withTxLock(async () => {
+            await (await this.getContractManager()).syncOnchain();
+            return this._cosignOnchainTxImpl(tx);
+        });
+    }
+
+    /** @see IWallet.sendOnchain */
+    async sendOnchain(params: SendOnchainParams): Promise<string> {
+        if (params.sweepTo && params.outputs.length > 0) {
+            throw new Error("sendOnchain: sweepTo requires empty outputs");
+        }
+        if (!params.sweepTo && params.outputs.length === 0) {
+            throw new OnchainCosignPreflightError("no outputs and no sweepTo");
+        }
+        const build = async (sync: boolean) => {
+            try {
+                return await this._buildOnchainSpend(params, sync);
+            } catch (e) {
+                if (e instanceof OnchainCosignPreflightError) throw e;
+                const reason = e instanceof Error ? e.message : String(e);
+                throw new OnchainCosignPreflightError(reason, { cause: e });
+            }
+        };
+        // A spend the coins cannot fund fails here instead of queueing behind a settle.
+        await build(true);
+        // No second sync: the wallet's own spends while this waited are already stored.
+        return this._withTxLock(async () => this._cosignOnchainTxImpl(await build(false)));
+    }
+
+    private async _buildOnchainSpend(
+        { outputs, inputs, sweepTo }: SendOnchainParams,
+        sync: boolean,
+    ): Promise<Transaction> {
+        const manager = await this.getContractManager();
+        const named = inputs && new Set(inputs.map(vtxoOutpoint));
+        if (sync && named) {
+            // Scoped, so the VtxoManager sweep does not repeat its full sync; still needed
+            // because an indexer-written unrolled row carries no confirmation height.
+            const owners = (await this.onchainCoins(manager))
+                .filter(({ coin }) => named.has(vtxoOutpoint(coin)))
+                .map(({ contract }) => contract.script);
+            if (owners.length > 0) await manager.syncOnchain([...new Set(owners)]);
+        } else if (sync) {
+            await manager.syncOnchain();
+        }
+        const [tip, locked] = await Promise.all([
+            this.onchainProvider.getChainTip(),
+            this.lockedOutpoints(),
+        ]);
+        const dropped = new Map<string, string>();
+        const candidates = (await this.onchainCoins(manager))
+            .filter(({ coin, contract }) => {
+                if (named) return named.has(vtxoOutpoint(coin));
+                return isContractGenericallySpendable(contract);
+            })
+            .filter(({ coin, contract }) => {
+                const key = vtxoOutpoint(coin);
+                // arkd refuses to cosign an input queued for a batch.
+                if (locked.has(key) || this._pendingSpendOutpoints.has(key)) {
+                    dropped.set(key, `${key} is locked by an in-flight settlement`);
+                    return false;
+                }
+                try {
+                    assertCosignable(coin, exitCsvOf(contract), tip, this._cosignMarginBlocks);
+                    return true;
+                } catch (e) {
+                    if (e instanceof OnchainCosignPreflightError) {
+                        dropped.set(vtxoOutpoint(coin), e.reason);
+                    }
+                    return false;
+                }
+            })
+            .sort((a, b) => b.coin.value - a.coin.value);
+        if (named) {
+            const found = new Set(candidates.map(({ coin }) => vtxoOutpoint(coin)));
+            const reasons = [...named]
+                .filter((o) => !found.has(o))
+                .map((o) => dropped.get(o) ?? `${o} is not a known unspent onchain coin`);
+            if (reasons.length > 0) throw new OnchainCosignPreflightError(reasons.join("; "));
+        }
+        const feeRate = (await this.onchainProvider.getFeeRate()) ?? 1;
+        const tx = new SdkTransaction({ version: 2 });
+
+        if (sweepTo) {
+            // The largest first; whatever exceeds arkd's input cap waits for the next sweep.
+            const swept = candidates.slice(0, MAX_COSIGN_INPUTS);
+            for (const { coin } of swept) {
+                tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
+            }
+            const total = swept.reduce((sum, { coin }) => sum + coin.value, 0);
+            const amount = total - estimateOnchainCosignFee(swept.length, 1, feeRate);
+            if (swept.length === 0 || amount < Number(this.dustAmount)) {
+                throw new OnchainCosignPreflightError("nothing to sweep");
+            }
+            tx.addOutputAddress(sweepTo, BigInt(amount), this.network);
+            return tx;
+        }
+
+        for (const o of outputs) tx.addOutputAddress(o.address, BigInt(o.amount), this.network);
+        const want = outputs.reduce((sum, o) => sum + o.amount, 0);
+        let have = 0;
+        let fee = 0;
+        for (const { coin } of candidates.slice(0, MAX_COSIGN_INPUTS)) {
+            tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout });
+            have += coin.value;
+            fee = estimateOnchainCosignFee(tx.inputsLength, outputs.length + 1, feeRate);
+            if (have >= want + fee) break;
+        }
+        if (have < want + fee || tx.inputsLength === 0) {
+            const cap =
+                candidates.length > MAX_COSIGN_INPUTS ? ` in ${MAX_COSIGN_INPUTS} inputs` : "";
+            throw new OnchainCosignPreflightError(
+                `insufficient onchain funds${cap}: have ${have}, need ${want + fee}`,
+            );
+        }
+        const change = have - want - fee;
+        if (change >= Number(this.dustAmount)) {
+            tx.addOutputAddress(await this.getBoardingAddress(), BigInt(change), this.network);
+        }
+        return tx;
+    }
+
+    private async _cosignOnchainTxImpl(tx: Transaction): Promise<string> {
+        const manager = await this.getContractManager();
+        const tip = await this.onchainProvider.getChainTip();
+        const owned = new Map(
+            (await this.onchainCoins(manager)).map((c) => [vtxoOutpoint(c.coin), c]),
+        );
+        const emulated = emulatorInputIndexes(tx);
+        const arkInputs = new Set<number>();
+        const ownedIndexes: number[] = [];
+        const spent: Outpoint[] = [];
+        let inSum = 0n;
+
+        for (let i = 0; i < tx.inputsLength; i++) {
+            const input = tx.getInput(i);
+            const outpoint = { txid: hex.encode(input.txid!), vout: input.index! };
+            const mine = owned.get(vtxoOutpoint(outpoint));
+            if (!mine) {
+                if (!input.witnessUtxo) {
+                    throw new OnchainCosignPreflightError(
+                        `input ${i} (${vtxoOutpoint(outpoint)}) has no witnessUtxo`,
+                    );
+                }
+                inSum += input.witnessUtxo.amount;
+                continue;
+            }
+            const { coin, contract, script } = mine;
+            const path = contractHandlers.get(contract.type)!.selectPath(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: tip.height,
+                vtxo: coin,
+            });
+            if (!path) {
+                throw new OnchainCosignPreflightError(
+                    `no collaborative path for ${vtxoOutpoint(outpoint)}`,
+                );
+            }
+            assertCosignable(coin, exitCsvOf(contract), tip, this._cosignMarginBlocks);
+            prepareOwnedInput(tx, { index: i, coin, path, tapTree: script.encode() });
+            if (!emulated.has(i)) arkInputs.add(i);
+            ownedIndexes.push(i);
+            spent.push(outpoint);
+            inSum += BigInt(coin.value);
+        }
+        let outSum = 0n;
+        for (let i = 0; i < tx.outputsLength; i++) outSum += tx.getOutput(i).amount ?? 0n;
+        if (outSum > inSum) throw new Error(`outputs ${outSum} exceed inputs ${inSum}`);
+        if (arkInputs.size > 0 && tx.inputsLength > MAX_COSIGN_INPUTS) {
+            throw new OnchainCosignPreflightError(
+                `${tx.inputsLength} inputs exceed arkd's limit of ${MAX_COSIGN_INPUTS}`,
+            );
+        }
+
+        if (emulated.size > 0) await attachPrevoutTxs(tx, this.onchainProvider);
+        const signed = (await this._signerRouter.sign(
+            tx,
+            this.inputSigningJobsFromWitnessUtxos(tx, ownedIndexes),
+            { onUnknownScript: "sign" },
+        )) as Transaction;
+        const markPending = async (txid: string) => {
+            try {
+                await manager.markOnchainSpendPending(spent, txid);
+            } catch (e) {
+                console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
+            }
+        };
+        // In flight, as a settle's boarding inputs are: SDK picks skip them until the store marks them.
+        const held = spent.map(vtxoOutpoint);
+        for (const key of held) this._pendingSpendOutpoints.add(key);
+        try {
+            let txid: string;
+            try {
+                txid = await submitOnchainSpend(signed, arkInputs, {
+                    arkProvider: this.arkProvider,
+                    emulator: this._emulator,
+                    onchainProvider: this.onchainProvider,
+                });
+            } catch (e) {
+                // Segwit txids ignore witnesses, so the unsigned id is the one arkd may have broadcast.
+                if (e instanceof OnchainCosignAmbiguousError || isCosignRejectedAfterSigning(e)) {
+                    await markPending(signed.id);
+                }
+                throw e;
+            }
+            await markPending(txid);
+            return txid;
+        } finally {
+            for (const key of held) this._pendingSpendOutpoints.delete(key);
+        }
+    }
+
+    /** Boarding outpoints the automatic cosign sweep should renew now (never unrolled exits); excludes coins an intent has locked. */
+    async getOnchainSweepInputs(): Promise<Outpoint[]> {
+        const manager = await this.getContractManager();
+        await manager.syncOnchain();
+        const [tip, locked, coins] = await Promise.all([
+            this.onchainProvider.getChainTip(),
+            this.lockedOutpoints(),
+            this.onchainCoins(manager),
+        ]);
+        return coins
+            .filter(
+                ({ coin, contract }) =>
+                    !locked.has(vtxoOutpoint(coin)) &&
+                    needsOnchainSweep(coin, contract, tip, this._cosignMarginBlocks),
+            )
+            .slice(0, MAX_COSIGN_INPUTS)
+            .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
+    }
+
+    /** Unspent onchain coins from the store; the onchain rows are kept fresh by syncOnchain, not the indexer. */
+    private async onchainCoins(
+        manager: ContractManager,
+    ): Promise<{ coin: ExtendedContractVtxo; contract: Contract; script: VtxoScript }[]> {
+        const snapshot = await manager.getContractsWithVtxos(undefined, undefined, {
+            maxSyncAgeMs: Number.MAX_SAFE_INTEGER,
+            unspentOnly: true,
+        });
+        return snapshot.flatMap(({ contract, vtxos }) => {
+            const handler = contractHandlers.get(contract.type);
+            const coins = vtxos.filter((v) => v.isUnrolled && !isVtxoSpent(v));
+            if (!handler || coins.length === 0) return [];
+            const script = handler.createScript(contract.params);
+            return coins.map((coin) => ({ coin, contract, script }));
+        });
     }
 
     async safeRegisterIntent(
@@ -6094,9 +6435,9 @@ export class Wallet
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
             const inputArkTxIds = new Set<string>();
-            // Grouped by the address each UTXO sits on, which after rotation may not be the
-            // current boarding address.
-            const boardingRemovalsByAddress = new Map<string, Set<string>>();
+            // Scripts of the settled boarding inputs, which may sit on rotated-away addresses.
+            const boardingScripts = new Set<string>();
+            const boardingOutpoints: Outpoint[] = [];
 
             const vtxoInputs = inputs.filter(isVirtualCoin);
             const cm = await this.getContractManager();
@@ -6120,22 +6461,14 @@ export class Wallet
                         settledBy: commitmentTxid,
                     });
                 } else {
-                    // Boarding input: its source address is recoverable from its tapTree; fall back
-                    // to the current one if undecodable (defensive).
-                    let sourceAddress: string;
+                    let pkScript: Uint8Array;
                     try {
-                        sourceAddress = VtxoScript.decode(input.tapTree).onchainAddress(
-                            this.network,
-                        );
+                        pkScript = VtxoScript.decode(input.tapTree).pkScript;
                     } catch {
-                        sourceAddress = this.boardingTapscript.onchainAddress(this.network);
+                        pkScript = this.boardingTapscript.pkScript;
                     }
-                    let set = boardingRemovalsByAddress.get(sourceAddress);
-                    if (!set) {
-                        set = new Set();
-                        boardingRemovalsByAddress.set(sourceAddress, set);
-                    }
-                    set.add(`${input.txid}:${input.vout}`);
+                    boardingScripts.add(hex.encode(pkScript));
+                    boardingOutpoints.push({ txid: input.txid, vout: input.vout });
                 }
             }
 
@@ -6172,20 +6505,21 @@ export class Wallet
                 }
             }
 
-            if (boardingRemovalsByAddress.size > 0) {
-                await inVtxoWriteOrder(this.walletRepository, async () => {
-                    for (const [address, toRemove] of boardingRemovalsByAddress) {
-                        const currentUtxos = await collectUtxos(this.walletRepository, address);
-                        const filtered = currentUtxos.filter(
-                            (u) => !toRemove.has(`${u.txid}:${u.vout}`),
-                        );
-                        // Clear and re-save the filtered list for this address bucket.
-                        await this.walletRepository.deleteUtxos(address);
-                        if (filtered.length > 0) {
-                            await this.walletRepository.saveUtxos(address, filtered);
-                        }
-                    }
-                });
+            if (boardingScripts.size > 0) {
+                // An explorer that has not seen the commitment yet still lists these as
+                // unspent; the pending mark vetoes them until the sync sees the spend.
+                try {
+                    await cm.markOnchainSpendPending(boardingOutpoints, commitmentTxid, {
+                        skipUnknown: true,
+                    });
+                } catch (e) {
+                    console.warn("Settled boarding inputs not marked pending", e);
+                }
+                try {
+                    await cm.syncOnchain([...boardingScripts]);
+                } catch (e) {
+                    console.warn("Onchain boarding sync after settle failed", e);
+                }
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);

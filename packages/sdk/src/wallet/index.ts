@@ -1,4 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
+import type { Transaction } from "@scure/btc-signer";
+import type { EmulatorProvider } from "../providers/emulator";
 import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
@@ -229,6 +231,17 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `false`
      */
     concurrentSpending?: boolean;
+
+    /** Cosigns onchain inputs whose spend carries an emulator packet; no default. */
+    emulator?: EmulatorProvider;
+
+    /**
+     * Minimum blocks that must remain before a coin's exit CSV matures for the
+     * client to request an onchain cosign. Non-negative integer.
+     *
+     * @defaultValue 6
+     */
+    onchainCosignMarginBlocks?: number;
 }
 
 /**
@@ -461,6 +474,15 @@ export interface SendParams {
     maxChangeFee?: number;
 }
 
+/** Arguments of {@link IWallet.sendOnchain}. */
+export type SendOnchainParams = {
+    outputs: { address: string; amount: number }[];
+    /** Spend only these onchain coins; defaults to every cosignable generically spendable coin. */
+    inputs?: Outpoint[];
+    /** Spend every selected cosignable coin to this address (Σin − fee); `outputs` must be empty. */
+    sweepTo?: string;
+};
+
 /**
  * Known asset metadata fields.
  *
@@ -605,6 +627,8 @@ export interface Status {
     block_hash?: string;
     /** Block time where the output was confirmed, when known. */
     block_time?: number;
+    /** Set on an onchain coin the contract manager stored from the onchain provider. */
+    fromExplorer?: boolean;
 }
 
 /** Onchain output location data. */
@@ -983,6 +1007,26 @@ export interface IWallet extends IReadonlyWallet {
      * ```
      */
     send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string>;
+
+    /**
+     * Fill, sign and cosign the wallet-owned onchain inputs of a PSBT through
+     * the collaborative leaf, then broadcast it. Foreign inputs are left as given:
+     * sign them but do not finalize them, since arkd refuses a finalized input and
+     * finalizes the transaction itself.
+     *
+     * @param psbt - Base64 PSBT or transaction
+     * @returns Onchain transaction id
+     */
+    cosignOnchainTx(psbt: string | Transaction): Promise<string>;
+
+    /**
+     * Spend onchain contract coins (boarding, unrolled) immediately via
+     * {@link cosignOnchainTx}, selecting inputs and adding change.
+     *
+     * @returns Onchain transaction id
+     * @see SendOnchainParams
+     */
+    sendOnchain(params: SendOnchainParams): Promise<string>;
 
     // TODO: this needs to be async or find a workaround
     /** Asset manager bound to this wallet instance. */

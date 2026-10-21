@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import { assertTimerMs } from "../../utils/time";
+import type { Transaction } from "@scure/btc-signer";
 import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
@@ -19,6 +20,7 @@ import type {
     ExtendedCoin,
     Recipient,
     SendParams,
+    SendOnchainParams,
 } from "..";
 import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
@@ -408,6 +410,14 @@ export class ExpoWallet
 
     send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         return this.wallet.send(...args);
+    }
+
+    cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        return this.wallet.cosignOnchainTx(psbt);
+    }
+
+    sendOnchain(params: SendOnchainParams): Promise<string> {
+        return this.wallet.sendOnchain(params);
     }
 
     get assetManager(): IAssetManager {
