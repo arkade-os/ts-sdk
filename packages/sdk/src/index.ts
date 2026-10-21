@@ -343,6 +343,9 @@ import {
     IndexerTxType,
     ChainTxType,
     GetVtxosOptions,
+    GetUtxosOptions,
+    IndexerUtxo,
+    IndexerUtxosUnsupportedError,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -689,6 +692,7 @@ export {
     READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
+    IndexerUtxosUnsupportedError,
     DEFAULT_VTXO_PAGE_SIZE,
     // Script-related
     ArkAddress,
@@ -977,6 +981,8 @@ export type {
     // Indexer types
     IndexerProvider,
     GetVtxosOptions,
+    GetUtxosOptions,
+    IndexerUtxo,
     PageResponse,
     BatchInfo,
     ChainTx,

@@ -1762,7 +1762,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         const scripts = tapscripts.map((t) => hex.encode(t.pkScript));
         try {
-            await manager.syncOnchain(scripts);
+            await manager.syncOnchain(scripts, new Map(scripts.map((s, i) => [s, fetched[i]])));
         } catch (e) {
             console.warn("Onchain boarding sync failed; using fetched coins", e);
         }

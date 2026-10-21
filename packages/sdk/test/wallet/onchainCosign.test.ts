@@ -490,6 +490,21 @@ describe("wallet.getBoardingUtxosForSigners", () => {
     });
 });
 
+describe("wallet.getBoardingUtxos", () => {
+    it("fetches each boarding address once, syncing what it fetched", async () => {
+        const { wallet, onchainProvider, walletRepository, boardingScriptHex } = await makeWallet();
+        await wallet.getContractManager();
+        onchainProvider.getCoins.mockClear();
+
+        await wallet.getBoardingUtxos();
+
+        const addresses = onchainProvider.getCoins.mock.calls.map(([a]: [string]) => a);
+        expect(addresses.length).toBeGreaterThan(0);
+        expect(new Set(addresses).size).toBe(addresses.length);
+        expect(await collectScriptVtxos(walletRepository, boardingScriptHex)).toHaveLength(1);
+    });
+});
+
 describe("wallet.cosignOnchainTx", () => {
     it("fills owned inputs of an external PSBT and leaves foreign inputs alone", async () => {
         const { wallet, arkProvider, boardingCoin, externalScript } = await makeWallet();

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider } from "../src";
+import { IndexerUtxosUnsupportedError, RestIndexerProvider } from "../src";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
 
@@ -362,6 +362,115 @@ describe("RestIndexerProvider", () => {
             ).rejects.toThrow("before must be greater than after");
 
             expect(mockFetch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("getUtxos", () => {
+        const spender = "cc".repeat(32);
+        const wireUtxo = (spend: Record<string, unknown>) => ({
+            outpoint: { txid: "aa".repeat(32), vout: 1 },
+            broadcastedAt: "1700000000",
+            amount: "50000",
+            script: "5120" + "bb".repeat(32),
+            spend: { txid: spender, ...spend },
+        });
+
+        it("queries by outpoint and reads the spend, confirmed or not", async () => {
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({
+                    utxos: [
+                        wireUtxo({ confirmedAtTime: "1700000600", confirmedAtHeight: "210" }),
+                        { ...wireUtxo({}), outpoint: { txid: "dd".repeat(32), vout: 0 } },
+                    ],
+                    page: null,
+                }),
+            );
+
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const { utxos } = await provider.getUtxos({
+                outpoints: [
+                    { txid: "aa".repeat(32), vout: 1 },
+                    { txid: "dd".repeat(32), vout: 0 },
+                ],
+            });
+
+            const url = new URL(mockFetch.mock.calls[0][0]);
+            expect(url.pathname).toBe("/v1/indexer/utxos");
+            expect(url.searchParams.getAll("outpoints")).toEqual([
+                `${"aa".repeat(32)}:1`,
+                `${"dd".repeat(32)}:0`,
+            ]);
+            expect(utxos).toEqual([
+                {
+                    txid: "aa".repeat(32),
+                    vout: 1,
+                    value: 50_000,
+                    script: "5120" + "bb".repeat(32),
+                    spentBy: spender,
+                    spendConfirmation: { height: 210, time: 1_700_000_600 },
+                },
+                {
+                    txid: "dd".repeat(32),
+                    vout: 0,
+                    value: 50_000,
+                    script: "5120" + "bb".repeat(32),
+                    spentBy: spender,
+                },
+            ]);
+        });
+
+        it("queries by script", async () => {
+            mockFetch.mockResolvedValueOnce(jsonResponse({ utxos: [wireUtxo({})], page: null }));
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const scripts = ["5120" + "bb".repeat(32), "5120" + "cc".repeat(32)];
+
+            const { utxos } = await provider.getUtxos({ scripts });
+
+            const url = new URL(mockFetch.mock.calls[0][0]);
+            expect(url.searchParams.getAll("scripts")).toEqual(scripts);
+            expect(url.searchParams.has("outpoints")).toBe(false);
+            expect(utxos).toHaveLength(1);
+        });
+
+        it("needs exactly one of scripts and outpoints", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            await expect(provider.getUtxos({ scripts: [] })).rejects.toThrow(/either/);
+            await expect(
+                provider.getUtxos({
+                    scripts: ["s"],
+                    outpoints: [{ txid: "aa".repeat(32), vout: 0 }],
+                } as never),
+            ).rejects.toThrow(/either/);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it("reports a server without the route, then stops asking", async () => {
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({ code: 5, message: "Not Found", details: [] }, { status: 404 }),
+            );
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const query = { outpoints: [{ txid: "aa".repeat(32), vout: 0 }] };
+
+            await expect(provider.getUtxos(query)).rejects.toBeInstanceOf(
+                IndexerUtxosUnsupportedError,
+            );
+            await expect(provider.getUtxos(query)).rejects.toBeInstanceOf(
+                IndexerUtxosUnsupportedError,
+            );
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            { utxos: [{ outpoint: {} }] },
+            { utxos: [wireUtxo({ confirmedAtHeight: "x" })] },
+            { utxos: [wireUtxo({ confirmedAtHeight: "" })] },
+            { utxos: [{ ...wireUtxo({}), amount: "xyz" }] },
+        ])("rejects a malformed answer %#", async (body) => {
+            mockFetch.mockResolvedValueOnce(jsonResponse(body));
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            await expect(
+                provider.getUtxos({ outpoints: [{ txid: "aa".repeat(32), vout: 0 }] }),
+            ).rejects.toThrow("Invalid utxos data received");
         });
     });
 
