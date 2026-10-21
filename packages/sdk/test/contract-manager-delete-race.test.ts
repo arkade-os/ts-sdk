@@ -18,6 +18,7 @@ const until = async (predicate: () => boolean): Promise<void> => {
     for (let i = 0; i < 200 && !predicate(); i++) {
         await new Promise((resolve) => setTimeout(resolve, 1));
     }
+    if (!predicate()) throw new Error("until: predicate never held");
 };
 
 describe("ContractManager sync with a contract deleted mid-fetch", () => {
