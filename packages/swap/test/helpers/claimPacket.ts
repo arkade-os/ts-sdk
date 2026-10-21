@@ -43,6 +43,7 @@ export const sealClaimPacketDeterministic = (
 export async function openClaimPacket(
     packetBase64: string,
     covclaimdSecretKey: Uint8Array,
+    minAmount?: bigint,
 ): Promise<Uint8Array> {
     const packet = base64.decode(packetBase64);
     const ephemeralPub = packet.subarray(0, 33);
@@ -53,12 +54,16 @@ export async function openClaimPacket(
     const aesKey = await crypto.subtle.importKey("raw", key as BufferSource, "AES-GCM", false, [
         "decrypt",
     ]);
+    const amount = new Uint8Array(8);
+    if (minAmount !== undefined) new DataView(amount.buffer).setBigUint64(0, minAmount, false);
     return new Uint8Array(
         await crypto.subtle.decrypt(
             {
                 name: "AES-GCM",
                 iv: nonce as BufferSource,
-                additionalData: ephemeralPub as BufferSource,
+                additionalData: (minAmount === undefined
+                    ? ephemeralPub
+                    : Uint8Array.from([...ephemeralPub, ...amount])) as BufferSource,
             },
             aesKey,
             sealed as BufferSource,

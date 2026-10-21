@@ -38,7 +38,7 @@ export interface CovclaimdInfo {
     emulatorPubkey: string;
 }
 
-/** The four fields `POST /v1/reveal` takes. */
+/** The fields `POST /v1/reveal` takes. */
 export interface RevealParams {
     /** The funded lockup's Arkade address, bech32m. */
     swapAddress: string;
@@ -46,6 +46,8 @@ export interface RevealParams {
     ciphertext: string;
     /** The covenant's `enforcePayTo` ArkadeScript, base64. */
     arkadeScript: string;
+    /** The `minAmount` {@link ciphertext} was sealed with, in sats. */
+    minAmount: bigint;
     /** The lockup's serialized taptree, hex. */
     taptree: string;
 }
@@ -147,12 +149,26 @@ export const covclaimdClient = (
         },
 
         async reveal(params) {
+            const { minAmount } = params;
+            if (
+                typeof minAmount !== "bigint" ||
+                minAmount < 1n ||
+                minAmount > BigInt(Number.MAX_SAFE_INTEGER)
+            ) {
+                throw new Error(
+                    `min_amount ${minAmount} is missing, not positive, or past what a JSON number carries`,
+                );
+            }
             await send("reveal", "/v1/reveal", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
                     swap_address: params.swapAddress,
-                    packet: { ciphertext: params.ciphertext, arkade_script: params.arkadeScript },
+                    packet: {
+                        ciphertext: params.ciphertext,
+                        arkade_script: params.arkadeScript,
+                        min_amount: Number(minAmount),
+                    },
                     taptree: params.taptree,
                 }),
             });
@@ -197,6 +213,8 @@ export async function revealClaimPacket(
         address: string;
         /** `P`, 32 bytes, from the swap's `secrets`. */
         preimage: Uint8Array;
+        /** Sats the lockup must carry, e.g. the record's `expectedAmount`: covclaimd claims no less. */
+        minAmount: bigint;
     },
 ): Promise<{ ciphertext: string }> {
     const fields = revealFieldsFromScript(input.script);
@@ -211,7 +229,13 @@ export async function revealClaimPacket(
     const { ciphertext } = await sealClaimPacket({
         preimage: input.preimage,
         covclaimdPubkey: (await client.info()).covclaimdPubkey,
+        minAmount: input.minAmount,
     });
-    await client.reveal({ swapAddress: input.address, ciphertext, ...fields });
+    await client.reveal({
+        swapAddress: input.address,
+        ciphertext,
+        minAmount: input.minAmount,
+        ...fields,
+    });
     return { ciphertext };
 }
