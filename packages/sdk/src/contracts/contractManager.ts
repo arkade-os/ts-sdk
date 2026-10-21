@@ -1900,10 +1900,16 @@ export class ContractManager implements IContractManager {
             script: scripts,
         });
         const scriptToContract = new Map(contracts.map((c) => [c.script, c]));
-        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const {
+            scripts: annotatable,
+            cache,
+            failures,
+        } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
+        this.recordAnnotationFailures(annotatable, failures);
+        const owned = vtxos.filter((v) => annotatable.has(v.script));
         if (owned.length === 0) return;
 
-        const annotated = annotateAgainst(owned, scriptToContract);
+        const annotated = annotateAgainst(owned, scriptToContract, cache);
         const byAddress = new Map<string, ExtendedVirtualCoin[]>();
         for (const vtxo of annotated) {
             const contract = scriptToContract.get(vtxo.script);
