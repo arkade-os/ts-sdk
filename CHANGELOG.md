@@ -88,6 +88,19 @@ style and have not been backfilled.
 
 ### Added
 
+- **Onchain coin spends come from the arkd indexer first.** arkd v0.9.22
+  records the onchain coins whose spend it signed or watched (boarding inputs
+  of a batch, inputs of a cosigned onchain tx, spent unrolled VTXOs), and the
+  optional `IndexerProvider.getUtxos` reads them as `IndexerUtxo`; a server
+  without the route throws `IndexerUtxosUnsupportedError` and is not asked
+  again. `syncOnchain` names a vanished coin's spender without an `outspends`
+  call, and only asks about coins whose state can change. arkd's word holds a
+  coin the explorer still lists only for the spend this wallet recorded and
+  only within the six-block pending window: an unbounded hold would let an
+  operator hide a boarding coin from its CSV exit. `syncOnchain` also takes
+  the coins a caller already fetched, so `getBoardingUtxos` fetches each
+  boarding address once.
+
 - **Onchain coins can be spent at once through arkd's cosigner.** Boarding
   UTXOs, unrolled VTXOs and Arkade covenant UTXOs could only move by joining a
   batch or after their exit timelock. arkd v0.9.22's `POST
