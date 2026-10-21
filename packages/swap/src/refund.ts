@@ -534,6 +534,5 @@ export async function pushRefundWithoutReceiver(
  * How long past `refundLocktime` to keep retrying the push before surfacing the server's refusal.
  * Two hours: MTP (BIP-113) lags wall clock by about an hour, plus room for a slow block. Mirror
  * of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes of the same margin.
- * @deprecated The client handles refund retries; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const REFUND_MTP_LAG_SECONDS = 2 * 60 * 60;
