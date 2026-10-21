@@ -69,6 +69,11 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`claimCash` rejects ArkadeCash from another server.** The server signer key is
+  now checked against the key encoded in the cash token before any VTXOs are
+  queried, so a mismatched server fails with a clear error instead of proceeding
+  with a script it did not issue.
+
 - **Contract subscription recovery clears stale poll state.** Recovery now
   uses the same connection-reset path as stream reconnection, so a successful
   manager reconciliation re-enables failsafe polling for contracts whose

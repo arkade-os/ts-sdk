@@ -190,6 +190,26 @@ const makeCash = () =>
         "tarkadecash",
     );
 
+describe("claimCash server validation", () => {
+    it("rejects cash issued by another server before querying the indexer", async () => {
+        const cash = makeCash();
+        const indexer = cashIndexer(hex.encode(cash.vtxoScript.pkScript), []);
+        const getVtxos = (indexer as unknown as { getVtxos: ReturnType<typeof vi.fn> }).getVtxos;
+        const getInfo = vi.fn(async () => ({
+            ...info,
+            signerPubkey: `03${"2".repeat(64)}`,
+        }));
+        const wallet = await makeWallet(indexer, { getInfo });
+        getInfo.mockClear();
+
+        await expect(wallet.claimCash(cash.toString())).rejects.toThrow(
+            "Server pubkey mismatch: this cash was issued by a different server",
+        );
+        expect(getInfo).toHaveBeenCalledOnce();
+        expect(getVtxos).not.toHaveBeenCalled();
+    });
+});
+
 describe("claimCash drain-pending accounting", () => {
     // A server-returned checkpoint is signed here in place, so it must declare
     // SIGHASH_DEFAULT like the ones we build.

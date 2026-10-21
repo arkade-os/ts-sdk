@@ -4747,6 +4747,12 @@ export class Wallet
      */
     async claimCash(cashStr: string): Promise<ArkadeCashClaimResult> {
         const cash = ArkadeCash.fromString(cashStr);
+        const info = await this.arkProvider.getInfo();
+        const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
+        if (!equalBytes(serverPubKey, cash.serverPubKey)) {
+            throw new Error("Server pubkey mismatch: this cash was issued by a different server");
+        }
+
         const cashScript = cash.vtxoScript;
         const cashPkScript = hex.encode(cashScript.pkScript);
 
@@ -4799,7 +4805,6 @@ export class Wallet
         }
 
         if (spendable.length > 0) {
-            const info = await this.arkProvider.getInfo();
             const serverUnrollScript = assertValidServerUnrollScript(
                 info.checkpointTapscript,
                 resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
