@@ -151,8 +151,8 @@ import {
     RequestGetUsedSigningDescriptors,
     ResponseGetUsedSigningDescriptors,
     RequestAdvanceSigningDescriptorWatermark,
-    RequestGetStoredVtxosForContract,
-    ResponseGetStoredVtxosForContract,
+    RequestGetStoredContractsWithVtxos,
+    ResponseGetStoredContractsWithVtxos,
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
     isSerializedAggregateError,
@@ -163,7 +163,6 @@ import type {
     Contract,
     ContractEventCallback,
     ContractWithVtxos,
-    ExtendedContractVtxo,
     GetContractsFilter,
     PathSelection,
     WatchedScript,
@@ -240,7 +239,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_DELEGATE_INFO: 10_000,
     IS_CONTRACT_MANAGER_WATCHING: 10_000,
     GET_CURRENT_SIGNING_DESCRIPTOR: 10_000,
-    GET_STORED_VTXOS_FOR_CONTRACT: 10_000,
+    GET_STORED_CONTRACTS_WITH_VTXOS: 10_000,
     // Allocation is a local repository write plus a fire-and-forget band
     // slide — no indexer round trip on the request path.
     GET_NEXT_SIGNING_DESCRIPTOR: 10_000,
@@ -337,7 +336,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
-    "GET_STORED_VTXOS_FOR_CONTRACT",
+    "GET_STORED_CONTRACTS_WITH_VTXOS",
     "GET_WATCHED_SCRIPTS",
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
@@ -1423,21 +1422,22 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
-            /** Asks the worker for one contract's stored VTXOs; never syncs, spends included. */
-            async getStoredVtxosForContract(
-                contract: Pick<Contract, "script" | "address">,
-            ): Promise<ExtendedContractVtxo[]> {
-                const message: RequestGetStoredVtxosForContract = {
-                    type: "GET_STORED_VTXOS_FOR_CONTRACT",
+            async getStoredContractsWithVtxos(
+                filter?: GetContractsFilter,
+            ): Promise<ContractWithVtxos[]> {
+                const message: RequestGetStoredContractsWithVtxos = {
+                    type: "GET_STORED_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
-                    payload: { contract: { script: contract.script, address: contract.address } },
+                    payload: { filter },
                 };
                 try {
                     const response = await sendContractMessage(message);
-                    return (response as ResponseGetStoredVtxosForContract).payload.vtxos;
+                    // The worker may have started a background catch-up sync.
+                    await refreshSyncState();
+                    return (response as ResponseGetStoredContractsWithVtxos).payload.contracts;
                 } catch (cause) {
-                    throw new Error(`Failed to get stored vtxos for contract: ${cause}`, {
+                    throw new Error(`Failed to get stored contracts with vtxos: ${cause}`, {
                         cause,
                     });
                 }

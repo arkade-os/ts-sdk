@@ -89,11 +89,12 @@ style and have not been backfilled.
   return `Promise<void>`; callers can await teardown, including in-flight
   event handling and repository writes.
 
-- **`IContractManager` gains a required `getStoredVtxosForContract()`.**
-  It reads one contract's VTXOs from the repository alone, spent ones
-  included, and never reaches the indexer: `getContractsWithVtxos` keeps
-  spent rows but syncs first, while `getVtxos` reads locally but drops them.
-  Also reachable through the service worker wallet. Custom
+- **`IContractManager.getStoredContractsWithVtxos()` is required and
+  reachable through the service worker.** It answers from the repository
+  without waiting on the indexer and keeps spent VTXOs, so a caller can tell
+  whether, and by which transaction, a contract's coin was spent without a
+  server round trip: `getContractsWithVtxos` keeps spent rows but syncs
+  first, while `getVtxos` reads locally but drops them. Custom
   `IContractManager` implementations must add it. (#953)
 
 - **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read

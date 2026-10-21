@@ -12,7 +12,6 @@ import type {
     Contract,
     ContractEvent,
     ContractWithVtxos,
-    ExtendedContractVtxo,
     GetContractsFilter,
     PathSelection,
     WatchedScript,
@@ -358,13 +357,13 @@ export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
-export type RequestGetStoredVtxosForContract = RequestEnvelope & {
-    type: "GET_STORED_VTXOS_FOR_CONTRACT";
-    payload: { contract: Pick<Contract, "script" | "address"> };
+export type RequestGetStoredContractsWithVtxos = RequestEnvelope & {
+    type: "GET_STORED_CONTRACTS_WITH_VTXOS";
+    payload: { filter?: GetContractsFilter };
 };
-export type ResponseGetStoredVtxosForContract = ResponseEnvelope & {
-    type: "STORED_VTXOS_FOR_CONTRACT";
-    payload: { vtxos: ExtendedContractVtxo[] };
+export type ResponseGetStoredContractsWithVtxos = ResponseEnvelope & {
+    type: "STORED_CONTRACTS_WITH_VTXOS";
+    payload: { contracts: ContractWithVtxos[] };
 };
 
 function unsupportedByManager(method: string): Error {
@@ -922,7 +921,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
-    | RequestGetStoredVtxosForContract
+    | RequestGetStoredContractsWithVtxos
     | RequestWatchScript
     | RequestUnwatchScript
     | RequestGetWatchedScripts
@@ -985,7 +984,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
-        | ResponseGetStoredVtxosForContract
+        | ResponseGetStoredContractsWithVtxos
         | ResponseWatchScript
         | ResponseUnwatchScript
         | ResponseGetWatchedScripts
@@ -1448,13 +1447,15 @@ export class WalletMessageHandler
                         payload: { contracts, filterApplied: true },
                     });
                 }
-                case "GET_STORED_VTXOS_FOR_CONTRACT": {
+                case "GET_STORED_CONTRACTS_WITH_VTXOS": {
                     const manager = await this.readonlyWallet.getContractManager();
-                    const vtxos = await manager.getStoredVtxosForContract(message.payload.contract);
+                    const contracts = await manager.getStoredContractsWithVtxos(
+                        message.payload.filter,
+                    );
                     return this.tagged({
                         id,
-                        type: "STORED_VTXOS_FOR_CONTRACT",
-                        payload: { vtxos },
+                        type: "STORED_CONTRACTS_WITH_VTXOS",
+                        payload: { contracts },
                     });
                 }
                 case "WATCH_SCRIPT": {

@@ -1,8 +1,9 @@
 /**
- * `getStoredVtxosForContract` end to end: a page-side service worker wallet,
+ * `getStoredContractsWithVtxos` end to end: a page-side service worker wallet,
  * the real worker handler, and a real `Wallet` behind it, with only the
  * network faked. A canned responder would agree with itself; this pins the
- * letter the page sends, and that the worker answers from storage alone.
+ * letter the page sends, and that the worker answers from storage without
+ * waiting on the indexer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,8 +99,8 @@ async function makePair() {
     return { inner, sw, serviceWorker, walletRepository };
 }
 
-describe("getStoredVtxosForContract through the service worker", () => {
-    it("reads spent rows from worker storage in one letter, without the indexer", async () => {
+describe("getStoredContractsWithVtxos through the service worker", () => {
+    it("reads spent rows from worker storage without waiting on the indexer", async () => {
         const { inner, sw, serviceWorker, walletRepository } = await makePair();
 
         // a spent coin already stored under one of the wallet's own contracts
@@ -113,25 +114,34 @@ describe("getStoredVtxosForContract through the service worker", () => {
         // building the proxy sends its own sync-state probe, which is not ours to count
         const manager = await sw.getContractManager();
         serviceWorker.postMessage.mockClear();
-        mockFetch.mockClear();
 
-        // a full row, carrying a bigint that JSON cannot serialize
-        const row = { ...contract, metadata: { amount: BigInt(5) } };
-        const vtxos = await manager.getStoredVtxosForContract(row);
-
-        expect(vtxos).toHaveLength(1);
-        expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy, contractScript: contract.script });
-
-        // exactly one letter, carrying only what the worker needs
-        const letters = serviceWorker.postMessage.mock.calls.map(([message]) => message);
-        expect(letters.map((message) => message.type)).toEqual(["GET_STORED_VTXOS_FOR_CONTRACT"]);
-        expect(letters[0].payload.contract).toEqual({
-            script: contract.script,
-            address: contract.address,
+        // the indexer stalls: a catch-up sync may start, but the read must not wait for it
+        let release!: () => void;
+        const stalled = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const answer = mockFetch.getMockImplementation()!;
+        mockFetch.mockImplementation(async (url: string, ...rest: unknown[]) => {
+            if (String(url).includes("/v1/indexer/vtxos")) await stalled;
+            return answer(url, ...rest);
         });
 
-        // nothing went to the indexer while answering
-        const isIndexerRead = (url: unknown) => String(url).includes("/v1/indexer/vtxos");
-        expect(mockFetch.mock.calls.filter(([url]) => isIndexerRead(url))).toHaveLength(0);
+        try {
+            const [entry] = await manager.getStoredContractsWithVtxos({ script: contract.script });
+
+            expect(entry.contract.script).toBe(contract.script);
+            expect(entry.vtxos).toHaveLength(1);
+            expect(entry.vtxos[0]).toMatchObject({
+                isSpent: true,
+                spentBy,
+                contractScript: contract.script,
+            });
+
+            const [letter] = serviceWorker.postMessage.mock.calls.map(([message]) => message);
+            expect(letter.type).toBe("GET_STORED_CONTRACTS_WITH_VTXOS");
+            expect(letter.payload).toEqual({ filter: { script: contract.script } });
+        } finally {
+            release();
+        }
     });
 });

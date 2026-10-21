@@ -302,15 +302,7 @@ export interface IContractManager extends Disposable {
      * runs); check {@link getSyncState} before trusting the result. For display, never coin
      * selection.
      */
-    getStoredContractsWithVtxos?(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
-
-    /**
-     * One contract's VTXOs from the repository alone: never reaches the indexer, and keeps
-     * terminally spent outputs.
-     */
-    getStoredVtxosForContract(
-        contract: Pick<Contract, "script" | "address">,
-    ): Promise<ExtendedContractVtxo[]>;
+    getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 
     /**
      * Settles when the `lazyInitialization` boot (look-ahead drain, reconcile, watcher start)
@@ -1524,12 +1516,6 @@ export class ContractManager implements IContractManager {
         }));
     }
 
-    async getStoredVtxosForContract(
-        contract: Pick<Contract, "script" | "address">,
-    ): Promise<ExtendedContractVtxo[]> {
-        return this.getVtxosForContracts([contract]);
-    }
-
     async getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
         if (!this.syncedWithin(contracts, this.config.vtxoSyncMaxAgeMs ?? 0)) {
@@ -2018,7 +2004,7 @@ export class ContractManager implements IContractManager {
     }
 
     private async getVtxosForContracts(
-        contracts: Pick<Contract, "script" | "address">[],
+        contracts: Contract[],
         options?: { unspentOnly?: boolean },
     ): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(
