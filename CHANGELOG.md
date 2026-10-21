@@ -89,6 +89,13 @@ style and have not been backfilled.
   return `Promise<void>`; callers can await teardown, including in-flight
   event handling and repository writes.
 
+- **`IContractManager` gains a required `getStoredVtxosForContract()`.**
+  It reads one contract's VTXOs from the repository alone, spent ones
+  included, and never reaches the indexer: `getContractsWithVtxos` keeps
+  spent rows but syncs first, while `getVtxos` reads locally but drops them.
+  Also reachable through the service worker wallet. Custom
+  `IContractManager` implementations must add it. (#953)
+
 - **`@arkade-os/swap/nostr` no longer exports `RFQ_AD_KIND`.** Nothing read
   the ad it named; kind 38859 now carries the signed solver card, exported
   as `SOLVER_CARD_KIND` by `@arkade-os/solver-discovery`.

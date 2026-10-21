@@ -305,11 +305,10 @@ export interface IContractManager extends Disposable {
     getStoredContractsWithVtxos?(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 
     /**
-     * One contract's Vtxos from the repository alone: never reaches
-     * the indexer, and keeps terminally spent outputs. Optional so adding it
-     * breaks no implementer of this public interface — fall back when absent.
+     * One contract's VTXOs from the repository alone: never reaches the indexer, and keeps
+     * terminally spent outputs.
      */
-    getStoredVtxosForContract?(
+    getStoredVtxosForContract(
         contract: Pick<Contract, "script" | "address">,
     ): Promise<ExtendedContractVtxo[]>;
 
@@ -1528,13 +1527,7 @@ export class ContractManager implements IContractManager {
     async getStoredVtxosForContract(
         contract: Pick<Contract, "script" | "address">,
     ): Promise<ExtendedContractVtxo[]> {
-        const vtxos = await getVtxosForContract(this.config.walletRepository, contract);
-        return vtxos.map(
-            (vtxo): ExtendedContractVtxo => ({
-                ...vtxo,
-                contractScript: contract.script,
-            }),
-        );
+        return this.getVtxosForContracts([contract]);
     }
 
     async getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]> {
@@ -2025,7 +2018,7 @@ export class ContractManager implements IContractManager {
     }
 
     private async getVtxosForContracts(
-        contracts: Contract[],
+        contracts: Pick<Contract, "script" | "address">[],
         options?: { unspentOnly?: boolean },
     ): Promise<ExtendedContractVtxo[]> {
         const res = await Promise.all(

@@ -117,7 +117,7 @@ describe("getStoredVtxosForContract through the service worker", () => {
 
         // a full row, carrying a bigint that JSON cannot serialize
         const row = { ...contract, metadata: { amount: BigInt(5) } };
-        const vtxos = await manager.getStoredVtxosForContract!(row);
+        const vtxos = await manager.getStoredVtxosForContract(row);
 
         expect(vtxos).toHaveLength(1);
         expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy, contractScript: contract.script });

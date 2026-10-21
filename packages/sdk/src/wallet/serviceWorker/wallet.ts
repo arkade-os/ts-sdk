@@ -1436,8 +1436,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 try {
                     const response = await sendContractMessage(message);
                     return (response as ResponseGetStoredVtxosForContract).payload.vtxos;
-                } catch (e) {
-                    throw new Error("Failed to get stored vtxos for contract");
+                } catch (cause) {
+                    throw new Error(`Failed to get stored vtxos for contract: ${cause}`, {
+                        cause,
+                    });
                 }
             },
 
