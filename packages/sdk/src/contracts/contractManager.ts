@@ -141,6 +141,23 @@ function annotatableIn(
 }
 
 /**
+ * Sync paths pass the contracts they fetched for rather than re-reading the repository: a row
+ * deleted while the indexer fetch was in flight would otherwise throw on annotation.
+ */
+function annotateAgainst(
+    vtxos: VirtualCoin[],
+    byScript: Map<string, Contract>,
+    // Per-contract memo: rebuilding the taproot tree per VTXO dominates long histories (#521).
+    tapscripts: ContractTapscriptCache = new Map(),
+): NormalizedExtendedVirtualCoin[] {
+    // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
+    // into forfeit construction and repository writes.
+    return vtxos.map((vtxo) =>
+        extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscripts),
+    );
+}
+
+/**
  * Hard cap on the HD index range {@link scanContracts} probes, so a handler that reports a hit
  * at every index cannot hang the wallet. Reaching it is a structural failure, not completion.
  */
@@ -1563,13 +1580,7 @@ export class ContractManager implements IContractManager {
             byScript.set(contract.script, contract);
         }
 
-        // Per-contract memo: rebuilding the taproot tree per VTXO dominates long histories (#521).
-        const tapscriptCache: ContractTapscriptCache = tapscripts ?? new Map();
-        // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
-        // into forfeit construction and repository writes.
-        return vtxos.map((vtxo) =>
-            extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscriptCache),
-        );
+        return annotateAgainst(vtxos, byScript, tapscripts);
     }
 
     /** @inheritdoc */
@@ -1892,7 +1903,7 @@ export class ContractManager implements IContractManager {
         const owned = vtxos.filter((v) => scriptToContract.has(v.script));
         if (owned.length === 0) return;
 
-        const annotated = await this.annotateVtxos(owned);
+        const annotated = annotateAgainst(owned, scriptToContract);
         const byAddress = new Map<string, ExtendedVirtualCoin[]>();
         for (const vtxo of annotated) {
             const contract = scriptToContract.get(vtxo.script);
@@ -2131,7 +2142,7 @@ export class ContractManager implements IContractManager {
         } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
         this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
-        const annotated = await this.annotateVtxos(owned, cache);
+        const annotated = annotateAgainst(owned, scriptToContract, cache);
 
         const byContract = new Map<string, ExtendedContractVtxo[]>();
         // So a just-promoted script saves against its row, not the synthetic watcher object.
@@ -2256,7 +2267,7 @@ export class ContractManager implements IContractManager {
         } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
         this.recordAnnotationFailures(annotatable, failures);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
-        const annotated = await this.annotateVtxos(owned, cache);
+        const annotated = annotateAgainst(owned, scriptToContract, cache);
         for (const vtxo of annotated) {
             result.get(vtxo.script)!.push({
                 ...vtxo,
