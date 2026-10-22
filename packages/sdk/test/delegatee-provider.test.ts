@@ -182,6 +182,21 @@ describe("DelegateeManagerImpl.register", () => {
         );
     });
 
+    it("persists nothing for an ended watch the service derived differently", async () => {
+        contractManager.createContract.mockClear();
+        contractManager.updateContract.mockClear();
+        const manager = new DelegateeManagerImpl(
+            makeProvider({ address: "bcrt1pother", status: "cancelled" }),
+            wallet,
+        );
+        await expect(manager.registerBoarding(params)).rejects.toThrow(
+            "delegatee derived a different address",
+        );
+        // a row must never carry an address that does not derive from its script
+        expect(contractManager.createContract).not.toHaveBeenCalled();
+        expect(contractManager.updateContract).not.toHaveBeenCalled();
+    });
+
     it("refuses a service whose server key is not the wallet's", async () => {
         const provider = makeProvider();
         provider.getInfo.mockResolvedValue({ ...makeInfo(), serverPubkey: vectors.owner });
@@ -516,6 +531,41 @@ describe("DelegateeManagerImpl.refreshStatus", () => {
         expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
             metadata: {
                 delegationStatus: "active",
+                delegationAddress: vectors.renewal.address,
+            },
+        });
+    });
+
+    it("asks about a row a restore re-derived, which carries no status", async () => {
+        const row = await makeRow({});
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockResolvedValue({
+            delegation: {
+                id: 1,
+                address: vectors.renewal.address,
+                status: "active",
+                variables: {},
+                expiresAt: 4102444800,
+            },
+            vtxos: [],
+        });
+
+        const got = await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(provider.getDelegation).toHaveBeenCalledWith(vectors.renewal.address);
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                expiresAt: 4102444800,
+            },
+        ]);
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "active",
+                delegationExpiresAt: 4102444800,
                 delegationAddress: vectors.renewal.address,
             },
         });

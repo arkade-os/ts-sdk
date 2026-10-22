@@ -49,9 +49,11 @@ style and have not been backfilled.
   cannot be reached for keeps the status it had — a network failure never
   moves the wallet's addresses, and the watch's expiry is the hard bound. The
   registration now also persists the address the service knows the watch by
-  (`delegationAddress`), so a row written before it can be refreshed too, and
-  the rows the SDK watches but never registers are marked `local`, never a
-  delegation.
+  (`delegationAddress`), so a row written before it can be refreshed too. The
+  companion rows of a registration (watched, never registered) are marked
+  `local`, never a delegation; the rows a restore re-derives carry no status,
+  so a refresh asks the service about them. A watch whose address the service
+  derived differently is refused before anything is persisted, ended or not.
 
 ### Changed
 
@@ -689,11 +691,11 @@ style and have not been backfilled.
 
 - **A delegatee contract the SDK cannot read a delegation status from is
   reported, not skipped in silence.** A row written before the status was
-  persisted, or one the service does not know, left the wallet on its own
+  persisted, or one a restore re-derived, left the wallet on its own
   addresses with nothing said: the delegated coins kept counting, but the
   wallet looked as if it had never delegated. Such a row is now reported once
-  per contract, pointing at the re-registration that makes it a delegation
-  again.
+  per contract, pointing at `refreshStatus` and the re-registration that make
+  it a delegation again.
 
 ## [0.4.77] - 2026-09-30
 
