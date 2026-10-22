@@ -31,6 +31,14 @@ const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
 
+To generate a mnemonic once from the command line, without a project:
+
+```bash
+pnpm dlx @arkade-os/sdk   # or: npx @arkade-os/sdk
+```
+
+It prints a new 12-word mnemonic and stores nothing. Keep it secret: anyone who has it can spend the wallet's funds.
+
 ### Read-Only Wallets (Watch-Only)
 
 The SDK supports read-only wallets that allow you to query wallet state without exposing private keys. This is useful for:
