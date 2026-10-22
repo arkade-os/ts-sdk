@@ -475,6 +475,34 @@ describe("DelegateeManagerImpl.refreshStatus", () => {
         });
     });
 
+    it("keeps the persisted status on a 404 the service itself did not answer", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        // a wrong base URL: every path 404s, info included
+        provider.getInfo.mockRejectedValue(
+            new DelegateeRequestError("Failed to get delegatee info (404): not found", 404),
+        );
+        provider.getDelegation.mockRejectedValue(
+            new DelegateeRequestError("Failed to get delegatee delegation (404): not found", 404),
+        );
+
+        const got = await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                error: "Failed to get delegatee delegation (404): not found",
+            },
+        ]);
+        expect(repo.updateContract).not.toHaveBeenCalled();
+    });
+
     it("keeps the persisted status when the service cannot be reached", async () => {
         const row = await makeRow({
             delegationStatus: "active",

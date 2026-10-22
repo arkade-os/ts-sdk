@@ -54,6 +54,9 @@ style and have not been backfilled.
   `local`, never a delegation; the rows a restore re-derives carry no status,
   so a refresh asks the service about them. A watch whose address the service
   derived differently is refused before anything is persisted, ended or not.
+  A 404 ends a watch only when the service itself answers: a base URL or a
+  proxy that 404s every path, `getInfo` included, is a failure to reach the
+  service and keeps the status the row had.
 
 ### Changed
 

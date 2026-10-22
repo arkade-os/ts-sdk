@@ -423,6 +423,15 @@ export class DelegateeManagerImpl implements IDelegateeManager {
         const manager = await this.wallet.getContractManager();
         const rows = await manager.getContracts({ type: [DelegateeContractHandler.type] });
         const refreshed: DelegateeStatusRefresh[] = [];
+        // A 404 ends a watch only when the service itself answered it. A wrong base URL or a
+        // proxy 404s every path, info included: that is a failure to reach the service, not its
+        // answer. Asked once, on the first 404.
+        let answering: Promise<boolean> | undefined;
+        const serviceAnswers = () =>
+            (answering ??= this.delegateeProvider.getInfo().then(
+                () => true,
+                () => false,
+            ));
         for (const row of rows) {
             const template = row.params.template;
             if (template !== "renewal" && template !== "boarding") continue;
@@ -462,7 +471,11 @@ export class DelegateeManagerImpl implements IDelegateeManager {
                         : {}),
                 });
             } catch (e) {
-                if (e instanceof DelegateeRequestError && e.status === 404) {
+                if (
+                    e instanceof DelegateeRequestError &&
+                    e.status === 404 &&
+                    (await serviceAnswers())
+                ) {
                     // The service does not know this watch: it is over, whatever it was.
                     await manager.updateContract(row.script, {
                         metadata: {
