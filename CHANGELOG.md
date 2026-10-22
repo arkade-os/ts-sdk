@@ -73,6 +73,16 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`claimCash` refuses another operator's ArkadeCash.** The token's script
+  commits to its issuer's signer, but the claim never checked it against the
+  connected operator, so a wallet on the wrong operator queried an indexer
+  that could not know the note and failed with a misleading "No VTXOs found".
+  It now throws `ArkadeCashOperatorMismatchError` before any query. A signer
+  the operator lists as deprecated is accepted, cutoff or not: it is the same
+  operator after a rotation, and refusing it would lock the bearer out of
+  cash minted before the rotation, including swept cash that still recovers
+  through settlement. (#1045)
+
 - **Contract subscription recovery clears stale poll state.** Recovery now
   uses the same connection-reset path as stream reconnection, so a successful
   manager reconciliation re-enables failsafe polling for contracts whose

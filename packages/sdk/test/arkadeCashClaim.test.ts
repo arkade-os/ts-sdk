@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { SigHash, Transaction } from "@scure/btc-signer";
-import { Wallet, ArkadeCashCreateError } from "../src/wallet/wallet";
+import {
+    Wallet,
+    ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
+} from "../src/wallet/wallet";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { SingleKey } from "../src/identity/singleKey";
@@ -189,6 +193,85 @@ const makeCash = () =>
         { type: "blocks", value: 144n },
         "tarkadecash",
     );
+
+const makeCashUnder = (serverPubKey: Uint8Array) =>
+    ArkadeCash.generate(serverPubKey, { type: "blocks", value: 144n }, "tarkadecash");
+
+// The token holds the signer its script uses: unknown to the connected operator means the wrong
+// operator; in its deprecated list means the same operator after a rotation.
+describe("claimCash operator check", () => {
+    const FOREIGN_SIGNER = new Uint8Array(32).fill(2);
+    const ROTATED_SIGNER = new Uint8Array(32).fill(3);
+
+    it("rejects cash issued under a signer the operator does not advertise, before querying the indexer", async () => {
+        const cash = makeCashUnder(FOREIGN_SIGNER);
+        const indexer = cashIndexer(hex.encode(cash.vtxoScript.pkScript), []);
+        const wallet = await makeWallet(indexer, {});
+        const getVtxos = (indexer as unknown as { getVtxos: ReturnType<typeof vi.fn> }).getVtxos;
+        getVtxos.mockClear();
+
+        const err = await wallet
+            .claimCash(cash.toString())
+            .then(() => null)
+            .catch((e) => e);
+
+        expect(err).toBeInstanceOf(ArkadeCashOperatorMismatchError);
+        expect(err.cashSignerPubKey).toBe(hex.encode(FOREIGN_SIGNER));
+        expect(err.activeSignerPubKey).toBe(SERVER_PUBKEY_HEX.slice(2));
+        expect(getVtxos).not.toHaveBeenCalled();
+    });
+
+    // A second read could land on both sides of a rotation: the check on the old signer set, the
+    // sweep's checkpoint on the new one.
+    it("checks the operator and builds the sweep from one server-info snapshot", async () => {
+        const cash = makeCash();
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const unspent = { ...spentCashVtxo(cashPkScript), isSpent: false };
+        const getInfo = vi.fn(async () => info);
+        const submitTx = vi.fn(async () => {
+            throw new Error("rejected");
+        });
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [unspent]), {
+            getInfo,
+            getPendingTxs: vi.fn(async () => []),
+            submitTx,
+        });
+        getInfo.mockClear();
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(submitTx).toHaveBeenCalledOnce();
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "sweep-failed" },
+        ]);
+        expect(getInfo).toHaveBeenCalledOnce();
+    });
+
+    // A rotation must not lock the holder out of this operator's cash: before the cutoff it can
+    // migrate; after it, the operator sweeps and the claim recovers.
+    it.each([
+        ["no cutoff advertised", 0n],
+        ["cutoff ahead", BigInt(Math.floor(Date.now() / 1000) + 86_400)],
+        ["cutoff passed", 1n],
+    ])("claims cash issued under a deprecated signer (%s)", async (_label, cutoffDate) => {
+        const cash = makeCashUnder(ROTATED_SIGNER);
+        const cashPkScript = hex.encode(cash.vtxoScript.pkScript);
+        const wallet = await makeWallet(cashIndexer(cashPkScript, [spentCashVtxo(cashPkScript)]), {
+            getPendingTxs: vi.fn(async () => []),
+            getInfo: vi.fn(async () => ({
+                ...info,
+                // arkd may send signers compressed; the check compares x-only.
+                deprecatedSigners: [{ pubkey: `02${hex.encode(ROTATED_SIGNER)}`, cutoffDate }],
+            })),
+        });
+
+        const result = await wallet.claimCash(cash.toString());
+
+        expect(result.unclaimed.vtxos).toEqual([
+            { txid: CASH_TXID, vout: 0, value: CASH_VALUE, reason: "already-spent" },
+        ]);
+    });
+});
 
 describe("claimCash drain-pending accounting", () => {
     // A server-returned checkpoint is signed here in place, so it must declare

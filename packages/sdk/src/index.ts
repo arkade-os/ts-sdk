@@ -177,6 +177,7 @@ import {
     type ArkadeCashUnclaimedVtxo,
     type ArkadeCashVtxoRef,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -771,6 +772,7 @@ export {
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
     networkFromArkadeInfo,

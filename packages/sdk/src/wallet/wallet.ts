@@ -656,6 +656,28 @@ export class ArkadeCashCreateError extends Error {
 }
 
 /**
+ * Thrown by {@link Wallet.claimCash} when the arkadeCash comes from another operator. Its signer
+ * is not the connected operator's active signer, and it is not in the operator's list of
+ * deprecated signers either. Nothing is queried or signed. To claim it, connect to the operator
+ * that issued it.
+ */
+export class ArkadeCashOperatorMismatchError extends Error {
+    constructor(
+        /** The signer in the arkadeCash script, x-only hex. */
+        readonly cashSignerPubKey: string,
+        /** The active signer of the connected operator, x-only hex. */
+        readonly activeSignerPubKey: string,
+    ) {
+        super(
+            `ArkadeCash comes from another operator: its signer ${cashSignerPubKey} is not the ` +
+                `active signer ${activeSignerPubKey} of the connected operator, and not one of ` +
+                `its deprecated signers. Connect to the operator that issued it to claim it.`,
+        );
+        this.name = "ArkadeCashOperatorMismatchError";
+    }
+}
+
+/**
  * Freshness of provider-backed sync (server-info source + indexer-sync health). Balances/VTXOs
  * are always served from the repository regardless. `syncing` says a provider sync is in flight
  * right now; optional so adding it breaks no implementer, {@link ReadonlyWallet} always sets it.
@@ -4747,6 +4769,17 @@ export class Wallet
      */
     async claimCash(cashStr: string): Promise<ArkadeCashClaimResult> {
         const cash = ArkadeCash.fromString(cashStr);
+
+        // The cash script holds its issuer's signer: another operator can't find or spend it, so
+        // refuse before querying. A deprecated signer is the same operator after a rotation, so
+        // accept it: even after the cutoff, the swept VTXO is still recovered below.
+        const info = await this.arkProvider.getInfo();
+        const signerSet = signerSetFromInfo(info);
+        const signer = classifyAgainstSignerSet(hex.encode(cash.serverPubKey), signerSet);
+        if (signer.status === "UNKNOWN_SIGNER") {
+            throw new ArkadeCashOperatorMismatchError(signer.signerPubKey, signerSet.active);
+        }
+
         const cashScript = cash.vtxoScript;
         const cashPkScript = hex.encode(cashScript.pkScript);
 
@@ -4799,7 +4832,6 @@ export class Wallet
         }
 
         if (spendable.length > 0) {
-            const info = await this.arkProvider.getInfo();
             const serverUnrollScript = assertValidServerUnrollScript(
                 info.checkpointTapscript,
                 resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
