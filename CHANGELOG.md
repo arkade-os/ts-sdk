@@ -41,6 +41,23 @@ style and have not been backfilled.
   asset-bearing inputs is refused rather than reshaped. Automatic renewal still
   settles into one output, and `split` is refused on the service-worker wallet.
 
+- **`IDelegateeManager.refreshStatus` re-reads the delegated watches from the
+  service.** The service alone knows whether a watch is still live, so the
+  wallet asks it and persists the answer on the contract rows: a watch the
+  service ended stops being the wallet's default address, and a watch the
+  service does not know anymore is over, whatever it was. A watch the service
+  cannot be reached for keeps the status it had — a network failure never
+  moves the wallet's addresses, and the watch's expiry is the hard bound. The
+  registration now also persists the address the service knows the watch by
+  (`delegationAddress`), so a row written before it can be refreshed too. The
+  companion rows of a registration (watched, never registered) are marked
+  `local`, never a delegation; the rows a restore re-derives carry no status,
+  so a refresh asks the service about them. A watch whose address the service
+  derived differently is refused before anything is persisted, ended or not.
+  A 404 ends a watch only when the service itself answers: a base URL or a
+  proxy that 404s every path, `getInfo` included, is a failure to reach the
+  service and keeps the status the row had.
+
 ### Changed
 
 - **The pre-signed delegator API is deprecated.** `DelegateProvider`,
@@ -672,6 +689,16 @@ style and have not been backfilled.
   repository still filters in memory. The Expo background poll now
   reads only watched and awaiting-funds contracts too, instead of every
   row.
+
+### Bug Fixes
+
+- **A delegatee contract the SDK cannot read a delegation status from is
+  reported, not skipped in silence.** A row written before the status was
+  persisted, or one a restore re-derived, left the wallet on its own
+  addresses with nothing said: the delegated coins kept counting, but the
+  wallet looked as if it had never delegated. Such a row is now reported once
+  per contract, pointing at `refreshStatus` and the re-registration that make
+  it a delegation again.
 
 ## [0.4.77] - 2026-09-30
 

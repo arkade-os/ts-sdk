@@ -154,6 +154,7 @@ describe("delegated default addresses", () => {
     it("falls back to the wallet's own addresses once the delegation lapses", async () => {
         const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
         const own = wallet.arkAddress.encode();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         await wallet.contractRepository.saveContract({
             ...renewal.contract,
             metadata: { delegationStatus: "active", delegationExpiresAt: 1 },
@@ -163,6 +164,34 @@ describe("delegated default addresses", () => {
 
         await wallet.contractRepository.saveContract({ ...renewal.contract, metadata: undefined });
         expect(await wallet.getAddress()).toBe(own);
+        warn.mockRestore();
+    });
+
+    it("reports a delegatee row that carries no delegation status, once", async () => {
+        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const own = wallet.arkAddress.encode();
+        await wallet.contractRepository.saveContract({ ...renewal.contract, metadata: undefined });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        expect(await wallet.getAddress()).toBe(own);
+        expect(await wallet.getAddress()).toBe(own);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("without a delegation status");
+        warn.mockRestore();
+    });
+
+    it("leaves a row it never registered with the service alone, silently", async () => {
+        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const own = wallet.arkAddress.encode();
+        await wallet.contractRepository.saveContract({
+            ...renewal.contract,
+            metadata: { delegationStatus: "local" },
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        expect(await wallet.getAddress()).toBe(own);
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
     });
 
     it("skips a newer row whose params no longer derive its script", async () => {
