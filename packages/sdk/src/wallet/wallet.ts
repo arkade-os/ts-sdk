@@ -166,7 +166,12 @@ import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension, type ExtensionPacket } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
-import { ExecutorManagerImpl, IExecutorManager } from "./executor";
+import {
+    DELEGATION_EXPIRES_KEY,
+    DELEGATION_STATUS_KEY,
+    ExecutorManagerImpl,
+    IExecutorManager,
+} from "./executor";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import { DefaultContractHandler } from "../contracts/handlers/default";
@@ -1017,13 +1022,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const { template } = c.params;
                 if (template === "renewal" ? renewal : template === "boarding" ? boarding : true)
                     continue;
-                const { delegationStatus, delegationExpiresAt } = c.metadata ?? {};
-                if (
-                    delegationStatus !== "active" ||
-                    (typeof delegationExpiresAt === "number" &&
-                        delegationExpiresAt > 0 &&
-                        delegationExpiresAt <= nowSeconds)
-                )
+                const status = c.metadata?.[DELEGATION_STATUS_KEY];
+                const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
+                if (status === undefined) {
+                    // A row written before the delegation status was persisted, or one the
+                    // service does not know: not a live delegation. Report it once, so a wallet
+                    // that silently lost its delegated defaults is visible.
+                    this.warnDelegatedStatusMissing(c.script);
+                    continue;
+                }
+                if (status !== "active") continue;
+                if (typeof expiresAt === "number" && expiresAt > 0 && expiresAt <= nowSeconds)
                     continue;
                 try {
                     if (
@@ -1046,6 +1055,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         this._delegatedTapscript = renewal;
         this._delegatedBoardingAddress = boarding;
+    }
+
+    /** Delegated contracts already reported as carrying no delegation status. */
+    private readonly _warnedDelegatedScripts = new Set<string>();
+
+    /**
+     * Report a delegated contract the SDK cannot read a delegation status from: it was written
+     * before the status was persisted, or the service does not know it. Once per contract, so the
+     * warning is a signal and not a log.
+     */
+    private warnDelegatedStatusMissing(script: string): void {
+        if (this._warnedDelegatedScripts.has(script)) return;
+        this._warnedDelegatedScripts.add(script);
+        console.warn(
+            "Skipping delegated contract without a delegation status: not a registered watch (re-register to delegate to it)",
+            script,
+        );
     }
 
     /** Current active server signer (x-only, 32 bytes); changes only on server-signer rotation. */

@@ -1,10 +1,11 @@
 import { hex } from "@scure/base";
 import type { Asset, IWallet } from ".";
-import type {
-    ExecutorContractKeys,
-    ExecutorDelegation,
-    ExecutorInfo,
-    ExecutorProvider,
+import {
+    ExecutorRequestError,
+    type ExecutorContractKeys,
+    type ExecutorDelegation,
+    type ExecutorInfo,
+    type ExecutorProvider,
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
 import { ExecutorContractHandler } from "../contracts/handlers/executor";
@@ -16,8 +17,59 @@ import {
     type DelegationParams,
     defaultVariables,
 } from "../script/executor/executorTemplate";
+import { toXOnlySignerHex } from "./signerRotation";
 
 export type { ExecutorContractKeys };
+
+/** Metadata key: the service's status of a delegated watch. */
+export const DELEGATION_STATUS_KEY = "delegationStatus";
+/** Metadata key: the watch's expiry, in unix seconds. */
+export const DELEGATION_EXPIRES_KEY = "delegationExpiresAt";
+/** Metadata key: the address the service knows the watch by. */
+export const DELEGATION_ADDRESS_KEY = "delegationAddress";
+
+/**
+ * The status of a contract row the SDK watches but never registered with the service: the local
+ * companion of a registration (the renewal contract of a boarding watch, the boarding contract of
+ * a renewal watch). Never a live delegation.
+ */
+export const DELEGATION_LOCAL_STATUS = "local";
+/**
+ * The status of a watch the service does not know anymore: it was registered, but the service
+ * dropped it. Never a live delegation.
+ */
+export const DELEGATION_GONE_STATUS = "gone";
+/**
+ * The status of a watch the service could not be asked about, and that carries no status of its
+ * own. Informational only: it is never persisted.
+ */
+export const DELEGATION_UNKNOWN_STATUS = "unknown";
+
+/** How a delegated watch was registered, persisted on its contract row. */
+export interface ExecutorWatchMetadata {
+    /** The template the service registered. */
+    template: ExecutorDefault;
+    /** The service's status of the watch. */
+    status: string;
+    /** The watch's expiry, in unix seconds. */
+    expiresAt?: number;
+    /** The address the service knows the watch by. */
+    address?: string;
+}
+
+/** The service's answer for one delegated watch. */
+export interface ExecutorStatusRefresh {
+    /** The delegated contract row's script. */
+    script: string;
+    /** The address the service knows the watch by. */
+    address: string;
+    /** The status the row carries now: the service's, or the one it already had. */
+    status: string;
+    /** The watch's expiry, in unix seconds. */
+    expiresAt?: number;
+    /** Set when the service could not be asked; the row keeps the status it had. */
+    error?: string;
+}
 
 /** A watch both sides derived: the address to fund and what restores it. */
 export interface ExecutorWatchRegistration {
@@ -42,11 +94,16 @@ export type ExecutorWallet = Pick<
  * params has a boarding exit delay, its boarding contract: derived locally from the key, the
  * params and the service's keys, so a restored wallet finds its delegated coins without asking
  * the service. Idempotent.
+ *
+ * `registered` carries the service's answer for the template it registered: that row becomes the
+ * live delegation, the others stay local companions of it (watched, never delegated to). Without
+ * it every row is a local companion.
  */
 export async function watchExecutorContracts(
     wallet: Pick<IWallet, "identity" | "getAddress" | "getContractManager">,
     keys: ExecutorContractKeys,
     params: DelegationParams,
+    registered?: ExecutorWatchMetadata,
 ): Promise<Contract[]> {
     const [owner, address, manager] = await Promise.all([
         wallet.identity.compressedPublicKey(),
@@ -67,10 +124,31 @@ export async function watchExecutorContracts(
                 script: hex.encode(script.pkScript),
                 address: script.address(hrp, serverPubKey).encode(),
                 label: template === "renewal" ? "Executor renewal" : "Executor boarding",
+                metadata: metadataFor(template, registered),
             }),
         );
     }
     return contracts;
+}
+
+/** The metadata a delegated contract row carries: the service's answer, or the local marker. */
+function metadataFor(
+    template: ExecutorDefault,
+    registered?: ExecutorWatchMetadata,
+): Record<string, string | number> | undefined {
+    if (registered?.template !== template) {
+        // Not the template the service registered: watched, but never delegated to.
+        return { [DELEGATION_STATUS_KEY]: DELEGATION_LOCAL_STATUS };
+    }
+    return {
+        [DELEGATION_STATUS_KEY]: registered.status,
+        ...(registered.expiresAt !== undefined
+            ? { [DELEGATION_EXPIRES_KEY]: registered.expiresAt }
+            : {}),
+        ...(registered.address !== undefined
+            ? { [DELEGATION_ADDRESS_KEY]: registered.address }
+            : {}),
+    };
 }
 
 function contractParams(
@@ -119,6 +197,16 @@ export interface IExecutorManager {
         params: DelegationParams,
         options?: { expiresAt?: number },
     ): Promise<ExecutorWatchRegistration & { txid?: string }>;
+    /**
+     * Re-read the service's view of this wallet's delegated watches and persist it on the
+     * contract rows. A watch the service ended stops being advertised as soon as the service
+     * says so; a watch the service does not know anymore is over, whatever it was.
+     *
+     * A watch the service cannot be asked about (it is down, or the request failed) keeps the
+     * status it had: a network failure never moves the wallet's addresses, and the watch's
+     * expiry is the hard bound.
+     */
+    refreshStatus(): Promise<ExecutorStatusRefresh[]>;
 }
 
 /** Client-side watch registration with the executor service. */
@@ -250,6 +338,21 @@ export class ExecutorManagerImpl implements IExecutorManager {
         // The same address proves the service resolved the template under GetInfo's keys and
         // commits to the same tapscripts.
         if (delegation.status !== "active") {
+            // The service ended the watch: watch the contracts anyway, carrying that status, so
+            // the wallet stops advertising the address it delegated to.
+            const ended = await watchExecutorContracts(this.wallet, keys, params, {
+                template: kind,
+                status: delegation.status,
+                expiresAt: delegation.expiresAt,
+                address: delegation.address,
+            });
+            await this.persistStatus(
+                ended,
+                kind,
+                delegation.status,
+                delegation.expiresAt,
+                delegation.address,
+            );
             throw new Error(`executor watch ${delegation.address} is ${delegation.status}`);
         }
         if (delegation.address !== watchAddress) {
@@ -257,18 +360,144 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
             );
         }
-        const contracts = await watchExecutorContracts(this.wallet, keys, params);
-        const row = contracts.find((c) => c.params.template === kind);
-        if (row) {
-            const manager = await this.wallet.getContractManager();
-            await manager.updateContract(row.script, {
-                metadata: {
-                    ...row.metadata,
-                    delegationStatus: delegation.status,
-                    delegationExpiresAt: delegation.expiresAt,
-                },
-            });
-        }
+        const contracts = await watchExecutorContracts(this.wallet, keys, params, {
+            template: kind,
+            status: delegation.status,
+            expiresAt: delegation.expiresAt,
+            address: delegation.address,
+        });
+        // The row may predate this registration (the service is idempotent, the repository is
+        // not): make sure it carries what the service just said.
+        await this.persistStatus(
+            contracts,
+            kind,
+            delegation.status,
+            delegation.expiresAt,
+            delegation.address,
+        );
         return { address: watchAddress, templateId, variables, keys, delegation };
     }
+
+    /**
+     * Write the service's answer for a watch on its contract row. The wallet's default addresses
+     * follow the persisted status, so this is what stops a delegated address from being
+     * advertised once the service ended it.
+     */
+    private async persistStatus(
+        contracts: Contract[],
+        template: ExecutorDefault,
+        status: string,
+        expiresAt: number | undefined,
+        address: string,
+    ): Promise<void> {
+        const row = contracts.find((c) => c.params.template === template);
+        if (!row) return;
+        const manager = await this.wallet.getContractManager();
+        await manager.updateContract(row.script, {
+            metadata: {
+                ...row.metadata,
+                [DELEGATION_STATUS_KEY]: status,
+                ...(expiresAt !== undefined ? { [DELEGATION_EXPIRES_KEY]: expiresAt } : {}),
+                [DELEGATION_ADDRESS_KEY]: address,
+            },
+        });
+    }
+
+    /**
+     * Re-read the service's view of this wallet's delegated watches and persist it on the
+     * contract rows. A watch the service ended stops being advertised as soon as the service says
+     * so; a watch the service does not know anymore is over, whatever it was.
+     *
+     * A watch the service cannot be asked about (it is down, or the request failed) keeps the
+     * status it had: a network failure never moves the wallet's addresses, and the watch's expiry
+     * is the hard bound.
+     */
+    async refreshStatus(): Promise<ExecutorStatusRefresh[]> {
+        const manager = await this.wallet.getContractManager();
+        const rows = await manager.getContracts({ type: [ExecutorContractHandler.type] });
+        const refreshed: ExecutorStatusRefresh[] = [];
+        for (const row of rows) {
+            const template = row.params.template;
+            if (template !== "renewal" && template !== "boarding") continue;
+            const persisted = row.metadata?.[DELEGATION_STATUS_KEY];
+            // Watched but never registered with the service: nothing to ask about.
+            if (persisted === DELEGATION_LOCAL_STATUS) continue;
+            let address: string;
+            try {
+                address = await this.watchAddress(row, template);
+            } catch (e) {
+                refreshed.push({
+                    script: row.script,
+                    address: "",
+                    status: typeof persisted === "string" ? persisted : DELEGATION_UNKNOWN_STATUS,
+                    error: errorMessage(e),
+                });
+                continue;
+            }
+            try {
+                const { delegation } = await this.executorProvider.getDelegation(address);
+                await manager.updateContract(row.script, {
+                    metadata: {
+                        ...row.metadata,
+                        [DELEGATION_STATUS_KEY]: delegation.status,
+                        ...(delegation.expiresAt !== undefined
+                            ? { [DELEGATION_EXPIRES_KEY]: delegation.expiresAt }
+                            : {}),
+                        [DELEGATION_ADDRESS_KEY]: address,
+                    },
+                });
+                refreshed.push({
+                    script: row.script,
+                    address,
+                    status: delegation.status,
+                    ...(delegation.expiresAt !== undefined
+                        ? { expiresAt: delegation.expiresAt }
+                        : {}),
+                });
+            } catch (e) {
+                if (e instanceof ExecutorRequestError && e.status === 404) {
+                    // The service does not know this watch: it is over, whatever it was.
+                    await manager.updateContract(row.script, {
+                        metadata: {
+                            ...row.metadata,
+                            [DELEGATION_STATUS_KEY]: DELEGATION_GONE_STATUS,
+                            [DELEGATION_ADDRESS_KEY]: address,
+                        },
+                    });
+                    refreshed.push({ script: row.script, address, status: DELEGATION_GONE_STATUS });
+                    continue;
+                }
+                refreshed.push({
+                    script: row.script,
+                    address,
+                    status: typeof persisted === "string" ? persisted : DELEGATION_UNKNOWN_STATUS,
+                    error: errorMessage(e),
+                });
+            }
+        }
+        return refreshed;
+    }
+
+    /**
+     * The address the service knows a watch by: the address of a renewal watch, the onchain
+     * address of a boarding one. Persisted on the row when the watch was registered, recomputed
+     * for rows written before it was.
+     */
+    private async watchAddress(row: Contract, template: ExecutorDefault): Promise<string> {
+        const persisted = row.metadata?.[DELEGATION_ADDRESS_KEY];
+        if (typeof persisted === "string" && persisted.length > 0) return persisted;
+        const script = ExecutorContractHandler.createScript(row.params);
+        if (template === "renewal") {
+            const { hrp } = ArkAddress.decode(await this.wallet.getAddress());
+            return script
+                .address(hrp, hex.decode(toXOnlySignerHex(row.params.serverPubKey)))
+                .encode();
+        }
+        const info = await this.executorProvider.getInfo();
+        return script.onchainAddress(getNetwork(info.network as NetworkName));
+    }
+}
+
+function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
 }

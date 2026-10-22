@@ -376,6 +376,18 @@ style and have not been backfilled.
   path, is refused before anything is signed. The renewal's asset packet is
   built by `createAssetPacket`, as a wallet send's is.
 
+- **`IExecutorManager.refreshStatus` re-reads the delegated watches from the
+  service.** The service alone knows whether a watch is still live, so the
+  wallet asks it and persists the answer on the contract rows: a watch the
+  service ended stops being the wallet's default address, and a watch the
+  service does not know anymore is over, whatever it was. A watch the service
+  cannot be reached for keeps the status it had — a network failure never
+  moves the wallet's addresses, and the watch's expiry is the hard bound. The
+  registration now also persists the address the service knows the watch by
+  (`delegationAddress`), so a row written before it can be refreshed too, and
+  the rows the SDK watches but never registers are marked `local`, never a
+  delegation.
+
 ### Changed
 
 - **The pre-signed delegator API is deprecated.** `DelegateProvider`,
@@ -1489,6 +1501,16 @@ style and have not been backfilled.
   it benefits too: a settled output cost three or four sequential Electrum
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
+
+### Bug Fixes
+
+- **A delegated contract the SDK cannot read a delegation status from is
+  reported, not skipped in silence.** A row written before the status was
+  persisted, or one the service does not know, left the wallet on its own
+  addresses with nothing said: the delegated coins kept counting, but the
+  wallet looked as if it had never delegated. Such a row is now reported once
+  per contract, pointing at the re-registration that makes it a delegation
+  again.
 
 ## [0.4.77] - 2026-09-30
 

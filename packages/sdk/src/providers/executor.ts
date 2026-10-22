@@ -46,6 +46,20 @@ export interface ExecutorDelegationDetails {
     coins: ExecutorCoin[];
 }
 
+/**
+ * An executor request that failed. `status` is the HTTP status when the service answered
+ * (404: it does not know the watch), and undefined when the request never reached it.
+ */
+export class ExecutorRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "ExecutorRequestError";
+    }
+}
+
 export interface ExecutorProvider {
     getInfo(): Promise<ExecutorInfo>;
     listTemplates(): Promise<ExecutorTemplate[]>;
@@ -128,8 +142,11 @@ export class RestExecutorProvider implements ExecutorProvider {
     }
 }
 
-async function failure(response: Response, what: string): Promise<Error> {
-    return new Error(`Failed to ${what}: ${await response.text()}`);
+async function failure(response: Response, what: string): Promise<ExecutorRequestError> {
+    return new ExecutorRequestError(
+        `Failed to ${what} (${response.status}): ${await response.text()}`,
+        response.status,
+    );
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
