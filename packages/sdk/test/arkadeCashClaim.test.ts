@@ -248,7 +248,7 @@ describe("claimCash operator check", () => {
     });
 
     // A rotation must not lock the holder out of this operator's cash: before the cutoff it can
-    // migrate; after it, the operator sweeps and the claim recovers.
+    // migrate; after it, once the batch expires and is swept, the claim recovers it.
     it.each([
         ["no cutoff advertised", 0n],
         ["cutoff ahead", BigInt(Math.floor(Date.now() / 1000) + 86_400)],
