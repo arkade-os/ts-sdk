@@ -1411,9 +1411,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     protected async contractSnapshotStored(): Promise<ContractWithVtxos[]> {
         const contractManager = await this.getContractManager();
-        return contractManager.getStoredContractsWithVtxos
-            ? contractManager.getStoredContractsWithVtxos()
-            : contractManager.getContractsWithVtxos();
+        return contractManager.getStoredContractsWithVtxos();
     }
 
     /**
