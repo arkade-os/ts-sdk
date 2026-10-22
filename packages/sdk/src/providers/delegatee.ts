@@ -44,6 +44,20 @@ export interface DelegateeDelegationDetails {
     vtxos: DelegateeVtxo[];
 }
 
+/**
+ * A delegatee request that failed. `status` is the HTTP status when the service answered
+ * (404: it does not know the watch), and undefined when the request never reached it.
+ */
+export class DelegateeRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status?: number,
+    ) {
+        super(message);
+        this.name = "DelegateeRequestError";
+    }
+}
+
 export interface DelegateeProvider {
     getInfo(): Promise<DelegateeInfo>;
     listTemplates(): Promise<DelegateeTemplate[]>;
@@ -126,8 +140,11 @@ export class RestDelegateeProvider implements DelegateeProvider {
     }
 }
 
-async function failure(response: Response, what: string): Promise<Error> {
-    return new Error(`Failed to ${what}: ${await response.text()}`);
+async function failure(response: Response, what: string): Promise<DelegateeRequestError> {
+    return new DelegateeRequestError(
+        `Failed to ${what} (${response.status}): ${await response.text()}`,
+        response.status,
+    );
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

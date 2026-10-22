@@ -1,8 +1,10 @@
 import { hex } from "@scure/base";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RestDelegateeProvider } from "../src/providers/delegatee";
+import { DelegateeRequestError } from "../src/providers/delegatee";
 import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/delegatee/delegateeTemplate";
 import { DelegateeManagerImpl } from "../src/wallet/delegatee";
+import { DelegateeContractHandler } from "../src/contracts/handlers/delegatee";
 import vectors from "./fixtures/delegatee/vectors.json";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
@@ -145,15 +147,32 @@ describe("DelegateeManagerImpl.register", () => {
             vectors.boarding.pkScript,
         ]);
         expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
-            metadata: { delegationStatus: "active", delegationExpiresAt: 9 },
+            metadata: {
+                delegationStatus: "active",
+                delegationExpiresAt: 9,
+                delegationAddress: vectors.boarding.address,
+            },
         });
     });
 
     it("refuses a watch the service returns as no longer active", async () => {
+        contractManager.createContract.mockClear();
+        contractManager.updateContract.mockClear();
         const manager = new DelegateeManagerImpl(makeProvider({ status: "expired" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
             `delegatee watch ${vectors.boarding.address} is expired`,
         );
+        // the row carries what the service said, so the wallet stops advertising the address
+        expect(contractManager.createContract.mock.calls.map(([c]) => c.script)).toEqual([
+            vectors.renewal.pkScript,
+            vectors.boarding.pkScript,
+        ]);
+        expect(contractManager.updateContract).toHaveBeenCalledWith(vectors.boarding.pkScript, {
+            metadata: {
+                delegationStatus: "expired",
+                delegationAddress: vectors.boarding.address,
+            },
+        });
     });
 
     it("refuses an address the service derived differently, e.g. under another delegate key", async () => {
@@ -352,3 +371,153 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
         listTemplates: vi.fn(),
     };
 }
+
+describe("DelegateeManagerImpl.refreshStatus", () => {
+    /** A delegatee row as the repository holds it: the renewal watch of the wallet's key. */
+    async function makeRow(metadata: Record<string, unknown> = {}) {
+        const params = DelegateeContractHandler.serializeParams({
+            template: "renewal",
+            owner: hex.decode(vectors.owner),
+            exitDelay: 0x400001,
+            renewalWindow: 86400,
+            maxFee: 500,
+            delegatePubKey: hex.decode(vectors.delegatePubkey),
+            serverPubKey: hex.decode(vectors.serverPubkey),
+            emulatorPubKey: hex.decode(vectors.emulatorPubkey),
+        });
+        const script = DelegateeContractHandler.createScript(params);
+        return {
+            type: "delegatee",
+            params,
+            script: hex.encode(script.pkScript),
+            address: script.address("tark", hex.decode(vectors.serverPubkey).subarray(1)).encode(),
+            state: "active" as const,
+            createdAt: 0,
+            metadata,
+        };
+    }
+
+    function makeRefreshManager(rows: unknown[]) {
+        const repo = {
+            getContracts: vi.fn(async () => rows),
+            updateContract: vi.fn(),
+        };
+        return { repo, w: { ...wallet, getContractManager: async () => repo } };
+    }
+
+    it("persists the status the service reports", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockResolvedValue({
+            delegation: {
+                id: 1,
+                address: vectors.renewal.address,
+                status: "expired",
+                variables: {},
+                expiresAt: undefined,
+            },
+            vtxos: [],
+        });
+
+        const got = await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            { script: row.script, address: vectors.renewal.address, status: "expired" },
+        ]);
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "expired",
+                delegationAddress: vectors.renewal.address,
+            },
+        });
+    });
+
+    it("ends a watch the service does not know anymore", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockRejectedValue(
+            new DelegateeRequestError("Failed to get delegatee delegation (404): not found", 404),
+        );
+
+        const got = await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            { script: row.script, address: vectors.renewal.address, status: "gone" },
+        ]);
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "gone",
+                delegationAddress: vectors.renewal.address,
+            },
+        });
+    });
+
+    it("keeps the persisted status when the service cannot be reached", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockRejectedValue(new Error("connection refused"));
+
+        const got = await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                error: "connection refused",
+            },
+        ]);
+        // a network failure never moves the wallet's addresses
+        expect(repo.updateContract).not.toHaveBeenCalled();
+    });
+
+    it("does not ask the service about a row it never registered", async () => {
+        const row = await makeRow({ delegationStatus: "local" });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+
+        const got = await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(got).toEqual([]);
+        expect(provider.getDelegation).not.toHaveBeenCalled();
+        expect(repo.updateContract).not.toHaveBeenCalled();
+    });
+
+    it("asks about a row written before the watch address was persisted", async () => {
+        const row = await makeRow({ delegationStatus: "active" });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockResolvedValue({
+            delegation: {
+                id: 1,
+                address: vectors.renewal.address,
+                status: "active",
+                variables: {},
+                expiresAt: undefined,
+            },
+            vtxos: [],
+        });
+
+        await new DelegateeManagerImpl(provider, w).refreshStatus();
+
+        expect(provider.getDelegation).toHaveBeenCalledWith(vectors.renewal.address);
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "active",
+                delegationAddress: vectors.renewal.address,
+            },
+        });
+    });
+});
