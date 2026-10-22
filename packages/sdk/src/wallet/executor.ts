@@ -97,7 +97,8 @@ export type ExecutorWallet = Pick<
  *
  * `registered` carries the service's answer for the template it registered: that row becomes the
  * live delegation, the others stay local companions of it (watched, never delegated to). Without
- * it every row is a local companion.
+ * it (a restore) the rows carry no status: the SDK cannot tell a companion from a registered
+ * watch, so it claims neither, and {@link IExecutorManager.refreshStatus} asks the service.
  */
 export async function watchExecutorContracts(
     wallet: Pick<IWallet, "identity" | "getAddress" | "getContractManager">,
@@ -131,12 +132,17 @@ export async function watchExecutorContracts(
     return contracts;
 }
 
-/** The metadata a delegated contract row carries: the service's answer, or the local marker. */
+/**
+ * The metadata a delegated contract row carries: the service's answer, the local marker, or
+ * nothing when no registration is known.
+ */
 function metadataFor(
     template: ExecutorDefault,
     registered?: ExecutorWatchMetadata,
 ): Record<string, string | number> | undefined {
-    if (registered?.template !== template) {
+    // A restore: whether the service watches this row is the service's to say.
+    if (registered === undefined) return undefined;
+    if (registered.template !== template) {
         // Not the template the service registered: watched, but never delegated to.
         return { [DELEGATION_STATUS_KEY]: DELEGATION_LOCAL_STATUS };
     }
@@ -335,8 +341,14 @@ export class ExecutorManagerImpl implements IExecutorManager {
             variables,
             options,
         );
-        // The same address proves the service resolved the template under GetInfo's keys and
-        // commits to the same tapscripts.
+        // The service fills <COSIGNER_KEY> with its key: the same address proves it is GetInfo's,
+        // and commits to the same tapscripts. Checked before anything is persisted, so a row never
+        // carries an address that does not derive from its script.
+        if (delegation.address !== watchAddress) {
+            throw new Error(
+                `executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
+            );
+        }
         if (delegation.status !== "active") {
             // The service ended the watch: watch the contracts anyway, carrying that status, so
             // the wallet stops advertising the address it delegated to.
@@ -354,11 +366,6 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 delegation.address,
             );
             throw new Error(`executor watch ${delegation.address} is ${delegation.status}`);
-        }
-        if (delegation.address !== watchAddress) {
-            throw new Error(
-                `executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
-            );
         }
         const contracts = await watchExecutorContracts(this.wallet, keys, params, {
             template: kind,

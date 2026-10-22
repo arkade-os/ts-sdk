@@ -1025,9 +1025,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const status = c.metadata?.[DELEGATION_STATUS_KEY];
                 const expiresAt = c.metadata?.[DELEGATION_EXPIRES_KEY];
                 if (status === undefined) {
-                    // A row written before the delegation status was persisted, or one the
-                    // service does not know: not a live delegation. Report it once, so a wallet
-                    // that silently lost its delegated defaults is visible.
+                    // A row written before the delegation status was persisted, or one a restore
+                    // re-derived: not a live delegation until the service says so. Report it
+                    // once, so a wallet that silently lost its delegated defaults is visible.
                     this.warnDelegatedStatusMissing(c.script);
                     continue;
                 }
@@ -1069,7 +1069,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (this._warnedDelegatedScripts.has(script)) return;
         this._warnedDelegatedScripts.add(script);
         console.warn(
-            "Skipping delegated contract without a delegation status: not a registered watch (re-register to delegate to it)",
+            "Skipping delegated contract without a delegation status: not a known watch (refresh the delegation status, or re-register to delegate to it)",
             script,
         );
     }
