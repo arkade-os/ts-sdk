@@ -75,6 +75,7 @@ const submit = (
     p: ReturnType<typeof provider>,
     verifyServerSignatures?: { serverPubkey: Uint8Array; deprecatedServerPubkeys?: Uint8Array[] },
     ins: ArkTxInput[] = inputs(),
+    oneShot = false,
 ) =>
     signAndSubmitOffchainTx({
         identity: USER,
@@ -83,6 +84,7 @@ const submit = (
         outputs: [{ script: P2TR, amount: 9_000n }],
         serverUnrollScript: SERVER_UNROLL,
         verifyServerSignatures,
+        oneShot,
     });
 
 /** A vtxo whose collaborative leaf names a signer the server has since
@@ -174,5 +176,37 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
         const p = provider({ cosignArkTx: async (psbt) => psbt, cosignCheckpoint: async (c) => c });
         await submit(p);
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("signAndSubmitOffchainTx one-shot", () => {
+    const userSigners = (psbt: string) =>
+        (Transaction.fromPSBT(base64.decode(psbt)).getInput(0).tapScriptSig ?? [])
+            .map(([d]) => hex.encode(d.pubKey))
+            .sort();
+
+    it("is finalized by submitTx when the server cosigns the signed checkpoints", async () => {
+        const p = provider();
+        await submit(p, { serverPubkey: SERVER_PUBKEY }, inputs(), true);
+
+        const [submitted] = p.submitTx.mock.calls[0][1];
+        expect(userSigners(submitted)).toEqual([hex.encode(key(11))]);
+        expect(p.finalizeTx).not.toHaveBeenCalled();
+    });
+
+    it("falls back to finalizeTx when the server rebuilds the checkpoints unsigned", async () => {
+        const p = provider({
+            cosignCheckpoint: async (psbt) => {
+                const rebuilt = Transaction.fromPSBT(base64.decode(psbt));
+                rebuilt.updateInput(0, { tapScriptSig: undefined }, true);
+                return cosign(base64.encode(rebuilt.toPSBT()));
+            },
+        });
+        await submit(p, { serverPubkey: SERVER_PUBKEY }, inputs(), true);
+
+        const [finalized] = (p.finalizeTx.mock.calls[0] as unknown[])[1] as string[];
+        expect(userSigners(finalized)).toEqual(
+            [hex.encode(key(11)), hex.encode(SERVER_PUBKEY)].sort(),
+        );
     });
 });

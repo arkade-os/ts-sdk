@@ -483,6 +483,8 @@ interface ServiceWorkerWalletOptions {
      * @see WalletConfig.lookAheadWindow
      */
     lookAheadWindow?: number;
+    /** @see WalletConfig.oneShotSubmit */
+    oneShotSubmit?: boolean;
     /**
      * Timelock floors forwarded to the worker wallet. Lowering either below its
      * per-network default relaxes a fund-safety bound; intended for local
@@ -540,6 +542,7 @@ type MessageBusInitConfig = {
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     lookAheadWindow?: number;
+    oneShotSubmit?: boolean;
     minBatchExpirySeconds?: bigint;
     minCheckpointExitDelaySeconds?: bigint;
     messageTimeouts?: Record<string, number>;
@@ -1785,6 +1788,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        public readonly oneShotSubmit?: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1837,6 +1841,7 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
+            options.oneShotSubmit,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 
@@ -1848,6 +1853,7 @@ export class ServiceWorkerWallet
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
+            oneShotSubmit: options.oneShotSubmit,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
             minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
         });

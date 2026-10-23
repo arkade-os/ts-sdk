@@ -14,6 +14,18 @@ style and have not been backfilled.
 
 ### Added
 
+- **Offchain sends finalize in one call on arkd with one-shot submit.**
+  Checkpoints are submitted already signed, so arkd finalizes the transaction
+  within `submitTx`; an arkd without support drops the signatures and the SDK
+  falls back to `finalizeTx` as before, carrying each checkpoint's condition
+  witness (a swap claim's preimage) back onto the rebuilt copy. Covers wallet
+  sends, ArkadeCash sweeps, `signAndSubmitOffchainTx`, Arkade contract spends,
+  and swap claims, refunds and offer cancels. Set `WalletConfig.oneShotSubmit: false` to keep the two-step flow,
+  in which arkd holds no checkpoint signature before the wallet holds the cosigned
+  ark tx. Swaps read it from the new `IWallet.oneShotSubmit`; an `Arkade` client
+  takes `ArkadeConnectOptions.oneShotSubmit` and the helpers `oneShot: false`.
+  `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
+
 - **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
   A covenant can read state the transaction carries — `tx.packet(type)` in the
   spend itself, `tx.inputs[i].packet(type)` when the output is spent later —

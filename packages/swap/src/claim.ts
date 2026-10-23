@@ -101,6 +101,7 @@ export async function pushClaim(
         partiallyClaimed?: boolean;
         /** @see operatorUnrollScript */
         network?: Network;
+        oneShot?: boolean;
     },
 ): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
@@ -137,6 +138,7 @@ export async function pushClaim(
         outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.contract.options.server },
+        oneShot: input.oneShot,
     });
     return { txid, amount: locked, left: live.length - vtxos.length, spent: vtxos };
 }
