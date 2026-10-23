@@ -26,6 +26,8 @@ export interface OffchainBalance {
      * misattributing. Worker and main-thread figures come from different reads and may differ.
      */
     intentLocked: number;
+    /** Held by `reserveVtxos` and neither gated nor intent-locked; never in `available`. */
+    reserved: number;
     recoverable: number;
     pendingRecovery: number;
     /**
@@ -52,6 +54,8 @@ export interface BalanceCapabilities {
     isGenericallySpendable: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /** Not committed to an in-flight (non-terminal) intent. */
     isUnlocked: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
+    /** Held by `reserveVtxos`; absent means nothing is held. */
+    isReserved?: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /**
      * Sats an asset output rides on (operator dust amount, via {@link getDustAmount}). `0n`
      * disables the carrier deduction from `available`.
@@ -71,13 +75,15 @@ export function computeOffchainBalance(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
     caps: BalanceCapabilities,
 ): OffchainBalance {
-    const { now, isPendingRecovery, isGenericallySpendable, isUnlocked, dustCarrier } = caps;
+    const { now, isPendingRecovery, isGenericallySpendable, isUnlocked, isReserved, dustCarrier } =
+        caps;
 
     let settled = 0;
     let preconfirmed = 0;
     let available = 0;
     let gated = 0;
     let intentLocked = 0;
+    let reserved = 0;
     let recoverable = 0;
     let pendingRecovery = 0;
     let unrolled = 0;
@@ -122,11 +128,13 @@ export function computeOffchainBalance(
         } else {
             settled += vtxo.value;
         }
-        // `settled + preconfirmed` splits exactly three ways. Gate before lock: see `gated`.
+        // `settled + preconfirmed` splits exactly four ways. Gate before lock: see `gated`.
         if (!isGenericallySpendable(vtxo)) {
             gated += vtxo.value;
         } else if (!isUnlocked(vtxo)) {
             intentLocked += vtxo.value;
+        } else if (isReserved?.(vtxo)) {
+            reserved += vtxo.value;
         } else {
             available += vtxo.value;
             addAssets(spendable, vtxo);
@@ -148,6 +156,7 @@ export function computeOffchainBalance(
         available,
         gated,
         intentLocked,
+        reserved,
         recoverable,
         pendingRecovery,
         unrolled,
@@ -184,6 +193,7 @@ export function toWalletBalance(
         available: offchain.available,
         gated: offchain.gated,
         intentLocked: offchain.intentLocked,
+        reserved: offchain.reserved,
         recoverable: offchain.recoverable,
         pendingRecovery: offchain.pendingRecovery,
         unrolled: offchain.unrolled,

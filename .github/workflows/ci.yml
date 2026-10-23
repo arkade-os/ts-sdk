@@ -82,6 +82,7 @@ jobs:
             group: settlement-delegation
             test_files: >-
               test/e2e/settlement.test.ts
+              test/e2e/early-settlement-fee.test.ts
               test/e2e/boardingRotation.test.ts
               test/e2e/non-interactive-delegate.test.ts
               test/e2e/contract-params-change.test.ts
@@ -89,6 +90,7 @@ jobs:
               test/e2e/operatorOffline.test.ts
               test/e2e/arkade-script.test.ts
               test/e2e/contractWatchState.test.ts
+              test/e2e/contractSubscriptionRecovery.test.ts
               test/e2e/lookAhead.test.ts
               test/e2e/activity.test.ts
           - package: sdk

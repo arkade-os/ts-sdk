@@ -12,7 +12,10 @@ import {
     type DelegateeDefault,
 } from "../../../src";
 import { resolveUnilateralPath } from "../../../src/wallet/exit/path";
-import { defaultVariables } from "../../../src/script/delegatee/delegateeTemplate";
+import { defaultVariables, instantiate } from "../../../src/script/delegatee/delegateeTemplate";
+import { ArkadeScript } from "../../../src/arkade/script";
+import { computeArkadeScriptPublicKey } from "../../../src/arkade/tweak";
+import { concatBytes } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../../../src/script/address";
 import vectors from "../../fixtures/delegatee/vectors.json";
 import { createMockIndexerProvider, createMockVtxo } from "../helpers";
@@ -86,6 +89,48 @@ describe("DelegateeContractHandler", () => {
         const s = DelegateeContractHandler.createScript(params("boarding"));
         expect(s.scripts.map((l) => hex.encode(l))).toEqual(vectors.boarding.tapscripts);
         expect(s.onchainAddress(networks.regtest)).toBe(vectors.boarding.address);
+    });
+
+    it("pushes a pubkey into a covenant x-only", () => {
+        const owner = hex.decode(vectors.owner);
+        const doc = {
+            inputs: [
+                {
+                    contract: {
+                        definition: {
+                            constructorInputs: [{ name: "owner", type: "pubkey" }],
+                            functions: [
+                                {
+                                    name: "pay",
+                                    arkade: { asm: ["<owner>", "OP_DROP", "OP_1"] },
+                                    leaves: [
+                                        {
+                                            asm: [
+                                                "<SERVER_KEY>",
+                                                "OP_CHECKSIGVERIFY",
+                                                "<EMULATOR_KEY:pay>",
+                                                "OP_CHECKSIG",
+                                            ],
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                        arguments: { owner: "<owner>" },
+                    },
+                },
+            ],
+            outputs: [],
+        };
+        const covenant = concatBytes(
+            ArkadeScript.encode([owner.subarray(1)]),
+            new Uint8Array([0x75, 0x51]),
+        );
+        const tweaked = computeArkadeScriptPublicKey(hex.decode(vectors.emulatorPubkey), covenant);
+        const [leaf] = instantiate(doc, doc.inputs[0].contract, { owner }, keys).scripts;
+        expect(hex.encode(leaf)).toBe(
+            `20${vectors.serverPubkey.slice(2)}ad20${hex.encode(tweaked)}ac`,
+        );
     });
 
     it("round-trips its params and refuses unknown templates, x-only keys and bad numbers", () => {

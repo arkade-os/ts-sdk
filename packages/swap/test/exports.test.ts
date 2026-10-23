@@ -371,6 +371,7 @@ const ADVANCED_ONLY: readonly string[] = [
     "RfqAmountSide",
     "AmountOn",
     "attesting",
+    "createNostrTransportFactory",
     "nostrTransportFactory",
     "AttestingRfqTransport",
     "RfqRendezvous",

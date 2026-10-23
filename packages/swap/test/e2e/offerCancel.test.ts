@@ -209,6 +209,12 @@ describe("the v2 cancel (regtest)", () => {
         const quoteId = quoteIdOfSwapId(swap.id);
 
         const record = (await store.getSwapRecord(quoteId)) as OfferSwapRecord;
+        // As in the first test: a cancel that outruns the indexer finds no deposit.
+        await waitFor(async () => {
+            const reader = await wallet.getArkadeReader();
+            const { vtxos } = await reader.getVtxos({ scripts: [record.swapPkScript] });
+            return vtxos.some((v) => v.txid === record.fundingTxid);
+        });
         const decoded = ArkAddress.decode(record.swapAddress);
         // Same wallet key, a different operator key: the rebuild derives a
         // script the offer's own `swapPkScript` does not match.

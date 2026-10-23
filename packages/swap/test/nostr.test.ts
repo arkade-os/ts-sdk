@@ -18,7 +18,7 @@ import {
  * A stand-in for SimplePool that behaves like a relay the solver is also on:
  * it decrypts what the client publishes and lets the test answer as the solver.
  */
-const fakePool = (solverSecret: Uint8Array) => {
+const fakePool = (solverSecret: Uint8Array, outcome?: () => Promise<string>) => {
     let onevent: ((e: Event) => void) | undefined;
     let onclose: ((reasons: unknown[]) => void) | undefined;
     const published: unknown[] = [];
@@ -37,7 +37,7 @@ const fakePool = (solverSecret: Uint8Array) => {
         publish(_relays: string[], event: Event) {
             const key = nip44.v2.utils.getConversationKey(solverSecret, event.pubkey);
             published.push(JSON.parse(nip44.v2.decrypt(event.content, key)));
-            return [Promise.resolve("ok")];
+            return [outcome ? outcome() : Promise.resolve("ok")];
         },
         close() {},
     };
@@ -227,8 +227,8 @@ describe("nostrRfqTransport", () => {
     /**
      * A dropped subscription and a silent solver look identical from here, and
      * mean opposite things. Both shapes of `onclose` payload nostr-tools has
-     * used across its 2.x line are exercised, because the package declares a
-     * peer range spanning both and would otherwise only work against one.
+     * used across its 2.x line are exercised, so the transport reads whichever
+     * one the installed release sends.
      */
     it.each([
         ["legacy string[]", ["relay closed"]],
@@ -245,6 +245,102 @@ describe("nostrRfqTransport", () => {
 
         const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
         dropEveryRelay(reasons);
+        await expect(pending).rejects.toBeInstanceOf(RelayUnavailable);
+        await transport.close();
+    });
+
+    it("fails at once, publishing nothing, once every relay dropped before the request", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool, published, dropEveryRelay } = fakePool(solverSecret);
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+        });
+        dropEveryRelay([{ url: "wss://x", reason: "connection failed" }]);
+        await expect(
+            transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+        ).rejects.toBeInstanceOf(RelayUnavailable);
+        await expect(transport.status("abc")).rejects.toBeInstanceOf(RelayUnavailable);
+        expect(published).toHaveLength(0);
+    });
+
+    it("refuses a request after close without publishing", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool, published } = fakePool(solverSecret);
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+        });
+        await transport.close();
+        await expect(
+            transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+        ).rejects.toBeInstanceOf(TransportClosed);
+        expect(published).toHaveLength(0);
+    });
+
+    /**
+     * nostr-tools resolves a relay it could not connect to with "connection failure: ...",
+     * so counting every fulfilled result as accepted waited out the reply timeout instead.
+     * Waiting past that timeout also proves the abandoned reply is not an unhandled rejection.
+     */
+    it("treats a relay it could not connect to as not accepting", async () => {
+        const solverSecret = generateSecretKey();
+        const { pool } = fakePool(solverSecret, () =>
+            Promise.resolve("connection failure: connection timed out"),
+        );
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+            timeoutMs: 20,
+        });
+        await expect(
+            transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+        ).rejects.toThrow(/no relay accepted the RFQ message: connection failure/);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        await transport.close();
+    });
+
+    it("clears the reply timer when the publish fails", async () => {
+        vi.useFakeTimers();
+        try {
+            const solverSecret = generateSecretKey();
+            const { pool } = fakePool(solverSecret, () => Promise.reject(new Error("blocked")));
+            const transport = nostrRfqTransport({
+                relays: ["wss://x"],
+                solverPubkey: getPublicKey(solverSecret),
+                pool: pool as never,
+            });
+            await expect(
+                transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" }),
+            ).rejects.toThrow(/no relay accepted/);
+            // A leftover 30s timer would keep a Node process alive for nothing.
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not leave an unhandled rejection when every relay drops mid-publish", async () => {
+        const solverSecret = generateSecretKey();
+        let ack!: (reason: string) => void;
+        const { pool, dropEveryRelay } = fakePool(
+            solverSecret,
+            () => new Promise<string>((resolve) => (ack = resolve)),
+        );
+        const transport = nostrRfqTransport({
+            relays: ["wss://x"],
+            solverPubkey: getPublicKey(solverSecret),
+            pool: pool as never,
+        });
+        const pending = transport.requestQuote({ v: 1, type: "rfq_request", rfq_id: "abc" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        dropEveryRelay([{ url: "wss://x", reason: "closed" }]);
+        // Let Node's unhandled-rejection check run while the publish is still in flight.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        ack("");
         await expect(pending).rejects.toBeInstanceOf(RelayUnavailable);
         await transport.close();
     });
@@ -267,13 +363,13 @@ describe("nostrRfqTransport", () => {
     });
 
     /**
-     * Every other test injects a pool, so this is the only coverage of the
-     * owned-pool teardown. The two assertions are one property: `pool.close()`
-     * already ends every subscription on those relays, so closing the
-     * subscription as well sends a second CLOSE frame on a socket that is
-     * already closing — the double-close this transport exists to avoid.
+     * The default pool is shared: many transports multiplex over one socket
+     * per relay, so close() ends only this transport's subscription. The
+     * socket stays for the next negotiation; teardown is explicit via
+     * closeSharedNostrPool(). Closing the pool here too would send a second
+     * CLOSE on a socket other transports still use.
      */
-    it("tears an owned pool down through pool.close() alone", async () => {
+    it("shares one pool by default and closes only the subscription", async () => {
         const subscriptionClose = vi.fn();
         const subscribeMany = vi
             .spyOn(SimplePool.prototype, "subscribeMany")
@@ -285,14 +381,18 @@ describe("nostrRfqTransport", () => {
                 relays,
                 solverPubkey: getPublicKey(generateSecretKey()),
                 secretKey: generateSecretKey(),
-                // no `pool`: the transport creates and therefore owns one
+                // no `pool`: the transport shares the process-wide pool
             });
             await transport.close();
-            expect(poolClose).toHaveBeenCalledWith(relays);
-            expect(subscriptionClose).not.toHaveBeenCalled();
+            // A second close must not reach the subscription: each close decrements the relay's count.
+            await transport.close();
+            expect(subscriptionClose).toHaveBeenCalledTimes(1);
+            expect(poolClose).not.toHaveBeenCalled();
         } finally {
             subscribeMany.mockRestore();
             poolClose.mockRestore();
+            const { closeSharedNostrPool } = await import("../src/nostr");
+            closeSharedNostrPool();
         }
     });
 

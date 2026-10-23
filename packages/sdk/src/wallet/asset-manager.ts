@@ -23,7 +23,7 @@ import { IndexerProvider } from "../providers/indexer";
 import { ArkAddress } from "../script/address";
 import { selectedCoinsToAssetInputs, selectCoinsWithAsset } from "./asset";
 import { Extension } from "../extension";
-import { selectVirtualCoins, Wallet } from "./wallet";
+import { selectVirtualCoins, Wallet, type OffchainSubmit } from "./wallet";
 
 export class ReadonlyAssetManager implements IReadonlyAssetManager {
     constructor(readonly indexer: IndexerProvider) {}
@@ -62,6 +62,13 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
      * ```
      */
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
+        return this.wallet.withSpendLock((submit) => this.issueWith(params, submit));
+    }
+
+    private async issueWith(
+        params: IssuanceParams,
+        submit: OffchainSubmit,
+    ): Promise<IssuanceResult> {
         if (params.amount <= 0n) {
             throw new Error(`Issue amount must be greater than 0, got ${params.amount}`);
         }
@@ -125,6 +132,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
         }
 
         const arkTxid = await submitToSelf(
+            submit,
             this.wallet,
             coinSelection.inputs,
             totalBtcSelected,
@@ -154,6 +162,10 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
      * ```
      */
     async reissue(params: ReissuanceParams): Promise<string> {
+        return this.wallet.withSpendLock((submit) => this.reissueWith(params, submit));
+    }
+
+    private async reissueWith(params: ReissuanceParams, submit: OffchainSubmit): Promise<string> {
         if (params.amount <= 0n) {
             throw new Error(`Reissuance amount must be greater than 0, got ${params.amount}`);
         }
@@ -246,7 +258,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             );
         }
 
-        return submitToSelf(this.wallet, selectedCoins, totalBtcSelected, groups);
+        return submitToSelf(submit, this.wallet, selectedCoins, totalBtcSelected, groups);
     }
 
     /**
@@ -265,6 +277,10 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
      * ```
      */
     async burn(params: BurnParams): Promise<string> {
+        return this.wallet.withSpendLock((submit) => this.burnWith(params, submit));
+    }
+
+    private async burnWith(params: BurnParams, submit: OffchainSubmit): Promise<string> {
         if (params.amount <= 0n) {
             throw new Error(`Burn amount must be greater than 0, got ${params.amount}`);
         }
@@ -338,7 +354,7 @@ export class AssetManager extends ReadonlyAssetManager implements IAssetManager 
             );
         }
 
-        return submitToSelf(this.wallet, selectedCoins, totalBtcSelected, groups);
+        return submitToSelf(submit, this.wallet, selectedCoins, totalBtcSelected, groups);
     }
 }
 
@@ -354,6 +370,7 @@ function inputsForAsset(assetInputs: Map<number, Asset[]>, assetId: string): Ass
 }
 
 async function submitToSelf(
+    submit: OffchainSubmit,
     wallet: Wallet,
     inputs: ExtendedVirtualCoin[],
     amount: number | bigint,
@@ -364,7 +381,7 @@ async function submitToSelf(
         { script: outputAddress.pkScript, amount: BigInt(amount) },
         Extension.create([Packet.create(groups)]).txOut(),
     ];
-    const { arkTxid } = await wallet.buildAndSubmitOffchainTx(inputs, outputs);
+    const { arkTxid } = await submit(inputs, outputs);
     return arkTxid;
 }
 

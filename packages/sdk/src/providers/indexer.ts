@@ -375,9 +375,14 @@ export interface IndexerProvider {
      *
      * @param scripts - Scripts to monitor
      * @param subscriptionId - Existing subscription id to extend
+     * @param signal - Cancels an obsolete request; its server-side outcome may be unknown
      * @returns Subscription id
      */
-    subscribeForScripts(scripts: string[], subscriptionId?: string): Promise<string>;
+    subscribeForScripts(
+        scripts: string[],
+        subscriptionId?: string,
+        signal?: AbortSignal,
+    ): Promise<string>;
 
     /**
      * Remove some or all scripts from an existing subscription.
@@ -806,7 +811,11 @@ export class RestIndexerProvider implements IndexerProvider {
         };
     }
 
-    async subscribeForScripts(scripts: string[], subscriptionId?: string): Promise<string> {
+    async subscribeForScripts(
+        scripts: string[],
+        subscriptionId?: string,
+        signal?: AbortSignal,
+    ): Promise<string> {
         const url = `${this.serverUrl}/v1/indexer/script/subscribe`;
         const res = await indexerFetch(url, {
             headers: {
@@ -814,6 +823,7 @@ export class RestIndexerProvider implements IndexerProvider {
             },
             method: "POST",
             body: JSON.stringify({ scripts, subscriptionId }),
+            signal,
         });
         if (!res.ok) {
             const errorText = await res.text();

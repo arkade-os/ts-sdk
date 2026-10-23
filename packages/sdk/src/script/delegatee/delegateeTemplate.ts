@@ -39,19 +39,19 @@ export const DEFAULT_TEMPLATE_IDS: Readonly<Record<DelegateeDefault, string>> = 
 };
 
 type Field = { name: string; type: string };
-type Definition = {
+export type Definition = {
     constructorInputs: Field[];
     functions: { name: string; arkade?: { asm: string[] }; leaves: { asm: string[] }[] }[];
 };
-type Construction = {
+export type Construction = {
     definition: Definition | { artifact: string };
     arguments: Record<string, string | { program: string }>;
 };
-type Template = {
+export type Template = {
     inputs: { type?: string; contract: Construction }[];
     outputs: { name: string; locking: { contract?: Construction } }[];
 };
-type Value = number | Uint8Array;
+export type Value = number | Uint8Array;
 
 /** The variables of a default template for owner. */
 function variablesOf(
@@ -104,10 +104,10 @@ export function defaultContract(
 
 /**
  * Build a bundled contract: arguments bind `<variable>`s or `{"program": output}`, the witness
- * program of an output locked to another contract. Leaves take keys x-only; covenants take the
- * owner compressed and the delegate key as the hex the intent message spells it in.
+ * program of an output locked to another contract. A pubkey is x-only in a leaf and in a covenant
+ * alike; `DELEGATE_KEY` in a covenant is the hex the intent message spells it in.
  */
-function instantiate(
+export function instantiate(
     doc: Template,
     construction: Construction,
     variables: Record<string, Value>,
@@ -134,7 +134,7 @@ function instantiate(
     const arg = (name: string): Value => {
         const value = args.get(name);
         if (value === undefined) throw new Error(`missing constructor value ${name}`);
-        return value;
+        return pubkeys.has(name) ? (value as Uint8Array).subarray(1) : value;
     };
     const delegate = hex.decode(keys.delegatePubkey);
 
@@ -159,8 +159,7 @@ function instantiate(
             if (!covenant) throw new Error(`${name} names no covenant`);
             return computeArkadeScriptPublicKey(emulator, covenant);
         }
-        const value = arg(name);
-        return pubkeys.has(name) ? (value as Uint8Array).subarray(1) : value;
+        return arg(name);
     };
 
     const tapscripts = def.functions.flatMap((fn) =>
