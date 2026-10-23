@@ -15,6 +15,7 @@ import {
     getArkPsbtFields,
     PrevArkTxField,
     PrevTxUnavailableError,
+    ServerResponseMismatchError,
     type EmulatorInfo,
     type EmulatorProvider,
 } from "../src";
@@ -214,6 +215,33 @@ describe("ArkadeContract — extended features", () => {
         expect(
             sign.mock.calls.some((c2) => Array.isArray(c2[1]) && (c2[1] as number[]).includes(1)),
         ).toBe(true);
+    });
+
+    it("rejects an emulator reply carrying another ark tx", async () => {
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        vi.mocked(emulator.submitTx).mockResolvedValueOnce({
+            signedArkTx: foreignCheckpoint(),
+            signedCheckpointTxs: [],
+        });
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+
+        await expect(
+            c.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(COIN)
+                .to(p2tr(receiver), AMOUNT)
+                .send(),
+        ).rejects.toBeInstanceOf(ServerResponseMismatchError);
     });
 
     it("resolves a PrevArkTx field for every input of a covenant spend", async () => {

@@ -55,6 +55,15 @@ style and have not been backfilled.
   races the worker's `INIT_WALLET` still waits for the contract manager's
   boot sync. (#953)
 
+- **`submitViaEmulator` submits emulator-cosigned offchain transactions.**
+  Covenant spends had no shared submit path, so every caller hand-rolled it.
+  The helper signs the caller's own ark-tx inputs and, up front, their
+  checkpoints, which the emulator verifies before its own arkd handshake. It
+  then submits through the emulator and rejects a reply whose ark tx has
+  another txid with a `ServerResponseMismatchError`.
+  `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
+  longer reports a txid it did not submit.
+
 ### Changed
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
