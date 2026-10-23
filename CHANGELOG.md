@@ -14,6 +14,15 @@ style and have not been backfilled.
 
 ### Added
 
+- **`arkade-keygen` prints a fresh mnemonic without a project.** Generating
+  one before `Wallet.create` meant installing `@scure/bip39` into a project
+  and running a `node -e` one-liner that fails with `ERR_MODULE_NOT_FOUND`
+  anywhere else, since Node resolves bare imports from the caller's
+  directory. The SDK now ships a bin, so `pnpm dlx @arkade-os/sdk` (or
+  `npx @arkade-os/sdk`) prints a 12-word English BIP39 mnemonic to stdout
+  and writes nothing else. It takes only `--help` and refuses any other
+  argument. (#1097)
+
 - **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
   A covenant can read state the transaction carries — `tx.packet(type)` in the
   spend itself, `tx.inputs[i].packet(type)` when the output is spent later —
