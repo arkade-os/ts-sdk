@@ -99,10 +99,15 @@ async function main() {
     });
     console.log("HTLC address:", htlc.address);
 
-    // Subscribe before funding: `.on` reports activity from subscription on.
+    // Subscribe before funding: `.on` reports activity from subscription on. A reconnect
+    // re-syncs without events, so on `connection_reset` read the stored coins instead.
     let onCoin!: (coin: { txid: string; vout: number; value: number }) => void;
     const received = new Promise<Parameters<typeof onCoin>[0]>((resolve) => (onCoin = resolve));
     await htlc.on("vtxo_received", (event) => onCoin(event.vtxos[0]));
+    await htlc.on("connection_reset", async () => {
+        const [coin] = (await htlc.getVtxos()).filter((vtxo) => !vtxo.isSpent);
+        if (coin) onCoin(coin);
+    });
 
     console.log(`Funding the HTLC with ${AMOUNT} sats...`);
     fund(htlc.address, AMOUNT);
