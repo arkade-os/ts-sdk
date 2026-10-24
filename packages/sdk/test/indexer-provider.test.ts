@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestIndexerProvider } from "../src";
+import { isEventSourceError } from "../src/providers/utils";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
 
@@ -413,6 +414,11 @@ describe("RestIndexerProvider", () => {
     describe("getFilteredSubscription", () => {
         const PACKET_4 = "has(tx.extension) && hasPacket(tx.extension, 4)";
         const PACKET_3 = "has(tx.extension) && hasPacket(tx.extension, 3)";
+        // As mutinynet answered an expression that does not compile.
+        const REFUSED = JSON.stringify({
+            code: 3,
+            message: 'INVALID_TX_FILTER (52): invalid tx filter "not cel (((": Syntax error',
+        });
 
         beforeEach(() => {
             MockEventSource.reset();
@@ -460,6 +466,24 @@ describe("RestIndexerProvider", () => {
             ac.abort();
         });
 
+        it("fails with arkd's own message when it refuses the filter", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const subscription = provider.getFilteredSubscription(
+                { expressions: ["not cel ((("] },
+                new AbortController().signal,
+            );
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            MockEventSource.instances[0].emitFailure(REFUSED);
+            MockEventSource.instances[0].emitError(0);
+
+            const error = await pending.catch((e: unknown) => e);
+            expect(isEventSourceError(error)).toBe(true);
+            expect((error as Error).message).toMatch(/INVALID_TX_FILTER \(52\)/);
+            expect(MockEventSource.instances[0].listenerCount("failure")).toBe(0);
+        });
+
         it("refuses an empty filter, which the server would accept and never match", () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
@@ -490,6 +514,32 @@ describe("RestIndexerProvider", () => {
             expect(url.pathname).toBe("/v1/indexer/subscription");
             expect(url.searchParams.getAll("filter.expressions")).toEqual([PACKET_4]);
             expect(MockEventSource.instances).toHaveLength(0);
+            for (const spy of quiet) spy.mockRestore();
+            vi.doUnmock("expo/fetch");
+        });
+
+        it("stops on arkd's refusal on Expo instead of reconnecting into it", async () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            const quiet = (["warn", "error"] as const).map((level) =>
+                vi.spyOn(console, level).mockImplementation(() => undefined),
+            );
+            mockFetch.mockImplementation(
+                async () => new Response(`event: failure\ndata: ${REFUSED}\n\n`, { status: 200 }),
+            );
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("http://localhost:7070");
+
+            const subscription = provider.getFilteredSubscription(
+                { expressions: ["not cel ((("] },
+                new AbortController().signal,
+            );
+
+            const error = await subscription.next().catch((e: unknown) => e);
+            expect(isEventSourceError(error)).toBe(true);
+            expect((error as Error).message).toMatch(/INVALID_TX_FILTER \(52\)/);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
             for (const spy of quiet) spy.mockRestore();
             vi.doUnmock("expo/fetch");
         });

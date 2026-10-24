@@ -1,6 +1,7 @@
 import { RestIndexerProvider, SubscriptionResponse, toSubscriptionResponse } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
+import { streamFailureError } from "./utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
 /**
@@ -58,6 +59,9 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                         if (data.event) {
                             return toSubscriptionResponse(data.event);
                         }
+                        // A `failure` event's status, which this reader sees as a plain data line.
+                        // Skipping it would reconnect into the same refusal at once, in a tight loop.
+                        if (data.code !== undefined) throw streamFailureError(data);
                         return null;
                     },
                 );

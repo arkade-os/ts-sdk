@@ -91,6 +91,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A stream arkd refuses fails with arkd's reason.** arkd sends the status
+  of a refused stream — a filter that does not compile, say — as a named SSE
+  `failure` event, which nothing listened for: the EventSource providers
+  surfaced only a bare `EventSource error`, and `ExpoIndexerProvider` skipped
+  the payload and reconnected straight into the same refusal, in a tight loop.
+  Both now throw an `EventSourceError` carrying arkd's message.
+
 - **`claimCash` refuses another operator's ArkadeCash.** The token's script
   commits to its issuer's signer, but the claim never checked it against the
   connected operator, so a wallet on the wrong operator queried an indexer
