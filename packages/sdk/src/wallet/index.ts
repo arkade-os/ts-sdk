@@ -122,8 +122,8 @@ export interface BaseWalletConfig {
     storage?: StorageConfig;
     /**
      * The Arkade deployment, in place of `arkProvider`/`indexerProvider`/`onchainProvider`
-     * (combining them throws): `{ network: "bitcoin" }` or `{ serverUrl }`. With
-     * `{ network }`, a server reporting another network throws.
+     * (combining them throws): `{ network: "bitcoin" }` or `{ operatorUrl }`. With
+     * `{ network }`, an operator reporting another network throws.
      *
      * @see ArkadeService
      */

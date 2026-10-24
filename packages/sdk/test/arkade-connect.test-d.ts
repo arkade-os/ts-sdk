@@ -6,7 +6,7 @@ const getInfo = async () => ({}) as any;
 
 it("accepts each form on its own", () => {
     expectTypeOf({ service: { network: "bitcoin" as const } }).toExtend<Options>();
-    expectTypeOf({ service: { serverUrl: "http://localhost:7070" } }).toExtend<Options>();
+    expectTypeOf({ service: { operatorUrl: "http://localhost:7070" } }).toExtend<Options>();
     expectTypeOf({ arkade: { getInfo } }).toExtend<Options>();
 });
 

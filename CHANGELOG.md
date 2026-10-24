@@ -16,10 +16,10 @@ style and have not been backfilled.
 
 - **`Arkade.connect` takes a `service` and can own its contract manager.**
   `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
-  contractRepository } })` resolves the server, indexer, esplora and the mainnet
-  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ serverUrl,
+  contractRepository } })` resolves the operator, indexer, esplora and the mainnet
+  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ operatorUrl,
   emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
-  without `emulatorUrl`. A `{ network }` service whose server reports another
+  without `emulatorUrl`. A `{ network }` service whose operator reports another
   network throws. `storage` builds a session-scoped manager (in-memory VTXO
   store, chain tip from esplora) that the new `arkade.dispose()` stops; a
   caller-passed `contractManager` is never disposed. `service` and the provider

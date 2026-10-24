@@ -30,7 +30,7 @@ import {
 // The SDK watches contracts over SSE; Node.js has no built-in EventSource.
 configureEventSource((url) => new EventSource(url));
 
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
 const AMOUNT = 10_000;
 
@@ -78,7 +78,7 @@ async function main() {
     // Bob's wallet receives the claimed coins.
     const bob = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        service: { serverUrl: ARK_SERVER_URL },
+        service: { operatorUrl: OPERATOR_URL },
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -89,7 +89,7 @@ async function main() {
     const preimage = randomBytes(32);
 
     const ark = await Arkade.connect({
-        service: { serverUrl: ARK_SERVER_URL, emulatorUrl: EMULATOR_URL },
+        service: { operatorUrl: OPERATOR_URL, emulatorUrl: EMULATOR_URL },
         storage: { contractRepository: new InMemoryContractRepository() },
     });
     const htlc = ark.contract(htlcProgram, {

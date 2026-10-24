@@ -129,14 +129,14 @@ describe("resolveArkadeService", () => {
 
     it("server arm yields an emulator only with emulatorUrl", async () => {
         vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
-        const bare = await arkade.resolveArkadeService({ serverUrl: "http://localhost:7070" });
+        const bare = await arkade.resolveArkadeService({ operatorUrl: "http://localhost:7070" });
         expect(bare.emulator).toBeUndefined();
         expect((bare.indexerProvider as RestIndexerProvider).serverUrl).toBe(
             "http://localhost:7070",
         );
 
         const withEmu = await arkade.resolveArkadeService({
-            serverUrl: "http://localhost:7070",
+            operatorUrl: "http://localhost:7070",
             emulatorUrl: "http://localhost:7073",
         });
         expect((withEmu.emulator as RestEmulatorProvider).serverUrl).toBe("http://localhost:7073");
@@ -174,7 +174,7 @@ describe("Arkade.connect with service", () => {
         const contractRepository = new InMemoryContractRepository();
 
         const ark = await arkade.Arkade.connect({
-            service: { serverUrl: "http://localhost:7070" },
+            service: { operatorUrl: "http://localhost:7070" },
             storage: { contractRepository },
         });
 
@@ -413,7 +413,7 @@ describe("Wallet.create spellings", () => {
         const setup = await (ReadonlyWallet as any).setupWalletConfig(
             {
                 identity: ReadonlySingleKey.fromPublicKey(hex.decode("02" + TEST_PUB_KEY_HEX)),
-                service: { serverUrl: "http://localhost:7070" },
+                service: { operatorUrl: "http://localhost:7070" },
                 storage: {
                     walletRepository: new InMemoryWalletRepository(),
                     contractRepository: new InMemoryContractRepository(),

@@ -20,44 +20,44 @@ import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers
  *
  * - `{ network: "bitcoin" }` — the hosted mainnet deployment, including its covenant co-signer
  *   ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network with a one-liner.
- * - `{ serverUrl, emulatorUrl? }` — a specific server. A custom server does not imply the default
+ * - `{ operatorUrl, emulatorUrl? }` — a specific operator. A custom operator does not imply the default
  *   emulator: without `emulatorUrl`, covenant (`arkadeScript`) paths stay disabled.
  */
-export type ArkadeService = { network: "bitcoin" } | { serverUrl: string; emulatorUrl?: string };
+export type ArkadeService = { network: "bitcoin" } | { operatorUrl: string; emulatorUrl?: string };
 
-/** The providers and server info an {@link ArkadeService} resolves to. */
+/** The providers and operator info an {@link ArkadeService} resolves to. */
 export interface ResolvedArkadeService {
     arkProvider: ArkProvider;
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
-    /** The covenant co-signer; absent for a `serverUrl` service without `emulatorUrl`. */
+    /** The covenant co-signer; absent for an `operatorUrl` service without `emulatorUrl`. */
     emulator?: EmulatorProvider;
     info: ArkadeInfo;
 }
 
-/** The Arkade server URL a service names. */
+/** The operator URL a service names. */
 export function arkadeServiceUrl(service: ArkadeService): string {
-    return "serverUrl" in service ? service.serverUrl : DEFAULT_ARKADE_SERVER_URL;
+    return "operatorUrl" in service ? service.operatorUrl : DEFAULT_ARKADE_SERVER_URL;
 }
 
 /**
- * Resolve a service into providers and the server's info.
+ * Resolve a service into providers and the operator's info.
  *
  * Pass `opts.arkProvider`/`opts.info` to reuse what the caller already holds (no second
- * `getInfo`). A `network` service whose server reports another network throws: the caller named
+ * `getInfo`). A `network` service whose operator reports another network throws: the caller named
  * the deployment, and silently using another one is the expensive failure.
  */
 export async function resolveArkadeService(
     service: ArkadeService,
     opts: { arkProvider?: ArkProvider; info?: ArkadeInfo } = {},
 ): Promise<ResolvedArkadeService> {
-    const serverUrl = arkadeServiceUrl(service);
-    const arkProvider = opts.arkProvider ?? new RestArkProvider(serverUrl);
+    const operatorUrl = arkadeServiceUrl(service);
+    const arkProvider = opts.arkProvider ?? new RestArkProvider(operatorUrl);
     const info = opts.info ?? (await arkProvider.getInfo());
 
     if ("network" in service && service.network !== info.network) {
         throw new Error(
-            `Arkade service network mismatch: requested '${service.network}' but the server at ${serverUrl} reports '${info.network}'`,
+            `Arkade service network mismatch: requested '${service.network}' but the operator at ${operatorUrl} reports '${info.network}'`,
         );
     }
 
@@ -75,7 +75,7 @@ export async function resolveArkadeService(
 
     return {
         arkProvider,
-        indexerProvider: new RestIndexerProvider(serverUrl),
+        indexerProvider: new RestIndexerProvider(operatorUrl),
         onchainProvider: new EsploraProvider(esploraUrl),
         emulator,
         info,
