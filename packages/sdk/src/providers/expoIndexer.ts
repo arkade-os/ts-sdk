@@ -21,8 +21,8 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
         super(serverUrl);
     }
 
-    override async *getSubscription(
-        subscriptionId: string,
+    protected override async *subscriptionStream(
+        url: string,
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
         // Detect if we're running in React Native/Expo environment
@@ -40,8 +40,6 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
             }
             throw error;
         });
-
-        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
             try {

@@ -524,7 +524,17 @@ export class RestIndexerProvider implements IndexerProvider {
         subscriptionId: string,
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
-        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
+        return this.subscriptionStream(
+            `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`,
+            abortSignal,
+        );
+    }
+
+    /** The SSE transport behind every subscription; `ExpoIndexerProvider` replaces only this. */
+    protected subscriptionStream(
+        url: string,
+        abortSignal: AbortSignal,
+    ): AsyncIterableIterator<SubscriptionResponse> {
         // Captured, not resolved, here: resolution has to happen per connection
         // attempt inside the generator, so a caller that abandons the iterator
         // never triggers it and a late `configureEventSource` is still seen.
