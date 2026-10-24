@@ -142,6 +142,7 @@ export {
     // wallet can follow the doc without re-implementing the chunk/page loop.
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    toOffchainInputFeeParams,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,

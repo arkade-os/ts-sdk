@@ -14,6 +14,14 @@ style and have not been backfilled.
 
 ### Added
 
+- **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
+  `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
+  `vtxo`/`recoverable` type, birth and expiry. Every fee-aware settle in the
+  SDK prices its inputs with it. An app building its own settle intents had
+  to copy it. The wallet's collaborative exit did not price inputs at all,
+  and arkd rejected it with `INTENT_INSUFFICIENT_FEE` once mutinynet charged
+  young coins.
+
 - **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
   A covenant can read state the transaction carries — `tx.packet(type)` in the
   spend itself, `tx.inputs[i].packet(type)` when the output is spent later —

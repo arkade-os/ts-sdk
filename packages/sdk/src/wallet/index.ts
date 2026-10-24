@@ -795,6 +795,7 @@ export {
     isVirtualCoin,
     normalizeVtxo,
     requiresForfeit,
+    toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type NormalizedVtxoPage,
