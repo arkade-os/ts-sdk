@@ -14,6 +14,15 @@ style and have not been backfilled.
 
 ### Added
 
+- **`IndexerProvider.getFilteredSubscription` streams the transactions a CEL
+  filter matches.** `subscribeForScripts` needs the scripts in advance, so a
+  reader of extension packets at someone else's script — an offer, a sealed
+  claim — had to take arkd's whole transaction stream, or speak gRPC to reach
+  the filtered one. arkd has served that filter over SSE at
+  `GET /v1/indexer/subscription` since v0.9.6; both `RestIndexerProvider` and
+  `ExpoIndexerProvider` now open it. A custom `IndexerProvider` implementation
+  must add the method.
+
 - **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
   A covenant can read state the transaction carries — `tx.packet(type)` in the
   spend itself, `tx.inputs[i].packet(type)` when the output is spent later —
@@ -81,6 +90,13 @@ style and have not been backfilled.
   `GET_VTXOS`. (#943)
 
 ### Bug Fixes
+
+- **A stream arkd refuses fails with arkd's reason.** arkd sends the status
+  of a refused stream — a filter that does not compile, say — as a named SSE
+  `failure` event, which nothing listened for: the EventSource providers
+  surfaced only a bare `EventSource error`, and `ExpoIndexerProvider` skipped
+  the payload and reconnected straight into the same refusal, in a tight loop.
+  Both now throw an `EventSourceError` carrying arkd's message.
 
 - **`claimCash` refuses another operator's ArkadeCash.** The token's script
   commits to its issuer's signer, but the claim never checked it against the

@@ -30,6 +30,7 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
         cleanedUp = true;
         eventSource.removeEventListener("message", messageHandler);
         eventSource.removeEventListener("error", errorHandler);
+        eventSource.removeEventListener("failure", failureHandler);
     };
 
     const close = () => {
@@ -60,10 +61,8 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
         }
     };
 
-    const errorHandler = () => {
+    const rejectWith = (error: Error) => {
         if (closed) return;
-        const error = new Error("EventSource error");
-        error.name = "EventSourceError";
         if (errorResolve) {
             const reject = errorResolve;
             messageResolve = null;
@@ -74,10 +73,17 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
         }
     };
 
+    const errorHandler = () => rejectWith(eventSourceError("EventSource error"));
+
+    // arkd sends a refused stream's status (a filter it cannot compile, say) as a
+    // named `failure` event before closing; the bare `error` after it says nothing.
+    const failureHandler = (event: MessageEvent) => rejectWith(streamFailureError(event.data));
+
     // Attach listeners immediately so events are buffered
     // even before the caller starts iterating
     eventSource.addEventListener("message", messageHandler);
     eventSource.addEventListener("error", errorHandler);
+    eventSource.addEventListener("failure", failureHandler);
 
     const gen = (async function* () {
         try {
@@ -123,6 +129,22 @@ export function eventSourceIterator(eventSource: EventSourceLike): ManagedEventS
     };
 
     return managed;
+}
+
+function eventSourceError(message: string): Error {
+    const error = new Error(message);
+    error.name = "EventSourceError";
+    return error;
+}
+
+/** An arkd stream status (`{ code, message }`, or anything unparsed) as an {@link isEventSourceError}. */
+export function streamFailureError(data: unknown): Error {
+    let message = String(data);
+    try {
+        const parsed = typeof data === "string" ? JSON.parse(data) : data;
+        if (typeof parsed?.message === "string") message = parsed.message;
+    } catch {}
+    return eventSourceError(`EventSource failure: ${message}`);
 }
 
 export function isEventSourceError(error: unknown): error is Error {
