@@ -5,6 +5,8 @@ import { ArkProvider, RestArkProvider } from "../providers/ark";
 import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
+import type { OnchainProvider } from "../providers/onchain";
+import type { NetworkName } from "../networks";
 import {
     type Identity,
     type ReadonlyIdentity,
@@ -134,6 +136,9 @@ type Options = {
      * Ignored when `buildServices` is supplied — that override owns `storage`.
      */
     intentRepository?: IntentRepository;
+    /** The worker wallet's onchain provider, per network: an instance cannot cross `postMessage`.
+     * Defaults to Esplora; ignored when `buildServices` is supplied. */
+    onchainProvider?: (network: NetworkName) => OnchainProvider;
     debug?: boolean;
     buildServices?: (config: Initialize["config"]) => Promise<MessageBusServices>;
 };
@@ -224,6 +229,7 @@ export class MessageBus {
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: IntentRepository;
+    private readonly onchainProvider?: (network: NetworkName) => OnchainProvider;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
     private broadcastQueue: ResponseEnvelope[] = [];
     private draining = false;
@@ -240,6 +246,7 @@ export class MessageBus {
             messageTimeoutMs = 30_000,
             messageTimeoutOverrides = {},
             intentRepository,
+            onchainProvider,
             debug = false,
             buildServices,
         }: Options,
@@ -248,6 +255,7 @@ export class MessageBus {
         assertTimerMs("messageTimeoutMs", messageTimeoutMs);
         assertTimeoutMap("messageTimeoutOverrides", messageTimeoutOverrides);
         this.intentRepository = intentRepository;
+        this.onchainProvider = onchainProvider;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.messageTimeoutMs = messageTimeoutMs;
@@ -544,6 +552,7 @@ export class MessageBus {
                 arkProvider,
                 arkServerPublicKey: config.arkServer.publicKey,
                 indexerProvider,
+                onchainProvider: this.onchainProvider,
                 storage,
                 delegateProvider,
                 settlementConfig: config.settlementConfig,
@@ -565,6 +574,7 @@ export class MessageBus {
             arkProvider,
             arkServerPublicKey: config.arkServer.publicKey,
             indexerProvider,
+            onchainProvider: this.onchainProvider,
             storage,
             delegateProvider,
             watcherConfig: config.watcherConfig,

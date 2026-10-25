@@ -14,6 +14,19 @@ style and have not been backfilled.
 
 ### Added
 
+- **`onchainProvider` can be a per-network factory, in a service worker
+  too.** `WalletConfig.onchainProvider` takes `(network) => OnchainProvider`,
+  called once the operator's network is known, live or from the cached
+  snapshot, and `MessageBus` takes the same factory for its worker wallet. A
+  provider cannot cross `postMessage`, so a worker wallet was pinned to Esplora
+  at `ESPLORA_URL[network]`; replacing `buildServices` instead meant
+  re-implementing identity hydration the SDK does not export.
+
+- **`@arkade-os/swap`: the onchain corridor reads L1 through a caller's
+  provider.** `corridors.onchain.chain` takes `{ provider }` beside
+  `{ esploraUrl }`, so a wallet on Electrum watches and claims the HTLC over
+  its own backend rather than a second, Esplora-only one.
+
 - **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
   `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
   `vtxo`/`recoverable` type, birth and expiry. Every fee-aware settle in the
