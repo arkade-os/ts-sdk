@@ -137,7 +137,8 @@ type Options = {
      */
     intentRepository?: IntentRepository;
     /** The worker wallet's onchain provider, per network: an instance cannot cross `postMessage`.
-     * Defaults to Esplora; ignored when `buildServices` is supplied. */
+     * Called on every init and never closed, so return one instance per network. Defaults to
+     * Esplora; ignored when `buildServices` is supplied. */
     onchainProvider?: (network: NetworkName) => OnchainProvider;
     debug?: boolean;
     buildServices?: (config: Initialize["config"]) => Promise<MessageBusServices>;

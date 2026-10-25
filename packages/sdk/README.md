@@ -306,7 +306,7 @@ const wallet = await OnchainWallet.create(identity, 'bitcoin', provider)
 await provider.close()
 ```
 
-Where the network is only known at runtime (`Wallet.create`, or a service worker's `MessageBus`), pass a factory instead: `onchainProvider: (network) => new ElectrumOnchainProvider(new ElectrumWS(ELECTRUM_WS_URL[network]), getNetwork(network))`.
+Where the network is only known at runtime (`Wallet.create`, or a service worker's `MessageBus`), pass a factory instead: `onchainProvider: (network) => new ElectrumOnchainProvider(new ElectrumWS(ELECTRUM_WS_URL[network]), networks[network])`. A `MessageBus` calls it on every init and never closes what it returns, so a worker should hand back one instance per network rather than a new connection each time.
 
 #### Atomic 1P1C package broadcast (TRUC / BIP 431)
 
