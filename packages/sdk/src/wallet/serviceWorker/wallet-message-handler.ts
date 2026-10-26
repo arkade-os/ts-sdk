@@ -357,6 +357,15 @@ export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
+export type RequestGetStoredContractsWithVtxos = RequestEnvelope & {
+    type: "GET_STORED_CONTRACTS_WITH_VTXOS";
+    payload: { filter?: GetContractsFilter };
+};
+export type ResponseGetStoredContractsWithVtxos = ResponseEnvelope & {
+    type: "STORED_CONTRACTS_WITH_VTXOS";
+    payload: { contracts: ContractWithVtxos[] };
+};
+
 function unsupportedByManager(method: string): Error {
     return new Error(`Contract manager does not support ${method}`);
 }
@@ -912,6 +921,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestGetStoredContractsWithVtxos
     | RequestWatchScript
     | RequestUnwatchScript
     | RequestGetWatchedScripts
@@ -974,6 +984,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseGetStoredContractsWithVtxos
         | ResponseWatchScript
         | ResponseUnwatchScript
         | ResponseGetWatchedScripts
@@ -1434,6 +1445,17 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts, filterApplied: true },
+                    });
+                }
+                case "GET_STORED_CONTRACTS_WITH_VTXOS": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contracts = await manager.getStoredContractsWithVtxos(
+                        message.payload.filter,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "STORED_CONTRACTS_WITH_VTXOS",
+                        payload: { contracts },
                     });
                 }
                 case "WATCH_SCRIPT": {

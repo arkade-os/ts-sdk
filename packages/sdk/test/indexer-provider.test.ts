@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestIndexerProvider } from "../src";
+import { isEventSourceError } from "../src/providers/utils";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
 
@@ -407,6 +408,140 @@ describe("RestIndexerProvider", () => {
             await expect(returned).resolves.toMatchObject({ done: true });
             expect(MockEventSource.instances[0].listenerCount("message")).toBe(0);
             expect(MockEventSource.instances[0].listenerCount("error")).toBe(0);
+        });
+    });
+
+    describe("getFilteredSubscription", () => {
+        const PACKET_4 = "has(tx.extension) && hasPacket(tx.extension, 4)";
+        const PACKET_3 = "has(tx.extension) && hasPacket(tx.extension, 3)";
+        // As mutinynet answered an expression that does not compile.
+        const REFUSED = JSON.stringify({
+            code: 3,
+            message: 'INVALID_TX_FILTER (52): invalid tx filter "not cel (((": Syntax error',
+        });
+
+        beforeEach(() => {
+            MockEventSource.reset();
+            vi.stubGlobal("EventSource", MockEventSource);
+        });
+
+        it("opens the id-less route with every expression as a repeated filter field", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const ac = new AbortController();
+            const subscription = provider.getFilteredSubscription(
+                { expressions: [PACKET_4, PACKET_3] },
+                ac.signal,
+            );
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            const url = new URL(MockEventSource.instances[0].url);
+            expect(url.origin + url.pathname).toBe("http://localhost:7070/v1/indexer/subscription");
+            expect(url.searchParams.getAll("filter.expressions")).toEqual([PACKET_4, PACKET_3]);
+
+            ac.abort();
+            await expect(pending).resolves.toMatchObject({ done: true });
+        });
+
+        it("yields matching transactions and skips the started and heartbeat messages", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const ac = new AbortController();
+            const subscription = provider.getFilteredSubscription(
+                { expressions: [PACKET_4] },
+                ac.signal,
+            );
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            const source = MockEventSource.instances[0];
+            source.emitMessage(JSON.stringify({ subscriptionStarted: { subscriptionId: "s" } }));
+            source.emitMessage(JSON.stringify({ heartbeat: {} }));
+            source.emitMessage(JSON.stringify({ event: { txid: "ab", tx: "cHNidP8B" } }));
+
+            await expect(pending).resolves.toMatchObject({
+                done: false,
+                value: { txid: "ab", tx: "cHNidP8B", scripts: [], newVtxos: [] },
+            });
+            ac.abort();
+        });
+
+        it("fails with arkd's own message when it refuses the filter", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const subscription = provider.getFilteredSubscription(
+                { expressions: ["not cel ((("] },
+                new AbortController().signal,
+            );
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            MockEventSource.instances[0].emitFailure(REFUSED);
+            MockEventSource.instances[0].emitError(0);
+
+            const error = await pending.catch((e: unknown) => e);
+            expect(isEventSourceError(error)).toBe(true);
+            expect((error as Error).message).toMatch(/INVALID_TX_FILTER \(52\)/);
+            expect(MockEventSource.instances[0].listenerCount("failure")).toBe(0);
+        });
+
+        it("refuses an empty filter, which the server would accept and never match", () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+
+            expect(() =>
+                provider.getFilteredSubscription({ expressions: [] }, new AbortController().signal),
+            ).toThrow("at least one expression");
+            expect(MockEventSource.instances).toHaveLength(0);
+        });
+
+        it("goes through the Expo transport on ExpoIndexerProvider", async () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            const quiet = (["warn", "error"] as const).map((level) =>
+                vi.spyOn(console, level).mockImplementation(() => undefined),
+            );
+            mockFetch.mockResolvedValueOnce(new Response(null, { status: 500 }));
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("http://localhost:7070");
+
+            const subscription = provider.getFilteredSubscription(
+                { expressions: [PACKET_4] },
+                new AbortController().signal,
+            );
+
+            await expect(subscription.next()).rejects.toThrow(/Unexpected status 500/);
+            const url = new URL(mockFetch.mock.calls[0][0] as string);
+            expect(url.pathname).toBe("/v1/indexer/subscription");
+            expect(url.searchParams.getAll("filter.expressions")).toEqual([PACKET_4]);
+            expect(MockEventSource.instances).toHaveLength(0);
+            for (const spy of quiet) spy.mockRestore();
+            vi.doUnmock("expo/fetch");
+        });
+
+        it("stops on arkd's refusal on Expo instead of reconnecting into it", async () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            const quiet = (["warn", "error"] as const).map((level) =>
+                vi.spyOn(console, level).mockImplementation(() => undefined),
+            );
+            mockFetch.mockImplementation(
+                async () => new Response(`event: failure\ndata: ${REFUSED}\n\n`, { status: 200 }),
+            );
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("http://localhost:7070");
+
+            const subscription = provider.getFilteredSubscription(
+                { expressions: ["not cel ((("] },
+                new AbortController().signal,
+            );
+
+            const error = await subscription.next().catch((e: unknown) => e);
+            expect(isEventSourceError(error)).toBe(true);
+            expect((error as Error).message).toMatch(/INVALID_TX_FILTER \(52\)/);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            for (const spy of quiet) spy.mockRestore();
+            vi.doUnmock("expo/fetch");
         });
     });
 });

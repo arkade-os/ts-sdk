@@ -174,10 +174,9 @@ pair leg `arkade:ASSET`, which no solver serves; if you were building a leg by h
 `arkadeAssetLeg` is on `/protocol`, and the v2 answer is to name the asset — `arkadeAsset(network,
 id)` — and let `client.quote()` build the pair.
 
-And seventeen internals the client absorbed, none of which had a consumer in the sweep taken at
+And fifteen internals the client absorbed, none of which had a consumer in the sweep taken at
 this release: `assertFundable`, `assertReceivable`, `offerTermsFromQuote`, `newRfqId`, `rfqPair`,
-`MIN_CLAIM_WINDOW_SECONDS`, `MIN_HEADROOM_SECONDS`, `SOLO_REFUND_HEADROOM_SECONDS`,
-`REFUND_MTP_LAG_SECONDS`, `RFQ_TERMINAL_STATES`, `RFQ_RESOLVED_STATES`,
+`MIN_HEADROOM_SECONDS`, `SOLO_REFUND_HEADROOM_SECONDS`, `RFQ_TERMINAL_STATES`, `RFQ_RESOLVED_STATES`,
 `RFQ_SWAP_TERMINAL_STATES`, `retireSettledOfferContracts`, `OfferContractRetirer`, `spendUpdate`,
 `getAssetSwapsOrThrow`, `updateAssetSwapBestEffort`. If you import one of these, say so and it
 gets a `/protocol` floor in a patch: internalizing is a finding about who uses what, not a

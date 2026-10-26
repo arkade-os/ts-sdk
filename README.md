@@ -14,7 +14,7 @@ The [`regtest/`](regtest/) directory is a shared regtest environment, vendored a
 
 ## Prerequisites
 
-- Node.js >= 24.15.0 < 27 (LTS; see `.nvmrc`)
+- Node.js >= 24.22.1 < 27 (LTS; see `.nvmrc`)
 - pnpm >= 10.25.0 < 11
 
 ```bash

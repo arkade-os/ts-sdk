@@ -142,6 +142,7 @@ export {
     // wallet can follow the doc without re-implementing the chunk/page loop.
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    toOffchainInputFeeParams,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -177,6 +178,7 @@ import {
     type ArkadeCashUnclaimedVtxo,
     type ArkadeCashVtxoRef,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -286,6 +288,7 @@ import {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     ArkTxInput,
     OffchainTx,
     VerifyServerSignatures,
@@ -353,6 +356,7 @@ import {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
 } from "./providers/indexer";
 import {
     RestEmulatorProvider,
@@ -748,6 +752,7 @@ export {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     waitForIncomingFunds,
     AbortError,
     VtxoReservedError,
@@ -775,6 +780,7 @@ export {
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
     networkFromArkadeInfo,
@@ -1012,6 +1018,7 @@ export type {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
     // Network types
     Network,
     NetworkName,

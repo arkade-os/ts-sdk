@@ -151,6 +151,8 @@ import {
     RequestGetUsedSigningDescriptors,
     ResponseGetUsedSigningDescriptors,
     RequestAdvanceSigningDescriptorWatermark,
+    RequestGetStoredContractsWithVtxos,
+    ResponseGetStoredContractsWithVtxos,
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
     isSerializedAggregateError,
@@ -261,6 +263,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
     GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_STORED_CONTRACTS_WITH_VTXOS: 20_000,
     GET_WATCHED_SCRIPTS: 10_000,
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
@@ -333,6 +336,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
+    "GET_STORED_CONTRACTS_WITH_VTXOS",
     "GET_WATCHED_SCRIPTS",
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
@@ -1413,6 +1417,27 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return (response as ResponseGetContractsWithVtxos).payload.contracts;
                 } catch (cause) {
                     throw new Error(`Failed to get contracts with vtxos: ${cause}`, {
+                        cause,
+                    });
+                }
+            },
+
+            async getStoredContractsWithVtxos(
+                filter?: GetContractsFilter,
+            ): Promise<ContractWithVtxos[]> {
+                const message: RequestGetStoredContractsWithVtxos = {
+                    type: "GET_STORED_CONTRACTS_WITH_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { filter },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    // The worker may have started a background catch-up sync.
+                    await refreshSyncState();
+                    return (response as ResponseGetStoredContractsWithVtxos).payload.contracts;
+                } catch (cause) {
+                    throw new Error(`Failed to get stored contracts with vtxos: ${cause}`, {
                         cause,
                     });
                 }

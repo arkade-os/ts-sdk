@@ -70,6 +70,7 @@ import {
     assertSubmittedArkTxid,
     buildOffchainTx,
     matchServerCheckpoints,
+    submitViaEmulator,
     type ArkTxInput,
 } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
@@ -933,25 +934,9 @@ export class ArkadeTransactionBuilder {
             if (!client.emulator) {
                 throw new Error("covenant spends require an `emulator` on the Arkade client");
             }
-            const signedArk = await this.signArk(arkTx, userInputs);
-            const signedCps =
-                userInputs.length > 0
-                    ? await Promise.all(
-                          checkpoints.map((c, i) =>
-                              userInputs.includes(i) ? client.identity!.sign(c, [0]) : c,
-                          ),
-                      )
-                    : checkpoints;
-            const res = await client.emulator.submitTx(
-                base64.encode(signedArk.toPSBT()),
-                signedCps.map((c) => base64.encode(c.toPSBT())),
-            );
-            const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
-            return {
-                txid,
-                signedArkTx: res.signedArkTx,
-                signedCheckpointTxs: res.signedCheckpointTxs,
-            };
+            return submitViaEmulator(client.emulator, { arkTx, checkpoints }, client.identity, {
+                inputIndexes: userInputs,
+            });
         }
 
         // Pure-tapscript path → arkd directly: sign the ark tx, submit UNSIGNED checkpoints, then
