@@ -23,10 +23,11 @@ import {
     CSVMultisigTapscript,
     networks,
     Transaction,
-} from "../dist/esm/index.js";
+} from "../dist/index.js";
 import { base64, hex } from "@scure/base";
 import { execSync } from "child_process";
 
+// From regtest/.env.defaults - verify the key is the same
 const SERVER_PUBLIC_KEY = hex.decode(
     "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb",
 );
@@ -243,7 +244,10 @@ async function main() {
         console.log("Final amount sent to Bob:", 1500, "sats");
         console.log("Number of state updates:", bobChannelStates.length);
     } else {
-        execSync(`node regtest/regtest.mjs mine 200`);
+        // Pass the refund locktime (chainTip + 10) but stay inside the VTXO's batch expiry,
+        // or arkd only accepts the VTXO for recovery (VTXO_RECOVERABLE).
+        execSync(`node regtest/regtest.mjs mine 11`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         console.log("\nRefunding channel...");
         // after 10 blocks, Alice can spend without Bob's signature
@@ -251,7 +255,7 @@ async function main() {
             [
                 {
                     ...input,
-                    tapLeafScript: virtualSpillmanChannel.findLeaf(hex.encode(refundScript)),
+                    tapLeafScript: virtualSpilmanChannel.findLeaf(hex.encode(refundScript)),
                 },
             ],
             [
@@ -289,10 +293,18 @@ async function main() {
         console.log("Alice's final balance:", channelCapacity, "sats");
         console.log("Bob's final balance:", 0, "sats");
     }
+
+    await Promise.all([aliceWallet.dispose(), bobWallet.dispose()]);
 }
 
 async function fundAddress(address, amount) {
     console.log(`\nFunding address with ${amount} sats...`);
+    // The arkd CLI wallet starts empty and its VTXOs go stale after rounds; top it up from a fresh note.
+    const note = execSync(`${arkdExec} arkd note --amount 200000`, { encoding: "utf8" })
+        .trim()
+        .split(/\s+/)
+        .pop();
+    execSync(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`);
     await new Promise((resolve) => setTimeout(resolve, 2000));
 }

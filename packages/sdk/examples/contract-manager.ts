@@ -12,7 +12,7 @@
 //
 // Usage:
 // $ pnpm test:setup
-// $ node examples/contract-manager.js [arkdExec]
+// $ npx tsx examples/contract-manager.ts [arkdExec]
 //
 import {
     InMemoryWalletRepository,
@@ -228,7 +228,7 @@ async function main() {
     // Clean up
     console.log("\nStopping watcher...");
     stopWatching();
-    manager.dispose();
+    await aliceWallet.dispose();
 
     console.log("\n=== Example Complete ===");
     return 0;
@@ -238,6 +238,12 @@ async function main() {
 // For production code, use execFileSync with separated arguments to prevent
 // command injection vulnerabilities.
 async function fundAddress(address: string, amount: number) {
+    // The arkd CLI wallet starts empty and its VTXOs go stale after rounds; top it up from a fresh note.
+    const note = execSync(`${arkdExec} arkd note --amount 200000`, { encoding: "utf8" })
+        .trim()
+        .split(/\s+/)
+        .pop();
+    execSync(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`, {
         stdio: "inherit",
     });
