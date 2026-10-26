@@ -30,6 +30,7 @@ import {
 } from "../../src/repositories/sqlite";
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "child_process";
+import { rmSync } from "node:fs";
 
 // EventSource is used internally by the SDK for settlement events (SSE).
 // It is not available in Node.js by default, so we need to polyfill it.
@@ -62,6 +63,8 @@ async function main() {
         identity: bob,
         arkProvider: new RestArkProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
+        // No background renewal/boarding settlement: the example settles explicitly.
+        settlementConfig: false,
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -71,13 +74,18 @@ async function main() {
     console.log("[Bob]\tWallet created successfully!");
     console.log("[Bob]\tArk Address:", bobWallet.arkAddress.encode());
 
-    // SQLite-persisted wallet
+    // SQLite-persisted wallet. Alice gets a new key every run, so start from an empty file:
+    // contracts left by a previous run belong to a key this wallet cannot sign for.
+    for (const suffix of ["", "-shm", "-wal"])
+        rmSync(`alice-wallet.sqlite${suffix}`, { force: true });
     const executor = createSQLExecutor("alice-wallet.sqlite");
 
     const aliceWallet = await Wallet.create({
         identity: alice,
         arkProvider: new RestArkProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
+        // No background renewal/boarding settlement: the example settles explicitly.
+        settlementConfig: false,
         storage: {
             walletRepository: new SQLiteWalletRepository(executor),
             contractRepository: new SQLiteContractRepository(executor),
@@ -130,6 +138,8 @@ async function main() {
     console.log("[Alice]\tBalance:", await aliceWallet.getBalance());
     console.log("[Bob]\tBalance:", await bobWallet.getBalance());
     console.log("Only Alice's data is persisted on disk");
+
+    await Promise.all([aliceWallet.dispose(), bobWallet.dispose()]);
 }
 
 main().catch(console.error);
