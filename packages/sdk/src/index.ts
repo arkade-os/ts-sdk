@@ -142,6 +142,7 @@ export {
     // wallet can follow the doc without re-implementing the chunk/page loop.
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    toOffchainInputFeeParams,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -287,6 +288,7 @@ import {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     ArkTxInput,
     OffchainTx,
     VerifyServerSignatures,
@@ -746,6 +748,7 @@ export {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     waitForIncomingFunds,
     AbortError,
     VtxoReservedError,

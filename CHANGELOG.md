@@ -22,6 +22,14 @@ style and have not been backfilled.
   `GET /v1/indexer/subscription` since v0.9.6; both `RestIndexerProvider` and
   `ExpoIndexerProvider` now open it. A custom `IndexerProvider` implementation
   must add the method.
+  
+- **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
+  `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
+  `vtxo`/`recoverable` type, birth and expiry. Every fee-aware settle in the
+  SDK prices its inputs with it. An app building its own settle intents had
+  to copy it. The wallet's collaborative exit did not price inputs at all,
+  and arkd rejected it with `INTENT_INSUFFICIENT_FEE` once mutinynet charged
+  young coins.
 
 - **`ArkadeTransactionBuilder.withPacket` carries a caller's extension packet.**
   A covenant can read state the transaction carries — `tx.packet(type)` in the
@@ -63,6 +71,15 @@ style and have not been backfilled.
   reads locally but drops them. Without `lazyInitialization`, a read that
   races the worker's `INIT_WALLET` still waits for the contract manager's
   boot sync. (#953)
+
+- **`submitViaEmulator` submits emulator-cosigned offchain transactions.**
+  Covenant spends had no shared submit path, so every caller hand-rolled it.
+  The helper signs the caller's own ark-tx inputs and, up front, their
+  checkpoints, which the emulator verifies before its own arkd handshake. It
+  then submits through the emulator and rejects a reply whose ark tx has
+  another txid with a `ServerResponseMismatchError`.
+  `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
+  longer reports a txid it did not submit.
 
 ### Changed
 
