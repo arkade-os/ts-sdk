@@ -18,6 +18,7 @@ import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transac
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
+import type { EmulatorProvider } from "../providers/emulator";
 import { toXOnly } from "./keys";
 
 export { assertAllowedSighashTypes };
@@ -817,6 +818,38 @@ export async function signAndSubmitOffchainTx(params: {
         verifyServerSignatures: params.verifyServerSignatures,
     });
     return arkTxid;
+}
+
+/**
+ * Sign the caller's inputs of a pre-built offchain tx and submit it through the emulator, which
+ * co-signs and finalizes it with arkd. The checkpoints of `inputIndexes` are signed up front: the
+ * emulator verifies them before its own arkd handshake. An emulator-only leaf passes no inputs and
+ * no signer.
+ */
+export async function submitViaEmulator(
+    emulator: Pick<EmulatorProvider, "submitTx">,
+    offchainTx: OffchainTx,
+    signer: { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> } | undefined,
+    opts: { inputIndexes: number[] },
+): Promise<{ txid: string; signedArkTx: string; signedCheckpointTxs: string[] }> {
+    const { inputIndexes } = opts;
+    let { arkTx, checkpoints } = offchainTx;
+    if (inputIndexes.length > 0) {
+        if (!signer) {
+            throw new Error(`this spend requires an \`identity\` to sign inputs ${inputIndexes}`);
+        }
+        arkTx = await signer.sign(arkTx, inputIndexes);
+        checkpoints = await Promise.all(
+            checkpoints.map((c, i) => (inputIndexes.includes(i) ? signer.sign(c, [0]) : c)),
+        );
+    }
+    const res = await emulator.submitTx(
+        base64.encode(arkTx.toPSBT()),
+        checkpoints.map((c) => base64.encode(c.toPSBT())),
+    );
+    const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
+    assertSubmittedArkTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
+    return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 
 /**
