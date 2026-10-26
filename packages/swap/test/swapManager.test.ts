@@ -40,7 +40,7 @@ import {
     type ChainUtxo,
     type TxStatus,
 } from "../src/onchainHtlc";
-import { REFUND_MTP_LAG_SECONDS } from "@arkade-os/swap/protocol";
+import { REFUND_MTP_LAG_SECONDS } from "../src/protocol";
 import { LockupNeedsRecoveryError, type LockupSpendIndexer, type LockupVtxo } from "../src/refund";
 import { SWAP_LOCKUP_CONTRACT_TYPE } from "../src/lockupContract";
 import { RefundNotLocallyPossibleError } from "../src/refundBlocked";

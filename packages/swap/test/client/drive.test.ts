@@ -33,7 +33,7 @@ import {
     type SwapRecord,
 } from "../../src/client/record";
 import { RFQ_CONFIGURATION_REFUSAL, RFQ_CONFIGURATION_REFUSALS } from "../../src/swapManager";
-import { REFUND_MTP_LAG_SECONDS } from "@arkade-os/swap/protocol";
+import { REFUND_MTP_LAG_SECONDS } from "../../src/protocol";
 import { RefundNotLocallyPossibleError } from "../../src/refundBlocked";
 import type { AssetSwapRepository } from "../../src/repository";
 import { promoteOfferContract } from "../../src/coverage";

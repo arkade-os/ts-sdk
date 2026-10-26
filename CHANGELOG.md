@@ -741,6 +741,15 @@ style and have not been backfilled.
   reads only watched and awaiting-funds contracts too, instead of every
   row.
 
+### Internal
+
+- **Swap unit tests read timing floors from source.** Two tests imported
+  `REFUND_MTP_LAG_SECONDS` through `@arkade-os/swap/protocol`, which resolves
+  to the package's own `dist`. On a checkout built before that export existed,
+  the constant was `undefined`, every refund window became `NaN`, and five
+  `swapManager` tests failed, the pre-commit hook included. CI builds first,
+  so it stayed green.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes
