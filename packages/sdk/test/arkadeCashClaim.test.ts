@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { SigHash } from "@scure/btc-signer";
+import { Transaction } from "../src/utils/transaction";
 import {
     Wallet,
     ArkadeCashCreateError,

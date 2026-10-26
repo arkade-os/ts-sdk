@@ -77,8 +77,8 @@ exported as `Transaction` from `@arkade-os/sdk`), never through `@scure/btc-sign
 `Transaction.fromPSBT`. This applies to both `sdk` and its plugins. Since scure 2.4, the raw
 decoder strips unknown PSBT fields by default, which drops every Ark field (taptree, condition
 witness, cosigner keys, ...). It also rejects the legacy output tap trees that older SDK releases
-wrote, which the wrapper repairs. No lint enforces this, so the plan, code and review steps must
-each check for it: any `fromPSBT` call that resolves to scure's class is a defect.
+wrote, which the wrapper repairs. Any `fromPSBT` call that resolves to scure's class is a defect;
+`scripts/check-scure-fromPSBT.mjs` fails `pnpm run lint` on one.
 
 ## Review
 

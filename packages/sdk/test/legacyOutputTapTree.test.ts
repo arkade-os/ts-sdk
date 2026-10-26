@@ -1,6 +1,5 @@
 import { hex } from "@scure/base";
 import { describe, expect, it } from "vitest";
-import { Transaction as BtcSignerTransaction } from "@scure/btc-signer";
 import { Transaction, VtxoScript } from "../src";
 import { TapTreeCoder, toBIP371TapTree } from "../src/script/base";
 
@@ -45,8 +44,6 @@ describe("Transaction.fromPSBT with a legacy PSBT_OUT_TAP_TREE", () => {
     it.each([1, 3, 6, 8])("decodes %i legacy leaves with real depths", (n) => {
         const script = scriptWithLeaves(n);
         const { psbt, txid } = psbtWithOutputTapTree(script, script.encode());
-
-        expect(() => BtcSignerTransaction.fromPSBT(psbt)).toThrow(/tapTree/);
 
         const tx = Transaction.fromPSBT(psbt);
         expect(tx.id).toBe(txid);
