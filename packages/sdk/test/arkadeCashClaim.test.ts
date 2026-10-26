@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { SigHash } from "@scure/btc-signer";
+import { Transaction } from "../src/utils/transaction";
 import {
     Wallet,
     ArkadeCashCreateError,
@@ -377,9 +378,7 @@ describe("claimCash drain-pending accounting", () => {
 
         expect(getPendingTxs).toHaveBeenCalledTimes(3);
         for (const [{ proof }] of getPendingTxs.mock.calls as [{ proof: string }][]) {
-            const inputs = Transaction.fromPSBT(base64.decode(proof), {
-                unknown: "ignore",
-            }).inputsLength;
+            const inputs = Transaction.fromPSBT(base64.decode(proof)).inputsLength;
             expect(inputs).toBeLessThanOrEqual(20 + 1);
         }
         // Same arkTxid across all batches → finalized once, not three times.
@@ -519,7 +518,7 @@ describe("claimCash drain-pending accounting", () => {
 
         expect(getPendingTxs).toHaveBeenCalledOnce();
         const { proof } = (getPendingTxs.mock.calls as unknown as [{ proof: string }][])[0][0];
-        const tx = Transaction.fromPSBT(base64.decode(proof), { unknown: "ignore" });
+        const tx = Transaction.fromPSBT(base64.decode(proof));
         const inputs = Array.from({ length: tx.inputsLength }, (_, i) =>
             hex.encode(tx.getInput(i).txid!),
         );

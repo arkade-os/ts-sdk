@@ -22,9 +22,9 @@ import {
     CLTVMultisigTapscript,
     CSVMultisigTapscript,
     networks,
+    Transaction,
 } from "../dist/esm/index.js";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
 import { execSync } from "child_process";
 
 const SERVER_PUBLIC_KEY = hex.decode(

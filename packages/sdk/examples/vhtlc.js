@@ -20,10 +20,10 @@ import {
     buildOffchainTx,
     networks,
     CSVMultisigTapscript,
+    Transaction,
 } from "../dist/esm/index.js";
 import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
 
 import { execSync } from "child_process";
 
