@@ -21,6 +21,8 @@ const EXAMPLES = "packages/sdk/examples";
 const ALLOWLIST = [
     // The wrapper itself.
     "packages/sdk/src/utils/transaction.ts",
+    // Asserts that the raw decoder rejects legacy output tap trees.
+    "packages/sdk/test/legacyOutputTapTree.test.ts",
 ];
 
 const findings = new Set();
