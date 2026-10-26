@@ -1,0 +1,245 @@
+{
+    "formatVersion": 1,
+    "contractName": "VHTLCPayoutAssetV2Candidate",
+    "constructorInputs": [
+        {
+            "name": "receiver",
+            "type": "pubkey"
+        },
+        {
+            "name": "preimageHash",
+            "type": "bytes20"
+        },
+        {
+            "name": "receiverProgram",
+            "type": "bytes32"
+        },
+        {
+            "name": "senderProgram",
+            "type": "bytes32"
+        },
+        {
+            "name": "refundLocktime",
+            "type": "int"
+        },
+        {
+            "name": "assetWireTxid",
+            "type": "bytes32"
+        },
+        {
+            "name": "assetGroupIndex",
+            "type": "int"
+        }
+    ],
+    "functions": [
+        {
+            "name": "nonInteractiveClaim",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "<assetGroupIndex>",
+                    "<assetWireTxid>",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_1",
+                    "OP_PICK",
+                    "OP_3",
+                    "OP_PICK",
+                    "OP_INSPECTOUTASSETLOOKUP",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_2",
+                    "OP_ROLL",
+                    "OP_3",
+                    "OP_ROLL",
+                    "OP_INSPECTINASSETLOOKUP",
+                    "OP_VERIFY",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTASSETCOUNT",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_NIP",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_DROP",
+                    "<receiverProgram>",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "OP_1"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "nonInteractiveClaim",
+                    "witness": [
+                        {
+                            "name": "preimage",
+                            "type": "bytes32",
+                            "encoding": "raw-32"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "OP_SIZE",
+                        "32",
+                        "OP_EQUALVERIFY",
+                        "OP_HASH160",
+                        "<preimageHash>",
+                        "OP_EQUAL",
+                        "OP_VERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:nonInteractiveClaim>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "nonInteractiveRefund",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "<assetGroupIndex>",
+                    "<assetWireTxid>",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_1",
+                    "OP_PICK",
+                    "OP_3",
+                    "OP_PICK",
+                    "OP_INSPECTOUTASSETLOOKUP",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_2",
+                    "OP_ROLL",
+                    "OP_3",
+                    "OP_ROLL",
+                    "OP_INSPECTINASSETLOOKUP",
+                    "OP_VERIFY",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTASSETCOUNT",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_NIP",
+                    "1",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_DROP",
+                    "<senderProgram>",
+                    "OP_EQUAL",
+                    "OP_VERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "OP_1"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "nonInteractiveRefund",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "receiverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<receiver>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:nonInteractiveRefund>",
+                        "OP_CHECKSIG"
+                    ]
+                },
+                {
+                    "name": "nonInteractiveRefundWithoutReceiver",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<refundLocktime>",
+                        "OP_CHECKLOCKTIMEVERIFY",
+                        "OP_DROP",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:nonInteractiveRefund>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        }
+    ],
+    "source": {
+        "entry": "payout-asset-v2-candidate.ark",
+        "files": {
+            "payout-asset-v2-candidate.ark": "pragma arkade ^0.1.0;\n\ncontract VHTLCPayoutAssetV2Candidate(\n    pubkey receiver,\n    bytes20 preimageHash,\n    bytes32 receiverProgram,\n    bytes32 senderProgram,\n    int refundLocktime,\n    bytes32 assetWireTxid,\n    int assetGroupIndex\n) {\n    function nonInteractiveClaim() {\n        require(tx.outputs[this.activeInputIndex].assets.lookup(assetWireTxid, assetGroupIndex) >= tx.inputs[this.activeInputIndex].assets.lookup(assetWireTxid, assetGroupIndex));\n        require(tx.outputs[this.activeInputIndex].assets.length == 1);\n        require(tx.outputs[this.activeInputIndex].witnessVersion == 1);\n        require(tx.outputs[this.activeInputIndex].scriptPubKey == receiverProgram);\n        require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);\n    }\n\n    function nonInteractiveRefund() {\n        require(tx.outputs[this.activeInputIndex].assets.lookup(assetWireTxid, assetGroupIndex) >= tx.inputs[this.activeInputIndex].assets.lookup(assetWireTxid, assetGroupIndex));\n        require(tx.outputs[this.activeInputIndex].assets.length == 1);\n        require(tx.outputs[this.activeInputIndex].witnessVersion == 1);\n        require(tx.outputs[this.activeInputIndex].scriptPubKey == senderProgram);\n        require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);\n    }\n\n    function nonInteractiveClaim(bytes32 preimage, signature serverSig, signature emulatorSig) tapscript {\n        require(hash160(preimage) == preimageHash);\n        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n    }\n\n    function nonInteractiveRefund(signature serverSig, signature receiverSig, signature emulatorSig) tapscript {\n        require(checkMultisig([server, receiver, emulator], [serverSig, receiverSig, emulatorSig], 3));\n    }\n\n    function nonInteractiveRefundWithoutReceiver(signature serverSig, signature emulatorSig) tapscript {\n        require(after(refundLocktime));\n        require(checkMultisig([server, tweak(emulator, nonInteractiveRefund)], [serverSig, emulatorSig], 2));\n    }\n}\n"
+        }
+    },
+    "compiler": {
+        "name": "arkadec",
+        "version": "0.1.0",
+        "options": {
+            "optimize": false
+        }
+    },
+    "fingerprint": "sha256:a623d3dbf287f68f0dc2b39d3c1313fddca94f3e2cc0f10a246020cfbe9026c8"
+}

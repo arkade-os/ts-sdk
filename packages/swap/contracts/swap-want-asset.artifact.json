@@ -1,0 +1,120 @@
+{
+    "formatVersion": 1,
+    "contractName": "SwapWantAsset",
+    "constructorInputs": [
+        {
+            "name": "makerWP",
+            "type": "pubkey"
+        },
+        {
+            "name": "wantAmount",
+            "type": "int"
+        },
+        {
+            "name": "wantAssetTxid",
+            "type": "bytes32"
+        },
+        {
+            "name": "wantAssetGroupIndex",
+            "type": "int"
+        },
+        {
+            "name": "user",
+            "type": "pubkey"
+        }
+    ],
+    "functions": [
+        {
+            "name": "fulfill",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "0",
+                    "<wantAssetTxid>",
+                    "<wantAssetGroupIndex>",
+                    "OP_INSPECTOUTASSETLOOKUP",
+                    "OP_VERIFY",
+                    "<wantAmount>",
+                    "OP_GREATERTHANOREQUAL",
+                    "OP_VERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_NIP",
+                    "1",
+                    "OP_EQUALVERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_DROP",
+                    "<makerWP>",
+                    "OP_EQUAL"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "fulfill",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:fulfill>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "cancel",
+            "leaves": [
+                {
+                    "name": "cancel",
+                    "witness": [
+                        {
+                            "name": "userSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        },
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<user>",
+                        "OP_CHECKSIGVERIFY",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        }
+    ],
+    "source": {
+        "entry": "swap-want-asset.ark",
+        "files": {
+            "swap-want-asset.ark": "pragma arkade ^0.1.0;\n\ncontract SwapWantAsset(\n  pubkey makerWP,\n  int wantAmount,\n  bytes32 wantAssetTxid,\n  int wantAssetGroupIndex,\n  pubkey user\n) {\n  function fulfill() {\n    require(tx.outputs[0].assets.lookup(wantAssetTxid, wantAssetGroupIndex) >= wantAmount);\n    require(tx.outputs[0].witnessVersion == 1);\n    require(tx.outputs[0].scriptPubKey == makerWP);\n  }\n\n  function cancel(signature userSig, signature serverSig) tapscript {\n    require(checkMultisig([user, server], [userSig, serverSig], 2));\n  }\n}\n"
+        }
+    },
+    "compiler": {
+        "name": "arkadec",
+        "version": "0.1.0",
+        "options": {
+            "optimize": true
+        }
+    },
+    "fingerprint": "sha256:cf1107cd913be5f131ce15fd78aba2a69cc5ba9714c6181f6616d2b7faab6d2d"
+}
