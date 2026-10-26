@@ -220,6 +220,12 @@ export interface SubscriptionEvent extends SubscriptionResponse {
     type: "event";
 }
 
+/** @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.SubscriptionFilter */
+export interface SubscriptionFilter {
+    /** CEL expressions over each indexed transaction, OR-ed: `hasPacket(tx.extension, 4)`. */
+    expressions: string[];
+}
+
 /**
  * Filters accepted by `IndexerProvider.getVtxos`.
  *
@@ -330,6 +336,20 @@ export interface IndexerProvider {
      */
     getSubscription(
         subscriptionId: string,
+        abortSignal: AbortSignal,
+    ): AsyncIterableIterator<SubscriptionResponse>;
+
+    /**
+     * Stream the transactions matching `filter`, evaluated by the server, so the
+     * caller needs neither a subscription id nor the scripts in advance. Each
+     * reconnect opens a fresh subscription with the same filter.
+     *
+     * @param filter - Server-side transaction filter
+     * @param abortSignal - Signal used to terminate the stream
+     * @returns Async iterator of subscription responses
+     */
+    getFilteredSubscription(
+        filter: SubscriptionFilter,
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse>;
 
@@ -524,7 +544,34 @@ export class RestIndexerProvider implements IndexerProvider {
         subscriptionId: string,
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
-        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
+        return this.subscriptionStream(
+            `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`,
+            abortSignal,
+        );
+    }
+
+    getFilteredSubscription(
+        filter: SubscriptionFilter,
+        abortSignal: AbortSignal,
+    ): AsyncIterableIterator<SubscriptionResponse> {
+        // The server accepts an empty filter and streams nothing, which would look like a quiet market.
+        if (filter.expressions.length === 0) {
+            throw new Error("A filtered subscription needs at least one expression");
+        }
+        const query = new URLSearchParams(
+            filter.expressions.map((expression) => ["filter.expressions", expression]),
+        );
+        return this.subscriptionStream(
+            `${this.serverUrl}/v1/indexer/subscription?${query}`,
+            abortSignal,
+        );
+    }
+
+    /** The SSE transport behind every subscription; `ExpoIndexerProvider` replaces only this. */
+    protected subscriptionStream(
+        url: string,
+        abortSignal: AbortSignal,
+    ): AsyncIterableIterator<SubscriptionResponse> {
         // Captured, not resolved, here: resolution has to happen per connection
         // attempt inside the generator, so a caller that abandons the iterator
         // never triggers it and a late `configureEventSource` is still seen.

@@ -355,6 +355,7 @@ import {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
 } from "./providers/indexer";
 import {
     RestEmulatorProvider,
@@ -1011,6 +1012,7 @@ export type {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
     // Network types
     Network,
     NetworkName,
