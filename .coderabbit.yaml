@@ -20,6 +20,10 @@ reviews:
     - "!pnpm-lock.yaml"
 
   path_instructions:
+    - path: "packages/**"
+      instructions: >-
+        Flag any fromPSBT call on @scure/btc-signer's Transaction, however imported; use the
+        SDK's Transaction (AGENTS.md, Decoding PSBTs).
     - path: "packages/sdk/**"
       instructions: >-
         sdk must not import from or special-case plugin packages (AGENTS.md, Core Package).

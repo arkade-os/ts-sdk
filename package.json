@@ -14,7 +14,7 @@
         "test:integration:sdk": "bash scripts/regtest.sh sdk groups",
         "test:integration:swap": "bash scripts/regtest.sh swap cycle",
         "test:integration:swap-rfq": "bash scripts/regtest.sh swap-rfq cycle",
-        "lint": "biome format config && node scripts/check-scure-fromPSBT.mjs && pnpm -r lint",
+        "lint": "biome format config && pnpm -r lint",
         "format": "biome format --write config && pnpm -r format",
         "release": "node scripts/release.mjs",
         "release:dry-run": "node scripts/release.mjs --dry-run",

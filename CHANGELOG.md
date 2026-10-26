@@ -750,16 +750,6 @@ style and have not been backfilled.
   reads only watched and awaiting-funds contracts too, instead of every
   row.
 
-### Internal
-
-- **`pnpm run lint` fails on a raw scure `fromPSBT`.** Since scure 2.4,
-  `@scure/btc-signer`'s own `Transaction.fromPSBT` strips the unknown
-  PSBT fields that carry Ark data and rejects legacy output tap trees.
-  `scripts/check-scure-fromPSBT.mjs` resolves every `fromPSBT` call in
-  the sdk and swap sources, tests and the sdk examples through the
-  TypeScript checker, and fails on one that reaches scure's class. The
-  two examples that did now use the SDK's `Transaction`.
-
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes
