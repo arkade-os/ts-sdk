@@ -1,5 +1,10 @@
 import type { EventSourceLike } from "./eventSource";
 
+export function extractServerUrl(provider: object): string | undefined {
+    const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
+    return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
+}
+
 export type ManagedEventSourceIterator = AsyncGenerator<MessageEvent, void, unknown> & {
     close(): void;
 };

@@ -14,6 +14,21 @@ style and have not been backfilled.
 
 ### Added
 
+- **`Arkade.connect` can attest the emulator's enclave.** With
+  `emulatorAttestation: { pcr0: [...] }`, connect verifies the emulator
+  enclave's AWS Nitro attestation (certificate chain to the AWS root, COSE
+  signature, nonce, an accepted PCR0), then reads `/v1/info` with a signed
+  request and requires the key the enclave signed to equal the configured
+  one (the network pin or `emulatorPubkey`). The pin alone says which key
+  covenants commit to, not that the emulator answering holds it, so a stale
+  pin only surfaced as a refused claim. A mismatch, an unlisted image or a
+  bad signature fails closed with the new `EnclaveAttestationError`.
+  `fetchEmulatorInfo(url, Arkade.enclaveResponseSigningKey)` verifies later
+  reads, whatever the provider (`EmulatorProvider.getInfo` takes the key too, but
+  a custom implementation may ignore it), and `attestEnclave` and `signedGet` are
+  exported for other enclaves. Needs an enclave runtime that
+  signs responses (ArkLabsHQ/enclave#205).
+
 - **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
   `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
   `vtxo`/`recoverable` type, birth and expiry. Every fee-aware settle in the
@@ -73,6 +88,13 @@ style and have not been backfilled.
   longer reports a txid it did not submit.
 
 ### Changed
+
+- **`RestEmulatorProvider.getInfo` reports a busy emulator as retryable.** A
+  429 or 5xx (the enclave answers 503 until its app starts) now throws
+  `ProviderUnavailableError`, not a plain `Error`, so retry logic built on
+  `isRetryableProviderError` waits it out instead of failing for good. A
+  trailing slash on the server URL is ignored: it produced `//v1/info`, which
+  servers redirect and the signed read refuses to follow.
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 

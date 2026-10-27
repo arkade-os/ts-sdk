@@ -890,6 +890,49 @@ not submit, and a service-worker wallet in readonly mode refuses the message out
 All three are proxied to the worker on a service-worker wallet, so a plugin shares the wallet's
 connection instead of opening a second one outside its rate gate and caches.
 
+### Attesting the Emulator Enclave
+
+`Arkade.connect` builds covenants against the co-signer key pinned for the network (or
+`emulatorPubkey`), never the emulator's own `/v1/info`: otherwise whoever answers that URL would
+pick the key. When the emulator runs in an AWS Nitro enclave, `emulatorAttestation` also proves
+the emulator actually holds that key:
+
+```typescript
+const emulatorUrl = "https://emulator.example";
+const client = await Arkade.connect({
+    arkade: arkProvider,
+    emulator: new RestEmulatorProvider(emulatorUrl),
+    // The enclave images (PCR0s) to trust. During an upgrade, list the old and the new.
+    emulatorAttestation: { pcr0: ["<96 hex chars>"] },
+});
+
+// Later reads can be verified with the same key (set because connect attested; without a key
+// the read is unsigned). `fetchEmulatorInfo` checks the signature itself; a custom provider's
+// `getInfo` is free to ignore the key.
+await fetchEmulatorInfo(emulatorUrl, client.enclaveResponseSigningKey!);
+```
+
+`connect` fetches the enclave's attestation document, checks its AWS Nitro certificate chain,
+COSE signature, nonce and PCR0, and takes the response signing key from it. It then reads
+`/v1/info` with a signed request and requires the `signerPubkey` the enclave signed to equal the
+configured key. Any failure throws `EnclaveAttestationError`: an unlisted image, a bad chain or
+signature, or a different key (a stale pin after a rotation: pass `emulatorPubkey`). After an
+enclave upgrade the signing key changes, so reconnect to re-attest. For other enclaves,
+`attestEnclave(url, { pcr0 })` returns the signing key and `signedGet(url, key)` makes reads
+verified with it.
+
+Requirements:
+
+- The emulator's enclave runtime signs responses (ArkLabsHQ/enclave#205).
+- In a browser, the emulator's CORS setup allows the page's origin on both
+  `/enclave/attestation` and `/v1/info`, allows the `X-Enclave-Sign-Nonce` request header in
+  preflight, and exposes the `X-Enclave-Signature` response header
+  (`Access-Control-Expose-Headers`). Without the last one the browser hides the signature and
+  `connect` fails with "no X-Enclave-Signature".
+- Nothing between the client and the enclave rewrites paths. Signed responses cover the path the
+  enclave received, and the attestation document is fetched from the origin root.
+- The device clock is roughly right (Nitro leaf certificates live for about three hours).
+
 ### Unilateral Exit
 
 Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:

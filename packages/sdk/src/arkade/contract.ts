@@ -55,10 +55,13 @@ import { RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
+import { attestEnclave, type EnclaveAttestationConfig } from "../enclave/attestation";
 import type { Network, NetworkName } from "../networks";
 import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
 import type { ArkProvider } from "../providers/ark";
-import type { EmulatorProvider } from "../providers/emulator";
+import { type EmulatorProvider, fetchEmulatorInfo } from "../providers/emulator";
+import { EnclaveAttestationError } from "../providers/errors";
+import { extractServerUrl } from "../providers/utils";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
 import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
@@ -246,11 +249,39 @@ export interface ArkadeConnectOptions {
      */
     emulatorPubkey?: string;
     /**
+     * Attest the emulator's enclave and check, through its signed `/v1/info`, that it co-signs
+     * with the configured key (the network pin, or `emulatorPubkey`). The configured key stays
+     * the one covenants commit to; attestation proves the emulator actually holds it. Lists the
+     * enclave images (PCR0s) to trust; include old and new during an upgrade. The emulator must
+     * expose its `serverUrl`, as `RestEmulatorProvider` does.
+     *
+     * @throws {EnclaveAttestationError} from `connect` when the enclave fails attestation, runs an
+     *   image not listed, its `/v1/info` signature doesn't verify, or it signs with another key.
+     */
+    emulatorAttestation?: EnclaveAttestationConfig;
+    /**
      * The wallet's contract manager (`wallet.getContractManager()`). Enables
      * {@link ArkadeContract.register}, and makes {@link ArkadeContract.getUtxos} read
      * repository-backed state for registered contracts instead of the indexer.
      */
     contractManager?: IContractManager;
+}
+
+/** Attest the emulator's enclave, then read its co-signer key from a signed `/v1/info`. */
+async function attestEmulator(
+    emulator: EmulatorProvider | undefined,
+    config: EnclaveAttestationConfig,
+): Promise<{ signerPubkey: string; responseSigningKey: Uint8Array }> {
+    const serverUrl = emulator && extractServerUrl(emulator);
+    if (!serverUrl) {
+        throw new Error(
+            "emulatorAttestation needs an emulator exposing its serverUrl (e.g. RestEmulatorProvider).",
+        );
+    }
+    const responseSigningKey = await attestEnclave(serverUrl, config);
+
+    const { signerPubkey } = await fetchEmulatorInfo(serverUrl, responseSigningKey);
+    return { signerPubkey: signerPubkey.toLowerCase(), responseSigningKey };
 }
 
 /**
@@ -266,10 +297,17 @@ export class Arkade {
     /**
      * The co-signer key covenants are built against (33-byte compressed), present only when an
      * emulator is configured. Resolved from the network or `emulatorPubkey`, never the emulator's
-     * own report. If a claim is refused, compare it with the emulator's `/v1/info` `signerPubkey`:
-     * a difference means the network rotated and this SDK's pin is stale.
+     * own report; with `emulatorAttestation`, `connect` has checked the attested emulator signs
+     * with it. Otherwise, if a claim is refused, compare it with the emulator's `/v1/info`
+     * `signerPubkey`: a difference means the network rotated and this SDK's pin is stale.
      */
     readonly emulatorKey: Uint8Array | undefined;
+    /**
+     * The emulator enclave's response signing key, present when connected with
+     * `emulatorAttestation`. Pass it to `fetchEmulatorInfo` to verify later reads; a custom
+     * provider's `emulator.getInfo` may ignore it.
+     */
+    readonly enclaveResponseSigningKey: Uint8Array | undefined;
     readonly checkpoint: CSVMultisigTapscript.Type;
     readonly indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     readonly identity?: Identity;
@@ -284,6 +322,7 @@ export class Arkade {
         network: Network;
         serverKey: Uint8Array;
         emulatorKey: Uint8Array | undefined;
+        enclaveResponseSigningKey?: Uint8Array;
         checkpoint: CSVMultisigTapscript.Type;
         indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
         identity?: Identity;
@@ -295,6 +334,7 @@ export class Arkade {
         this.network = fields.network;
         this.serverKey = fields.serverKey;
         this.emulatorKey = fields.emulatorKey;
+        this.enclaveResponseSigningKey = fields.enclaveResponseSigningKey;
         this.checkpoint = fields.checkpoint;
         this.indexer = fields.indexer;
         this.identity = fields.identity;
@@ -316,11 +356,23 @@ export class Arkade {
 
         // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
         // the key covenants commit to. A rotation is invisible until the pin ships;
-        // `emulatorPubkey` covers that window.
-        let emulatorKey: Uint8Array | undefined;
-        if (opts.emulator) {
-            emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
+        // `emulatorPubkey` covers that window. An attested emulator must sign with the same key,
+        // so a stale pin or wrong override fails here rather than at claim time. The key is
+        // resolved first: on a network with no pin, that error names the fix, and attesting
+        // would only spend two requests before it.
+        const configured = opts.emulator
+            ? resolveEmulatorPubkey(network, opts.emulatorPubkey)
+            : undefined;
+        const attested = opts.emulatorAttestation
+            ? await attestEmulator(opts.emulator, opts.emulatorAttestation)
+            : undefined;
+        if (attested && attested.signerPubkey !== configured) {
+            throw new EnclaveAttestationError(
+                `attested emulator co-signs with ${attested.signerPubkey}, not the configured ` +
+                    `key ${configured}; if the network rotated, pass emulatorPubkey`,
+            );
         }
+        const emulatorKey = configured === undefined ? undefined : hex.decode(configured);
 
         // Up-front so contract instantiation stays synchronous.
         let userKey: Uint8Array | undefined;
@@ -334,6 +386,7 @@ export class Arkade {
             network,
             serverKey,
             emulatorKey,
+            enclaveResponseSigningKey: attested?.responseSigningKey,
             checkpoint,
             indexer: opts.indexer,
             identity: opts.identity,
