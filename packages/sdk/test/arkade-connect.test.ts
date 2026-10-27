@@ -49,8 +49,11 @@ function info(network = "bitcoin"): ArkadeInfo {
 
 function multisigProgram() {
     return {
-        version: 0,
-        params: ["server", "user"],
+        version: 1,
+        params: [
+            { name: "server", type: "pubkey" },
+            { name: "user", type: "pubkey" },
+        ],
         functions: {
             cooperative: { tapscript: { signers: ["$user", "$server"] } },
         },

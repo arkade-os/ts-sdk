@@ -239,6 +239,34 @@ describe("Program v0 rows", () => {
         expect(replaced.metadata).toEqual({ genericallySpendable: false });
     });
 
+    it("keeps an open generic-spend gate when the new metadata omits the flag", async () => {
+        const m = await seededManager(v0Row({ metadata: { genericallySpendable: true } }));
+
+        const replaced = await m.createContract({
+            type: "arkade",
+            params: v1Params(),
+            script: SCRIPT,
+            address: "ark1v0",
+            metadata: { kind: "new-kind" },
+        });
+
+        expect(replaced.metadata).toEqual({ kind: "new-kind", genericallySpendable: true });
+    });
+
+    it("lets the caller close an open generic-spend gate explicitly", async () => {
+        const m = await seededManager(v0Row({ metadata: { genericallySpendable: true } }));
+
+        const replaced = await m.createContract({
+            type: "arkade",
+            params: v1Params(),
+            script: SCRIPT,
+            address: "ark1v0",
+            metadata: { genericallySpendable: false },
+        });
+
+        expect(replaced.metadata).toEqual({ genericallySpendable: false });
+    });
+
     it("rejects params that lock a different script and keeps the v0 row", async () => {
         const m = await seededManager();
 

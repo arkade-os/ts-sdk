@@ -1374,8 +1374,9 @@ export class ContractManager implements IContractManager {
     /**
      * Overwrite a row this SDK cannot read with `params`, already verified to lock its script. One
      * write, so the script never goes without a row. The row's history (`createdAt`, `state`,
-     * `watch`) survives, as do its `label` and `metadata` unless the caller passes new ones, and so
-     * does a closed generic-spend gate: the first writer's choice holds.
+     * `watch`) survives, as do its `label` and `metadata` unless the caller passes new ones. The
+     * first writer's generic-spend gate holds: a closed one stays closed, and an open one stays
+     * open unless the caller sets the flag explicitly.
      */
     private async replaceUnsupported(
         existing: Contract,
@@ -1384,10 +1385,13 @@ export class ContractManager implements IContractManager {
         // `register()` passes absent options as explicit `undefined`; they must not erase the row's.
         const label = params.label ?? existing.label;
         const given = params.metadata ?? existing.metadata;
+        const wasOpen = existing.metadata?.genericallySpendable === true;
         const metadata =
-            given?.genericallySpendable === true && existing.metadata?.genericallySpendable !== true
-                ? { ...given, genericallySpendable: false }
-                : given;
+            wasOpen && given?.genericallySpendable === undefined
+                ? { ...given, genericallySpendable: true }
+                : given?.genericallySpendable === true && !wasOpen
+                  ? { ...given, genericallySpendable: false }
+                  : given;
         const { watch: _, label: _label, metadata: _metadata, ...rest } = params;
         const contract: Contract = {
             ...rest,
