@@ -1,6 +1,6 @@
 /** The wire shape asserted here is covclaimd's own, read off its handler and
  * proto — not one invented to match the code. */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { base64, hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -14,9 +14,6 @@ import {
 } from "../src/reveal";
 import { lightningReceiveContract } from "../src/rfq";
 import { openClaimPacket } from "./helpers/claimPacket";
-
-const gate = vi.hoisted(() => ({ binds: false }));
-vi.mock("../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
 
 const PREIMAGE = new Uint8Array(32).fill(7);
 const MIN_AMOUNT = 50_000n;
@@ -294,7 +291,7 @@ describe("revealClaimPacket", () => {
         return { client: covclaimdClient("https://cov.example", { fetchImpl: impl }), calls };
     };
 
-    it("seals to the key the SAME daemon serves, unbound while packets bind no amount, then reveals there", async () => {
+    it("seals to the key the SAME daemon serves, bound to the amount, then reveals there", async () => {
         const script = covenant();
         const { client: c, calls } = client([{ body: infoBody }, { body: "{}" }]);
         const { ciphertext } = await revealClaimPacket(c, {
@@ -308,14 +305,16 @@ describe("revealClaimPacket", () => {
             "https://cov.example/v1/preimage/covclaimd-pubkey",
             "https://cov.example/v1/reveal",
         ]);
-        expect(hex.encode(await openClaimPacket(ciphertext, COVCLAIMD_SK))).toBe(
+        expect(hex.encode(await openClaimPacket(ciphertext, COVCLAIMD_SK, MIN_AMOUNT))).toBe(
             hex.encode(PREIMAGE),
         );
+        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK)).rejects.toThrow();
         expect(JSON.parse(String(calls[1].init?.body))).toEqual({
             swap_address: addressOf(script),
             packet: {
                 ciphertext,
                 arkade_script: base64.encode(script.nonInteractiveClaimArkadeScript!),
+                min_amount: 50_000,
             },
             taptree: hex.encode(script.encode()),
         });
@@ -406,48 +405,5 @@ describe("revealClaimPacket", () => {
         }).catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.retryable).toBe(false);
-    });
-});
-
-describe("revealClaimPacket, once packets bind the amount", () => {
-    beforeEach(() => {
-        gate.binds = true;
-    });
-    afterEach(() => {
-        gate.binds = false;
-    });
-
-    const client = (replies: Array<{ status?: number; body?: string }>) => {
-        const { impl, calls } = stubFetch(replies);
-        return { client: covclaimdClient("https://cov.example", { fetchImpl: impl }), calls };
-    };
-
-    it("seals to the key the SAME daemon serves, bound to the amount, then reveals there", async () => {
-        const script = covenant();
-        const { client: c, calls } = client([{ body: infoBody }, { body: "{}" }]);
-        const { ciphertext } = await revealClaimPacket(c, {
-            script,
-            address: addressOf(script),
-            preimage: PREIMAGE,
-            minAmount: MIN_AMOUNT,
-        });
-
-        expect(calls.map((call) => call.url)).toEqual([
-            "https://cov.example/v1/preimage/covclaimd-pubkey",
-            "https://cov.example/v1/reveal",
-        ]);
-        expect(hex.encode(await openClaimPacket(ciphertext, COVCLAIMD_SK, MIN_AMOUNT))).toBe(
-            hex.encode(PREIMAGE),
-        );
-        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK)).rejects.toThrow();
-        expect(JSON.parse(String(calls[1].init?.body))).toEqual({
-            swap_address: addressOf(script),
-            packet: {
-                ciphertext,
-                arkade_script: base64.encode(script.nonInteractiveClaimArkadeScript!),
-                min_amount: 50_000,
-            },
-            taptree: hex.encode(script.encode()),
-        });
     });
 });

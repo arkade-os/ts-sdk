@@ -64,7 +64,6 @@ import {
     type ProvisionedClaimSecret,
     type ProvisionedKey,
 } from "@arkade-os/sdk";
-import { bindsClaimAmount } from "./claimAmountGate";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
@@ -2151,13 +2150,12 @@ const provisionReceive = async (
     ]);
     // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets covclaimd
     // claim dust and hand the solver `P`.
-    const binds = bindsClaimAmount();
     const claimPacket =
-        params.covclaimdPubkey && (!binds || params.amountSide === "to")
+        params.covclaimdPubkey && params.amountSide === "to"
             ? await sealClaimPacket({
                   preimage,
                   covclaimdPubkey: params.covclaimdPubkey,
-                  minAmount: binds ? BigInt(params.amount) : undefined,
+                  minAmount: BigInt(params.amount),
               })
             : undefined;
     return { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket };

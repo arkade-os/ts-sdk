@@ -9,7 +9,6 @@
 import { base64, hex } from "@scure/base";
 import { ArkAddress, assertTimerMs, type VHTLC } from "@arkade-os/sdk";
 
-import { bindsClaimAmount } from "./claimAmountGate";
 import { sealClaimPacket } from "./claimPacket";
 import { assertPreimageMatches } from "./onchainHtlc";
 
@@ -233,13 +232,17 @@ export async function revealClaimPacket(
     }
     assertPreimageMatches(input.preimage, input.script.options.preimageHash);
     assertRevealAmount(input.minAmount);
-    const minAmount = bindsClaimAmount() ? input.minAmount : undefined;
 
     const { ciphertext } = await sealClaimPacket({
         preimage: input.preimage,
         covclaimdPubkey: (await client.info()).covclaimdPubkey,
-        minAmount,
+        minAmount: input.minAmount,
     });
-    await client.reveal({ swapAddress: input.address, ciphertext, minAmount, ...fields });
+    await client.reveal({
+        swapAddress: input.address,
+        ciphertext,
+        minAmount: input.minAmount,
+        ...fields,
+    });
     return { ciphertext };
 }

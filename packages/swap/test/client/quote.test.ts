@@ -45,9 +45,6 @@ import {
     type SolverTransport,
 } from "./fixtures";
 
-const gate = vi.hoisted(() => ({ binds: false }));
-vi.mock("../../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
-
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
@@ -192,40 +189,6 @@ describe("quote() on lightning -> arkade", () => {
 
             const { profile } = transport.sent[0] as { profile: Record<string, unknown> };
             expect(Object.keys(profile)).not.toContain("claim_packet");
-        });
-
-        const withCovclaimd = { lightning: { covclaimd: { pubkey: compressed(7) } } };
-        const packetOf = (transport: SolverTransport): Uint8Array =>
-            base64.decode(
-                (transport.sent[0] as { profile: Record<string, unknown> }).profile
-                    .claim_packet as string,
-            );
-
-        it("sends a stampable, unbound packet on either side while packets bind no amount", async () => {
-            for (const [amountOn, amount] of [
-                ["give", 5_000n],
-                ["take", 4_950n],
-            ] as const) {
-                const { client, transport } = await setup({ corridors: withCovclaimd });
-                await client.quote({ via: "lightning", amount, amountOn });
-
-                const packet = packetOf(transport);
-                const shape = claimPacketShape(base64.encode(packet));
-                expect(shape.kind, amountOn).toBe("packet");
-                if (shape.kind !== "packet") return;
-                expect(shape.needsArkadeScript).toBe(true);
-                expect(shape.covclaimdPubkey).toEqual(hex.decode(compressed(7)));
-                expect(hex.encode(packet.subarray(-11)), amountOn).not.toMatch(/^040008/);
-            }
-        });
-    });
-
-    describe("the claim packet, once it binds the amount", () => {
-        beforeEach(() => {
-            gate.binds = true;
-        });
-        afterEach(() => {
-            gate.binds = false;
         });
 
         const withCovclaimd = { lightning: { covclaimd: { pubkey: compressed(7) } } };
