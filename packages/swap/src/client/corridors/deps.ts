@@ -69,7 +69,8 @@ export interface CorridorOverrides {
         /** Default: the package's own {@link decodeBolt11}. */
         decode?: ((bolt11: string) => InvoiceFacts) | null;
         /** Default: none — nothing is sealed and no packet is sent, so the
-         * trader must claim its own lockup before `refund_locktime`. */
+         * trader must claim its own lockup before `refund_locktime`. Set, only a
+         * take-pinned (exact-out) BTC receive is guaranteed one. */
         covclaimd?: { pubkey: Pubkey } | null;
     };
     onchain?: {

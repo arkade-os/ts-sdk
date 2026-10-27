@@ -1,6 +1,6 @@
 /** The wire shape asserted here is covclaimd's own, read off its handler and
  * proto — not one invented to match the code. */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -15,7 +15,11 @@ import {
 import { lightningReceiveContract } from "../src/rfq";
 import { openClaimPacket } from "./helpers/claimPacket";
 
+const gate = vi.hoisted(() => ({ binds: false }));
+vi.mock("../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
+
 const PREIMAGE = new Uint8Array(32).fill(7);
+const MIN_AMOUNT = 50_000n;
 const COVCLAIMD_SK = new Uint8Array(32).fill(0x22);
 const COVCLAIMD_PK = secp256k1.getPublicKey(COVCLAIMD_SK, true);
 const EMULATOR_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x33), true);
@@ -62,6 +66,13 @@ const infoBody = JSON.stringify({
     covclaimd_pub_key: hex.encode(COVCLAIMD_PK),
     emulator_pub_key: hex.encode(EMULATOR_PK),
 });
+
+const anyReveal = {
+    swapAddress: "a",
+    ciphertext: "b",
+    arkadeScript: "c",
+    taptree: "d",
+};
 
 describe("revealFieldsFromScript", () => {
     it("derives arkade_script as base64 of the covenant's own NIC arkade script", () => {
@@ -203,15 +214,34 @@ describe("covclaimdClient", () => {
             swapAddress: "ark1swap",
             ciphertext: "Y2lwaGVy",
             arkadeScript: "c2NyaXB0",
+            minAmount: MIN_AMOUNT,
             taptree: "deadbeef",
         });
         expect(calls[0].url).toBe("https://cov.example/v1/reveal");
         expect(calls[0].init?.method).toBe("POST");
         expect(JSON.parse(String(calls[0].init?.body))).toEqual({
             swap_address: "ark1swap",
-            packet: { ciphertext: "Y2lwaGVy", arkade_script: "c2NyaXB0" },
+            packet: { ciphertext: "Y2lwaGVy", arkade_script: "c2NyaXB0", min_amount: 50_000 },
             taptree: "deadbeef",
         });
+    });
+
+    it("sends no min_amount for an unbound ciphertext", async () => {
+        const { impl, calls } = stubFetch([{ body: "{}" }]);
+        await covclaimdClient("https://cov.example", { fetchImpl: impl }).reveal(anyReveal);
+        expect(JSON.parse(String(calls[0].init?.body)).packet).toEqual({
+            ciphertext: "b",
+            arkade_script: "c",
+        });
+    });
+
+    it("refuses a min_amount that is not positive, or past a JSON number's exact range, before posting", async () => {
+        const { impl, calls } = stubFetch([{ body: "{}" }]);
+        const client = covclaimdClient("https://cov.example", { fetchImpl: impl });
+        for (const minAmount of [BigInt(Number.MAX_SAFE_INTEGER) + 1n, 0n, -1n]) {
+            await expect(client.reveal({ ...anyReveal, minAmount })).rejects.toThrow(/min_amount/);
+        }
+        expect(calls).toHaveLength(0);
     });
 
     it("marks a 400 NOT retryable — the packet cannot bind to this address at this daemon", async () => {
@@ -219,7 +249,7 @@ describe("covclaimdClient", () => {
             { status: 400, body: "aead open: message authentication failed" },
         ]);
         const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
-            .reveal({ swapAddress: "a", ciphertext: "b", arkadeScript: "c", taptree: "d" })
+            .reveal(anyReveal)
             .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.retryable).toBe(false);
@@ -231,7 +261,7 @@ describe("covclaimdClient", () => {
         for (const status of [429, 503]) {
             const { impl } = stubFetch([{ status, body: "busy" }]);
             const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
-                .reveal({ swapAddress: "a", ciphertext: "b", arkadeScript: "c", taptree: "d" })
+                .reveal(anyReveal)
                 .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
             expect(error.retryable, `status ${status}`).toBe(true);
         }
@@ -242,7 +272,7 @@ describe("covclaimdClient", () => {
             throw new Error("ECONNREFUSED");
         }) as unknown as typeof fetch;
         const error = (await covclaimdClient("https://cov.example", { fetchImpl: impl })
-            .reveal({ swapAddress: "a", ciphertext: "b", arkadeScript: "c", taptree: "d" })
+            .reveal(anyReveal)
             .catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.status).toBe(0);
@@ -264,13 +294,14 @@ describe("revealClaimPacket", () => {
         return { client: covclaimdClient("https://cov.example", { fetchImpl: impl }), calls };
     };
 
-    it("seals to the key the SAME daemon serves, then reveals there", async () => {
+    it("seals to the key the SAME daemon serves, unbound while packets bind no amount, then reveals there", async () => {
         const script = covenant();
         const { client: c, calls } = client([{ body: infoBody }, { body: "{}" }]);
         const { ciphertext } = await revealClaimPacket(c, {
             script,
             address: addressOf(script),
             preimage: PREIMAGE,
+            minAmount: MIN_AMOUNT,
         });
 
         expect(calls.map((call) => call.url)).toEqual([
@@ -290,12 +321,29 @@ describe("revealClaimPacket", () => {
         });
     });
 
+    it("refuses a missing, non-positive or oversize minAmount before any call", async () => {
+        const script = covenant();
+        const { client: c, calls } = client([{ body: infoBody }, { body: "{}" }]);
+        for (const minAmount of [undefined, 0n, BigInt(Number.MAX_SAFE_INTEGER) + 1n]) {
+            await expect(
+                revealClaimPacket(c, {
+                    script,
+                    address: addressOf(script),
+                    preimage: PREIMAGE,
+                    minAmount: minAmount as bigint,
+                }),
+            ).rejects.toThrow(/min_amount/);
+        }
+        expect(calls).toHaveLength(0);
+    });
+
     it("re-sealing produces a fresh packet: no ephemeral key or nonce is reused", async () => {
         const script = covenant();
         const first = await revealClaimPacket(client([{ body: infoBody }, { body: "{}" }]).client, {
             script,
             address: addressOf(script),
             preimage: PREIMAGE,
+            minAmount: MIN_AMOUNT,
         });
         const second = await revealClaimPacket(
             client([{ body: infoBody }, { body: "{}" }]).client,
@@ -303,6 +351,7 @@ describe("revealClaimPacket", () => {
                 script,
                 address: addressOf(script),
                 preimage: PREIMAGE,
+                minAmount: MIN_AMOUNT,
             },
         );
         expect(second.ciphertext).not.toBe(first.ciphertext);
@@ -313,7 +362,12 @@ describe("revealClaimPacket", () => {
         const other = covenant({ payoutPkScript: p2tr(0x53) });
         const { client: c, calls } = client([{ body: infoBody }, { body: "{}" }]);
         await expect(
-            revealClaimPacket(c, { script, address: addressOf(other), preimage: PREIMAGE }),
+            revealClaimPacket(c, {
+                script,
+                address: addressOf(other),
+                preimage: PREIMAGE,
+                minAmount: MIN_AMOUNT,
+            }),
         ).rejects.toThrow(/address does not belong to this covenant/);
         expect(calls).toHaveLength(0);
     });
@@ -326,6 +380,7 @@ describe("revealClaimPacket", () => {
                 script,
                 address: addressOf(script),
                 preimage: new Uint8Array(32).fill(9),
+                minAmount: MIN_AMOUNT,
             }),
         ).rejects.toThrow(/preimage does not match the covenant's payment hash/);
         expect(calls).toHaveLength(0);
@@ -347,8 +402,52 @@ describe("revealClaimPacket", () => {
             script,
             address: addressOf(script),
             preimage: PREIMAGE,
+            minAmount: MIN_AMOUNT,
         }).catch((e: unknown) => e as CovclaimdRevealError)) as CovclaimdRevealError;
         expect(error).toBeInstanceOf(CovclaimdRevealError);
         expect(error.retryable).toBe(false);
+    });
+});
+
+describe("revealClaimPacket, once packets bind the amount", () => {
+    beforeEach(() => {
+        gate.binds = true;
+    });
+    afterEach(() => {
+        gate.binds = false;
+    });
+
+    const client = (replies: Array<{ status?: number; body?: string }>) => {
+        const { impl, calls } = stubFetch(replies);
+        return { client: covclaimdClient("https://cov.example", { fetchImpl: impl }), calls };
+    };
+
+    it("seals to the key the SAME daemon serves, bound to the amount, then reveals there", async () => {
+        const script = covenant();
+        const { client: c, calls } = client([{ body: infoBody }, { body: "{}" }]);
+        const { ciphertext } = await revealClaimPacket(c, {
+            script,
+            address: addressOf(script),
+            preimage: PREIMAGE,
+            minAmount: MIN_AMOUNT,
+        });
+
+        expect(calls.map((call) => call.url)).toEqual([
+            "https://cov.example/v1/preimage/covclaimd-pubkey",
+            "https://cov.example/v1/reveal",
+        ]);
+        expect(hex.encode(await openClaimPacket(ciphertext, COVCLAIMD_SK, MIN_AMOUNT))).toBe(
+            hex.encode(PREIMAGE),
+        );
+        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK)).rejects.toThrow();
+        expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+            swap_address: addressOf(script),
+            packet: {
+                ciphertext,
+                arkade_script: base64.encode(script.nonInteractiveClaimArkadeScript!),
+                min_amount: 50_000,
+            },
+            taptree: hex.encode(script.encode()),
+        });
     });
 });

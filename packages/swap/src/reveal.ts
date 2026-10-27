@@ -9,6 +9,7 @@
 import { base64, hex } from "@scure/base";
 import { ArkAddress, assertTimerMs, type VHTLC } from "@arkade-os/sdk";
 
+import { bindsClaimAmount } from "./claimAmountGate";
 import { sealClaimPacket } from "./claimPacket";
 import { assertPreimageMatches } from "./onchainHtlc";
 
@@ -38,7 +39,7 @@ export interface CovclaimdInfo {
     emulatorPubkey: string;
 }
 
-/** The four fields `POST /v1/reveal` takes. */
+/** The fields `POST /v1/reveal` takes. */
 export interface RevealParams {
     /** The funded lockup's Arkade address, bech32m. */
     swapAddress: string;
@@ -46,6 +47,8 @@ export interface RevealParams {
     ciphertext: string;
     /** The covenant's `enforcePayTo` ArkadeScript, base64. */
     arkadeScript: string;
+    /** The `minAmount` {@link ciphertext} was sealed with, in sats; omit for an unbound one. */
+    minAmount?: bigint;
     /** The lockup's serialized taptree, hex. */
     taptree: string;
 }
@@ -54,6 +57,19 @@ export interface CovclaimdClient {
     info(): Promise<CovclaimdInfo>;
     reveal(params: RevealParams): Promise<void>;
 }
+
+/** `min_amount` travels as a JSON number. */
+const assertRevealAmount = (minAmount: bigint): void => {
+    if (
+        typeof minAmount !== "bigint" ||
+        minAmount < 1n ||
+        minAmount > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+        throw new Error(
+            `min_amount ${minAmount} is missing, not positive, or past what a JSON number carries`,
+        );
+    }
+};
 
 const decodeKey = (value: unknown, field: string): Uint8Array => {
     if (typeof value !== "string") throw new Error(`covclaimd info: ${field} is not a string`);
@@ -147,12 +163,19 @@ export const covclaimdClient = (
         },
 
         async reveal(params) {
+            const { minAmount } = params;
+            if (minAmount !== undefined) assertRevealAmount(minAmount);
             await send("reveal", "/v1/reveal", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
                     swap_address: params.swapAddress,
-                    packet: { ciphertext: params.ciphertext, arkade_script: params.arkadeScript },
+                    packet: {
+                        ciphertext: params.ciphertext,
+                        arkade_script: params.arkadeScript,
+                        // covclaimd reads an absent field as unbound
+                        min_amount: minAmount === undefined ? undefined : Number(minAmount),
+                    },
                     taptree: params.taptree,
                 }),
             });
@@ -197,6 +220,8 @@ export async function revealClaimPacket(
         address: string;
         /** `P`, 32 bytes, from the swap's `secrets`. */
         preimage: Uint8Array;
+        /** Sats the lockup must carry, e.g. the record's `expectedAmount`. */
+        minAmount: bigint;
     },
 ): Promise<{ ciphertext: string }> {
     const fields = revealFieldsFromScript(input.script);
@@ -207,11 +232,14 @@ export async function revealClaimPacket(
         throw new Error("address does not belong to this covenant");
     }
     assertPreimageMatches(input.preimage, input.script.options.preimageHash);
+    assertRevealAmount(input.minAmount);
+    const minAmount = bindsClaimAmount() ? input.minAmount : undefined;
 
     const { ciphertext } = await sealClaimPacket({
         preimage: input.preimage,
         covclaimdPubkey: (await client.info()).covclaimdPubkey,
+        minAmount,
     });
-    await client.reveal({ swapAddress: input.address, ciphertext, ...fields });
+    await client.reveal({ swapAddress: input.address, ciphertext, minAmount, ...fields });
     return { ciphertext };
 }
