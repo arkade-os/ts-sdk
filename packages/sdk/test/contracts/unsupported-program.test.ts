@@ -204,6 +204,23 @@ describe("Program v0 rows", () => {
         ).resolves.toBeUndefined();
     });
 
+    it("keeps the row's label and metadata when the caller passes none", async () => {
+        const row = v0Row({ metadata: { kind: "app", genericallySpendable: true } });
+        const m = await seededManager(row);
+
+        // the shape `ArkadeContract.register()` sends without options
+        const replaced = await m.createContract({
+            type: "arkade",
+            params: v1Params(),
+            script: SCRIPT,
+            address: "ark1v0",
+            label: undefined,
+            metadata: undefined,
+        });
+
+        expect(replaced).toEqual({ ...row, params: v1Params() });
+    });
+
     it("keeps the first writer's closed generic-spend gate on replacement", async () => {
         const m = await seededManager();
 
