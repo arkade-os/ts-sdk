@@ -7,11 +7,15 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     UnannotatableInputError,
+    IndexedDBContractRepository,
     UnsupportedProgramVersionError,
     type Contract,
     type IndexerProvider,
 } from "../../src";
+import { collectContracts } from "../../src/repositories/contractRepository";
+import { STORE_CONTRACTS } from "../../src/repositories/indexedDB/schema";
 import { collectVtxos } from "../../src/repositories/walletRepository";
+import walletRow from "../fixtures/program-v0-row.json";
 import {
     createDefaultContractParams,
     createMockIndexerProvider,
@@ -263,5 +267,94 @@ describe("Program v0 rows", () => {
 
         expect(result).toEqual(v0Row({ params: v1Params() }));
         expect(save).not.toHaveBeenCalled();
+    });
+});
+
+// A covenant swap offer exported verbatim from a pre-v1 wallet's IndexedDB.
+describe("a Program v0 row left by a pre-v1 wallet", () => {
+    const { watchState: _, ...stored } = walletRow;
+    const row = stored as Contract;
+    const v1 = {
+        ...row.params,
+        program: JSON.stringify({ ...JSON.parse(row.params.program), version: 1 }),
+    };
+    const vtxo = createMockVtxo({ txid: "cc".repeat(32), script: row.script, value: 1000 });
+    let manager: ContractManager | undefined;
+
+    afterEach(async () => {
+        await manager?.dispose();
+        manager = undefined;
+    });
+
+    async function openWallet(): Promise<ContractManager> {
+        const dbName = `v0-wallet-${crypto.randomUUID()}`;
+        const repository = new IndexedDBContractRepository(dbName);
+        await collectContracts(repository, {});
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = indexedDB.open(dbName);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(STORE_CONTRACTS, "readwrite");
+            tx.objectStore(STORE_CONTRACTS).put(walletRow);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+
+        const indexer = createMockIndexerProvider();
+        (indexer.getVtxos as ReturnType<typeof vi.fn>).mockResolvedValue({ vtxos: [vtxo] });
+        manager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository: repository,
+            walletRepository: new InMemoryWalletRepository(),
+        });
+        return manager;
+    }
+
+    it("compiles to the stored script once read as v1", () => {
+        expect(() => ArkadeContractHandler.createScript(row.params)).toThrow(
+            UnsupportedProgramVersionError,
+        );
+        expect(hex.encode(ArkadeContractHandler.createScript(v1).pkScript)).toBe(row.script);
+    });
+
+    it("is reported as unsupported without degrading sync", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const m = await openWallet();
+            expect(await m.getUnsupportedContracts()).toEqual([row]);
+
+            await m.refreshVtxos({ includeInactive: true });
+
+            expect(m.getSyncState().mode).toBe("online");
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("is replaced in place by its v1 program, keeping watch, label and metadata", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const m = await openWallet();
+
+            const replaced = await m.createContract({
+                type: "arkade",
+                params: v1,
+                script: row.script,
+                address: row.address,
+            });
+
+            expect(replaced).toEqual({ ...row, params: v1 });
+            expect(await m.getContracts({ script: row.script })).toEqual([replaced]);
+            expect(await m.getUnsupportedContracts()).toEqual([]);
+            await m.refreshVtxos({ includeInactive: true });
+            await expect(
+                m.assertAnnotatable([{ txid: vtxo.txid, vout: 0, script: row.script }]),
+            ).resolves.toBeUndefined();
+        } finally {
+            warn.mockRestore();
+        }
     });
 });

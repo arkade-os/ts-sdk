@@ -21,6 +21,7 @@ import {
 } from "../src/offer";
 import { retireSettledOfferContracts } from "../src/coverage";
 import type { AssetSwap, AssetSwapStatus } from "../src/store";
+import v0Wallet from "./fixtures/program-v0-offer.json";
 
 // real derivation and register(); its own file because `coverage.ts` keeps the
 // issuance mark in module state, which a createOffer promotion would decide.
@@ -338,5 +339,42 @@ describe("restoreOfferCoverage over a Program v0 row", () => {
 
         expect(await manager.getContracts({ script })).toEqual([v0]);
         await manager.dispose();
+    });
+
+    describe("exported from a pre-v1 wallet", () => {
+        // its IndexedDB index column, not part of the contract
+        const { watchState: _, ...stored } = v0Wallet.contract;
+        const row = stored as Contract;
+        const swap = v0Wallet.swap as AssetSwap;
+
+        const seeded = async () => {
+            const repository = new InMemoryContractRepository();
+            await repository.saveContract(row);
+            return managed(repository);
+        };
+
+        it("leaves the row of its cancelled offer alone", async () => {
+            const { manager, wallet: restoring } = await seeded();
+
+            await restoreOfferCoverage(restoring, [swap]);
+
+            expect(await manager.getContracts({ script: row.script })).toEqual([row]);
+            expect(await manager.getUnsupportedContracts()).toEqual([row]);
+            await manager.dispose();
+        });
+
+        it("rebuilds a live offer's row as v1 in place, under the key it was funded with", async () => {
+            const { manager, wallet: restoring } = await seeded();
+
+            await restoreOfferCoverage(restoring, [{ ...swap, status: "pending" }]);
+
+            const [replaced] = await manager.getContracts({ script: row.script });
+            // a live record promotes its retained script back to watched
+            expect(replaced).toEqual({ ...row, params: replaced.params, watch: "watched" });
+            expect(JSON.parse(replaced.params.program).version).toBe(1);
+            expect(replaced.params.serverKey).toBe(row.params.serverKey);
+            expect(await manager.getUnsupportedContracts()).toEqual([]);
+            await manager.dispose();
+        });
     });
 });
