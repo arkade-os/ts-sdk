@@ -21,9 +21,7 @@ style and have not been backfilled.
   AEAD's additional data so the courier cannot strip it, and
   `RevealParams.minAmount` sends it as `packet.min_amount` for a ciphertext
   sealed with one. Only covclaimd with `min_amount` support opens a bound
-  packet. The package's own receives keep sealing unbound until it deploys;
-  after that, only an exact-out receive is guaranteed a claim packet, so an
-  exact-in one may carry none and leave the claim to the trader.
+  packet.
 
 - **`IndexerProvider.getFilteredSubscription` streams the transactions a CEL
   filter matches.** `subscribeForScripts` needs the scripts in advance, so a
@@ -118,6 +116,17 @@ style and have not been backfilled.
   `GET_VTXOS`. (#943)
 
 ### Bug Fixes
+
+- **`@arkade-os/swap`: a receive's claim packet binds the amount the lockup
+  must carry.** It sealed `P` with no amount, so covclaimd claimed whatever
+  the solver funded: a solver could fund the lockup with dust, learn `P` from
+  that claim, and settle the payer's full hold invoice or claim the trader's
+  full L1 HTLC. An exact-out receive (`amountSide: "to"`, or a take pin on
+  `arkade:BTC`) now seals with its amount, and `revealClaimPacket` binds and
+  sends `minAmount`. An exact-in receive, or one taking a non-BTC asset, sends
+  no packet: the lockup's sats are unknown until the quote, so the trader
+  claims that lockup itself. A covclaimd that predates `min_amount` cannot
+  open a bound packet; deploy covclaimd with `min_amount` support first.
 
 - **A stream arkd refuses fails with arkd's reason.** arkd sends the status
   of a refused stream — a filter that does not compile, say — as a named SSE
@@ -343,8 +352,7 @@ style and have not been backfilled.
 - **`@arkade-os/swap`: `revealClaimPacket` requires `minAmount`.** Pass the
   sats the lockup must carry, such as the swap record's `expectedAmount`; one
   that is not positive or is past `Number.MAX_SAFE_INTEGER` is refused before
-  any call. The packet does not bind it yet: that waits for covclaimd with
-  `min_amount` support to deploy, and the call stays the same when it does.
+  any call. The packet it seals opens only beside that amount.
 
 ### Features
 

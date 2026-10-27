@@ -10,7 +10,7 @@
  * exactly as its receive corridors build them (`receiver` = the trader's
  * payout key, `client` = the solver).
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -55,9 +55,6 @@ import {
     rfqSecretsProfile,
     rfqSignerOf,
 } from "../src/rfqProfileParts";
-
-const gate = vi.hoisted(() => ({ binds: false }));
-vi.mock("../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -790,7 +787,6 @@ const lightningReceiveFlow = async (
     const seen: {
         paymentHash?: string;
         payoutPubkey?: string;
-        claimPacket?: unknown;
         requests: { rfqId: string; paymentHash: string }[];
     } = { requests: [] };
     const transport: RfqTransport = {
@@ -802,7 +798,6 @@ const lightningReceiveFlow = async (
                 throw new SwapRefusal("quote_conflict", payload.rfq_id as string);
             }
             seen.payoutPubkey = profile.payout_pubkey as string;
-            seen.claimPacket = profile.claim_packet;
             return receiveQuote(payload, { from: 5_000, to: 4_950, ...over.quote });
         },
         async status() {
@@ -836,7 +831,7 @@ const lightningReceiveFlow = async (
 };
 
 describe("requestLightningReceive on an HD wallet", () => {
-    it("commits to the derived preimage, seals the packet to covclaimd, and returns the hold invoice to pay", async () => {
+    it("commits to the derived preimage and returns the hold invoice to pay", async () => {
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
 
@@ -854,8 +849,6 @@ describe("requestLightningReceive on an HD wallet", () => {
         });
         expect(flow.seen.paymentHash).toBe(paymentHashOf(preimage));
         expect(flow.seen.payoutPubkey).toBe(hex.encode(result.payoutPubkey));
-        // The wire carries the sealed packet string, never an object.
-        expect(typeof flow.seen.claimPacket).toBe("string");
         // Nothing secret leaves the function.
         expect(result).not.toHaveProperty("preimage");
     });
@@ -1295,45 +1288,6 @@ describe("a receive with no covclaimd to seal to", () => {
             }),
         );
         expect(Object.keys(profile)).not.toContain("claim_packet");
-    });
-
-    const minAmountTlv = (packet: unknown): string =>
-        hex.encode(base64.decode(packet as string).subarray(-11));
-
-    it("seals unbound on both legs and both sides while claim packets bind no amount", async () => {
-        const wallet = await hdWallet();
-        for (const amountSide of ["from", "to"] as const) {
-            const lightning = await capturedProfile((transport) =>
-                requestLightningReceive(wallet, transport, {
-                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                    amount: 5_000,
-                    amountSide,
-                    covclaimdPubkey: COVCLAIMD_PK,
-                    decodeInvoice: decodeStub,
-                }),
-            );
-            expect(minAmountTlv(lightning.claim_packet), amountSide).not.toMatch(/^040008/);
-
-            const onchain = await capturedProfile((transport) =>
-                requestOnchainReceive(wallet, transport, {
-                    emulatorPubkey: EMULATOR_PUBKEY_HEX,
-                    amount: 100_000,
-                    amountSide,
-                    refundPubkey: L1_REFUND_PUBKEY,
-                    covclaimdPubkey: COVCLAIMD_PK,
-                }),
-            );
-            expect(minAmountTlv(onchain.claim_packet), amountSide).not.toMatch(/^040008/);
-        }
-    });
-});
-
-describe("a receive once claim packets bind the amount", () => {
-    beforeEach(() => {
-        gate.binds = true;
-    });
-    afterEach(() => {
-        gate.binds = false;
     });
 
     const minAmountTlv = (packet: unknown): string =>
