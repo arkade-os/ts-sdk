@@ -332,6 +332,7 @@ import {
     NetworkName,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
+    DEFAULT_ARKADE_EMULATOR_URL,
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
@@ -502,6 +503,8 @@ export { collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+// Also at the root, so `import { Arkade }` works without the namespace.
+export { Arkade } from "./arkade";
 export * from "./extension/emulator";
 
 // BIP21 codec (reused by the payment rails) + the modular payment router.
@@ -539,6 +542,7 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
+import type { ArkadeService } from "./arkade/service";
 import type { ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
@@ -783,6 +787,7 @@ export {
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
+    DEFAULT_ARKADE_EMULATOR_URL,
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
@@ -926,6 +931,7 @@ export type {
     NewAddressType,
     WalletConfig,
     WalletMode,
+    ArkadeService,
     // Referenced by WalletMode: consumers need these to name or implement
     // a provider they pass to the wallet.
     DescriptorProvider,

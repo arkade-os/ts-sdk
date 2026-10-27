@@ -33,6 +33,7 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { ArkadeService } from "../arkade/service";
 
 /**
  * Wallet receive-address strategy.
@@ -120,6 +121,14 @@ export interface BaseWalletConfig {
     minCheckpointExitDelaySeconds?: bigint;
     /** Repository-backed storage configuration overrides. Defaults to IndexedDB if unset. */
     storage?: StorageConfig;
+    /**
+     * The Arkade deployment, in place of `arkProvider`/`indexerProvider`/`onchainProvider`
+     * (combining them throws): `{ network: "bitcoin" }` or `{ operatorUrl }`. With
+     * `{ network }`, an operator reporting another network throws.
+     *
+     * @see ArkadeService
+     */
+    service?: ArkadeService;
     /** Optional Arkade provider instance. */
     arkProvider?: ArkProvider;
     /** Optional indexer provider instance. */
@@ -203,12 +212,18 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      */
     settlementConfig?: SettlementConfig | false;
 
+    /** Short spelling of {@link settlementConfig}; setting both throws. */
+    settlement?: SettlementConfig | false;
+
     /**
      * Receive-address strategy. See {@link WalletMode}.
      *
      * @defaultValue `'auto'`
      */
     walletMode?: WalletMode;
+
+    /** Short spelling of {@link walletMode}; setting both throws. */
+    mode?: WalletMode;
 
     /**
      * Per-side width of the HD look-ahead watch window: receive scripts across
