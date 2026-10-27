@@ -299,8 +299,11 @@ describe("ArkadeContractHandler", () => {
 
         function sequenceExitProgram(): arkade.Program {
             return {
-                version: 0,
-                params: ["user", "exit"],
+                version: 1,
+                params: [
+                    { name: "user", type: "pubkey" },
+                    { name: "exit", type: "int" },
+                ],
                 functions: {
                     exit: {
                         tapscript: {

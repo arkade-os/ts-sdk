@@ -75,7 +75,11 @@ describe("Native scalar validation", () => {
 describe("Program timelocks — literal and $param values", () => {
     it("round-trips encoded CSV sequences and preserves seconds-based leaves", () => {
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [
+                { name: "user", type: "pubkey" },
+                { name: "exit", type: "int" },
+            ],
             functions: {
                 exit: {
                     tapscript: { signers: ["$user"], csv: { type: "sequence", value: "$exit" } },
@@ -95,7 +99,8 @@ describe("Program timelocks — literal and $param values", () => {
     it("resolves an encoded sequence with a condition without changing its timelock", () => {
         const condition: arkade.AsmToken[] = ["HASH160", new Uint8Array(20).fill(7), "EQUAL"];
         const program: arkade.Program = {
-            version: 0,
+            version: 1,
+            params: [{ name: "user", type: "pubkey" }],
             functions: {
                 reclaim: {
                     tapscript: {
