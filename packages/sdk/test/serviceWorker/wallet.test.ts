@@ -542,6 +542,13 @@ describe("ServiceWorkerReadonlyWallet", () => {
                         type: "CONTRACT_WATCHING",
                         payload: { isWatching: true },
                     };
+                case "GET_UNSUPPORTED_CONTRACTS":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "UNSUPPORTED_CONTRACTS",
+                        payload: { contracts },
+                    };
                 default:
                     return null;
             }
@@ -590,6 +597,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             paths,
         );
         await expect(manager.isWatching()).resolves.toBe(true);
+        await expect(manager.getUnsupportedContracts()).resolves.toEqual(contracts);
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({

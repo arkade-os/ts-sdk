@@ -48,6 +48,7 @@ export {
     serializeArkadeContractParams,
     deserializeArkadeContractParams,
     witnessRefToBytes,
+    UnsupportedProgramVersionError,
     type ArkadeContractParams,
     type CompiledProgramFunction,
     type ProgramKeys,

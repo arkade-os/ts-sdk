@@ -1,5 +1,5 @@
 {
-  "version": 0,
+  "version": 1,
   "name": "banco-asset-to-btc",
   "params": [
     { "name": "makerWP", "type": "pubkey" },
