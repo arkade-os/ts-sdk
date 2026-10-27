@@ -5,10 +5,10 @@
  * concrete `Wallet`, never on `IWallet`, which every swap entry point takes. The default URL is
  * `ESPLORA_URL[network]`.
  *
- * `getMtp` does not forward `OnchainProvider.getChainTip().time`: that promises only "block time",
- * and Esplora answers `mediantime` while Electrum answers the header's nTime. An MTP that runs high
- * makes `classifyOnchainHtlc` report `refundable` early and abandons a still-live L1 claim, so the
- * tip is read off `/blocks`, where `mediantime` is explicit.
+ * `getMtp` reads `/blocks`, where `mediantime` is explicit: an MTP that runs high makes
+ * `classifyOnchainHtlc` report `refundable` early and abandons a still-live L1 claim. A `{ provider }`
+ * override goes through `chainSourceFrom`, trusting `getChainTip().time`, which the interface pins to
+ * MTP; Electrum degrades to the tip's nTime only when its header window fails.
  */
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";

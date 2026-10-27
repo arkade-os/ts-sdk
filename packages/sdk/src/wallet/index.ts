@@ -7,6 +7,7 @@ import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { SettlementConfig } from "./vtxo-manager";
 import { GetVtxosOptions, IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import type { NetworkName } from "../networks";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
     ContractRepository,
@@ -123,8 +124,8 @@ export interface BaseWalletConfig {
     arkProvider?: ArkProvider;
     /** Optional indexer provider instance. */
     indexerProvider?: IndexerProvider;
-    /** Optional onchain provider instance. */
-    onchainProvider?: OnchainProvider;
+    /** Optional onchain provider, or a factory given the operator's network once it is known. */
+    onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
 }
