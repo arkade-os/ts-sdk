@@ -14,6 +14,34 @@ style and have not been backfilled.
 
 ### Added
 
+- **`Arkade.connect` takes a `service` and can own its contract manager.**
+  `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
+  contractRepository } })` resolves the operator, indexer, esplora and the mainnet
+  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ operatorUrl,
+  emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
+  without `emulatorUrl`. A `{ network }` service whose operator reports another
+  network throws. `storage` builds a session-scoped manager (in-memory VTXO
+  store, chain tip from esplora) that the new `arkade.dispose()` stops; a
+  caller-passed `contractManager` is never disposed. `service` and the provider
+  fields (`arkade`/`emulator`/`indexer`) are exclusive at the type level. The
+  resolver is exported as `arkade.resolveArkadeService`, and `Arkade` itself is
+  now exported from the package root as well as from the `arkade` namespace.
+
+- **`ArkadeContract.on` and `getVtxos`.** `await contract.on("vtxo_received" |
+  "vtxo_spent" | "connection_reset", cb)` registers the contract and reports its
+  activity from subscription on, returning a handle with `off()`. Coins that
+  predate it are not replayed and a reconnect re-syncs silently, so recover by
+  reading `getVtxos()` — every stored VTXO including spent ones, which
+  `getUtxos()` hides — after subscribing and on each `connection_reset`.
+  Handlers may be async: a throw or rejection is logged without reaching the
+  other handlers. `on()` after `arkade.dispose()` throws.
+
+- **`Wallet.create` short spellings.** `service` replaces `arkProvider`/
+  `indexerProvider`/`onchainProvider` (also on `ReadonlyWallet.create`), `mode`
+  aliases `walletMode` and `settlement` aliases `settlementConfig`. Setting both
+  spellings of one field throws. `service` reuses the server info the wallet
+  already fetched (or its cached snapshot), so `getInfo` is called once.
+
 - **`IndexerProvider.getFilteredSubscription` streams the transactions a CEL
   filter matches.** `subscribeForScripts` needs the scripts in advance, so a
   reader of extension packets at someone else's script — an offer, a sealed
