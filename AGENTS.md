@@ -28,7 +28,7 @@ Release and regtest/integration workflows are documented in `CONTRIBUTING.md`.
 
 ## Changelog
 
-Add a `CHANGELOG.md` entry under `## [Unreleased]` in the same commit as the change, grouped and styled to match the existing entries (bolded headline, root-cause prose, section ordering); the `[Unreleased]` header is retitled to `## [X.Y.Z] - YYYY-MM-DD` by hand at release time — no script or CI step does this.
+A commit that changes `packages/**/src` or any `package.json` (root included) must add a `CHANGELOG.md` entry; other changes may skip it. Add it under `## [Unreleased]` in the same commit as the change, grouped and styled to match the existing entries (bolded headline, root-cause prose, section ordering); the `[Unreleased]` header is retitled to `## [X.Y.Z] - YYYY-MM-DD` by hand at release time — no script or CI step does this.
 
 ## Contracts Subsystem Ownership
 
@@ -80,6 +80,11 @@ witness, cosigner keys, ...). It also rejects the legacy output tap trees that o
 wrote, which the wrapper repairs. No lint enforces this, so the plan, code and review steps must
 each check for it: any `fromPSBT` call that resolves to scure's class is a defect.
 
+## Review
+
+`REVIEW.md` holds the review priorities, severity, size limit and taste rules (overengineering,
+comments, tests, docs, PR descriptions). Self-review against it before opening a PR.
+
 ## Local Scratch Files
 
-`.gitignore` excludes `*.agents.md`, `TASKS.md`, `CLAUDE.md`, `REVIEW.md`, and `.claude/`. These are local scratch notes — drafts, review snapshots, AI session state — and are **not** authoritative project guidance. Authoritative guidance lives in this `AGENTS.md` (and the package READMEs); treat anything in an ignored file as transient context that may be stale or contradict the codebase.
+`.gitignore` excludes `*.agents.md`, `TASKS.md`, `CLAUDE.md`, and `.claude/`. These are local scratch notes — drafts, review snapshots, AI session state — and are **not** authoritative project guidance. Authoritative guidance lives in this `AGENTS.md` (and the package READMEs); treat anything in an ignored file as transient context that may be stale or contradict the codebase.

@@ -306,6 +306,8 @@ const wallet = await OnchainWallet.create(identity, 'bitcoin', provider)
 await provider.close()
 ```
 
+Where the network is only known at runtime (`Wallet.create`, or a service worker's `MessageBus`), pass a factory instead: `onchainProvider: (network) => new ElectrumOnchainProvider(new ElectrumWS(ELECTRUM_WS_URL[network]), networks[network])`. A `MessageBus` calls it on every init and never closes what it returns, so a worker should hand back one instance per network rather than a new connection each time.
+
 #### Atomic 1P1C package broadcast (TRUC / BIP 431)
 
 Both providers expose `broadcastTransaction(...txs)` that accepts either a single tx or a 1P1C package (parent first, child last). The package path is **atomic** — the parent doesn't have to independently meet mempool minfee, which is the point of TRUC relay.

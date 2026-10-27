@@ -11,6 +11,7 @@ import {
     type ArkProvider,
     type IndexerProvider,
     type OnchainProvider,
+    type ReadonlyWalletConfig,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
 import { FetchError } from "../src/utils/fetch";
@@ -324,12 +325,13 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             contractRepository: InMemoryContractRepository;
         },
         indexer: Partial<IndexerProvider> = {},
+        onchainProvider: ReadonlyWalletConfig["onchainProvider"] = {} as OnchainProvider,
     ) {
         return ReadonlyWallet.create({
             identity: await readonlyIdentity(),
             arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
             indexerProvider: { ...indexerStub(), ...indexer } as IndexerProvider,
-            onchainProvider: {} as OnchainProvider,
+            onchainProvider,
             storage: repos,
         });
     }
@@ -353,6 +355,29 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         expect(offline.arkAddress.encode()).toBe(onlineAddress);
         expect(offline.network).toEqual(online.network);
         expect(offline.dustAmount).toBe(online.dustAmount);
+    });
+
+    it("hands an onchain provider factory the network, from the cache when offline", async () => {
+        const repos = {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        };
+        await saveArkInfoSnapshot(repos.walletRepository, makeArkInfo(), 1);
+        const provider = {} as OnchainProvider;
+        const factory = vi.fn(() => provider);
+
+        const wallet = await createWallet(
+            async () => {
+                throw new ProviderUnavailableError("operator down");
+            },
+            repos,
+            {},
+            factory,
+        );
+
+        expect(wallet.serverInfoSource).toBe("cache");
+        expect(factory).toHaveBeenCalledWith("mutinynet");
+        expect(wallet.onchainProvider).toBe(provider);
     });
 
     it("fails with the typed unavailable error when offline with no cache", async () => {

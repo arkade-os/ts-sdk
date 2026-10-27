@@ -1094,9 +1094,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         const onchainProvider =
-            config.onchainProvider ||
-            resolvedService?.onchainProvider ||
-            new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
+            typeof config.onchainProvider === "function"
+                ? config.onchainProvider(info.network as NetworkName)
+                : config.onchainProvider ||
+                  resolvedService?.onchainProvider ||
+                  new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
 
         if (config.exitTimelock) {
             const { value, type } = config.exitTimelock;
