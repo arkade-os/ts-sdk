@@ -1,6 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, RestArkProvider, asset, type IWallet } from "@arkade-os/sdk";
+import {
+    ArkAddress,
+    ContractManager,
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+    RestArkProvider,
+    asset,
+    type Contract,
+    type IndexerProvider,
+    type IWallet,
+} from "@arkade-os/sdk";
 import {
     encodeOffer,
     offerContract,
@@ -20,8 +30,11 @@ const makerAddress =
 const SERVER_KEY = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const EMULATOR_KEY = hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27");
 const FUNDING_TXID = "ab".repeat(32);
+const ROTATED_KEY = "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
 
 const state = vi.hoisted(() => ({
+    signer: "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    rows: [] as { type: string; script: string; params: Record<string, string> }[],
     created: [] as Record<string, unknown>[],
     watched: [] as [string, string][],
     getInfoCalls: 0,
@@ -46,8 +59,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
             async getInfo() {
                 state.getInfoCalls++;
                 return {
-                    signerPubkey:
-                        "02" + "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+                    signerPubkey: "02" + state.signer,
                     checkpointTapscript,
                     network: "regtest",
                     unilateralExitDelay: BigInt(4096),
@@ -63,6 +75,8 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
 });
 
 const contractManager = {
+    getContracts: async ({ script }: { script: string[] }) =>
+        state.rows.filter((row) => script.includes(row.script)),
     createContract: async (params: Record<string, unknown>) => {
         state.created.push(params);
         return { ...params, state: "active", createdAt: 0 };
@@ -120,6 +134,8 @@ const restored = (offer: Offer, overrides: Partial<AssetSwap> = {}): AssetSwap =
 });
 
 beforeEach(() => {
+    state.signer = hex.encode(SERVER_KEY);
+    state.rows = [];
     state.created = [];
     state.watched = [];
     state.getInfoCalls = 0;
@@ -218,5 +234,109 @@ describe("restoreOfferCoverage", () => {
         expect(state.watched).toEqual([[hex.encode(good.swapPkScript), "watched"]]);
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
+    });
+
+    it("rebuilds with the operator key the stored row was funded under", async () => {
+        const offer = makeOffer();
+        const script = hex.encode(offer.swapPkScript);
+        state.signer = ROTATED_KEY;
+        // compressed on purpose: the stored key is normalized like the live one
+        state.rows = [
+            { type: "arkade", script, params: { serverKey: "02" + hex.encode(SERVER_KEY) } },
+        ];
+
+        await restoreOfferCoverage(wallet, [restored(offer)]);
+
+        expect(state.created).toHaveLength(1);
+        expect(state.created[0].script).toBe(script);
+        expect((state.created[0].params as Record<string, string>).serverKey).toBe(
+            hex.encode(SERVER_KEY),
+        );
+    });
+
+    it("falls back to the current signer when the offer has no row", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        state.signer = ROTATED_KEY;
+
+        await restoreOfferCoverage(wallet, [restored(makeOffer())]);
+
+        // funded under the old key, so the current one cannot rebuild it
+        expect(state.created).toEqual([]);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+    });
+});
+
+describe("restoreOfferCoverage over a Program v0 row", () => {
+    const indexer = {
+        getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+        subscribeForScripts: vi.fn().mockResolvedValue("sub"),
+        unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+        getSubscription: vi.fn(() => ({
+            [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
+        })),
+    } as unknown as IndexerProvider;
+
+    const managed = async (repository: InMemoryContractRepository) => {
+        const manager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository: repository,
+            walletRepository: new InMemoryWalletRepository(),
+        });
+        return {
+            manager,
+            wallet: { ...wallet, getContractManager: async () => manager } as unknown as IWallet,
+        };
+    };
+
+    it("replaces the row in place from the swap record", async () => {
+        const offer = makeOffer();
+        const script = hex.encode(offer.swapPkScript);
+        const scratch = await managed(new InMemoryContractRepository());
+        await restoreOfferCoverage(scratch.wallet, [restored(offer)]);
+        const [v1] = await scratch.manager.getContracts({ script });
+        await scratch.manager.dispose();
+
+        // the same row as an SDK that wrote Program v0 left it
+        const program = JSON.parse(v1.params.program);
+        const v0: Contract = {
+            ...v1,
+            params: { ...v1.params, program: JSON.stringify({ ...program, version: 0 }) },
+            createdAt: 1,
+        };
+        const repository = new InMemoryContractRepository();
+        await repository.saveContract(v0);
+        const { manager, wallet: restoring } = await managed(repository);
+        expect(await manager.getUnsupportedContracts()).toEqual([v0]);
+
+        await restoreOfferCoverage(restoring, [restored(offer)]);
+
+        expect(await manager.getContracts({ script })).toEqual([{ ...v1, createdAt: 1 }]);
+        expect(await manager.getUnsupportedContracts()).toEqual([]);
+        await manager.dispose();
+    });
+
+    it("leaves a v0 row whose every record has settled alone", async () => {
+        const offer = makeOffer();
+        const script = hex.encode(offer.swapPkScript);
+        const v0: Contract = {
+            type: "arkade",
+            params: {
+                program: JSON.stringify({ version: 0, functions: {} }),
+                serverKey: hex.encode(SERVER_KEY),
+            },
+            script,
+            address: "ark1v0",
+            state: "active",
+            createdAt: 1,
+        };
+        const repository = new InMemoryContractRepository();
+        await repository.saveContract(v0);
+        const { manager, wallet: restoring } = await managed(repository);
+
+        await restoreOfferCoverage(restoring, [restored(offer, { status: "fulfilled" })]);
+
+        expect(await manager.getContracts({ script })).toEqual([v0]);
+        await manager.dispose();
     });
 });

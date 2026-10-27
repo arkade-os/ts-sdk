@@ -539,7 +539,7 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
-import type { ArkadeContractParams } from "./arkade/program";
+import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -891,6 +891,7 @@ export {
     outpointReasons,
     logExcludedVtxos,
     UnannotatableInputError,
+    UnsupportedProgramVersionError,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,

@@ -495,6 +495,16 @@ export async function restoreOfferCoverage(
     ]);
     const operatorPubkey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const client = await derivingClient(wallet, info, contractManager);
+    // A stored row keeps the operator key its offer was funded under, which outlives a signer
+    // rotation; its `serverKey` is plain hex, readable even when its program is not.
+    const rows = await contractManager.getContracts({
+        script: live.map((swap) => swap.swapPkScript),
+    });
+    const fundedKey = new Map(
+        rows
+            .filter((row) => row.type === "arkade" && row.params.serverKey)
+            .map((row) => [row.script, row.params.serverKey]),
+    );
     const seen = new Set<string>();
     const covenants = [];
     for (const swap of live) {
@@ -502,6 +512,7 @@ export async function restoreOfferCoverage(
         seen.add(swap.swapPkScript);
         try {
             const { swapPkScript: _, ...binding } = decodeOffer(hex.decode(swap.offerHex));
+            const stored = fundedKey.get(swap.swapPkScript);
             covenants.push({
                 script: swap.swapPkScript,
                 issued: swap.createdAt,
@@ -509,7 +520,7 @@ export async function restoreOfferCoverage(
                 params: offerContractParams(
                     client,
                     binding,
-                    operatorPubkey,
+                    stored ? hex.decode(toXOnlySignerHex(stored)) : operatorPubkey,
                     hex.decode(swap.swapPkScript),
                 ),
             });

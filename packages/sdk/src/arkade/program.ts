@@ -170,6 +170,24 @@ export interface ArkadeFunction {
 /** Supported normalized Program version. */
 export const SUPPORTED_PROGRAM_VERSION = 1;
 
+/**
+ * A Program written for a version this SDK cannot read. Typed so a stored row in that format is
+ * reported as unsupported rather than broken: its script stays unknown until it is recovered with
+ * an SDK that reads that version, or re-created from fresh params.
+ */
+export class UnsupportedProgramVersionError extends Error {
+    readonly name = "UnsupportedProgramVersionError";
+    constructor(
+        readonly version: unknown,
+        context: string,
+    ) {
+        super(
+            `${context}: unsupported program version ${String(version)}; this SDK supports version ${SUPPORTED_PROGRAM_VERSION}. ` +
+                `Recover it with an SDK that reads version ${String(version)}, re-create it with current params, or delete it.`,
+        );
+    }
+}
+
 /** An Arkade contract program (hand-written or compiler-emitted). */
 export interface Program {
     version: number;
@@ -485,9 +503,7 @@ function compileFunctions(
     keys: ProgramKeys,
 ): Omit<CompiledProgramFunction, "tapLeafScript">[] {
     if (program.version !== SUPPORTED_PROGRAM_VERSION) {
-        throw new Error(
-            `ArkadeContract: unsupported program version ${program.version} — this SDK supports version ${SUPPORTED_PROGRAM_VERSION}`,
-        );
+        throw new UnsupportedProgramVersionError(program.version, "ArkadeContract");
     }
     const functions: Record<string, ArkadeFunction> = program.functions;
     const names = Object.keys(functions);
@@ -644,9 +660,7 @@ export function parseArtifact(artifact: {
         typeof v === "string" && v.startsWith("$") ? v : BigInt(v as string | number);
 
     if (artifact.version !== undefined && artifact.version !== SUPPORTED_PROGRAM_VERSION) {
-        throw new Error(
-            `parseArtifact: unsupported program version ${artifact.version}; expected ${SUPPORTED_PROGRAM_VERSION}`,
-        );
+        throw new UnsupportedProgramVersionError(artifact.version, "parseArtifact");
     }
     const declarations: unknown[] = [artifact.params];
     for (const [name, fn] of Object.entries(artifact.functions as Record<string, any>)) {

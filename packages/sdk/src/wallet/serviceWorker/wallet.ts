@@ -104,6 +104,8 @@ import {
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
+    RequestGetUnsupportedContracts,
+    ResponseGetUnsupportedContracts,
     RequestSend,
     RequestSendWithDeadline,
     RequestSendWithInputExpiryFloor,
@@ -268,6 +270,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
     GET_ALL_SPENDING_PATHS: 20_000,
+    GET_UNSUPPORTED_CONTRACTS: 20_000,
     GET_ASSET_DETAILS: 20_000,
     GET_EXPIRING_VTXOS: 20_000,
     GET_EXPIRED_BOARDING_UTXOS: 20_000,
@@ -341,6 +344,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
+    "GET_UNSUPPORTED_CONTRACTS",
     "GET_ASSET_DETAILS",
     "GET_EXPIRING_VTXOS",
     "RELOAD_WALLET",
@@ -1624,6 +1628,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return (response as ResponseGetAllSpendingPaths).payload.paths;
                 } catch (cause) {
                     throw new Error(`Failed to get all spending paths: ${cause}`, { cause });
+                }
+            },
+
+            async getUnsupportedContracts(): Promise<Contract[]> {
+                const message: RequestGetUnsupportedContracts = {
+                    type: "GET_UNSUPPORTED_CONTRACTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetUnsupportedContracts).payload.contracts;
+                } catch (cause) {
+                    throw new Error(`Failed to get unsupported contracts: ${cause}`, { cause });
                 }
             },
 
