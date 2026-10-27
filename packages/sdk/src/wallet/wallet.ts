@@ -1065,7 +1065,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const resolvedService = config.service
             ? await resolveArkadeService(config.service, { arkProvider, info })
             : undefined;
-        indexerProvider ??= resolvedService!.indexerProvider;
+        if (!indexerProvider) {
+            if (!resolvedService) throw new Error("indexerProvider is unresolved");
+            indexerProvider = resolvedService.indexerProvider;
+        }
 
         const network = networkFromArkadeInfo(info);
 
