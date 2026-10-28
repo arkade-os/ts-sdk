@@ -45,7 +45,7 @@ import {
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../refundBlocked";
 import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
-import { isRfqSwapTerminal } from "../rfqSwapState";
+import { isRfqSwapRestorable, isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps, toRestoreTx } from "../restore";
 import { preimageForSwapRecord } from "../store";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
@@ -330,12 +330,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 storage(),
                 remember,
                 // Terminal records stay readable but are excluded from the manager's read, sparing
-                // a rebuild per record just to file it `finished`. The index still learns their
-                // `rfqId` (see `getRfqSwapsPage`).
-                (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
+                // a rebuild per record just to file it `finished`, except a refunded send restore
+                // re-reads. The index still learns their `rfqId` (see `getRfqSwapsPage`).
+                (r) => !undrivable.has(r.id) && isRfqSwapRestorable(r),
             )),
             storage(),
-            (r) => !undrivableLegacy.has(r.rfqId) && !isRfqSwapTerminal(r.state),
+            (r) => !undrivableLegacy.has(r.rfqId) && isRfqSwapRestorable(r),
         ));
 
     // ── the outcome ──────────────────────────────────────────────────────────
@@ -973,7 +973,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
 
         // Terminal records stay in `records` (readable, replayed) but are never driven.
-        const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
+        const liveCorridor = corridor.filter(isRfqSwapRestorable);
         const store = corridorStore();
         for (const record of liveCorridor) store.index(record);
         // LEGACY(v1)

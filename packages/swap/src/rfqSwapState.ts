@@ -69,3 +69,19 @@ export const RFQ_SWAP_ACTIVE_STATES = [
 /** Whether `CorridorSwapRecord.state` ends the swap. */
 export const isRfqSwapTerminal = (state: RfqSwapState): boolean =>
     (RFQ_SWAP_TERMINAL_STATES as readonly string[]).includes(state);
+
+/** A `refunded` Lightning send with no refund of ours on record: a misread chain
+ * read could have ended a settled send this way, so restore re-reads it once. */
+export const isRecheckableRefundedSend = (record: {
+    kind: string;
+    state: RfqSwapState;
+    refundTxid?: string;
+}): boolean =>
+    record.kind === "lightning_send" && record.state === "refunded" && !record.refundTxid;
+
+/** Whether restore should hand a stored record to the manager. */
+export const isRfqSwapRestorable = (record: {
+    kind: string;
+    state: RfqSwapState;
+    refundTxid?: string;
+}): boolean => !isRfqSwapTerminal(record.state) || isRecheckableRefundedSend(record);

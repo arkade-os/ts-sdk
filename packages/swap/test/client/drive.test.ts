@@ -1739,6 +1739,31 @@ describe("the drive's own record write", () => {
 });
 
 describe("the settlement receipt", () => {
+    it("corrects a stored refunded send whose lockup reads claimed", async () => {
+        const spend = claimSpend();
+        const h = await build({
+            records: [settleable({ fundingTxid: "aa".repeat(32), state: "refunded" })],
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+        });
+
+        const stored = (await h.repository.getSwapRecord("q1")) as CorridorSwapRecord;
+        expect(stored.state).toBe("settled");
+        expect(stored.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+        expect(h.drive.swap("q1")?.outcome).toBe("paid");
+        expect(h.outcomes("q1")).toEqual(["paid"]);
+        await h.drive.dispose();
+    });
+
+    it("leaves a stored refunded send alone when its lockup does not read claimed", async () => {
+        const record = settleable({ fundingTxid: "aa".repeat(32), state: "refunded" });
+        const h = await build({ records: [record], vtxos: unspent() });
+
+        expect(await h.repository.getSwapRecord("q1")).toEqual(record);
+        expect(h.outcomes("q1")).toEqual(["refunded"]);
+        await h.drive.dispose();
+    });
+
     it("stamps the preimage that settled a send onto the stored record", async () => {
         // Driven, not seeded: the receipt is learned from the witness the fate
         // read verifies, and only the real pass exercises the path from that

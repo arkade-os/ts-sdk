@@ -65,7 +65,12 @@ import {
 } from "./rfqRecord";
 import { RefundNotLocallyPossibleError } from "./refundBlocked";
 import { LOCKUP_RETIRABLE } from "./coverage";
-import { RFQ_SWAP_ACTIVE_STATES, isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
+import {
+    RFQ_SWAP_ACTIVE_STATES,
+    isRecheckableRefundedSend,
+    isRfqSwapTerminal,
+    type RfqSwapState,
+} from "./rfqSwapState";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -782,10 +787,7 @@ export class RfqSwapManager {
             // A misread could have ended a settled send as refunded. One chain read per
             // restore corrects it; any other answer leaves the record untouched.
             const recheckRefundedSend =
-                !options.includeTerminal &&
-                record.kind === "lightning_send" &&
-                record.state === "refunded" &&
-                !record.refundTxid;
+                !options.includeTerminal && isRecheckableRefundedSend(record);
             if (!options.includeTerminal && isRfqSwapTerminal(record.state) && !recheckRefundedSend)
                 return;
             // The live object is at least as fresh as storage: a poll can move it
