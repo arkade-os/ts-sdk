@@ -150,7 +150,8 @@ style and have not been backfilled.
   `returned` read is not final and the swap stays monitored. A `refunded` send
   stored without a refund txid can now be re-read with
   `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
-  the background after `ready`. It moves the send to `settled` if the lockup
+  the background after `ready`, without holding up new swaps or `dispose()`.
+  It moves the send to `settled` if the lockup
   now reads claimed; any other read leaves it as is.
 
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**

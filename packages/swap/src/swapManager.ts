@@ -829,15 +829,17 @@ export class RfqSwapManager {
     /**
      * Re-read stored `refunded` Lightning sends with no refund txid, one at a time. A misread
      * could have ended a settled send this way: a `claimed` read settles the record, any other
-     * answer, or a failure, leaves it untouched. Returns the swaps it settled.
+     * answer, or a failure, leaves it untouched. Returns the swaps it settled. `stopped` is
+     * checked before each record and before each write, so a caller can walk away mid-run.
      */
     async recheckRefundedSends(
-        options: Pick<RfqRestoreOptions, "params"> = {},
+        options: Pick<RfqRestoreOptions, "params"> & { stopped?: () => boolean } = {},
     ): Promise<RfqSwap[]> {
         const repository = this.requireRepository("recheckRefundedSends");
         const params = options.params ?? this.paramsFromContracts();
         const settled: RfqSwap[] = [];
         for (const record of await collectRfqSwaps(repository, { state: "refunded" })) {
+            if (options.stopped?.()) break;
             if (!isRecheckableRefundedSend(record) || this.monitored.has(record.rfqId)) continue;
             const removedAt = this.removed.get(record.rfqId);
             try {
@@ -846,6 +848,7 @@ export class RfqSwapManager {
                     swapPkScript: swap.lockupPkScript,
                     paymentHash: swap.paymentHash,
                 });
+                if (options.stopped?.()) break;
                 if (fate.fate !== "claimed") continue;
                 if (this.monitored.has(record.rfqId)) continue;
                 if (this.removed.get(record.rfqId) !== removedAt) continue;

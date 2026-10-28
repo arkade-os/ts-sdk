@@ -273,6 +273,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const inFlight = new Set<Promise<unknown>>();
     let queue: Promise<void> = Promise.resolve();
+    /** The refunded-send re-read: off `queue`, so a hung read never holds a registration. */
+    let recheck: Promise<void> | undefined;
 
     const track = <T>(work: Promise<T>): Promise<T> => {
         inFlight.add(work);
@@ -297,6 +299,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         do {
             await queue;
             await Promise.allSettled([...inFlight]);
+            // Not after dispose: a hung read must not hold it, and it writes nothing past it.
+            if (!disposed) await recheck;
             await watcher?.idle();
         } while (inFlight.size > 0);
     };
@@ -1037,17 +1041,18 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
         // Again after: `funding -> funded` is an observation change with no manager transition.
         emitAll();
-        // Off `ready`: one indexer read per record, so a slow indexer never holds it up.
+        // Off `ready` and off `queue`: one indexer read per record, so a slow indexer holds
+        // up neither `ready` nor a new swap's registration.
         if (mode !== "readonly" && recheckable.length > 0) {
-            enqueue(async () => {
+            recheck = (async () => {
                 try {
                     await contractsOf();
                     managerDeps.repository = store;
-                    await manager.recheckRefundedSends();
+                    await manager.recheckRefundedSends({ stopped: () => disposed });
                 } catch (error) {
                     console.warn("[swap] the refunded send re-read did not complete", error);
                 }
-            });
+            })();
         }
     };
 

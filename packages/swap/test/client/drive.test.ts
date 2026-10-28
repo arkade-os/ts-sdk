@@ -139,6 +139,8 @@ interface Harness {
     readonly resolved: string[];
     readonly seen: SwapUpdate[];
     readonly recoveries: number[];
+    /** Every indexer `getVtxos` read so far. */
+    vtxoCalls(): number;
     /** From now on, every indexer read throws. */
     failIndexer(): void;
     outcomes(id: string): string[];
@@ -200,13 +202,14 @@ const build = async (
         ...(over.indexerFails ? { fail: true } : {}),
         ...(over.indexerGate === undefined ? {} : { gate: over.indexerGate }),
     };
+    const indexer = fakeIndexer(indexerState);
     const drive = createSwapDrive({
         wallet,
         repository,
         corridors,
         network: async () => "regtest",
         operator: fakeOperator(over.gate),
-        indexer: fakeIndexer(indexerState),
+        indexer,
         contracts,
         ...(over.mode === undefined ? {} : { mode: over.mode }),
         now: () => over.now ?? BEFORE,
@@ -231,6 +234,7 @@ const build = async (
         resolved: corridors.resolved,
         seen,
         recoveries,
+        vtxoCalls: () => indexer.vtxoCalls,
         failIndexer: () => {
             indexerState.fail = true;
         },
@@ -1778,6 +1782,52 @@ describe("the settlement receipt", () => {
         await h.drive.idle();
         expect(h.outcomes("q1")).toEqual(["refunded", "paid"]);
         await h.drive.dispose();
+    });
+
+    it("registers a newly accepted swap while the re-read is held", async () => {
+        let release!: () => void;
+        const h = await build({
+            records: [settleable({ fundingTxid: "aa".repeat(32), state: "refunded" })],
+            vtxos: unspent(),
+            indexerGate: new Promise((resolve) => {
+                release = resolve;
+            }),
+            ready: false,
+        });
+        await h.drive.ready;
+        await vi.waitFor(() => expect(h.vtxoCalls()).toBe(1));
+
+        const record = signable({ id: "q2", rfqId: "rfq-2", fundingTxid: "bb".repeat(32) });
+        await h.repository.saveSwapRecord(record);
+        h.drive.adopt(record);
+
+        // The new swap's first poll reaches the indexer before the re-read returns.
+        await vi.waitFor(() => expect(h.vtxoCalls()).toBe(2));
+        release();
+        await h.drive.dispose();
+    });
+
+    it("does not hold dispose on a hung re-read, and writes nothing after it", async () => {
+        let release!: () => void;
+        const spend = claimSpend();
+        const record = settleable({ fundingTxid: "aa".repeat(32), state: "refunded" });
+        const h = await build({
+            records: [record],
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+            indexerGate: new Promise((resolve) => {
+                release = resolve;
+            }),
+            ready: false,
+        });
+        await h.drive.ready;
+        await vi.waitFor(() => expect(h.vtxoCalls()).toBe(1));
+
+        await h.drive.dispose();
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(await h.repository.getSwapRecord("q1")).toEqual(record);
     });
 
     it("leaves a stored refunded send alone when its lockup does not read claimed", async () => {
