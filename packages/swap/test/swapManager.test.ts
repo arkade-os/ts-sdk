@@ -161,7 +161,7 @@ const FILL: ChainUtxo = {
  */
 const spendOfLockup = (
     over: {
-        leaf?: "claim" | "refundWithoutReceiver";
+        leaf?: "claim" | "refundWithoutReceiver" | "nonInteractiveRefund";
         conditionWitness?: Uint8Array[];
         finalWitness?: Uint8Array[];
         /** Which covenant was spent — the send lockup unless a receive test
@@ -171,7 +171,11 @@ const spendOfLockup = (
 ): { txid: string; psbt: string } => {
     const script = over.script ?? LOCKUP;
     const leaf =
-        over.leaf === "refundWithoutReceiver" ? script.refundWithoutReceiver() : script.claim();
+        over.leaf === "refundWithoutReceiver"
+            ? script.refundWithoutReceiver()
+            : over.leaf === "nonInteractiveRefund"
+              ? script.nonInteractiveRefund()[0]
+              : script.claim();
     const { checkpoints } = buildOffchainTx(
         [
             {
@@ -1148,6 +1152,22 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
         expect(s.refunds).toHaveLength(0);
     });
 
+    it("finalizes a nonInteractiveRefund observed before the locktime", async () => {
+        // The one leaf the solver can push alone before the locktime.
+        const spend = spendOfLockup({ leaf: "nonInteractiveRefund" });
+        const swap = lightningSwap({
+            lockup: { script: LOCKUP, address: LOCKUP.address("tark", key(3)).encode() },
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("refunded");
+    });
+
     it("ignores a preimage attached to a spend of somebody else's outpoint", async () => {
         // The witness only counts when it is on the input that spends OUR
         // lockup output; a tx that reveals P against a different outpoint says
@@ -2088,7 +2108,10 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.refundTxid).toBeUndefined();
     });
 
-    it("keeps an unreadable lockup monitored beyond the lag window", async () => {
+    it("holds the wait open through the lag window and ends it at the deadline", async () => {
+        // The wait has to end. Every pass inside the window re-asks and decides
+        // nothing, and the deadline is what closes it, so a lockup that never
+        // becomes readable cannot keep a swap monitored forever.
         let now = REFUND_LOCKTIME + 1;
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
@@ -2107,9 +2130,8 @@ describe("RfqSwapManager — the lightning-send leg", () => {
 
         await m.poll();
 
-        expect(swap.state).toBe("pending");
+        expect(swap.state).toBe("refunded");
         expect(swap.refundTxid).toBeUndefined();
-        expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
     it("let the settlement show late instead of recording it as a refund", async () => {
@@ -4522,11 +4544,12 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
         });
 
-        it("rechecks a refunded lightning send without a refund txid on restore", async () => {
+        it("corrects a refunded send without a refund txid that reads claimed", async () => {
             const store = fakeStore([
                 storedSend({
                     state: "refunded",
                     lockupSpendTxids: ["cc".repeat(32)],
+                    updatedAt: 1,
                 }),
             ]);
             const m = manager({
@@ -4536,18 +4559,50 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 now: SAFE_NOW,
                 spies: spies(),
             });
+            const states: RfqSwapState[] = [];
+            m.onSwapUpdate((updated) => states.push(updated.state));
 
             const result = await m.restoreFromRepository();
-            const [swap] = result.restored;
 
-            expect(result.restored).toHaveLength(1);
-            expect(swap?.state).toBe("pending");
-            expect(swap?.lockupSpendTxids).toBeUndefined();
-            await m.poll();
-
-            expect(swap?.state).toBe("settled");
+            expect(result.restored).toEqual([]);
+            expect(states).toEqual(["settled"]);
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
             expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        });
+
+        it.each([
+            [
+                "a refund",
+                () => {
+                    const refund = spendOfLockup({ leaf: "refundWithoutReceiver" });
+                    return fakeIndexer({ vtxos: spentBy(refund.txid), txs: [refund] });
+                },
+            ],
+            ["nothing", () => fakeIndexer({ vtxos: [] })],
+        ])("leaves a refunded send alone when the lockup reads %s", async (_, indexer) => {
+            const stored = storedSend({
+                state: "refunded",
+                lockupSpendTxids: ["cc".repeat(32)],
+                updatedAt: 1,
+            });
+            const store = fakeStore([stored]);
+            const m = manager({
+                indexer: indexer(),
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            const states: RfqSwapState[] = [];
+            m.onSwapUpdate((updated) => states.push(updated.state));
+
+            await m.restoreFromRepository();
+            await m.restoreFromRepository();
+
+            expect(states).toEqual([]);
+            expect(store.records.get(RFQ_ID)).toEqual(stored);
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
         });
 
         it("never replaces a live swap when paging returns it again", async () => {

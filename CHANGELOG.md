@@ -142,10 +142,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **`@arkade-os/swap` keeps uncertain Lightning sends recoverable.** A
-  pre-locktime refund verdict and an empty refund attempt no longer end a
-  send as `refunded`; restored refunded sends without a refund txid are
-  rechecked so a later verified claim can settle them.
+- **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
+  on a misread.** A `returned` lockup read before `refundLocktime` was final,
+  so an indexer read missing the solver's preimage ended a paid send as
+  `refunded` for good (#1105). Before the locktime the only refund the solver
+  can push alone is `nonInteractiveRefund`, so any other pre-locktime
+  `returned` read is not final and the swap stays monitored. A `refunded` send
+  stored without a refund txid is re-read once on restore and moved to
+  `settled` if the lockup now reads claimed; any other read leaves it as is.
 
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**
   `restoreOfferCoverage` rebuilt every live offer with the current signer, so

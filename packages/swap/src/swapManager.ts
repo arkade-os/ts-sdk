@@ -779,6 +779,8 @@ export class RfqSwapManager {
         const restored: RfqSwap[] = [];
         const failed: RfqRestoreFailure[] = [];
         const restore = async (record: RfqSwapRecord) => {
+            // A misread could have ended a settled send as refunded. One chain read per
+            // restore corrects it; any other answer leaves the record untouched.
             const recheckRefundedSend =
                 !options.includeTerminal &&
                 record.kind === "lightning_send" &&
@@ -804,14 +806,24 @@ export class RfqSwapManager {
                 });
                 return;
             }
+            if (recheckRefundedSend) {
+                const fate = await readLockupFate(this.deps.indexer, {
+                    swapPkScript: swap.lockupPkScript,
+                    paymentHash: swap.paymentHash,
+                }).catch(() => undefined);
+                if (fate?.fate !== "claimed") return;
+                if (this.monitored.has(record.rfqId)) return;
+                if (this.removed.get(record.rfqId) !== removedAt) return;
+                this.stampLockupSpends(swap, fate.spends);
+                this.stampSettlementPreimage(swap, fate.preimage);
+                this.setState(swap, "settled");
+                await this.save(swap);
+                this.dirty.delete(swap.rfqId);
+                return;
+            }
             if (this.monitored.has(record.rfqId)) return;
             if (this.removed.get(record.rfqId) !== removedAt) return;
             this.removed.delete(record.rfqId);
-            if (recheckRefundedSend) {
-                delete swap.lockupSpendTxids;
-                this.setState(swap, "pending");
-                this.finished.delete(swap.rfqId);
-            }
             if (isRfqSwapTerminal(swap.state)) this.rememberFinished(swap, true);
             else {
                 this.origins.set(record.rfqId, rfqSwapOriginOf(record));
@@ -1283,12 +1295,16 @@ export class RfqSwapManager {
             // Transient by assumption; the remaining steps are gated on absolute timelocks.
             fate = { fate: "unknown" };
         }
-        // A trader cannot spend the refund leaf before this absolute timelock. A
-        // pre-locktime `returned` verdict is an indexer read that can still change.
+        // Before the locktime the only refund the solver can push alone is
+        // `nonInteractiveRefund`. Any other pre-locktime `returned` verdict is an
+        // indexer read that can still change, so it is not final yet.
         if (
             swap.kind === "lightning_send" &&
             fate.fate === "returned" &&
-            this.config.now() < swap.refundLocktime
+            this.config.now() < swap.refundLocktime &&
+            !fate.leafScripts.every(
+                (script) => script === swap.lockup?.script.nonInteractiveRefundScript,
+            )
         ) {
             fate = { fate: "unknown" };
         }
@@ -1841,11 +1857,13 @@ export class RfqSwapManager {
                 swap.refundTxid = pushed.txid;
                 this.touch(swap);
                 if (pushed.left) return;
-            } else if (!swap.refundTxid) {
-                // `null` (nothing to return) is never proof the money came home. Keep
-                // reading the lockup; an indexer may still reveal a late settlement.
+            } else if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
+                // `null` (nothing to return) is not proof the money came home: ending now could
+                // record a late settlement as a refund. Wait for step 1 to see the spend.
                 return;
             }
+            // Past the deadline a settlement that only appears later is recorded as a
+            // refund; that is the cost of ending the wait at all.
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {

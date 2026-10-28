@@ -238,8 +238,9 @@ export type LockupFate =
     | { fate: "open" }
     /** Spent by a witness carrying a preimage that HASHES to the quote's `payment_hash`. */
     | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
-    /** Every lockup output was spent through a recognized refund leaf. */
-    | { fate: "returned"; spends: readonly LockupSpend[] }
+    /** Every lockup output was spent through a recognized refund leaf. `leafScripts` are
+     * the distinct leaf scripts spent, hex. */
+    | { fate: "returned"; spends: readonly LockupSpend[]; leafScripts: readonly string[] }
     /**
      * At least one output was unilaterally exited: onchain under the VHTLC script, beyond any
      * offchain claim or refund. Not terminal and not a loss (`completeUnroll` plus an onchain
@@ -264,7 +265,8 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
     ...(tx.getInput(inputIndex).finalScriptWitness ?? []),
 ];
 
-const spendsRefundLeaf = (tx: Transaction, inputIndex: number): boolean => {
+/** The refund leaf script an input spends, if it spends one. */
+const refundLeafScript = (tx: Transaction, inputIndex: number): Uint8Array | undefined => {
     const input = tx.getInput(inputIndex);
     const witness = input.finalScriptWitness;
     const leaves = input.tapLeafScript ?? [];
@@ -274,12 +276,14 @@ const spendsRefundLeaf = (tx: Transaction, inputIndex: number): boolean => {
             : leaves.length === 1
               ? scriptFromTapLeafScript(leaves[0])
               : undefined;
-    if (!script) return false;
+    if (!script) return undefined;
     try {
         const { type } = decodeTapscript(script);
-        return type === "multisig" || type === "csv-multisig" || type === "cltv-multisig";
+        return type === "multisig" || type === "csv-multisig" || type === "cltv-multisig"
+            ? script
+            : undefined;
     } catch {
-        return false;
+        return undefined;
     }
 };
 
@@ -350,6 +354,7 @@ export async function readLockupFate(
     const spends = [...spentBy.values()];
     const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
     const refunded = new Set<string>();
+    const leafScripts = new Set<string>();
     for (const raw of txs) {
         let tx: Transaction;
         try {
@@ -373,13 +378,17 @@ export async function readLockupFate(
                     return { fate: "claimed", preimage: candidate, spends };
                 }
             }
-            if (spendsRefundLeaf(tx, i)) refunded.add(`${vtxo.txid}:${vtxo.vout}`);
+            const leafScript = refundLeafScript(tx, i);
+            if (leafScript) {
+                refunded.add(`${vtxo.txid}:${vtxo.vout}`);
+                leafScripts.add(hex.encode(leafScript));
+            }
         }
     }
 
     if (sweptLeft) return { fate: "open" };
     return everySpendNamed && all.every((vtxo) => refunded.has(`${vtxo.txid}:${vtxo.vout}`))
-        ? { fate: "returned", spends }
+        ? { fate: "returned", spends, leafScripts: [...leafScripts] }
         : { fate: "unknown" };
 }
 
