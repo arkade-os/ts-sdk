@@ -794,7 +794,7 @@ describe("ArkadeContract — extended features", () => {
         expect(arkProvider.finalizeTx).toHaveBeenCalled();
     });
 
-    it("refuses a server-only leaf in a tapscript-only spend, before signing", async () => {
+    it("refuses a server-only leaf without a covenant, before signing", async () => {
         const { identity, sign } = mockIdentity();
         const COIN2 = mintCoin(5_000);
         const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN, COIN2]);
@@ -819,7 +819,14 @@ describe("ArkadeContract — extended features", () => {
             },
             {},
         );
+        const htlc = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        const refused = /serverOnly: a leaf without a covenant needs the user's signature/;
 
+        // Next to a user-signed leaf (arkd path) and next to a covenant (emulator path).
         await expect(
             c.functions
                 .cooperative()
@@ -827,9 +834,18 @@ describe("ArkadeContract — extended features", () => {
                 .from(COIN2, c.unlock.serverOnly())
                 .to(p2tr(receiver), 15_000n)
                 .send(),
-        ).rejects.toThrow(/serverOnly: a tapscript-only spend needs the user's signature/);
+        ).rejects.toThrow(refused);
+        await expect(
+            htlc.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(COIN)
+                .from(COIN2, c.unlock.serverOnly())
+                .to(p2tr(receiver), 15_000n)
+                .send(),
+        ).rejects.toThrow(refused);
         expect(sign).not.toHaveBeenCalled();
         expect(arkProvider.submitTx).not.toHaveBeenCalled();
+        expect(emulator.submitTx).not.toHaveBeenCalled();
     });
 
     it("requires a change output for surplus, and appends it when set (fix #4)", async () => {

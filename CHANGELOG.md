@@ -153,10 +153,10 @@ style and have not been backfilled.
   returns checkpoints without the condition witness, so finalizing failed with
   `INVALID_SIGNATURE`. The builder now adds it back after signing.
 
-- **A tapscript-only `send()` refuses a server-only leaf before signing.**
+- **`send()` refuses a server-only leaf without a covenant, before signing.**
   arkd rejects an input that only the server signs (`missing tapscript spend
-  sig`), and the identity could not sign its checkpoint either. `send()` now
-  says so up front, naming the function.
+  sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
+  says so up front, naming the function, whichever route the spend takes.
 
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**
   `restoreOfferCoverage` rebuilt every live offer with the current signer, so
