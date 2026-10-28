@@ -113,12 +113,6 @@ export interface BaseWalletConfig {
      * the default relaxes a fund-safety bound; intended for local testing.
      */
     minBatchExpirySeconds?: bigint;
-    /**
-     * Minimum accepted checkpoint exit delay decoded from `ArkadeInfo.checkpointTapscript`, as
-     * wall-clock seconds. Defaults per network (`defaultCheckpointExitDelayPolicy`, which already
-     * accepts hosted signet/mutinynet). Lowering it relaxes a fund-safety bound; for local testing.
-     */
-    minCheckpointExitDelaySeconds?: bigint;
     /** Repository-backed storage configuration overrides. Defaults to IndexedDB if unset. */
     storage?: StorageConfig;
     /**

@@ -33,8 +33,8 @@ export const toSeconds = (t: RelativeTimelock): bigint =>
 
 /**
  * Check an already-typed server-supplied relative timelock against `policy`. `label` names the
- * value in messages; `overrideOption` names the wallet-config option that lowers this floor, and
- * a floor rejection quotes the value that would pass.
+ * value in messages; `overrideOption`, when the floor is configurable, names the wallet-config
+ * option that lowers it, and a floor rejection then quotes the value that would pass.
  *
  * @throws {ServerResponseMismatchError} if the timelock is out of policy.
  */
@@ -42,7 +42,7 @@ export function assertTimelockInPolicy(
     timelock: RelativeTimelock,
     policy: TimelockFloorPolicy,
     label: string,
-    overrideOption: string,
+    overrideOption?: string,
 ): RelativeTimelock {
     if (policy.requireSeconds && timelock.type === "blocks") {
         // No override named: `requireSeconds` is not settable through wallet config.
@@ -53,10 +53,12 @@ export function assertTimelockInPolicy(
 
     const seconds = toSeconds(timelock);
     if (seconds < policy.minSeconds) {
+        const remedy = overrideOption
+            ? `; pass ${overrideOption}: ${seconds}n to Wallet.create to lower it`
+            : "";
         throw new ServerResponseMismatchError(
             `${label} rejected: ${timelock.value} ${timelock.type} is below the ` +
-                `${policy.minSeconds}s floor; pass ${overrideOption}: ${seconds}n to ` +
-                `Wallet.create to lower it`,
+                `${policy.minSeconds}s floor${remedy}`,
         );
     }
 

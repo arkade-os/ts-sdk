@@ -422,9 +422,9 @@ describe("pushRefundWithoutReceiver", () => {
 
     describe("the checkpoint script the operator hands out is gated", () => {
         // Sweepable checkpoints, so every refusal must land before anything is signed or sent.
-        it("refuses a checkpoint exit delay below the network's floor", async () => {
+        it("refuses a checkpoint exit delay below the floor", async () => {
             const operator = fakeOperator({
-                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
             });
             await expect(
                 pushRefundWithoutReceiver(operator, {
