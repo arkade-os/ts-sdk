@@ -75,7 +75,12 @@ import {
     submitViaEmulator,
     type ArkTxInput,
 } from "../utils/arkTransaction";
-import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
+import {
+    ConditionWitness,
+    getArkPsbtFields,
+    PrevArkTxField,
+    setArkPsbtField,
+} from "../utils/unknownFields";
 import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
@@ -1076,7 +1081,6 @@ export class ArkadeTransactionBuilder {
 
         // Pure-tapscript path → arkd directly: sign the ark tx, submit UNSIGNED checkpoints, then
         // sign the server-returned checkpoints and finalize.
-        // NOTE: not yet covered by integration tests.
         if (!client.identity) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
@@ -1095,9 +1099,15 @@ export class ArkadeTransactionBuilder {
         assertSubmittedArkTxid(res, signedArk, "submitTx");
         const matched = matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "submitTx");
         const finalCps = await Promise.all(
-            matched.map(async ({ server }) =>
-                base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
-            ),
+            matched.map(async ({ server, local }) => {
+                const signed = await client.identity!.sign(server, [0]);
+                // arkd returns checkpoints without the condition witness; finalize needs it back.
+                const [condition] = getArkPsbtFields(local, 0, ConditionWitness);
+                if (condition && getArkPsbtFields(signed, 0, ConditionWitness).length === 0) {
+                    setArkPsbtField(signed, 0, ConditionWitness, condition);
+                }
+                return base64.encode(signed.toPSBT());
+            }),
         );
         await ark.finalizeTx(res.arkTxid, finalCps);
         return {

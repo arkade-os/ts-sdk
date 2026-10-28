@@ -141,6 +141,27 @@ const hashlockProgram = {
     },
 } satisfies arkade.Program;
 
+// No covenant: two user-signed leaves, one behind a hashlock.
+const tapscriptProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "hash", type: "bytes20" },
+    ],
+    functions: {
+        cooperative: { tapscript: { signers: ["$user", "$server"] } },
+        reveal: {
+            inputs: [{ name: "preimage", type: "bytes" }],
+            tapscript: {
+                signers: ["$user", "$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
 // Offchain covenant with asset introspection.
 const assetOffchainProgram = {
     version: 1,
@@ -446,6 +467,28 @@ describe("arkade", () => {
         expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
         await waitForSpent(send.pkScript);
         await waitForSpent(claim.pkScript);
+    });
+
+    // arkd path (no covenant): two functions of one contract in one ark tx.
+    it("TestTapscriptTwoFunctions", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const preimage = crypto.getRandomValues(new Uint8Array(32));
+        const contract = ark.contract(tapscriptProgram, { hash: hash160(preimage) });
+
+        faucetOffchain(contract.address, 10000);
+        faucetOffchain(contract.address, 5000);
+        await waitForVtxo(contract.pkScript, 2);
+        const [first, second] = await contract.getUtxos();
+
+        const { signedArkTx } = await contract.functions
+            .cooperative()
+            .from(first)
+            .from(second, contract.unlock.reveal(preimage))
+            .to(ArkAddress.decode(await alice.wallet.getAddress()).pkScript, 15000n)
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(contract.pkScript);
     });
 
     // Settlement flow via intent + batch session (using arkade script)
