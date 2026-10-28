@@ -4533,7 +4533,6 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.failed).toEqual([]);
             expect(pages.mock.calls.map(([filter]) => filter.state)).toEqual([
                 ...RFQ_SWAP_ACTIVE_STATES,
-                "refunded",
             ]);
             expect((await m.getStats()).finishedSwaps).toBe(0);
             await expect(m.waitForSwapCompletion(terminalId)).resolves.toEqual({
@@ -4562,9 +4561,9 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const states: RfqSwapState[] = [];
             m.onSwapUpdate((updated) => states.push(updated.state));
 
-            const result = await m.restoreFromRepository();
+            const settled = await m.recheckRefundedSends();
 
-            expect(result.restored).toEqual([]);
+            expect(settled.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
             expect(states).toEqual(["settled"]);
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
             expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
@@ -4597,8 +4596,8 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const states: RfqSwapState[] = [];
             m.onSwapUpdate((updated) => states.push(updated.state));
 
-            await m.restoreFromRepository();
-            await m.restoreFromRepository();
+            await expect(m.recheckRefundedSends()).resolves.toEqual([]);
+            await expect(m.recheckRefundedSends()).resolves.toEqual([]);
 
             expect(states).toEqual([]);
             expect(store.records.get(RFQ_ID)).toEqual(stored);

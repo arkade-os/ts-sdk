@@ -171,6 +171,8 @@ const build = async (
         ready?: boolean;
         /** Holds the operator's info read — and so any refund push — open. */
         gate?: Promise<void>;
+        /** Holds every indexer `getVtxos` read open. */
+        indexerGate?: Promise<void>;
     } = {},
 ): Promise<Harness> => {
     const repository = over.repository ?? memoryRepository();
@@ -196,6 +198,7 @@ const build = async (
         ...(over.vtxos === undefined ? {} : { vtxos: over.vtxos }),
         ...(over.txs === undefined ? {} : { txs: over.txs }),
         ...(over.indexerFails ? { fail: true } : {}),
+        ...(over.indexerGate === undefined ? {} : { gate: over.indexerGate }),
     };
     const drive = createSwapDrive({
         wallet,
@@ -1751,7 +1754,29 @@ describe("the settlement receipt", () => {
         expect(stored.state).toBe("settled");
         expect(stored.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
         expect(h.drive.swap("q1")?.outcome).toBe("paid");
-        expect(h.outcomes("q1")).toEqual(["paid"]);
+        expect(h.outcomes("q1")).toEqual(["refunded", "paid"]);
+        await h.drive.dispose();
+    });
+
+    it("does not hold ready on the refunded send re-read", async () => {
+        let release!: () => void;
+        const spend = claimSpend();
+        const h = await build({
+            records: [settleable({ fundingTxid: "aa".repeat(32), state: "refunded" })],
+            vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: spend.txid }],
+            txs: [spend],
+            indexerGate: new Promise((resolve) => {
+                release = resolve;
+            }),
+            ready: false,
+        });
+
+        await h.drive.ready;
+        expect(h.drive.swap("q1")?.outcome).toBe("refunded");
+
+        release();
+        await h.drive.idle();
+        expect(h.outcomes("q1")).toEqual(["refunded", "paid"]);
         await h.drive.dispose();
     });
 

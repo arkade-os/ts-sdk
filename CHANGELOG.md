@@ -148,9 +148,10 @@ style and have not been backfilled.
   `refunded` for good (#1105). Before the locktime the only refund the solver
   can push alone is `nonInteractiveRefund`, so any other pre-locktime
   `returned` read is not final and the swap stays monitored. A `refunded` send
-  stored without a refund txid is re-read once on restore, including through
-  `createSwapClient`, and moved to `settled` if the lockup now reads claimed;
-  any other read leaves it as is.
+  stored without a refund txid can now be re-read with
+  `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
+  the background after `ready`. It moves the send to `settled` if the lockup
+  now reads claimed; any other read leaves it as is.
 
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**
   `restoreOfferCoverage` rebuilt every live offer with the current signer, so

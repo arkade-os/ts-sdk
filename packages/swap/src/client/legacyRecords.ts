@@ -22,7 +22,7 @@ import {
 } from "../repository";
 import type { AssetSwap } from "../store";
 import type { RfqSwapRecord } from "../rfqRecord";
-import { isRfqSwapRestorable } from "../rfqSwapState";
+import { isRfqSwapTerminal } from "../rfqSwapState";
 import { pageRfqRecords, splitRecords, type CorridorRecordStore } from "./driveRecords";
 
 /** v1 corridor records, or none: an unreadable v1 store must not stop the v2 records. */
@@ -41,7 +41,8 @@ const readLegacyRfqSwaps = async (
 /** Live v1 corridor records: what the manager should take over. */
 export const legacyLiveRfqSwaps = async (
     repository: AssetSwapRepository,
-): Promise<RfqSwapRecord[]> => (await readLegacyRfqSwaps(repository)).filter(isRfqSwapRestorable);
+): Promise<RfqSwapRecord[]> =>
+    (await readLegacyRfqSwaps(repository)).filter((record) => !isRfqSwapTerminal(record.state));
 
 /**
  * `bridge` plus the v1 `rfqSwaps` rows `admits` lets through. On an `rfqId` in both, v2 wins.

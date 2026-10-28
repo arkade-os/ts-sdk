@@ -784,12 +784,7 @@ export class RfqSwapManager {
         const restored: RfqSwap[] = [];
         const failed: RfqRestoreFailure[] = [];
         const restore = async (record: RfqSwapRecord) => {
-            // A misread could have ended a settled send as refunded. One chain read per
-            // restore corrects it; any other answer leaves the record untouched.
-            const recheckRefundedSend =
-                !options.includeTerminal && isRecheckableRefundedSend(record);
-            if (!options.includeTerminal && isRfqSwapTerminal(record.state) && !recheckRefundedSend)
-                return;
+            if (!options.includeTerminal && isRfqSwapTerminal(record.state)) return;
             // The live object is at least as fresh as storage: a poll can move it
             // into a later page, or an overlapping restore track it mid-rebuild.
             if (this.monitored.has(record.rfqId)) return;
@@ -808,21 +803,6 @@ export class RfqSwapManager {
                 });
                 return;
             }
-            if (recheckRefundedSend) {
-                const fate = await readLockupFate(this.deps.indexer, {
-                    swapPkScript: swap.lockupPkScript,
-                    paymentHash: swap.paymentHash,
-                }).catch(() => undefined);
-                if (fate?.fate !== "claimed") return;
-                if (this.monitored.has(record.rfqId)) return;
-                if (this.removed.get(record.rfqId) !== removedAt) return;
-                this.stampLockupSpends(swap, fate.spends);
-                this.stampSettlementPreimage(swap, fate.preimage);
-                this.setState(swap, "settled");
-                await this.save(swap);
-                this.dirty.delete(swap.rfqId);
-                return;
-            }
             if (this.monitored.has(record.rfqId)) return;
             if (this.removed.get(record.rfqId) !== removedAt) return;
             this.removed.delete(record.rfqId);
@@ -834,9 +814,7 @@ export class RfqSwapManager {
             restored.push(swap);
         };
 
-        const states = options.includeTerminal
-            ? [undefined]
-            : [...RFQ_SWAP_ACTIVE_STATES, "refunded" as const];
+        const states = options.includeTerminal ? [undefined] : RFQ_SWAP_ACTIVE_STATES;
         for (const state of states) {
             for (const record of await collectRfqSwaps(repository, { state }))
                 await restore(record);
@@ -846,6 +824,42 @@ export class RfqSwapManager {
             await this.pollMany(restored.filter((swap) => this.monitored.has(swap.rfqId)));
         }
         return { restored, failed, pruned: [] };
+    }
+
+    /**
+     * Re-read stored `refunded` Lightning sends with no refund txid, one at a time. A misread
+     * could have ended a settled send this way: a `claimed` read settles the record, any other
+     * answer, or a failure, leaves it untouched. Returns the swaps it settled.
+     */
+    async recheckRefundedSends(
+        options: Pick<RfqRestoreOptions, "params"> = {},
+    ): Promise<RfqSwap[]> {
+        const repository = this.requireRepository("recheckRefundedSends");
+        const params = options.params ?? this.paramsFromContracts();
+        const settled: RfqSwap[] = [];
+        for (const record of await collectRfqSwaps(repository, { state: "refunded" })) {
+            if (!isRecheckableRefundedSend(record) || this.monitored.has(record.rfqId)) continue;
+            const removedAt = this.removed.get(record.rfqId);
+            try {
+                const swap = rebuildRfqSwap(record, await params(record));
+                const fate = await readLockupFate(this.deps.indexer, {
+                    swapPkScript: swap.lockupPkScript,
+                    paymentHash: swap.paymentHash,
+                });
+                if (fate.fate !== "claimed") continue;
+                if (this.monitored.has(record.rfqId)) continue;
+                if (this.removed.get(record.rfqId) !== removedAt) continue;
+                this.stampLockupSpends(swap, fate.spends);
+                this.stampSettlementPreimage(swap, fate.preimage);
+                this.setState(swap, "settled");
+                await this.save(swap);
+                this.dirty.delete(swap.rfqId);
+                settled.push(swap);
+            } catch {
+                // Left as stored: the next start re-reads it.
+            }
+        }
+        return settled;
     }
 
     /**

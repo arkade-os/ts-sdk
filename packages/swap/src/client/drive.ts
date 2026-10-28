@@ -45,7 +45,7 @@ import {
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../refundBlocked";
 import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
-import { isRfqSwapRestorable, isRfqSwapTerminal } from "../rfqSwapState";
+import { isRecheckableRefundedSend, isRfqSwapRestorable, isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps, toRestoreTx } from "../restore";
 import { preimageForSwapRecord } from "../store";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
@@ -973,9 +973,10 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
 
         // Terminal records stay in `records` (readable, replayed) but are never driven.
-        const liveCorridor = corridor.filter(isRfqSwapRestorable);
+        const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
+        const recheckable = corridor.filter(isRecheckableRefundedSend);
         const store = corridorStore();
-        for (const record of liveCorridor) store.index(record);
+        for (const record of [...liveCorridor, ...recheckable]) store.index(record);
         // LEGACY(v1)
         const liveLegacy = await legacyLiveRfqSwaps(repository);
 
@@ -1036,6 +1037,18 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
         // Again after: `funding -> funded` is an observation change with no manager transition.
         emitAll();
+        // Off `ready`: one indexer read per record, so a slow indexer never holds it up.
+        if (mode !== "readonly" && recheckable.length > 0) {
+            enqueue(async () => {
+                try {
+                    await contractsOf();
+                    managerDeps.repository = store;
+                    await manager.recheckRefundedSends();
+                } catch (error) {
+                    console.warn("[swap] the refunded send re-read did not complete", error);
+                }
+            });
+        }
     };
 
     const ready = (): Promise<void> => (readyPromise ??= restore());
