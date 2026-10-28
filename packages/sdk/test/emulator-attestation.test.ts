@@ -183,6 +183,14 @@ describe("Arkade.connect with emulatorAttestation", () => {
         await expect(connect({ emulator: withoutUrl as any })).rejects.toThrow(/serverUrl/);
     });
 
+    it("refuses emulatorAttestation without an emulator rather than skip it", async () => {
+        const enclave = stubEmulatorEnclave();
+        await expect(connect({ emulator: undefined })).rejects.toThrow(
+            /emulatorAttestation needs an emulator/,
+        );
+        expect(enclave.requests).toEqual([]);
+    });
+
     it("leaves the pinned-key path untouched without the option", async () => {
         const enclave = stubEmulatorEnclave();
         const ark = await connect({ emulatorAttestation: undefined, network: networks.regtest });

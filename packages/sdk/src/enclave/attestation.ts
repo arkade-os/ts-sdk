@@ -52,6 +52,8 @@ export interface NitroDocument {
 }
 
 const ES384 = -35;
+// hf/nitrite's bound on cabundle items and the optional fields, kept equal so this client and
+// the Go one accept the same documents; like nitrite, the leaf certificate has none.
 const MAX_FIELD = 1024;
 
 /** Verify the COSE_Sign1 envelope, payload bounds and certificate chain (at `nowMs`). */
@@ -68,6 +70,8 @@ export function verifyNitroAttestation(
         throw new Error("malformed COSE_Sign1");
     }
     const alg = asMap(decodeCbor(protectedHeader), "protected header").get(1);
+    // COSE's -35, or its name as nitrite also accepts. The label never selects the check: the
+    // signature is verified as P-384/SHA-384 either way.
     if (alg !== ES384 && alg !== "ES384") throw new Error("COSE algorithm is not ES384");
 
     const fields = asMap(decodeCbor(payload), "payload");

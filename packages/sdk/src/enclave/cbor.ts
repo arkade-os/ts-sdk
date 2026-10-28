@@ -64,7 +64,8 @@ class Reader {
             case 5:
                 return this.map(depth, info === 31 ? undefined : this.length(info));
             case 6: {
-                // only COSE_Sign1's tag, and only around the whole document
+                // only COSE_Sign1's tag, and only around the whole document. The tag is optional
+                // (the NSM omits it): tagged or not, the document decodes to the same array.
                 const tag = this.argument(info);
                 if (depth !== 0 || tag !== BigInt(COSE_SIGN1_TAG)) {
                     throw new Error(`CBOR: unsupported tag ${tag}`);

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import {
@@ -52,6 +53,19 @@ describe("verifyNitroAttestation", () => {
         const es256 = encodeCbor(new Map([[1, -7]]));
         const doc = encodeCbor([es256, unprotected, payload, signature]);
         expect(() => verify(doc, f.rootDer)).toThrow(/ES384/);
+    });
+
+    it("verifies a real NSM document against the AWS root", () => {
+        // ArkLabsHQ/enclave's client/testdata/attestation.b64, checked at its own timestamp: its
+        // leaf certificate expired the same day.
+        const b64 = readFileSync(new URL("../fixtures/nitro-attestation.b64", import.meta.url));
+        const doc = verifyNitroAttestation(base64.decode(b64.toString("utf8").trim()), {
+            nowMs: Date.parse("2026-04-04T14:09:17.327Z"),
+        });
+        expect(hex.encode(doc.pcrs.get(0)!)).toBe(
+            "834837d8fdff29f35317acc40ba4e1e505b71a3cf7374ebba016a38e05c43784a01f0c1e88bf2b6174e4dbfc6f679ba9",
+        );
+        expect(hex.encode(doc.nonce!)).toBe("deadbeefcafebabe1234567890abcdef01020304");
     });
 });
 
