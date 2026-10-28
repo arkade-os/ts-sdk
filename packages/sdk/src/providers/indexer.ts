@@ -344,14 +344,17 @@ export interface IndexerProvider {
      * caller needs neither a subscription id nor the scripts in advance. Each
      * reconnect opens a fresh subscription with the same filter.
      *
+     * Heartbeats are yielded too: the server sends one after each quiet interval,
+     * so a caller can tell a half-open connection from an idle filter.
+     *
      * @param filter - Server-side transaction filter
      * @param abortSignal - Signal used to terminate the stream
-     * @returns Async iterator of subscription responses
+     * @returns Async iterator of matching events and heartbeats
      */
     getFilteredSubscription(
         filter: SubscriptionFilter,
         abortSignal: AbortSignal,
-    ): AsyncIterableIterator<SubscriptionResponse>;
+    ): AsyncIterableIterator<SubscriptionEvent | SubscriptionHeartbeat>;
 
     /**
      * Fetch raw virtual transactions by txid.
@@ -544,16 +547,26 @@ export class RestIndexerProvider implements IndexerProvider {
         subscriptionId: string,
         abortSignal: AbortSignal,
     ): AsyncIterableIterator<SubscriptionResponse> {
-        return this.subscriptionStream(
+        const stream = this.subscriptionStream(
             `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`,
             abortSignal,
         );
+        const gen = (async function* () {
+            for await (const message of stream) if (message.type === "event") yield message;
+        })();
+        // A generator's own `return` waits behind a pending `next`; closing the stream ends both.
+        const origReturn = gen.return.bind(gen);
+        gen.return = (value) => {
+            stream.return?.();
+            return origReturn(value);
+        };
+        return gen;
     }
 
     getFilteredSubscription(
         filter: SubscriptionFilter,
         abortSignal: AbortSignal,
-    ): AsyncIterableIterator<SubscriptionResponse> {
+    ): AsyncIterableIterator<SubscriptionEvent | SubscriptionHeartbeat> {
         // The server accepts an empty filter and streams nothing, which would look like a quiet market.
         if (filter.expressions.length === 0) {
             throw new Error("A filtered subscription needs at least one expression");
@@ -571,7 +584,7 @@ export class RestIndexerProvider implements IndexerProvider {
     protected subscriptionStream(
         url: string,
         abortSignal: AbortSignal,
-    ): AsyncIterableIterator<SubscriptionResponse> {
+    ): AsyncIterableIterator<SubscriptionEvent | SubscriptionHeartbeat> {
         // Captured, not resolved, here: resolution has to happen per connection
         // attempt inside the generator, so a caller that abandons the iterator
         // never triggers it and a late `configureEventSource` is still seen.
@@ -595,10 +608,8 @@ export class RestIndexerProvider implements IndexerProvider {
                             if (abortSignal?.aborted) break;
 
                             try {
-                                const data = JSON.parse(event.data);
-                                if (data.event) {
-                                    yield toSubscriptionResponse(data.event);
-                                }
+                                const message = toSubscriptionMessage(JSON.parse(event.data));
+                                if (message) yield message;
                             } catch (err) {
                                 console.error("Failed to parse subscription event:", err);
                                 throw err;
@@ -914,8 +925,17 @@ function numberChildKeys(txs: Tx[]): void {
     });
 }
 
-/** Internal: shared by the REST and Expo subscription streams; not re-exported from the package. */
-export function toSubscriptionResponse(event: any): SubscriptionResponse {
+/**
+ * One SSE data line as a stream item; `null` for what the stream skips, `subscriptionStarted` included.
+ * Internal: shared by the REST and Expo subscription streams; not re-exported from the package.
+ */
+export function toSubscriptionMessage(data: any): SubscriptionEvent | SubscriptionHeartbeat | null {
+    if (data.event) return { type: "event", ...toSubscriptionResponse(data.event) };
+    if (data.heartbeat !== undefined) return { type: "heartbeat" };
+    return null;
+}
+
+function toSubscriptionResponse(event: any): SubscriptionResponse {
     return {
         txid: event.txid,
         scripts: event.scripts || [],

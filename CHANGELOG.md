@@ -49,7 +49,11 @@ style and have not been backfilled.
   the filtered one. arkd has served that filter over SSE at
   `GET /v1/indexer/subscription` since v0.9.6; both `RestIndexerProvider` and
   `ExpoIndexerProvider` now open it. A custom `IndexerProvider` implementation
-  must add the method.
+  must add the method. The stream yields `SubscriptionEvent | SubscriptionHeartbeat`:
+  arkd heartbeats a quiet stream, and passing those through is what lets a
+  caller tell a half-open connection from a filter that matches nothing.
+  Callers on rc.26–28 must check `type === "event"` before reading `tx`.
+  `getSubscription` still skips heartbeats.
   
 - **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
   `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
