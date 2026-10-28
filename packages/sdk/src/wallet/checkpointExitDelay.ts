@@ -6,12 +6,15 @@ import { ServerResponseMismatchError } from "../providers/errors";
 import { assertTimelockInPolicy, isRegtest } from "./timelockPolicy";
 
 /**
- * Decode a server-supplied `checkpointTapscript`: 512s floor (the smallest seconds-typed CSV),
- * block-typed delays on regtest only, pubkey equal to `advertisedForfeitPubkey` when given.
- * `network` is the caller's pinned one, never the response's, so an operator cannot name
- * `regtest` to unlock block-typed delays.
+ * Decode and validate a server-supplied `checkpointTapscript`.
  *
- * @throws {ServerResponseMismatchError}
+ * Every offchain send/claim builds its checkpoint outputs' server-claim leaf from this script, so
+ * a sub-floor or wrong-pubkey value lets the operator sweep an in-flight checkpoint before it
+ * settles. This is the sole gate: callers must use the returned script, not decode their own.
+ *
+ * @throws {ServerResponseMismatchError} if the script fails to decode, its
+ *   timelock is out of policy, or its pubkey does not match
+ *   `advertisedForfeitPubkey` (when set).
  */
 export function assertValidServerUnrollScript(
     checkpointTapscript: string,
