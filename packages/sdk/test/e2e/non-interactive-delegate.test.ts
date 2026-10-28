@@ -34,8 +34,11 @@ const DELEGATE_EXIT_DELAY = 512;
 // the spend to keep version 2, send output 0 to this same input's scriptPubKey,
 // and preserve its value — i.e. refresh in place.
 const delegateProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+    ],
     functions: {
         delegate: {
             tapscript: { signers: ["$server"] },

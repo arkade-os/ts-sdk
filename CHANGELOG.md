@@ -25,6 +25,34 @@ style and have not been backfilled.
   after that, only an exact-out receive is guaranteed a claim packet, so an
   exact-in one may carry none and leave the claim to the trader.
 
+- **`Arkade.connect` takes a `service` and can own its contract manager.**
+  `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
+  contractRepository } })` resolves the operator, indexer, esplora and the mainnet
+  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ operatorUrl,
+  emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
+  without `emulatorUrl`. A `{ network }` service whose operator reports another
+  network throws. `storage` builds a session-scoped manager (in-memory VTXO
+  store, chain tip from esplora) that the new `arkade.dispose()` stops; a
+  caller-passed `contractManager` is never disposed. `service` and the provider
+  fields (`arkade`/`emulator`/`indexer`) are exclusive at the type level. The
+  resolver is exported as `arkade.resolveArkadeService`, and `Arkade` itself is
+  now exported from the package root as well as from the `arkade` namespace.
+
+- **`ArkadeContract.on` and `getVtxos`.** `await contract.on("vtxo_received" |
+  "vtxo_spent" | "connection_reset", cb)` registers the contract and reports its
+  activity from subscription on, returning a handle with `off()`. Coins that
+  predate it are not replayed and a reconnect re-syncs silently, so recover by
+  reading `getVtxos()` — every stored VTXO including spent ones, which
+  `getUtxos()` hides — after subscribing and on each `connection_reset`.
+  Handlers may be async: a throw or rejection is logged without reaching the
+  other handlers. `on()` after `arkade.dispose()` throws.
+
+- **`Wallet.create` short spellings.** `service` replaces `arkProvider`/
+  `indexerProvider`/`onchainProvider` (also on `ReadonlyWallet.create`), `mode`
+  aliases `walletMode` and `settlement` aliases `settlementConfig`. Setting both
+  spellings of one field throws. `service` reuses the server info the wallet
+  already fetched (or its cached snapshot), so `getInfo` is called once.
+
 - **`IndexerProvider.getFilteredSubscription` streams the transactions a CEL
   filter matches.** `subscribeForScripts` needs the scripts in advance, so a
   reader of extension packets at someone else's script — an offer, a sealed
@@ -32,7 +60,11 @@ style and have not been backfilled.
   the filtered one. arkd has served that filter over SSE at
   `GET /v1/indexer/subscription` since v0.9.6; both `RestIndexerProvider` and
   `ExpoIndexerProvider` now open it. A custom `IndexerProvider` implementation
-  must add the method.
+  must add the method. The stream yields `SubscriptionEvent | SubscriptionHeartbeat`:
+  arkd heartbeats a quiet stream, and passing those through is what lets a
+  caller tell a half-open connection from a filter that matches nothing.
+  Callers on rc.26–28 must check `type === "event"` before reading `tx`.
+  `getSubscription` still skips heartbeats.
   
 - **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
   `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
@@ -49,6 +81,8 @@ style and have not been backfilled.
   contract keeping its terms in a packet had to rebuild the extension output
   by hand after `build()`. The caller's packet now joins those two in the one
   extension output; a type either of them already uses is refused at build.
+
+- **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
@@ -119,6 +153,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap` restores offers funded before a signer rotation.**
+  `restoreOfferCoverage` rebuilt every live offer with the current signer, so
+  an offer funded under a rotated-out key failed its script check and was
+  skipped, its deposit left unwatched. It now takes the operator key from the
+  offer's stored row, which stays readable even for a Program v0 row, and the
+  rebuild replaces such a row in place from the swap record.
+
 - **A stream arkd refuses fails with arkd's reason.** arkd sends the status
   of a refused stream — a filter that does not compile, say — as a named SSE
   `failure` event, which nothing listened for: the EventSource providers
@@ -176,6 +217,9 @@ style and have not been backfilled.
   solver at their CLTV; `awaitLockupFunding` was its wait. `client.recover()`
   and the drive finish both; to drive them by hand, call
   `pushRefundWithoutReceiver` or `pushClaim` until it reports nothing `left`.
+
+- **Arkade contracts use typed normalized Program v1 only.** Compiler imports use source function names: an Arkade function and its same-named Taproot leaf share `contract.functions.claim(...)`, while standalone Taproot functions use their own names, such as `contract.functions.unilateral()`. Leaf order is preserved and duplicate callable names are rejected. `InputRef` remains exported as an alias of `InputDef`; constructor parameters and call inputs require `{ name, type }` declarations using native Arkade scalar names. `signature` replaces `sig`; `bytes20`, `bytes32` and `asset` replace the ambiguous `hash` type; `bool` and `AssetGroup` remain distinct from `int`. Width and boolean constraints follow the native type without extra declaration flags. JavaScript argument values are unchanged, and every `pubkey` remains restricted to 32 bytes. Explicit version 0 programs and persisted contracts are rejected without automatic migration, with the new `UnsupportedProgramVersionError`; omitted normalized JSON versions default to 1. A persisted v0 row is kept but no longer synced, and no longer degrades `getSyncState()` or warns on every sync: `IContractManager.getUnsupportedContracts()` lists those rows, and a custom `IContractManager` must add the method. Creating a contract with v1 params for a v0 row's script replaces that row in place, keeping its `createdAt`, `state`, `watch`, its generic-spend gate (a closed one stays closed; an open one stays open unless the caller sets the flag), and its label and metadata unless new ones are passed; exiting or spending a v0 row still fails. Back up v0 contract rows and retain a compatible SDK; manual recovery requires reconstructing the typed program with stored bindings and keys and verifying its `pkScript` matches before updating stored parameters or re-registering (see the SDK README). Server bindings must match the connected server. CSV offchain spending and external or covenant-tweaked leaf signing through `send()` fail explicitly. `SignerRef` remains unchanged, and emulator placement uses optional `emulatorIndex` metadata. Malformed function entries, declaration arrays, signature metadata and emulator positions are rejected during normalized artifact parsing. Tapscript signer validation uses the resolved signer list, including any emulator. The swap package's bundled programs use version 1 with compiler byte-width constraints and unchanged scripts and addresses.
+
 - **`ArkadeCashUnclaimedReason` drops `"swept"` and adds
   `"recovery-failed"`.** Swept cash is no longer left behind: it moves to
   `ArkadeCashClaimResult.recovering`, and only a failed import is reported
@@ -551,6 +595,10 @@ style and have not been backfilled.
   0.3.0.
 
 ### Bug Fixes
+
+- **Compiler server exit delays must be positive.** A missing server delay can arrive as zero, which previously compiled into a zero-block CSV leaf. Contract creation rejects zero alongside missing and negative delays before binding `SERVER_EXIT_DELAY`.
+
+- **Restored Arkade contracts sign with the connected identity.** Input selection used the persisted `userKey` even though signing preflight checked the connected identity, so a missing or different stored key could skip required signatures. Both checks now use the connected identity while persisted keys continue to preserve the contract script.
 
 - **`@arkade-os/swap`: a restore scan no longer reopens a cancelled or filled
   offer.** A client starting right after a cancel scans its deposits, and the

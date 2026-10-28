@@ -409,6 +409,24 @@ describe("RestIndexerProvider", () => {
             expect(MockEventSource.instances[0].listenerCount("message")).toBe(0);
             expect(MockEventSource.instances[0].listenerCount("error")).toBe(0);
         });
+
+        it("skips heartbeats, which its callers would read as an empty update", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const ac = new AbortController();
+            const subscription = provider.getSubscription("sub-1", ac.signal);
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            const source = MockEventSource.instances[0];
+            source.emitMessage(JSON.stringify({ heartbeat: {} }));
+            source.emitMessage(JSON.stringify({ event: { txid: "ab", scripts: ["5120"] } }));
+
+            await expect(pending).resolves.toMatchObject({
+                done: false,
+                value: { txid: "ab", scripts: ["5120"] },
+            });
+            ac.abort();
+        });
     });
 
     describe("getFilteredSubscription", () => {
@@ -444,7 +462,7 @@ describe("RestIndexerProvider", () => {
             await expect(pending).resolves.toMatchObject({ done: true });
         });
 
-        it("yields matching transactions and skips the started and heartbeat messages", async () => {
+        it("yields matching transactions and heartbeats, and skips the started message", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
             const ac = new AbortController();
             const subscription = provider.getFilteredSubscription(
@@ -459,9 +477,10 @@ describe("RestIndexerProvider", () => {
             source.emitMessage(JSON.stringify({ heartbeat: {} }));
             source.emitMessage(JSON.stringify({ event: { txid: "ab", tx: "cHNidP8B" } }));
 
-            await expect(pending).resolves.toMatchObject({
+            await expect(pending).resolves.toEqual({ done: false, value: { type: "heartbeat" } });
+            await expect(subscription.next()).resolves.toMatchObject({
                 done: false,
-                value: { txid: "ab", tx: "cHNidP8B", scripts: [], newVtxos: [] },
+                value: { type: "event", txid: "ab", tx: "cHNidP8B", scripts: [], newVtxos: [] },
             });
             ac.abort();
         });
@@ -515,6 +534,41 @@ describe("RestIndexerProvider", () => {
             expect(url.searchParams.getAll("filter.expressions")).toEqual([PACKET_4]);
             expect(MockEventSource.instances).toHaveLength(0);
             for (const spy of quiet) spy.mockRestore();
+            vi.doUnmock("expo/fetch");
+        });
+
+        it("yields heartbeats on Expo too", async () => {
+            vi.doMock("expo/fetch", () => {
+                throw new Error("expo/fetch unavailable");
+            });
+            const quiet = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const body = [
+                { subscriptionStarted: { subscriptionId: "s" } },
+                { heartbeat: {} },
+                { event: { txid: "ab", tx: "cHNidP8B" } },
+            ]
+                .map((data) => `data: ${JSON.stringify(data)}\n\n`)
+                .join("");
+            mockFetch.mockResolvedValueOnce(new Response(body, { status: 200 }));
+            const { ExpoIndexerProvider } = await import("../src/providers/expoIndexer");
+            const provider = new ExpoIndexerProvider("http://localhost:7070");
+            const ac = new AbortController();
+
+            const subscription = provider.getFilteredSubscription(
+                { expressions: [PACKET_4] },
+                ac.signal,
+            );
+
+            await expect(subscription.next()).resolves.toEqual({
+                done: false,
+                value: { type: "heartbeat" },
+            });
+            await expect(subscription.next()).resolves.toMatchObject({
+                done: false,
+                value: { type: "event", txid: "ab", tx: "cHNidP8B" },
+            });
+            ac.abort();
+            quiet.mockRestore();
             vi.doUnmock("expo/fetch");
         });
 

@@ -586,6 +586,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getSpendablePaths: vi.fn().mockResolvedValue(paths),
             isWatching: vi.fn().mockResolvedValue(true),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
+            getUnsupportedContracts: vi.fn().mockResolvedValue(contracts),
         };
         (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue(manager),
@@ -610,6 +611,16 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(getResponse).toMatchObject({
             tag: updater.messageTag,
             type: "CONTRACTS",
+            payload: { contracts },
+        });
+
+        const unsupportedResponse = await updater.handleMessage({
+            ...baseMessage("us"),
+            type: "GET_UNSUPPORTED_CONTRACTS",
+        } as any);
+        expect(unsupportedResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "UNSUPPORTED_CONTRACTS",
             payload: { contracts },
         });
 
