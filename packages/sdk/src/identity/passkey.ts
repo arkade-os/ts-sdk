@@ -46,9 +46,11 @@ type Bytes = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
 
 // Some password managers return PRF results as plain arrays; everything is copied into a fresh Uint8Array.
 function bytes(x: Bytes): Uint8Array<ArrayBuffer> {
-    if (x instanceof ArrayBuffer) return new Uint8Array(x.slice(0));
+    // A tag check, since `instanceof` fails for a buffer from another realm (an iframe bridge).
+    if (Object.prototype.toString.call(x) === "[object ArrayBuffer]")
+        return new Uint8Array((x as ArrayBuffer).slice(0));
     if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength).slice();
-    return Uint8Array.from(x);
+    return Uint8Array.from(x as ArrayLike<number>);
 }
 
 // A PRF output is exactly 32 bytes; anything else (a bridge's hex string, an empty buffer) is refused, never stretched into a key.
@@ -138,6 +140,8 @@ export async function createPrfPasskey(o: {
     // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way.
     if (!out?.results?.first && (!out || out.enabled === false))
         throw new PrfUnavailable("This passkey cannot derive a key.");
+    // Copied before the next ceremony: a client may reuse the buffer for its result.
+    const made = out.results?.first ? secret(out.results.first) : null;
     const used = (
         await evaluatePrf({
             rpId: o.rp.id,
@@ -152,7 +156,7 @@ export async function createPrfPasskey(o: {
                 : e;
         })
     ).prf;
-    if (out.results?.first && !same(secret(out.results.first), used)) {
+    if (made && !same(made, used)) {
         throw new PrfUnavailable("This passkey gave a different secret on its next use.");
     }
     return { credentialId, prf: used };

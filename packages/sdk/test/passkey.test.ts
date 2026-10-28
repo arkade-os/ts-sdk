@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
@@ -157,5 +158,46 @@ describe("PRF passkeys", () => {
         prfBytes.fill(0);
         expect(credentialId).toEqual(new Uint8Array(16).fill(9));
         expect(prf).toEqual(new Uint8Array(32).fill(3));
+    });
+
+    it("compares a drifting secret against the creation result even when the client reuses its buffer", async () => {
+        const result = new Uint8Array(32).fill(1);
+        const credential = () =>
+            ({
+                rawId: new Uint8Array(16).fill(4).buffer,
+                response: { userHandle: null },
+                getClientExtensionResults: () => ({
+                    prf: { enabled: true, results: { first: result.buffer } },
+                }),
+            }) as unknown as Credential;
+        const client = {
+            create: async () => credential(),
+            get: async () => {
+                result.fill(2);
+                return credential();
+            },
+        };
+        await expect(
+            createPrfPasskey({ rp, userId: new Uint8Array(16), userName: "a", salt, client }),
+        ).rejects.toThrow(PrfUnavailable);
+    });
+
+    it("reads an ArrayBuffer made in another realm", async () => {
+        const foreign = runInNewContext("(n) => new Uint8Array(32).fill(n).buffer")(
+            6,
+        ) as ArrayBuffer;
+        expect(foreign instanceof ArrayBuffer).toBe(false);
+        const client = {
+            create: async () => null,
+            get: async () =>
+                ({
+                    rawId: new Uint8Array(16).buffer,
+                    response: { userHandle: null },
+                    getClientExtensionResults: () => ({ prf: { results: { first: foreign } } }),
+                }) as unknown as Credential,
+        };
+        expect((await evaluatePrf({ rpId: rp.id, salt, client })).prf).toEqual(
+            new Uint8Array(32).fill(6),
+        );
     });
 });

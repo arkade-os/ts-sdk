@@ -24,8 +24,8 @@ style and have not been backfilled.
   refused (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it
   gives no 32-byte secret or one different from the secret it returned at creation (an
   authenticator that returns none at creation has nothing to compare against). The primitives (`createPrfPasskey`, `evaluatePrf`,
-  `mnemonicFromPrf`, `prfSupport`) are exported, and every call takes a `client` in
-  place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
+  `mnemonicFromPrf`, `prfSupport`) are exported; every call that prompts takes a
+  `client` in place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
   in the tree through `@noble/curves`).
 
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
