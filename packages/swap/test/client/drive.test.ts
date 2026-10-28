@@ -268,7 +268,7 @@ describe("the record bridge", () => {
         await h.drive.dispose();
     });
 
-    it("refunds across the bridge rather than reporting needs_recovery", async () => {
+    it("keeps an empty lockup nonterminal across the bridge", async () => {
         // The `rfqId -> QuoteId` index is what makes this pass: the manager keys
         // its callbacks on `rfqId`, the store on `QuoteId`, and an unbridged
         // `arkadeRefunder` misses its record and throws the ONE refusal the
@@ -281,13 +281,12 @@ describe("the record bridge", () => {
             // the manager holds for a late settlement instead of settling.
             now: AFTER + REFUND_MTP_LAG_SECONDS,
             vtxos: unspent(),
-            // An empty lockup: the refunder answers `null` without signing, and
-            // the manager settles the swap `refunded`. What is under test is
-            // that the record was FOUND, not how the push was built.
+            // An empty lockup: the refunder answers `null` without signing.
+            // That is not proof of a refund; the record must stay live.
             funded: [],
         });
 
-        expect(h.drive.swap("q1")?.outcome).toBe("refunded");
+        expect(h.drive.swap("q1")?.outcome).toBe("funded");
         expect(h.outcomes("q1")).not.toContain("needs_recovery");
         await h.drive.dispose();
     });
@@ -325,9 +324,9 @@ describe("the v1 read-through", () => {
         expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
         expect(await h.repository.getSwapRecord(legacy.rfqId)).toMatchObject({
             family: "rfq",
-            state: "refunded",
+            state: "pending",
         });
-        expect(h.outcomes(legacy.rfqId)).toContain("refunded");
+        expect(h.outcomes(legacy.rfqId)).toContain("funded");
         await h.drive.dispose();
     });
 
@@ -347,7 +346,7 @@ describe("the v1 read-through", () => {
             funded: [],
         });
 
-        expect((await h.repository.getRfqSwap(legacy.rfqId))?.state).toBe("refunded");
+        expect((await h.repository.getRfqSwap(legacy.rfqId))?.state).toBe("pending");
         expect(await collectSwapRecords(h.repository)).toEqual([]);
         await h.drive.dispose();
     });
@@ -363,7 +362,7 @@ describe("the v1 read-through", () => {
             funded: [],
         });
 
-        expect(h.drive.swap("q1")?.outcome).toBe("refunded");
+        expect(h.drive.swap("q1")?.outcome).toBe("funded");
         expect(await h.repository.getRfqSwap(legacy.rfqId)).toEqual(legacy);
         await h.drive.dispose();
     });
@@ -393,7 +392,7 @@ describe("the v1 read-through", () => {
         });
 
         await expect(h.drive.ready).resolves.toBeUndefined();
-        expect(h.drive.swap("q1")?.outcome).toBe("refunded");
+        expect(h.drive.swap("q1")?.outcome).toBe("funded");
         await h.drive.dispose();
     });
 

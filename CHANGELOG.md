@@ -142,6 +142,11 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap` keeps uncertain Lightning sends recoverable.** A
+  pre-locktime refund verdict and an empty refund attempt no longer end a
+  send as `refunded`; restored refunded sends without a refund txid are
+  rechecked so a later verified claim can settle them.
+
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**
   `restoreOfferCoverage` rebuilt every live offer with the current signer, so
   an offer funded under a rotated-out key failed its script check and was

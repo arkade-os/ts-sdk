@@ -1131,8 +1131,21 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
 
     it("reads a refund leaf carrying no preimage as a refund", async () => {
         const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
-        const { swap } = await resolve(fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }));
+        const { swap } = await resolve(
+            fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            REFUND_LOCKTIME + 1,
+        );
         expect(swap.state).toBe("refunded");
+    });
+
+    it("does not finalize a refund leaf observed before the locktime", async () => {
+        const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
+        const { swap, s } = await resolve(
+            fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+        );
+        expect(swap.state).toBe("pending");
+        expect(swap.lockupSpendTxids).toBeUndefined();
+        expect(s.refunds).toHaveLength(0);
     });
 
     it("ignores a preimage attached to a spend of somebody else's outpoint", async () => {
@@ -2075,10 +2088,7 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         expect(swap.refundTxid).toBeUndefined();
     });
 
-    it("holds the wait open through the lag window and ends it at the deadline", async () => {
-        // The wait has to end. Every pass inside the window re-asks and decides
-        // nothing, and the deadline is what closes it, so a lockup that never
-        // becomes readable cannot keep a swap monitored forever.
+    it("keeps an unreadable lockup monitored beyond the lag window", async () => {
         let now = REFUND_LOCKTIME + 1;
         const s = spies({ refund: async () => null });
         const swap = lightningSwap();
@@ -2097,8 +2107,9 @@ describe("RfqSwapManager — the lightning-send leg", () => {
 
         await m.poll();
 
-        expect(swap.state).toBe("refunded");
+        expect(swap.state).toBe("pending");
         expect(swap.refundTxid).toBeUndefined();
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
     it("let the settlement show late instead of recording it as a refund", async () => {
@@ -4500,6 +4511,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(result.failed).toEqual([]);
             expect(pages.mock.calls.map(([filter]) => filter.state)).toEqual([
                 ...RFQ_SWAP_ACTIVE_STATES,
+                "refunded",
             ]);
             expect((await m.getStats()).finishedSwaps).toBe(0);
             await expect(m.waitForSwapCompletion(terminalId)).resolves.toEqual({
@@ -4508,6 +4520,34 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             });
             await m.removeSwap(terminalId);
             await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
+        });
+
+        it("rechecks a refunded lightning send without a refund txid on restore", async () => {
+            const store = fakeStore([
+                storedSend({
+                    state: "refunded",
+                    lockupSpendTxids: ["cc".repeat(32)],
+                }),
+            ]);
+            const m = manager({
+                indexer: settlingIndexer(),
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+
+            const result = await m.restoreFromRepository();
+            const [swap] = result.restored;
+
+            expect(result.restored).toHaveLength(1);
+            expect(swap?.state).toBe("pending");
+            expect(swap?.lockupSpendTxids).toBeUndefined();
+            await m.poll();
+
+            expect(swap?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
         });
 
         it("never replaces a live swap when paging returns it again", async () => {
@@ -4983,7 +5023,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const m = manager({
                 indexer: fakeIndexer({ vtxos: spentBy(refund.txid), txs: [refund] }),
                 repository: store,
-                now: SAFE_NOW,
+                now: REFUND_LOCKTIME + 1,
                 spies: s,
             });
 

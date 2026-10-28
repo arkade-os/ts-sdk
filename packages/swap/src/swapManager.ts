@@ -779,7 +779,13 @@ export class RfqSwapManager {
         const restored: RfqSwap[] = [];
         const failed: RfqRestoreFailure[] = [];
         const restore = async (record: RfqSwapRecord) => {
-            if (!options.includeTerminal && isRfqSwapTerminal(record.state)) return;
+            const recheckRefundedSend =
+                !options.includeTerminal &&
+                record.kind === "lightning_send" &&
+                record.state === "refunded" &&
+                !record.refundTxid;
+            if (!options.includeTerminal && isRfqSwapTerminal(record.state) && !recheckRefundedSend)
+                return;
             // The live object is at least as fresh as storage: a poll can move it
             // into a later page, or an overlapping restore track it mid-rebuild.
             if (this.monitored.has(record.rfqId)) return;
@@ -801,6 +807,11 @@ export class RfqSwapManager {
             if (this.monitored.has(record.rfqId)) return;
             if (this.removed.get(record.rfqId) !== removedAt) return;
             this.removed.delete(record.rfqId);
+            if (recheckRefundedSend) {
+                delete swap.lockupSpendTxids;
+                this.setState(swap, "pending");
+                this.finished.delete(swap.rfqId);
+            }
             if (isRfqSwapTerminal(swap.state)) this.rememberFinished(swap, true);
             else {
                 this.origins.set(record.rfqId, rfqSwapOriginOf(record));
@@ -809,7 +820,9 @@ export class RfqSwapManager {
             restored.push(swap);
         };
 
-        const states = options.includeTerminal ? [undefined] : RFQ_SWAP_ACTIVE_STATES;
+        const states = options.includeTerminal
+            ? [undefined]
+            : [...RFQ_SWAP_ACTIVE_STATES, "refunded" as const];
         for (const state of states) {
             for (const record of await collectRfqSwaps(repository, { state }))
                 await restore(record);
@@ -1268,6 +1281,15 @@ export class RfqSwapManager {
             });
         } catch {
             // Transient by assumption; the remaining steps are gated on absolute timelocks.
+            fate = { fate: "unknown" };
+        }
+        // A trader cannot spend the refund leaf before this absolute timelock. A
+        // pre-locktime `returned` verdict is an indexer read that can still change.
+        if (
+            swap.kind === "lightning_send" &&
+            fate.fate === "returned" &&
+            this.config.now() < swap.refundLocktime
+        ) {
             fate = { fate: "unknown" };
         }
         // Before the terminal shortcut, and that order is the whole safety
@@ -1819,13 +1841,11 @@ export class RfqSwapManager {
                 swap.refundTxid = pushed.txid;
                 this.touch(swap);
                 if (pushed.left) return;
-            } else if (now < swap.refundLocktime + REFUND_MTP_LAG_SECONDS) {
-                // `null` (nothing to return) is not proof the money came home: ending now could
-                // record a late settlement as a refund. Wait for step 1 to see the spend.
+            } else if (!swap.refundTxid) {
+                // `null` (nothing to return) is never proof the money came home. Keep
+                // reading the lockup; an indexer may still reveal a late settlement.
                 return;
             }
-            // Past the deadline a settlement that only appears later is recorded as a
-            // refund; that is the cost of ending the wait at all.
             this.setState(swap, "refunded");
             this.emitAction(swap, "refundArkade");
         } catch (error) {
