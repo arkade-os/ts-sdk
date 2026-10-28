@@ -439,16 +439,7 @@ import {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
 } from "./wallet/batchExpiry";
 import type { BatchExpiryPolicy } from "./wallet/batchExpiry";
-import {
-    assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-} from "./wallet/checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -862,13 +853,6 @@ export {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
     type BatchExpiryPolicy,
     assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isSubdust,
     getSequence,

@@ -40,7 +40,6 @@ import {
     isVtxoSpent,
     matchServerCheckpoints,
     networkFromArkadeInfo,
-    resolveCheckpointExitDelayPolicy,
     scriptFromTapLeafScript,
     toXOnly,
     type IWallet,
@@ -398,12 +397,13 @@ export const assertNoneSwept = (
 };
 
 /**
- * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a sub-floor or
+ * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a degenerate or
  * wrong-key script lets the operator sweep an in-flight checkpoint before it settles.
  *
- * `network` pins the exit-delay floor to what the CALLER resolved — without it the bound comes
- * from the very response being checked, so an operator naming `regtest` relaxes its own. The
- * forfeit key is that response's own, as `Wallet.create` does at first contact.
+ * `network` pins the exit-delay check to what the CALLER resolved — without it the type bound
+ * comes from the very response being checked, so an operator naming `regtest` unlocks block-typed
+ * delays for its own script. The forfeit key is that response's own, as `Wallet.create` does at
+ * first contact.
  *
  * @throws {ServerResponseMismatchError} when the script is malformed or out of policy.
  */
@@ -414,9 +414,8 @@ export const operatorUnrollScript = async (
     const info = await operator.getInfo();
     return assertValidServerUnrollScript(
         info.checkpointTapscript,
-        resolveCheckpointExitDelayPolicy(network ?? networkFromArkadeInfo(info), {
-            advertisedForfeitPubkey: toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
-        }),
+        network ?? networkFromArkadeInfo(info),
+        toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
     );
 };
 
