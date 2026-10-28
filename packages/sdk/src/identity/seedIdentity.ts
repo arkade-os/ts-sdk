@@ -17,6 +17,14 @@ import type { SerializedSigningIdentity, SerializedReadonlyIdentity } from "./se
 import { DescriptorSigningRequest } from "./descriptorProvider";
 import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentity";
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
+import {
+    createPrfPasskey,
+    DEFAULT_PASSKEY_DOMAIN,
+    evaluatePrf,
+    mnemonicFromPrf,
+    type PasskeyDomain,
+    type WebAuthnClient,
+} from "./passkey";
 
 // SIGHASH_NONE / SIGHASH_SINGLE do not commit to the outputs we intend to
 // fund, so a PSBT we did not build must never talk us into one.
@@ -57,6 +65,19 @@ export type MnemonicOptions = SeedIdentityOptions & {
     /** Optional BIP39 passphrase for additional seed entropy. */
     passphrase?: string;
 };
+
+/** Where a passkey-derived identity comes from; `domain` defaults to {@link DEFAULT_PASSKEY_DOMAIN}. */
+export interface PasskeySource {
+    client?: WebAuthnClient;
+    domain?: PasskeyDomain;
+}
+
+/** A passkey-derived identity, with its words so the app can offer them as a backup. */
+export interface PasskeyMnemonic {
+    identity: MnemonicIdentity;
+    mnemonic: string;
+    credentialId: Uint8Array;
+}
 
 /**
  * Seed-based identity derived from a raw seed and an account descriptor *template*.
@@ -354,6 +375,58 @@ export class MnemonicIdentity extends SeedIdentity {
             throw new Error("Invalid mnemonic");
         }
         return new MnemonicIdentity(phrase, opts);
+    }
+
+    /**
+     * Creates a passkey and derives an identity from its PRF secret. The words are the backup: the
+     * passkey re-derives them on any device it syncs to, so whoever controls that passkey (and its
+     * sync account) can sign.
+     *
+     * @example
+     * ```typescript
+     * const { identity, mnemonic, credentialId } = await MnemonicIdentity.createPasskey({
+     *   rp: { id: location.hostname, name: "My wallet" },
+     *   userName: "alice",
+     * });
+     * ```
+     */
+    static async createPasskey(
+        o: {
+            rp: { id: string; name: string };
+            userName: string;
+            userId?: Uint8Array;
+        } & PasskeySource &
+            MnemonicOptions,
+    ): Promise<PasskeyMnemonic> {
+        const { rp, userName, userId, client, domain = DEFAULT_PASSKEY_DOMAIN, ...opts } = o;
+        const id = userId ?? crypto.getRandomValues(new Uint8Array(16));
+        const { credentialId, prf } = await createPrfPasskey({
+            rp,
+            userId: id,
+            userName,
+            salt: domain.salt,
+            client,
+        });
+        const mnemonic = mnemonicFromPrf(prf, domain.label);
+        return { identity: MnemonicIdentity.fromMnemonic(mnemonic, opts), mnemonic, credentialId };
+    }
+
+    /**
+     * Re-derives the identity of a passkey made by {@link createPasskey}. Without `credentialIds`
+     * the browser offers every passkey for `rpId`.
+     */
+    static async fromPasskey(
+        o: { rpId: string; credentialIds?: Uint8Array[] } & PasskeySource & MnemonicOptions,
+    ): Promise<PasskeyMnemonic> {
+        const { rpId, credentialIds, client, domain = DEFAULT_PASSKEY_DOMAIN, ...opts } = o;
+        const { credentialId, prf } = await evaluatePrf({
+            rpId,
+            salt: domain.salt,
+            credentialIds,
+            client,
+        });
+        const mnemonic = mnemonicFromPrf(prf, domain.label);
+        return { identity: MnemonicIdentity.fromMnemonic(mnemonic, opts), mnemonic, credentialId };
     }
 }
 

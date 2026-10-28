@@ -14,6 +14,20 @@ style and have not been backfilled.
 
 ### Added
 
+- **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`
+  creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
+  `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
+  the passkey syncs to. Both return the identity, the words (for the app to offer as a
+  backup) and the credential id. The words come from HKDF-SHA256 over the PRF secret
+  under a salt and label, `DEFAULT_PASSKEY_DOMAIN` unless an app passes its own `domain`
+  to keep words it derived before. A passkey is used once right after creation and
+  refused (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it
+  gives no 32-byte secret or a different one, so a key never depends on a secret its
+  passkey cannot give again. The primitives (`createPrfPasskey`, `evaluatePrf`,
+  `mnemonicFromPrf`, `prfSupport`) are exported, and every call takes a `client` in
+  place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
+  in the tree through `@noble/curves`).
+
 - **`Arkade.connect` takes a `service` and can own its contract manager.**
   `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
   contractRepository } })` resolves the operator, indexer, esplora and the mainnet

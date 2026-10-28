@@ -133,6 +133,7 @@
         "@bitcoinerlab/descriptors-scure": "3.1.7",
         "@marcbachmann/cel-js": "8.0.0",
         "@noble/curves": "2.4.0",
+        "@noble/hashes": "2.4.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.4.0",
         "@scure/bip39": "2.4.0",
