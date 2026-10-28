@@ -137,4 +137,25 @@ describe("PRF passkeys", () => {
             new Uint8Array(16).fill(5),
         );
     });
+
+    it("keeps the credential id when the client reuses its buffers", async () => {
+        const shared = new Uint8Array(16).fill(9);
+        const prfBytes = new Uint8Array(32).fill(3);
+        const client = {
+            create: async () => null,
+            get: async () =>
+                ({
+                    rawId: shared.buffer,
+                    response: { userHandle: null },
+                    getClientExtensionResults: () => ({
+                        prf: { results: { first: prfBytes.buffer } },
+                    }),
+                }) as unknown as Credential,
+        };
+        const { credentialId, prf } = await evaluatePrf({ rpId: rp.id, salt, client });
+        shared.fill(0);
+        prfBytes.fill(0);
+        expect(credentialId).toEqual(new Uint8Array(16).fill(9));
+        expect(prf).toEqual(new Uint8Array(32).fill(3));
+    });
 });

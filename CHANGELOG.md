@@ -22,8 +22,8 @@ style and have not been backfilled.
   under a salt and label, `DEFAULT_PASSKEY_DOMAIN` unless an app passes its own `domain`
   to keep words it derived before. A passkey is used once right after creation and
   refused (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it
-  gives no 32-byte secret or a different one, so a key never depends on a secret its
-  passkey cannot give again. The primitives (`createPrfPasskey`, `evaluatePrf`,
+  gives no 32-byte secret or one different from the secret it returned at creation (an
+  authenticator that returns none at creation has nothing to compare against). The primitives (`createPrfPasskey`, `evaluatePrf`,
   `mnemonicFromPrf`, `prfSupport`) are exported, and every call takes a `client` in
   place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
   in the tree through `@noble/curves`).

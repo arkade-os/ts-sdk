@@ -46,7 +46,7 @@ type Bytes = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
 
 // Some password managers return PRF results as plain arrays; everything is copied into a fresh Uint8Array.
 function bytes(x: Bytes): Uint8Array<ArrayBuffer> {
-    if (x instanceof ArrayBuffer) return new Uint8Array(x);
+    if (x instanceof ArrayBuffer) return new Uint8Array(x.slice(0));
     if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength).slice();
     return Uint8Array.from(x);
 }
@@ -102,7 +102,9 @@ export async function prfSupport(): Promise<"yes" | "no" | "unknown"> {
 
 /**
  * Creates a discoverable passkey that requires user verification, then uses it once and returns
- * that use's PRF secret: a key must never depend on a secret its passkey cannot give again.
+ * that use's PRF secret: a key must never depend on a secret its passkey cannot give again. When
+ * creation returns no PRF result there is nothing to compare that use against, so an authenticator
+ * that changes its secret later is not caught here; it derives other words on the next sign-in.
  *
  * @throws PrfUnavailable when the authenticator cannot do PRF or gives another secret on reuse
  * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation
