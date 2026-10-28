@@ -365,6 +365,18 @@ export type IncomingFunds =
           spentVtxos: ExtendedVirtualCoin[];
       };
 
+/**
+ * Capability contract for a wallet that can report newly received funds.
+ *
+ * Kept as its own interface rather than on the wallet interfaces because not every wallet
+ * implements it (the service-worker and Expo wallets do not), matching the repo's
+ * capability-interface pattern. Lets helpers depend on just this one method instead of the
+ * whole Wallet class.
+ */
+export interface NotifiesIncomingFunds {
+    notifyIncomingFunds(eventCallback: (coins: IncomingFunds) => void): Promise<() => void>;
+}
+
 interface HasToReadonly {
     toReadonly(): Promise<ReadonlyIdentity>;
 }
@@ -6405,7 +6417,7 @@ function abortReason(signal: AbortSignal): unknown {
  * ```
  */
 export async function waitForIncomingFunds(
-    wallet: Wallet,
+    wallet: NotifiesIncomingFunds,
     options?: WaitForIncomingFundsOptions,
 ): Promise<IncomingFunds> {
     const { signal, timeoutMs } = options ?? {};

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { waitForIncomingFunds } from "../src";
-import type { IncomingFunds, Wallet } from "../src";
+import type { IncomingFunds, NotifiesIncomingFunds } from "../src";
 
 type Emit = (funds: IncomingFunds) => void;
 
@@ -18,7 +18,7 @@ function fakeWallet(
 ) {
     const notifyIncomingFunds = vi.fn(subscribe);
     return {
-        wallet: { notifyIncomingFunds } as unknown as Wallet,
+        wallet: { notifyIncomingFunds } as NotifiesIncomingFunds,
         notifyIncomingFunds,
     };
 }
