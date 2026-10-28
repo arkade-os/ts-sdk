@@ -1084,7 +1084,13 @@ export class ArkadeTransactionBuilder {
         if (!client.identity) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
-        // Checked before anything is signed.
+        // Checked before anything is signed. arkd refuses an input signed by the server alone.
+        const serverOnly = inputs.find((_, i) => !userInputs.includes(i));
+        if (serverOnly) {
+            throw new Error(
+                `${serverOnly.unlocker.fn.name}: a tapscript-only spend needs the user's signature on every input, and this leaf has only the server's`,
+            );
+        }
         const ark = client.arkProvider;
         if (!ark.submitTx || !ark.finalizeTx) {
             throw new Error(

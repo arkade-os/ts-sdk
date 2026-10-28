@@ -794,6 +794,44 @@ describe("ArkadeContract — extended features", () => {
         expect(arkProvider.finalizeTx).toHaveBeenCalled();
     });
 
+    it("refuses a server-only leaf in a tapscript-only spend, before signing", async () => {
+        const { identity, sign } = mockIdentity();
+        const COIN2 = mintCoin(5_000);
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN, COIN2]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity,
+            network: networks.regtest,
+        });
+        const c = ark.contract(
+            {
+                version: 1,
+                params: [
+                    { name: "server", type: "pubkey" },
+                    { name: "user", type: "pubkey" },
+                ],
+                functions: {
+                    cooperative: { tapscript: { signers: ["$user", "$server"] } },
+                    serverOnly: { tapscript: { signers: ["$server"] } },
+                },
+            },
+            {},
+        );
+
+        await expect(
+            c.functions
+                .cooperative()
+                .from(COIN)
+                .from(COIN2, c.unlock.serverOnly())
+                .to(p2tr(receiver), 15_000n)
+                .send(),
+        ).rejects.toThrow(/serverOnly: a tapscript-only spend needs the user's signature/);
+        expect(sign).not.toHaveBeenCalled();
+        expect(arkProvider.submitTx).not.toHaveBeenCalled();
+    });
+
     it("requires a change output for surplus, and appends it when set (fix #4)", async () => {
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [COIN]);
         const ark = await arkade.Arkade.connect({
