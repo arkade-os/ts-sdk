@@ -28,6 +28,17 @@ style and have not been backfilled.
   place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
   in the tree through `@noble/curves`).
 
+- **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
+  carry.** An unbound packet lets covclaimd claim whatever the solver funds,
+  so a solver can fund the lockup with dust and learn `P` from that claim.
+  `sealClaimPacket` takes `minAmount`, written as TLV `0x04` and into the
+  AEAD's additional data so the courier cannot strip it, and
+  `RevealParams.minAmount` sends it as `packet.min_amount` for a ciphertext
+  sealed with one. Only covclaimd with `min_amount` support opens a bound
+  packet. The package's own receives keep sealing unbound until it deploys;
+  after that, only an exact-out receive is guaranteed a claim packet, so an
+  exact-in one may carry none and leave the claim to the trader.
+
 - **`Arkade.connect` takes a `service` and can own its contract manager.**
   `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
   contractRepository } })` resolves the operator, indexer, esplora and the mainnet
@@ -387,6 +398,11 @@ style and have not been backfilled.
   taken off the class and called on its own, as in
   `const { create } = Wallet`, throws `this is not a constructor`. Call
   `Wallet.create(config)` or `ReadonlyWallet.create(config)` as before.
+- **`@arkade-os/swap`: `revealClaimPacket` requires `minAmount`.** Pass the
+  sats the lockup must carry, such as the swap record's `expectedAmount`; one
+  that is not positive or is past `Number.MAX_SAFE_INTEGER` is refused before
+  any call. The packet does not bind it yet: that waits for covclaimd with
+  `min_amount` support to deploy, and the call stays the same when it does.
 
 ### Features
 
