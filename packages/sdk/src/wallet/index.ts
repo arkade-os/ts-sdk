@@ -262,9 +262,9 @@ export type StorageConfig = {
      */
     intentRepository?: IntentRepository;
     /**
-     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository. Currently only a
-     * best-effort raw-PSBT cache used by {@link Unroll} when passed to `Unroll.Session.create`;
-     * normal sync never populates or prunes it and {@link ContractManager} never receives it.
+     * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
+     * VTXO's exit branch into it and prunes it on spend (both best-effort, see
+     * {@link exitDataCapture}), and unilateral exits read it before the indexer.
      */
     virtualTxRepository?: VirtualTxRepository;
     /**

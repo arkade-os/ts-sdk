@@ -177,6 +177,11 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Docs: two stale API comments.** The `OnchainWallet` example passed
+  `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is), and
+  `StorageConfig.virtualTxRepository` was still described as inert although the
+  wallet captures exit branches into it and prunes them on spend.
+
 - **`@arkade-os/swap` migrates Program v0 offer rows.** A wallet upgraded from
   a swap release before 0.1.0-rc.31 kept its offer rows as unsupported Program
   v0 unless a live swap record rebuilt them, so settled offers and offers
