@@ -32,6 +32,21 @@ style and have not been backfilled.
 
 ### Added
 
+- **`@arkade-os/swap/orders`: partial-fill limit orders.** Swap offers fill
+  whole or not at all. A maker now funds a standing sell or buy order as a
+  covenant VTXO (`createOrder`) and can go offline: any taker fills part or
+  all of it (`fillOrder`), anyone returns it to the maker once it expires
+  (`settleExpiredOrder`), and the maker cancels with the operator
+  (`cancelOrder`). Each fill pays at the order's own input index, so two
+  orders cannot share one payment, and the fill that sells the last unit, or
+  leaves a buy order less budget than its next legal fill, pays the maker's
+  script directly: a zero-asset continuation would fail the emulator's asset
+  opcodes. Every fill moves at least 330 sats and never leaves a sell
+  remainder worth less; `fillAllowed` mirrors the covenant's checks and
+  `planFill` walks a book of orders. The covenants are arkadec format-v1
+  artifacts with a `renew()` leaf for keyless renewal. One order per
+  transaction until multi-covenant spends land.
+
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
   so a solver can fund the lockup with dust and learn `P` from that claim.
