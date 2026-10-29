@@ -12,10 +12,24 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 
 /** The real one derives the covenant against a live operator; what is ours is when it runs. */
-const coverage = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
+const calls = vi.hoisted(() => [] as string[]);
+const coverage = vi.hoisted(() =>
+    vi.fn(async (..._args: unknown[]) => {
+        calls.push("coverage");
+    }),
+);
 vi.mock("../../src/offer", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../../src/offer")>()),
     restoreOfferCoverage: (...args: unknown[]) => coverage(...args),
+}));
+const migration = vi.hoisted(() =>
+    vi.fn(async (..._args: unknown[]) => {
+        calls.push("migration");
+        return { migrated: [], skipped: [] };
+    }),
+);
+vi.mock("../../src/migrateOfferRows", () => ({
+    migrateV0OfferRows: (...args: unknown[]) => migration(...args),
 }));
 import {
     CSVMultisigTapscript,
@@ -1272,6 +1286,34 @@ describe("the offer half", () => {
             expect.objectContaining({ status: "pending", swapPkScript: OFFER_SCRIPT }),
         ]);
         await drive.dispose();
+    });
+
+    it("migrates Program v0 offer rows before registering", async () => {
+        calls.length = 0;
+        const funding = offerFunding();
+        const { drive } = await restoreOver([], funding, offerDeposit(funding.txid));
+
+        expect(calls).toEqual(["migration", "coverage"]);
+        await drive.dispose();
+    });
+
+    it("migrates Program v0 offer rows without a repository, never under readonly", async () => {
+        for (const mode of ["auto", "readonly"] as const) {
+            migration.mockClear();
+            const { wallet } = fakeWallet();
+            const drive = createSwapDrive({
+                wallet,
+                operator: fakeOperator(),
+                corridors: fakeCorridors(),
+                network: async () => "regtest",
+                indexer: fakeIndexer(),
+                mode,
+                now: () => BEFORE,
+            });
+            await drive.ready;
+            expect(migration).toHaveBeenCalledTimes(mode === "auto" ? 1 : 0);
+            await drive.dispose();
+        }
     });
 
     it("registers an adopted swept v1 offer's covenant", async () => {

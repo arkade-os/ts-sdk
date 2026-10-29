@@ -31,6 +31,7 @@ import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
 import { buildHtlcRefund, claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
+import { migrateV0OfferRows } from "../migrateOfferRows";
 import { restoreOfferCoverage } from "../offer";
 import { LockupContractMissing, lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
@@ -947,7 +948,21 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
+    /** Before any restore step reads offer rows; needs no repository. Never throws. */
+    const migrateOfferRows = async (): Promise<void> => {
+        if (mode === "readonly") return;
+        try {
+            const { skipped } = await migrateV0OfferRows(await wallet.getContractManager());
+            for (const { script, reason } of skipped) {
+                console.warn(`[swap] could not migrate Program v0 offer row ${script}: ${reason}`);
+            }
+        } catch (error) {
+            console.warn("[swap] Program v0 offer row migration did not complete", error);
+        }
+    };
+
     const restore = async (): Promise<void> => {
+        await migrateOfferRows();
         if (!repository) return;
         await adoptLegacyRfqSwaps(repository);
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
