@@ -12,21 +12,13 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 
 /** The real one derives the covenant against a live operator; what is ours is when it runs. */
-const calls = vi.hoisted(() => [] as string[]);
-const coverage = vi.hoisted(() =>
-    vi.fn(async (..._args: unknown[]) => {
-        calls.push("coverage");
-    }),
-);
+const coverage = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
 vi.mock("../../src/offer", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../../src/offer")>()),
     restoreOfferCoverage: (...args: unknown[]) => coverage(...args),
 }));
 const migration = vi.hoisted(() =>
-    vi.fn(async (..._args: unknown[]) => {
-        calls.push("migration");
-        return { migrated: [], skipped: [] };
-    }),
+    vi.fn(async (..._args: unknown[]) => ({ migrated: [] as string[], skipped: [] })),
 );
 vi.mock("../../src/migrateOfferRows", () => ({
     migrateV0OfferRows: (...args: unknown[]) => migration(...args),
@@ -1288,12 +1280,28 @@ describe("the offer half", () => {
         await drive.dispose();
     });
 
-    it("migrates Program v0 offer rows before registering", async () => {
-        calls.length = 0;
-        const funding = offerFunding();
-        const { drive } = await restoreOver([], funding, offerDeposit(funding.txid));
-
-        expect(calls).toEqual(["migration", "coverage"]);
+    it("does not hold ready on the Program v0 offer row migration", async () => {
+        migration.mockClear();
+        let release = () => {};
+        migration.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    release = () => resolve({ migrated: [], skipped: [] });
+                }),
+        );
+        const { wallet } = fakeWallet();
+        const drive = createSwapDrive({
+            wallet,
+            operator: fakeOperator(),
+            repository: memoryRepository(),
+            corridors: fakeCorridors(),
+            network: async () => "regtest",
+            indexer: fakeIndexer(),
+            now: () => BEFORE,
+        });
+        await drive.ready;
+        await vi.waitFor(() => expect(migration).toHaveBeenCalledTimes(1));
+        release();
         await drive.dispose();
     });
 
@@ -1311,6 +1319,7 @@ describe("the offer half", () => {
                 now: () => BEFORE,
             });
             await drive.ready;
+            await drive.idle();
             expect(migration).toHaveBeenCalledTimes(mode === "auto" ? 1 : 0);
             await drive.dispose();
         }

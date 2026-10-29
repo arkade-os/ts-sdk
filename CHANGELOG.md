@@ -176,7 +176,8 @@ style and have not been backfilled.
   v0 unless a live swap record rebuilt them, so settled offers and offers
   without a usable record were never synced again. The drive's restore now
   rewrites any offer row matching one of the two bundled programs to Program v1
-  in place, from the row alone, after checking the script is unchanged.
+  in place, from the row alone, after checking the script is unchanged. It runs
+  in the background, so `ready` never waits on the indexer to hydrate the rows.
 
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**
   `restoreOfferCoverage` rebuilt every live offer with the current signer, so

@@ -948,7 +948,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
-    /** Before any restore step reads offer rows; needs no repository. Never throws. */
+    /** Needs no repository. Never throws. */
     const migrateOfferRows = async (): Promise<void> => {
         if (mode === "readonly") return;
         try {
@@ -962,7 +962,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
     };
 
     const restore = async (): Promise<void> => {
-        await migrateOfferRows();
+        // Not awaited: each migrated row hydrates from the indexer, which `ready` must not wait
+        // on. Racing the record path is safe: both verify the script and write the same program.
+        void track(migrateOfferRows());
         if (!repository) return;
         await adoptLegacyRfqSwaps(repository);
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
