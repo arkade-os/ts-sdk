@@ -67,6 +67,17 @@ describe("renewArkadeVtxos", () => {
         expect(streams[0]?.aborted).toBe(true);
     });
 
+    it("refuses a coin listed twice", async () => {
+        const { ark, target, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+
+        await expect(arkade.renewArkadeVtxos(ark, [target, target])).rejects.toThrow(
+            /listed twice/,
+        );
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
     it("registers no intent when the caller's signal is already aborted", async () => {
         const { ark, target, registerIntent } = await keeper(() => {
             throw new Error("no stream expected");

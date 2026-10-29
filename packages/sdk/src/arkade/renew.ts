@@ -27,7 +27,8 @@ export interface ArkadeRenewTarget {
     contract: ArkadeContract;
     coin: VirtualCoin;
     /**
-     * Covenant function that lets proof input k+1 through to proof output k unchanged, e.g.
+     * Covenant function that lets proof input k+1 through to proof output k unchanged (the
+     * emulator enforces it), e.g.
      * `require(tx.version == 2); require(this.tunnel(this.activeInputIndex - 1));`. Default `renew`.
      */
     fn?: string;
@@ -51,6 +52,9 @@ export async function renewArkadeVtxos(
         );
     }
     if (targets.length === 0) throw new Error("renewArkadeVtxos: nothing to renew");
+    const outpoints = targets.map(({ coin }) => `${coin.txid}:${coin.vout}`);
+    const twice = outpoints.find((o, i) => outpoints.indexOf(o) !== i);
+    if (twice) throw new Error(`renewArkadeVtxos: coin ${twice} listed twice`);
     // Before registering: an intent nobody joins would hold these coins until arkd drops it.
     if (opts.signal?.aborted) throw new Error(ABORTED);
 
@@ -125,6 +129,7 @@ export async function renewArkadeVtxos(
         proof: base64.encode(proof.toPSBT()),
         message,
     });
+    // From here an abort leaves the registered intent with arkd until it expires.
     const intentId = await arkProvider.registerIntent({ proof: signedProof, message });
 
     const handler = createArkadeBatchHandler(

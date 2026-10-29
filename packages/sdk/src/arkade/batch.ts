@@ -76,8 +76,9 @@ export function createArkadeBatchHandler(
     intentId: string,
     inputs: ArkadeBatchInput[],
     /**
-     * Signs forfeits and boarding inputs. `undefined` for covenant-only inputs: their forfeit
-     * leaves name the server and the emulator, which co-signs at finalization.
+     * Signs forfeits and boarding inputs. `undefined` only when every input's forfeit leaf names
+     * just the server and the emulator, which co-signs at finalization: a leaf that also needs a
+     * user key would reach arkd unsigned and fail the batch.
      */
     signer: Identity | undefined,
     signedProof: string,
@@ -99,6 +100,9 @@ export function createArkadeBatchHandler(
 ): Batch.Handler {
     if (!signer && inputs.some((input) => !isVtxoCoin(input))) {
         throw new Error("createArkadeBatchHandler: boarding inputs need a signer");
+    }
+    if (!signer && inputs.some((input) => input.arkadeScriptBytes.length === 0)) {
+        throw new Error("createArkadeBatchHandler: inputs without an Arkade script need a signer");
     }
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
