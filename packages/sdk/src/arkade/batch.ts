@@ -75,7 +75,12 @@ const isVtxoCoin = (input: ArkadeBatchInput): input is ArkadeExtendedVirtualCoin
 export function createArkadeBatchHandler(
     intentId: string,
     inputs: ArkadeBatchInput[],
-    signer: Identity,
+    /**
+     * Signs forfeits and boarding inputs. `undefined` only when every input's forfeit leaf names
+     * just the server and the emulator, which co-signs at finalization: a leaf that also needs a
+     * user key would reach arkd unsigned and fail the batch.
+     */
+    signer: Identity | undefined,
     signedProof: string,
     message: Intent.RegisterMessage,
     session: SignerSession,
@@ -93,6 +98,12 @@ export function createArkadeBatchHandler(
     /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
     batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
 ): Batch.Handler {
+    if (!signer && inputs.some((input) => !isVtxoCoin(input))) {
+        throw new Error("createArkadeBatchHandler: boarding inputs need a signer");
+    }
+    if (!signer && inputs.some((input) => input.arkadeScriptBytes.length === 0)) {
+        throw new Error("createArkadeBatchHandler: inputs without an Arkade script need a signer");
+    }
     let batchId: string;
     let sweepTapTreeRoot: Uint8Array;
     // Assigned only after the tree it commits to has been validated, so it
@@ -309,7 +320,7 @@ export function createArkadeBatchHandler(
                     forfeitOutputScript,
                 );
 
-                forfeitTx = await signer.sign(forfeitTx, [0]);
+                if (signer) forfeitTx = await signer.sign(forfeitTx, [0]);
                 signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
             }
 
@@ -317,7 +328,7 @@ export function createArkadeBatchHandler(
             // The emulator already knows the arkade scripts from the intent proof,
             // so we don't modify the commitment tx outputs (which would change the txid).
             if (boardingIndices.length > 0) {
-                commitmentPsbt = await signer.sign(commitmentPsbt, boardingIndices);
+                commitmentPsbt = await signer!.sign(commitmentPsbt, boardingIndices);
             }
 
             // Build connector tree nodes for the emulator

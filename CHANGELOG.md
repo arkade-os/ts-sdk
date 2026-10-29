@@ -144,6 +144,21 @@ style and have not been backfilled.
   `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
   longer reports a txid it did not submit.
 
+- **`renewArkadeVtxos` renews covenant VTXOs without an owner key.** A
+  covenant coin whose owner is offline was swept at batch expiry unless the
+  app hand-rolled the intent, the emulator packet and a batch handler that
+  still demanded a signer. The helper registers one intent for any number of
+  coins, each through a covenant function that lets proof input k+1 through
+  to output k (`renew` by default) with its assets, has the emulator sign the
+  proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
+  its signer for this: forfeits go to the emulator unsigned, and boarding
+  inputs and inputs without an Arkade script, whose forfeits need a key, are
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing, since an intent nobody joins holds
+  its coins until arkd drops it.
+
 ### Changed
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.

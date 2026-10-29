@@ -1,0 +1,91 @@
+{
+  "formatVersion": 1,
+  "contractName": "Renewable",
+  "constructorInputs": [
+    {
+      "name": "owner",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "renew",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "OP_INSPECTVERSION",
+          "2",
+          "OP_NUMEQUALVERIFY",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "1",
+          "OP_SUB",
+          "7",
+          "0",
+          "OP_TUNNEL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "renew",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:renew>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "ownerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<SERVER_EXIT_DELAY>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<owner>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "source": {
+    "entry": "renewable.ark",
+    "files": {
+      "renewable.ark": "pragma arkade ^0.1.0;\n\n// A coin anyone may renew into a new batch without the owner's key.\ncontract Renewable(pubkey owner) {\n  function renew() {\n    require(tx.version == 2, \"intent only\");\n    require(this.tunnel(this.activeInputIndex - 1), \"tunnel\");\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(serverExitDelay));\n    require(checkSig(ownerSig, owner));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-10-29T19:27:31.494417700+00:00",
+  "fingerprint": "sha256:ff0de61217f68e8450199f2539fee92d9e1e641b3a70986c0c7f248ea3a01b9c"
+}
