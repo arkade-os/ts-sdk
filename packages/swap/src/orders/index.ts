@@ -190,14 +190,15 @@ export async function createOrder(
 ): Promise<{ txid: string; contract: arkade.ArkadeContract }> {
     const tooSmall = orderTooSmall(terms, size);
     if (tooSmall) throw new Error(tooSmall);
+    const budget = size * terms.priceSats + terms.reserveSats;
+    if (terms.side === "buy" && budget > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error(`a buy order of ${budget} sats exceeds what wallet.send can carry`);
+    }
     const contract = orderContract(client, terms);
     const txid = await wallet.send(
         terms.side === "sell"
             ? { address: contract.address, assets: [{ assetId: terms.assetId, amount: size }] }
-            : {
-                  address: contract.address,
-                  amount: Number(size * terms.priceSats + terms.reserveSats),
-              },
+            : { address: contract.address, amount: Number(budget) },
     );
     return { txid, contract };
 }
@@ -285,6 +286,7 @@ function returnToMaker(
     { terms, coin }: Order,
 ): Promise<arkade.ArkadeSpendResult> {
     spend.from(coin).to(terms.makerScript, BigInt(coin.value));
+    // The maker's output is the only one, so every asset goes to vout 0.
     for (const a of coin.assets ?? []) {
         spend.withAsset({
             assetId: a.assetId,

@@ -45,7 +45,8 @@ style and have not been backfilled.
   remainder worth less; `fillAllowed` mirrors the covenant's checks and
   `planFill` walks a book of orders. The covenants are arkadec format-v1
   artifacts with a `renew()` leaf for keyless renewal. One order per
-  transaction until multi-covenant spends land.
+  transaction until multi-covenant spends land. `createOrder` refuses a buy
+  order whose sats `wallet.send` cannot carry as an exact number.
 
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,

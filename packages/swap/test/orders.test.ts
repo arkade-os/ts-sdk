@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@arkade-os/sdk";
 import {
     buyCloses,
+    createOrder,
     fillAllowed,
     fillOrder,
     orderContract,
@@ -204,5 +205,15 @@ describe("refusals before anything is built", () => {
         await expect(fillOrder(client, past, 10n, taker)).rejects.toThrow("order has expired");
         const live = sell(100n, 10n, { expiresAt: BigInt(Date.now()) });
         await expect(settleExpiredOrder(client, live)).rejects.toThrow("order has not expired");
+    });
+
+    it("refuses a buy order worth more sats than a number holds exactly", async () => {
+        const wallet = { send: vi.fn() };
+        const huge = terms({ side: "buy", priceSats: 2n ** 53n });
+
+        await expect(createOrder(wallet as never, await connect(), huge, 2n)).rejects.toThrow(
+            "exceeds",
+        );
+        expect(wallet.send).not.toHaveBeenCalled();
     });
 });
