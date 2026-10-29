@@ -1,5 +1,6 @@
 import { base64, hex } from "@scure/base";
 import { RawWitness } from "@scure/btc-signer";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
 import {
@@ -24,7 +25,9 @@ const ABORTED = "renewArkadeVtxos: aborted before the batch completed";
 
 /** A covenant VTXO and the function that renews it. */
 export interface ArkadeRenewTarget {
-    contract: ArkadeContract;
+    // `<any>`, as in ArkadeTransactionBuilder: a contract of a literal program is not assignable
+    // to ArkadeContract<Program>, and renewal reads nothing program-specific.
+    contract: ArkadeContract<any>;
     coin: VirtualCoin;
     /**
      * Covenant function that lets proof input k+1 through to proof output k unchanged (the
@@ -55,13 +58,15 @@ export async function renewArkadeVtxos(
     const outpoints = targets.map(({ coin }) => `${coin.txid}:${coin.vout}`);
     const twice = outpoints.find((o, i) => outpoints.indexOf(o) !== i);
     if (twice) throw new Error(`renewArkadeVtxos: coin ${twice} listed twice`);
-    // Before registering: an intent nobody joins would hold these coins until arkd drops it.
-    if (opts.signal?.aborted) throw new Error(ABORTED);
 
     const legs = targets.map(({ contract, coin, fn = "renew" }) => {
         const compiled = contract.vtxoScript.functionByName(fn);
         if (!compiled?.arkadeScript) {
             throw new Error(`renewArkadeVtxos: ${fn} is not a covenant function`);
+        }
+        // No owner signs a renewal: a leaf naming any key but the server's could never complete.
+        if (compiled.signerKeys.some((key) => !equalBytes(key, contract.keys.serverKey))) {
+            throw new Error(`renewArkadeVtxos: ${fn} needs a signature besides the server's`);
         }
         const stack = (compiled.def.arkadeScript?.witness ?? []).map((ref) =>
             witnessRefToBytes(ref, {}, contract.args),
@@ -129,7 +134,9 @@ export async function renewArkadeVtxos(
         proof: base64.encode(proof.toPSBT()),
         message,
     });
-    // From here an abort leaves the registered intent with arkd until it expires.
+    // Checked last thing before registering: an intent nobody joins holds the coins until arkd
+    // drops it, and from here an abort can only leave it there.
+    if (opts.signal?.aborted) throw new Error(ABORTED);
     const intentId = await arkProvider.registerIntent({ proof: signedProof, message });
 
     const handler = createArkadeBatchHandler(

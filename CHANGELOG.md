@@ -153,10 +153,11 @@ style and have not been backfilled.
   proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
   its signer for this: forfeits go to the emulator unsigned, and boarding
   inputs and inputs without an Arkade script, whose forfeits need a key, are
-  refused when the handler is built.
-  The caller's `signal` ends the wait for a batch; one already aborted
-  registers nothing, since an intent nobody joins holds its coins until arkd
-  drops it.
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing, since an intent nobody joins holds
+  its coins until arkd drops it.
 
 ### Changed
 

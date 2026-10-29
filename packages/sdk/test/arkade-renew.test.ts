@@ -67,6 +67,56 @@ describe("renewArkadeVtxos", () => {
         expect(streams[0]?.aborted).toBe(true);
     });
 
+    it("refuses a covenant leaf that needs a key besides the server's", async () => {
+        const { ark, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+        const ownerSigned = {
+            version: 1,
+            params: [
+                { name: "owner", type: "pubkey" },
+                { name: "server", type: "pubkey" },
+            ],
+            functions: {
+                renew: {
+                    tapscript: { signers: ["$server", "$owner"], asm: [] },
+                    arkadeScript: { asm: ["INSPECTVERSION", 2, "NUMEQUAL"] },
+                },
+            },
+        } satisfies arkade.Program;
+        const contract = ark.contract(ownerSigned, { owner: xOnly() });
+        const coin = {
+            ...mintCoin(5000),
+            script: hex.encode(contract.pkScript),
+            status: { confirmed: true },
+        } as unknown as VirtualCoin;
+
+        await expect(arkade.renewArkadeVtxos(ark, [{ contract, coin }])).rejects.toThrow(
+            /needs a signature besides the server's/,
+        );
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
+    it("registers no intent when the caller aborts while the proof is being signed", async () => {
+        const { ark, target, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+        const caller = new AbortController();
+        (ark.emulator as { submitIntent: unknown }).submitIntent = async ({
+            proof,
+        }: {
+            proof: string;
+        }) => {
+            caller.abort();
+            return proof;
+        };
+
+        await expect(
+            arkade.renewArkadeVtxos(ark, [target], { signal: caller.signal }),
+        ).rejects.toThrow(/aborted before the batch completed/);
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
     it("refuses a coin listed twice", async () => {
         const { ark, target, registerIntent } = await keeper(() => {
             throw new Error("no stream expected");
