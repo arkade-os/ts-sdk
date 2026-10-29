@@ -171,6 +171,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap` migrates Program v0 offer rows.** A wallet upgraded from
+  a swap release before 0.1.0-rc.31 kept its offer rows as unsupported Program
+  v0 unless a live swap record rebuilt them, so settled offers and offers
+  without a usable record were never synced again. The drive's restore now
+  rewrites any offer row matching one of the two bundled programs to Program v1
+  in place, from the row alone, after checking the script is unchanged. It runs
+  in the background, so `ready` never waits on the indexer to hydrate the rows.
+
 - **`@arkade-os/swap` restores offers funded before a signer rotation.**
   `restoreOfferCoverage` rebuilt every live offer with the current signer, so
   an offer funded under a rotated-out key failed its script check and was

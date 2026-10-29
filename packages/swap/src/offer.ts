@@ -115,7 +115,7 @@ type SwapProgramBinding = {
  * because the closure is conditional and `csv.type` is a literal in the artifact format (only
  * `csv.value` resolves a `$param`); the declarative form would need six drift-prone files.
  */
-function withExitClosure(
+export function withExitClosure(
     program: ReturnType<typeof arkade.parseArtifact>,
     exit: RelativeTimelock | undefined,
 ): ReturnType<typeof arkade.parseArtifact> {
