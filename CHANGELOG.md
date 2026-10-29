@@ -149,6 +149,11 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Coin selection and `.from()` skip swept coins.** A registered contract's
+  `getUtxos()` keeps swept coins so they can be recovered, but arkd rejects a
+  spend that includes one. Selection without `.from()` now skips them, and
+  `.from()` refuses a coin with `isSwept: true` instead of failing at arkd.
+
 - **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
   returns checkpoints without the condition witness, so finalizing failed with
   `INVALID_SIGNATURE`. The builder now adds it back after signing.

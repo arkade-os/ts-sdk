@@ -192,6 +192,11 @@ export interface Utxo {
      */
     script?: string;
     /**
+     * Whether the server swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
+     * swept coin can't be spent offchain, so `.from()` refuses it; recover it into a batch instead.
+     */
+    isSwept?: boolean;
+    /**
      * Raw bytes of the ark tx that created this VTXO, attached as its input's PrevArkTx. Overrides
      * the indexer-resolved value; supply it when the tx isn't indexable yet (a recursive covenant
      * spending an ark tx the caller just built).
@@ -872,6 +877,11 @@ export class ArkadeTransactionBuilder {
             }
             if (taken.has(outpoint))
                 throw new Error(`from(): coin ${outpoint} is already an input`);
+            if (coin.isSwept) {
+                throw new Error(
+                    `from(): coin ${outpoint} was swept; recover it into a batch instead`,
+                );
+            }
             taken.add(outpoint);
         }
         this.inputs.push(...list.map((coin) => ({ coin, unlocker })));
@@ -1153,7 +1163,7 @@ export class ArkadeTransactionBuilder {
     }
 
     private async selectCoin(amount: bigint): Promise<Utxo> {
-        const utxos = await this.unlocker.contract.getUtxos();
+        const utxos = (await this.unlocker.contract.getUtxos()).filter((u) => !u.isSwept);
         if (utxos.length === 0) throw new Error("no spendable coins for this contract");
         // Smallest covering coin, else the largest (the rest may come via `.fund()`).
         const covering = utxos
