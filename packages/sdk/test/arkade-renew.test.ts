@@ -19,6 +19,7 @@ const renewable = arkade.programFromArtifact(
 /** A keeper's client whose server serves `stream` once the intent is registered. */
 async function keeper(stream: (signal: AbortSignal) => AsyncIterableIterator<never>) {
     const server = xOnly();
+    const registerIntent = vi.fn(async () => "intent-1");
     const ark = await arkade.Arkade.connect({
         arkade: {
             async getInfo() {
@@ -32,7 +33,7 @@ async function keeper(stream: (signal: AbortSignal) => AsyncIterableIterator<nev
                     unilateralExitDelay: 20n,
                 } as any;
             },
-            registerIntent: vi.fn(async () => "intent-1"),
+            registerIntent,
             getEventStream: stream,
         } as any,
         emulator: { submitIntent: vi.fn(async ({ proof }) => proof) } as any,
@@ -45,7 +46,7 @@ async function keeper(stream: (signal: AbortSignal) => AsyncIterableIterator<nev
         script: hex.encode(contract.pkScript),
         status: { confirmed: true },
     } as unknown as VirtualCoin;
-    return { ark, target: { contract, coin } };
+    return { ark, target: { contract, coin }, registerIntent };
 }
 
 describe("renewArkadeVtxos", () => {
@@ -64,6 +65,17 @@ describe("renewArkadeVtxos", () => {
             arkade.renewArkadeVtxos(ark, [target], { signal: caller.signal }),
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(streams[0]?.aborted).toBe(true);
+    });
+
+    it("registers no intent when the caller's signal is already aborted", async () => {
+        const { ark, target, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+
+        await expect(
+            arkade.renewArkadeVtxos(ark, [target], { signal: AbortSignal.abort() }),
+        ).rejects.toThrow(/aborted before the batch completed/);
+        expect(registerIntent).not.toHaveBeenCalled();
     });
 
     it("leaves no listener on the caller's signal", async () => {

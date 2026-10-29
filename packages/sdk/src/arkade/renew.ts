@@ -20,6 +20,8 @@ import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
 import { witnessRefToBytes } from "./program";
 
+const ABORTED = "renewArkadeVtxos: aborted before the batch completed";
+
 /** A covenant VTXO and the function that renews it. */
 export interface ArkadeRenewTarget {
     contract: ArkadeContract;
@@ -49,6 +51,8 @@ export async function renewArkadeVtxos(
         );
     }
     if (targets.length === 0) throw new Error("renewArkadeVtxos: nothing to renew");
+    // Before registering: an intent nobody joins would hold these coins until arkd drops it.
+    if (opts.signal?.aborted) throw new Error(ABORTED);
 
     const legs = targets.map(({ contract, coin, fn = "renew" }) => {
         const compiled = contract.vtxoScript.functionByName(fn);
@@ -145,7 +149,7 @@ export async function renewArkadeVtxos(
     const aborted = new Promise<never>((_, reject) => {
         onAbort = () => {
             abort.abort();
-            reject(new Error("renewArkadeVtxos: aborted before the batch completed"));
+            reject(new Error(ABORTED));
         };
     });
     if (opts.signal?.aborted) onAbort();
