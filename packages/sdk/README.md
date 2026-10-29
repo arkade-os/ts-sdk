@@ -192,6 +192,7 @@ import {
   BatchSignableIdentity,
   SignRequest,
   isBatchSignable,
+  Transaction,
   Wallet
 } from '@arkade-os/sdk'
 
@@ -340,7 +341,7 @@ import { waitForIncomingFunds } from '@arkade-os/sdk'
 const arkadeAddress = await wallet.getAddress()
 const boardingAddress = await wallet.getBoardingAddress()
 console.log('Arkade Address:', arkadeAddress)
-console.log('Boarding (Mainnet) Address:', boardingAddress)
+console.log('Boarding (onchain) Address:', boardingAddress)
 
 const incomingFunds = await waitForIncomingFunds(wallet)
 if (incomingFunds.type === "vtxo") {
@@ -435,7 +436,6 @@ To show "your money, minus what is tied up", subtract from `settled + preconfirm
 from `total` silently drops them from the figure.
 
 ```typescript
-
 // Get virtual outputs (available for offchain spending)
 const vtxos = await wallet.getVtxos()
 
@@ -536,7 +536,7 @@ const [vtxos, boardingInputs] = await Promise.all([
 // For settling transactions
 const settlementTxId = await wallet.settle({
   inputs: [...vtxos, ...boardingInputs],
-  // Optional: specify a mainnet output
+  // Optional: specify an onchain output
   outputs: [{
     address: "bc1p...",
     amount: 100_000n
@@ -975,7 +975,7 @@ switch (step.type) {
     const [parent, child] = step.pkg;
     console.log(`Parent: ${parent}`)
     console.log(`Child: ${child}`)
-    await step.do(); // broadcast the 1C1P package
+    await step.do(); // broadcast the 1P1C package
     break;
   case Unroll.StepType.DONE:
     console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
@@ -1598,7 +1598,7 @@ const contract = await manager.createContract({
 })
 
 // Listen for all contracts events (wallet address + external contracts)
-const unsubscribe = await manager.onContractEvent((event) => {
+const unsubscribe = manager.onContractEvent((event) => {
   switch (event.type) {
     case 'vtxo_received':
       console.log(`Received ${event.vtxos.length} virtual outputs to ${event.contractScript}`)

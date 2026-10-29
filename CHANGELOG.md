@@ -177,8 +177,9 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **Docs: two stale API comments.** The `OnchainWallet` example passed
-  `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is), and
+- **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
+  examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
+  and
   `StorageConfig.virtualTxRepository` was still described as inert although the
   wallet captures exit branches into it and prunes them on spend.
 

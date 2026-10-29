@@ -6,7 +6,7 @@
  * import { createSwapClient } from "@arkade-os/swap";
  * import { nodeSwapRepository } from "@arkade-os/swap/node";
  *
- * await using repository = nodeSwapRepository({ network: "mainnet" });
+ * await using repository = nodeSwapRepository({ network: "bitcoin" });
  * const client = createSwapClient({ wallet, repository });
  * ```
  *

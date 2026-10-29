@@ -172,7 +172,7 @@ disposal closes a connection, because it is the one that opened it:
 ```ts
 import { nodeSwapRepository } from "@arkade-os/swap/node";
 
-await using swaps = nodeSwapRepository({ network: "mainnet" }); // or { path } to choose the file
+await using swaps = nodeSwapRepository({ network: "bitcoin" }); // or { path } to choose the file
 ```
 
 Records are stored whole. The SQLite and Realm backends serialize each record to JSON with only
