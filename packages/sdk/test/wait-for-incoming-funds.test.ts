@@ -189,4 +189,18 @@ describe("waitForIncomingFunds", () => {
 
         expect(vi.getTimerCount()).toBe(0);
     });
+
+    it("cleans up when the subscription throws synchronously", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const { wallet } = fakeWallet(() => {
+            throw new Error("subscribe exploded");
+        });
+
+        await expect(waitForIncomingFunds(wallet, { timeoutMs: 30_000 })).rejects.toThrow(
+            "subscribe exploded",
+        );
+
+        // cancel() ran, so the timer was cleared (and with it the abort listener).
+        expect(vi.getTimerCount()).toBe(0);
+    });
 });

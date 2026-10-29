@@ -6994,24 +6994,30 @@ export async function waitForIncomingFunds(
             );
         }
 
-        wallet
-            .notifyIncomingFunds((funds: IncomingFunds) => {
-                // Skip purely outgoing events (empty `newVtxos` / `coins`), or a self-send's spent
-                // half could resolve this before its `vtxo_received` arrives.
-                const hasFunds =
-                    funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
-                if (settled || !hasFunds) return;
+        try {
+            wallet
+                .notifyIncomingFunds((funds: IncomingFunds) => {
+                    // Skip purely outgoing events (empty `newVtxos` / `coins`), or a self-send's spent
+                    // half could resolve this before its `vtxo_received` arrives.
+                    const hasFunds =
+                        funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
+                    if (settled || !hasFunds) return;
 
-                settle(() => resolve(funds));
-            })
-            .then((stop) => {
-                stopFunc = stop;
-                // May have settled before the handle arrived; don't leak it.
-                if (settled) stop();
-            })
-            .catch((error) => {
-                // Else a caller whose providers are down hangs forever on an unhandled rejection.
-                cancel(error);
-            });
+                    settle(() => resolve(funds));
+                })
+                .then((stop) => {
+                    stopFunc = stop;
+                    // May have settled before the handle arrived; don't leak it.
+                    if (settled) stop();
+                })
+                .catch((error) => {
+                    // Else a caller whose providers are down hangs forever on an unhandled rejection.
+                    cancel(error);
+                });
+        } catch (error) {
+            // notifyIncomingFunds threw synchronously, before returning its promise.
+            // Route it through cancel so the timeout and abort listener are cleaned up too.
+            cancel(error);
+        }
     });
 }
