@@ -66,9 +66,7 @@ An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that c
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the
 recipient nets exactly the `amount` written, with the estimate folded into the reported `fee`. The
 claim is built and broadcast by the client itself once the fill is claimable, signed by the
-wallet's payout key and priced off a per-network fee-rate floor
-(`discovery`/corridor overrides aside, that floor is the only environment-specific input). A
-routing UI should raise it in congestion — the claim has a consensus deadline — via
+wallet's payout key and priced off a per-network fee-rate floor. A routing UI should raise it in congestion — the claim has a consensus deadline — via
 `corridors: { onchain: { claimFeeRateSatVb } }`; set it to `null` to take the claim over manually
 (the drive then reports the L1 half as your job rather than blocking it). Wire your own builder
 with `corridors: { onchain: { claim } }` and it wins over the default.
@@ -217,8 +215,13 @@ Native does not, so install `react-native-get-random-values` (or `expo-crypto`) 
 before this package. `crypto.subtle` is unused. `EventSource` and `WebSocket` are needed only by
 the watch and relay transports, each of which takes an injected implementation.
 
-The client takes no server URL anywhere. Server info, chain reads and broadcast are all derived
-from the wallet, which is the single place that knows which operator it speaks to.
+The client takes no server URL. Server info, Arkade chain reads and broadcast are all derived
+from the wallet, which is the single place that knows which operator it speaks to. The onchain
+corridor is the exception: `IWallet` carries no L1 provider, so it reads bitcoin from Esplora at
+`ESPLORA_URL[network]`. Point it elsewhere with
+`corridors: { onchain: { chain: { esploraUrl } } }`, or pass `{ provider }` to read through your
+own `OnchainProvider` — an Electrum-backed wallet then watches and claims the HTLC over its own
+backend.
 
 ## Subpaths
 

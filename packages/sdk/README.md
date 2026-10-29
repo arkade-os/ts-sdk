@@ -31,6 +31,10 @@ const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
 
+`Wallet.create` also accepts short spellings: `service` in place of the
+`arkProvider`/`indexerProvider`/`onchainProvider` trio, `mode` for `walletMode` and
+`settlement` for `settlementConfig`. Setting both spellings of one field throws.
+
 ### Read-Only Wallets (Watch-Only)
 
 The SDK supports read-only wallets that allow you to query wallet state without exposing private keys. This is useful for:
@@ -249,7 +253,7 @@ Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through a
 
 If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
 
-> **New:** the interface also requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
+> **Note:** the interface requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
 
 #### Default URLs
 
@@ -403,6 +407,7 @@ console.log('Offchain Settled:', balance.settled)
 console.log('Offchain Preconfirmed:', balance.preconfirmed)
 console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly
 console.log('Locked by an in-flight intent:', balance.pendingSettlement)
+console.log('Held by reserveVtxos:', balance.reserved)
 console.log('Recoverable:', balance.recoverable)
 console.log('Awaiting recovery:', balance.pendingRecovery)
 console.log('Unilaterally exited:', balance.unrolled)
@@ -416,6 +421,8 @@ will actually pick, and the difference between the two is accounted for exactly:
 ```text
 settled + preconfirmed === available + gated + pendingSettlement + reserved
 ```
+
+When the wallet holds assets, one dust carrier is also kept out of `available`.
 
 `unrolled` holds virtual outputs whose unilateral exit already happened: they sit
 onchain behind their CSV timelock, so nothing offchain can move them and
@@ -1013,7 +1020,7 @@ The flow is **quote → fund → prepare → execute**:
 ```typescript
 import { UnilateralExit, OnchainWallet, serializeExitPackage } from '@arkade-os/sdk'
 
-const onchainWallet = await OnchainWallet.create(identity, 'mainnet')
+const onchainWallet = await OnchainWallet.create(identity, 'bitcoin')
 
 // 1. Quote: how many txs, how many sats (no funds needed, nothing signed)
 const quote = await UnilateralExit.estimate({
@@ -1261,8 +1268,6 @@ SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
 driver, the SDK handles the schema.
 Paged wallet reads require SQLite 3.15.0 or newer because they use
 [row-value comparisons](https://sqlite.org/rowvalue.html#backwards_compatibility).
-The built-in `node:sqlite` module is experimental in Node.js 22.12.x and stable
-from Node.js 22.13.0 onward.
 
 See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
 a full working example using `node:sqlite`.
@@ -1356,7 +1361,6 @@ const wallet = await Wallet.create({
 })
 ```
 
-### Using with Node.js
 ### Using with Node.js
 
 Node.js does not provide a global `EventSource` implementation (24.x has one behind `--experimental-eventsource`). The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching, so tell it which one to use:
@@ -1476,9 +1480,11 @@ When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it
 
 `watcherConfig.failsafePollIntervalMs` (default `20_000`) controls how often the watcher replays repository changes into contract events; it does not fetch fresh VTXOs from the indexer.
 
+To watch transactions at scripts you don't know in advance (extension packets at someone else's offer, say), `indexerProvider.getFilteredSubscription(filter, signal)` streams what a server-side CEL filter matches. It yields `SubscriptionEvent | SubscriptionHeartbeat`, so check `type === "event"` before reading `tx`. A custom `IndexerProvider` must implement it.
+
 #### Compiler artifacts
 
-Read compiler format v1 JSON with `arkade.programFromArtifact`, which returns a normalized Program at version 1. `arkade.parseArtifact` reads normalized Program JSON and defaults omitted versions to 1. Only version 1 is supported, with typed `{ name, type }` declarations for every constructor parameter and call argument. Explicit version 0 programs, including persisted contracts, are rejected; there is no automatic migration. Older SDKs reject version 1 programs rather than silently reconstructing a different script. An Arkade function and its same-named Taproot leaf share one call, such as `contract.functions.claim(...)`. Standalone Taproot functions use their own names, such as `contract.functions.unilateral()`. Leaf order in the artifact still determines the Taproot tree. This example assumes a `digest: bytes32` constructor and a `claim` function with one `preimage: bytes32` covenant argument; providers, wallet, artifact JSON and matching digest/preimage values are already available.
+Read compiler format v1 JSON with `arkade.programFromArtifact`, which returns a normalized Program at version 1. `arkade.parseArtifact` reads normalized Program JSON and defaults omitted versions to 1. Only version 1 is supported, with typed `{ name, type }` declarations for every constructor parameter and call argument. Explicit version 0 programs, including persisted contracts, are rejected; there is no automatic migration. Older SDKs reject version 1 programs rather than silently reconstructing a different script. An Arkade function and its same-named Taproot leaf share one call, such as `contract.functions.claim(...)`. Standalone Taproot functions use their own names, such as `contract.functions.unilateral()`. Leaf order in the artifact still determines the Taproot tree. This example assumes a `digest: bytes32` constructor and a `claim` function with one `preimage: bytes32` covenant argument; wallet, artifact JSON and matching digest/preimage values are already available.
 
 Declarations retain the compiler's native scalar names: `pubkey`, `signature`, `bytes`, `bytes20`, `bytes32`, `asset`, `int`, `bool` and `AssetGroup`. There are no `hash` or `sig` type aliases. Byte types take `Uint8Array`; `int`, `bool` and `AssetGroup` take `bigint | number`, with `bool` restricted to `0` or `1`. Fixed widths follow the type itself, without extra width or boolean flags. The SDK requires every `pubkey` to be a 32-byte x-only key, although the language treats it as a bytes alias. Structs and arrays retain the compiler's flattened scalar field names and ordering.
 
@@ -1487,25 +1493,29 @@ The normalized Program remains an SDK representation: compiler `constructorInput
 Before upgrading a wallet with persisted v0 contracts, back up its contract rows and retain a compatible SDK. After the upgrade, `manager.getUnsupportedContracts()` lists the v0 rows the wallet still holds: they stay stored, but their VTXOs are not synced and they cannot be spent or exited. To recover a contract in v1, reconstruct its program with typed declarations while preserving the stored constructor values, signer keys, leaf order and emulator position. Compile with the stored keys and compare the resulting `pkScript` with the original; reconnecting to a server with new keys or defaults can change the address. Only after the scripts match, register the reconstructed contract: over a v0 row with the same script, `register()` (like `manager.createContract`) replaces the row's params in place, then syncs its VTXOs. The row keeps its history, and its label and metadata unless you pass new ones. It leaves any other existing row unchanged. If the scripts differ, continue managing the contract with the compatible SDK. Changing the version number alone is not a migration.
 
 ```typescript
-import { arkade, ArkAddress } from '@arkade-os/sdk'
+import { arkade, Arkade, ArkAddress } from '@arkade-os/sdk'
 
 const program = arkade.programFromArtifact(artifactJson)
-const client = await arkade.Arkade.connect({
-  arkade: arkProvider,
-  emulator: emulatorProvider,
-  indexer: indexerProvider,
+const client = await Arkade.connect({
+  service: { network: 'bitcoin' }, // operator, indexer, esplora and covenant co-signer
   identity: wallet.identity,
   contractManager: await wallet.getContractManager(),
 })
 const contract = client.contract(program, { digest })
 await contract.register({ label: 'Hashlock' })
-await wallet.send({ address: contract.address, amount: 10_000 })
 
-// Call after funding appears in contract.getUtxos().
-const { txid } = await contract.functions.claim(preimage)
-  .to(ArkAddress.decode(recipientAddress).pkScript, 10_000n)
-  .send()
+const funded = await contract.on('vtxo_received', async () => {
+  funded.off()
+  const { txid } = await contract.functions.claim(preimage)
+    .to(ArkAddress.decode(recipientAddress).pkScript, 10_000n)
+    .send()
+})
+await wallet.send({ address: contract.address, amount: 10_000 })
 ```
+
+`service` takes `{ network }` for the reference deployment or `{ operatorUrl, emulatorUrl? }` for a custom one, whose covenant paths stay disabled without `emulatorUrl`; passing the `arkade`/`emulator`/`indexer` providers yourself still works. Without a wallet, pass `storage: { contractRepository }` instead of `contractManager`: the client then owns a session-scoped manager, which `client.dispose()` stops.
+
+`contract.on('vtxo_received' | 'vtxo_spent' | 'connection_reset', cb)` reports activity from subscription on and returns a handle with `off()`. Coins that predate it are not replayed and a reconnect re-syncs silently, so read `contract.getVtxos()` (every stored VTXO, spent ones included) after subscribing and on each `connection_reset`.
 
 The connected server supplies `<SERVER_KEY>` (the reserved `server` parameter in normalized Programs) and `<SERVER_EXIT_DELAY>`; conflicting overrides fail, and time-based delays that are not multiples of 512 seconds fail rather than changing the advertised delay. Resolved bindings are persisted, so restoring the contract keeps its script through server key or policy changes. A declared constructor named `user` defaults to the connected identity; other constructor keys and flattened struct/array fields remain caller-provided, using names such as `owners.0.key`. Child-output placeholders remain explicit `bytes32` constructor bindings. Leaf call inputs used as script operands cannot produce a fixed address and are rejected; raw CSV operands must be canonical BIP68 encodings.
 
@@ -1605,7 +1615,7 @@ await manager.updateContractParams(contract.script, { preimage: revealedPreimage
 // Check spendable paths (requires a specific virtual output)
 const [withVtxos] = await manager.getContractsWithVtxos({ script: contract.script })
 const vtxo = withVtxos.vtxos[0]
-const paths = manager.getSpendablePaths({
+const paths = await manager.getSpendablePaths({
   contractScript: contract.script,
   vtxo,
   collaborative: true,
@@ -1692,7 +1702,7 @@ pnpm -C packages/sdk docs:build       # Build TypeDoc API docs
 pnpm -C packages/sdk docs:open        # Open API docs in the browser
 ```
 
-For integration tests, use the root commands (`pnpm run test:integration:sdk` and the `regtest:*:sdk` family) — see the root README.
+For integration tests, use the root commands (`pnpm run test:integration:sdk` and the `regtest:*:sdk` family) — see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ### Releasing
 
