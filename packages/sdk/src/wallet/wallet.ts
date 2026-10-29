@@ -6969,8 +6969,13 @@ export async function waitForIncomingFunds(
 
             if (timeoutId !== undefined) clearTimeout(timeoutId);
             if (onAbort) signal?.removeEventListener("abort", onAbort);
-            stopFunc?.();
-
+            // stopFunc() comes from the caller's implementation, so it may throw.
+            // Catch it so deliver() still runs and the promise always settles.
+            try {
+                stopFunc?.();
+            } catch {
+                // Ignore: nothing else to do, but the promise must still settle.
+            }
             deliver();
         };
 

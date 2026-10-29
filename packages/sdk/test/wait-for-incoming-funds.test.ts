@@ -143,6 +143,25 @@ describe("waitForIncomingFunds", () => {
         await expect(waitForIncomingFunds(wallet)).rejects.toThrow("indexer unreachable");
     });
 
+    it("settles instead of hanging when the subscription teardown throws", async () => {
+        // A caller's notifyIncomingFunds may hand back an unsubscribe that throws.
+        // The funds still arrived, so the promise must resolve, not hang on teardown.
+        const throwingStop = vi.fn(() => {
+            throw new Error("teardown failed");
+        });
+        const { wallet } = fakeWallet(async (cb) => {
+            captured = cb;
+            return throwingStop;
+        });
+
+        const pending = waitForIncomingFunds(wallet);
+        await flush();
+        emit({ type: "utxo", coins: [coin] } as IncomingFunds);
+
+        await expect(pending).resolves.toMatchObject({ type: "utxo" });
+        expect(throwingStop).toHaveBeenCalledTimes(1);
+    });
+
     it("ignores an abort that arrives after the funds already resolved", async () => {
         const controller = new AbortController();
         const { wallet } = fakeWallet();
