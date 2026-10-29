@@ -15,7 +15,7 @@ vi.mock("../src/wallet/validation", async (importActual) => ({
     validateBatchRecipients: vi.fn(),
 }));
 
-import { createArkadeBatchHandler } from "../src/arkade/batch";
+import { createArkadeBatchHandler, type ArkadeBatchInput } from "../src/arkade/batch";
 import { validateBatchRecipients, ErrOffchainOutputNotFound } from "../src/wallet/validation";
 import { validateVtxoTxGraph } from "../src/tree/validation";
 import { Transaction } from "../src/utils/transaction";
@@ -346,5 +346,29 @@ describe("createArkadeBatchHandler finalization without tree signing", () => {
 
         await finalize;
         expect(arkProvider.submitSignedForfeitTxs).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("createArkadeBatchHandler without a signer", () => {
+    it("refuses boarding inputs, which only a key can sign", () => {
+        const boarding = {
+            txid: "aa".repeat(32),
+            vout: 0,
+            value: 1000,
+        } as unknown as ArkadeBatchInput;
+
+        expect(() =>
+            createArkadeBatchHandler(
+                INTENT_ID,
+                [boarding],
+                undefined,
+                proofDeclaring(),
+                { onchain_output_indexes: [] } as unknown as Intent.RegisterMessage,
+                makeSession(),
+                makeArkProvider(),
+                makeEmulator(),
+                networks.regtest,
+            ),
+        ).toThrow(/boarding inputs need a signer/);
     });
 });

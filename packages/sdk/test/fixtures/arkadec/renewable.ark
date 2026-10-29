@@ -1,0 +1,14 @@
+pragma arkade ^0.1.0;
+
+// A coin anyone may renew into a new batch without the owner's key.
+contract Renewable(pubkey owner) {
+  function renew() {
+    require(tx.version == 2, "intent only");
+    require(this.tunnel(this.activeInputIndex - 1), "tunnel");
+  }
+
+  function unilateral(signature ownerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(ownerSig, owner));
+  }
+}
