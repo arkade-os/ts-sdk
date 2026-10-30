@@ -158,6 +158,14 @@ style and have not been backfilled.
 
 ### Changed
 
+- **Delegation is scheduled three operator sessions before expiry.** The
+  default `delegateAt` (10% of remaining lifetime before expiry, floored at one
+  session) renewed coins long before it had to, which with a time-decaying
+  intent fee meant paying more than the coin would cost closer to expiry. The
+  delegate now always targets expiry minus three sessions, the latest time that
+  still leaves room for a failed batch; a coin already inside that window is
+  delegated one minute from now, as recoverable outputs are.
+
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
