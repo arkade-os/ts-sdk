@@ -29,6 +29,12 @@ style and have not been backfilled.
   `resolveCheckpointExitDelayPolicy` and `CheckpointExitDelayPolicy` are
   removed, and `assertValidServerUnrollScript(checkpointTapscript, network,
   advertisedForfeitPubkey?)` takes the pinned network and forfeit key directly.
+- **`WalletBalance.intentLocked` is renamed `pendingSettlement`.** The bucket
+  holds funds committed to an in-flight intent, which return to `available`
+  when it terminates; the new name says what the user is waiting for rather
+  than how the wallet enforces it. Same value, same semantics, no alias (see
+  `WalletBalance.available` for how the buckets add up). The service-worker
+  `GET_BALANCE` payload carries the new key too.
 
 ### Added
 
@@ -180,6 +186,23 @@ style and have not been backfilled.
   `ASSET_VALIDATION_FAILED`. `LockupVtxo` gains an optional `assets` field,
   which `findLockupVtxos` fills from the contract manager's rows, and both
   spends now declare every input's assets onto their one aggregate output.
+
+- **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
+  examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
+  and `StorageConfig.virtualTxRepository` was still described as inert although
+  the wallet captures exit branches into it and prunes them on spend.
+  `WalletBalance.boarding.unconfirmed` said "mainnet" for onchain, and
+  `boarding.loaded` had no doc.
+
+- **`@arkade-os/swap` builds an onchain send's lockup with the quoted solo
+  refund delay.** `deriveOnchainSend` always used the base ladder's
+  `unilateralRefundWithoutReceiverDelay`, so a solver that stretches that
+  delay (needed where a short exit delay would let the solo refund open before
+  the solver's last Arkade claim) quoted a lockup the client could not derive,
+  and the client refused to fund. It now reads
+  `profile.refund_without_receiver_delay` when the quote carries one, validates
+  it as `deriveLightningSend` does, and checks it against the refund-window
+  policy. A quote without the field still derives the base ladder.
 
 - **`@arkade-os/swap` migrates Program v0 offer rows.** A wallet upgraded from
   a swap release before 0.1.0-rc.31 kept its offer rows as unsupported Program
@@ -835,6 +858,22 @@ style and have not been backfilled.
   writes into the caller's object.
 
 ### Performance
+
+- **Wallet construction asks the delegate for its key alongside server
+  info.** `getDelegateInfo()` started only after `getInfo()` resolved,
+  though neither depends on the other, so every wallet with a delegate paid
+  both round trips back to back before it could build its scripts — in a
+  service worker, on every page load. Both requests are now in flight
+  together. A delegate that fails or is unreachable still leaves the wallet
+  on the default script.
+
+- **`setupServiceWorker` no longer waits for the worker update check.** It
+  awaited `registration.update()`, a fetch of the worker script, before
+  returning the worker that was already active, so every
+  `ServiceWorkerWallet.setup()` paid a round trip to the app's own origin
+  first, and failed outright whenever that fetch failed, offline included.
+  The check still runs and still picks up a newer worker; setup no longer
+  waits on it, and a failed check is logged instead of thrown.
 
 - **`getVtxos` and `getBalance` no longer read spent history.** Both
   loaded every stored VTXO row, spent ones included, and dropped the

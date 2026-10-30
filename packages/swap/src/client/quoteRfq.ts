@@ -867,6 +867,7 @@ const quoteOnchainSend = async (
     });
     verifyRefundWindow({
         refundLocktime: derived.refundLocktime,
+        refundWithoutReceiverDelay: derived.refundWithoutReceiverDelay,
         now: input.now,
         maxSeconds: input.policy?.maxRefundWindowSeconds,
     });
