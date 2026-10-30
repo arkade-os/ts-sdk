@@ -33,7 +33,8 @@ style and have not been backfilled.
   holds funds committed to an in-flight intent, which return to `available`
   when it terminates; the new name says what the user is waiting for rather
   than how the wallet enforces it. Same value, same semantics, no alias (see
-  `WalletBalance.available` for how the buckets add up). The service-worker `GET_BALANCE` payload carries the new key too.
+  `WalletBalance.available` for how the buckets add up). The service-worker
+  `GET_BALANCE` payload carries the new key too.
 
 ### Added
 
