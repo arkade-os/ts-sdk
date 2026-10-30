@@ -22,6 +22,7 @@
             "!**/pnpm-lock.yaml",
             "!**/*.md",
             "!packages/swap/src/*.program.json",
+            "!packages/swap/src/legacy/*.program.v0.json",
             "!**/fixtures/arkadec/**"
         ]
     },

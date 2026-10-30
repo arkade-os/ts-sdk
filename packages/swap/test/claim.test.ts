@@ -478,9 +478,9 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             });
 
-        it("refuses a checkpoint exit delay below the network's floor", async () => {
+        it("refuses a checkpoint exit delay below the floor", async () => {
             const operator = fakeOperator({
-                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
             });
             await expect(claim(operator)).rejects.toThrow(/checkpoint exit delay rejected/);
             expect(operator.submitted).toEqual([]);

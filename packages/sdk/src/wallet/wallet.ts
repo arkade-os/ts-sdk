@@ -93,11 +93,7 @@ import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry"
 import type { BatchExpiryPolicy } from "./batchExpiry";
 import { toTimelock } from "./timelockPolicy";
 import { runWalletRestoreHooks } from "./restoreHooks";
-import {
-    assertValidServerUnrollScript,
-    resolveCheckpointExitDelayPolicy,
-} from "./checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./checkpointExitDelay";
 import {
     assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
@@ -1052,6 +1048,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractRepository =
             config.storage?.contractRepository ?? new IndexedDBContractRepository();
 
+        // Independent of server info, so its round trip overlaps that one instead of following it.
+        const delegatePubKeyPromise = config.delegateProvider
+            ?.getDelegateInfo()
+            .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
+            .catch(() => undefined);
+
         // The cache is NOT written here but after construction validates the response
         // (saveValidatedArkInfoSnapshot in create()), so a bad live response can't poison it.
         const {
@@ -1132,12 +1134,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
-        const delegatePubKey = config.delegateProvider
-            ? await config.delegateProvider
-                  .getDelegateInfo()
-                  .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
-                  .catch(() => undefined)
-            : undefined;
+        const delegatePubKey = await delegatePubKeyPromise;
 
         const offchainOptions = {
             pubKey,
@@ -2872,10 +2869,11 @@ export class Wallet
         // Validate the server-controlled checkpoint script FIRST (the provider defaults it to ""
         // when omitted), as `Wallet.create` does, so a bad rotation is side-effect-free and the
         // wallet stays on its previous consistent epoch. The forfeit pubkey doesn't rotate, so the
-        // policy pins it to the boot value rather than trusting this response.
+        // check pins it to the boot value rather than trusting this response.
         const newServerUnrollScript = assertValidServerUnrollScript(
             checkpointTapscript,
-            resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
+            this.network,
+            this.forfeitPubkey,
         );
 
         // Fast path only; the authoritative re-check is inside `_doRotateServerSigner`.
@@ -3267,8 +3265,6 @@ export class Wallet
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
-        /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
-        protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
     ) {
         super(
             identity,
@@ -3427,18 +3423,10 @@ export class Wallet
         const forfeitAddress = Address(setup.network).decode(setup.info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
-        // Checkpoint output script. No prior pin at first contact (TOFU, like
-        // `arkServerPublicKey`): the forfeitPubkey check only catches malformed responses; the
-        // exit-delay floor is the real defense against a malicious operator.
-        const checkpointExitDelayOverrides: Partial<CheckpointExitDelayPolicy> = {
-            advertisedForfeitPubkey: forfeitPubkey,
-            ...(config.minCheckpointExitDelaySeconds !== undefined
-                ? { minSeconds: config.minCheckpointExitDelaySeconds }
-                : {}),
-        };
         const serverUnrollScript = assertValidServerUnrollScript(
             setup.info.checkpointTapscript,
-            resolveCheckpointExitDelayPolicy(setup.network, checkpointExitDelayOverrides),
+            setup.network,
+            forfeitPubkey,
         );
 
         // HD boot wiring; `getVtxoManager()` installs the rotator lazily.
@@ -3504,7 +3492,6 @@ export class Wallet
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
-            checkpointExitDelayOverrides,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -4877,7 +4864,8 @@ export class Wallet
         if (spendable.length > 0) {
             const serverUnrollScript = assertValidServerUnrollScript(
                 info.checkpointTapscript,
-                resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
+                this.network,
+                this.forfeitPubkey,
             );
 
             // One tx per VTXO: a rejected input dents only its own sweep, and each output stays

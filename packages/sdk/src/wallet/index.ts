@@ -113,12 +113,6 @@ export interface BaseWalletConfig {
      * the default relaxes a fund-safety bound; intended for local testing.
      */
     minBatchExpirySeconds?: bigint;
-    /**
-     * Minimum accepted checkpoint exit delay decoded from `ArkadeInfo.checkpointTapscript`, as
-     * wall-clock seconds. Defaults per network (`defaultCheckpointExitDelayPolicy`, which already
-     * accepts hosted signet/mutinynet). Lowering it relaxes a fund-safety bound; for local testing.
-     */
-    minCheckpointExitDelaySeconds?: bigint;
     /** Repository-backed storage configuration overrides. Defaults to IndexedDB if unset. */
     storage?: StorageConfig;
     /**
@@ -268,9 +262,9 @@ export type StorageConfig = {
      */
     intentRepository?: IntentRepository;
     /**
-     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository. Currently only a
-     * best-effort raw-PSBT cache used by {@link Unroll} when passed to `Unroll.Session.create`;
-     * normal sync never populates or prunes it and {@link ContractManager} never receives it.
+     * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
+     * VTXO's exit branch into it and prunes it on spend (both best-effort, see
+     * {@link exitDataCapture}), and unilateral exits read it before the indexer.
      */
     virtualTxRepository?: VirtualTxRepository;
     /**
@@ -310,10 +304,12 @@ export interface WalletBalance {
     boarding: {
         /** Confirmed funds ready to swap for virtual outputs. */
         confirmed: number;
-        /** Pending funds awaiting confirmation on mainnet */
+        /** Pending funds awaiting an onchain confirmation. */
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        /** Set on cached and service-worker balances: false until this instance has fetched
+         * boarding inputs, so zero boarding may only mean "not loaded". */
         loaded?: boolean;
     };
     /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
@@ -322,14 +318,14 @@ export interface WalletBalance {
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would pick, so `send` never
-     * refuses it: `settled + preconfirmed - gated - intentLocked - reserved`, minus one dust
+     * refuses it: `settled + preconfirmed - gated - pendingSettlement - reserved`, minus one dust
      * carrier kept back if any of these outputs hold assets.
      */
     available: number;
     /**
      * Owned but refused by the generic-spending gate: a VHTLC lockup, an unmarked `arkade`
      * program, or an unregistered contract type. In `settled`/`preconfirmed` and `total`, never
-     * `available`. Takes precedence over {@link intentLocked} (the gate is durable; a lock clears).
+     * `available`. Takes precedence over {@link pendingSettlement} (the gate is durable; a lock clears).
      *
      * Subtract it from `settled + preconfirmed`, never from `total`, which also carries boarding,
      * recoverable, pending-recovery and unrolled funds.
@@ -340,7 +336,7 @@ export interface WalletBalance {
      * intent terminates. Zero when unknown (no intent repository or a failed read), so it
      * under-reports into `available` rather than misattributing.
      */
-    intentLocked: number;
+    pendingSettlement: number;
     /** Held by `Wallet.reserveVtxos`: in `settled`/`preconfirmed` and `total`, never `available`. */
     reserved: number;
     /**
