@@ -183,6 +183,18 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Over Electrum, spend checks on a deposit or an HTLC funding no longer read
+  the payer's other outputs.** Electrum has no spend index, so
+  `ElectrumOnchainProvider.getTxOutspends` reads every output script's history,
+  and `getBoardingTxs` and both `@arkade-os/swap` chain sources call it on
+  transactions someone else built, whose other outputs are the payer's change
+  and any service fee address. Fulcrum answers a history past `max_history`
+  with an empty list (read as unspent), electrs refuses one past 500 entries by
+  default (failing the call), and a large one can exceed Fulcrum's per-client
+  buffer, which drops the connection. The new optional
+  `OnchainProvider.getTxOutspend(txid, vout)` answers one output from its own
+  script; those three callers use it when the provider has it.
+
 - **`@arkade-os/swap` declares a lockup's assets when claiming or refunding
   it.** Anyone can send an asset vtxo to a swap lockup's address, and arkd
   refuses to spend an asset-carrying input unless the transaction carries an

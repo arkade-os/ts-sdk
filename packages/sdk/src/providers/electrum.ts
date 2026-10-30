@@ -630,6 +630,19 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
+        return this.resolveOutspends(txid);
+    }
+
+    /** Reads `vout`'s script alone: another output of a tx someone else built (their change, a
+     *  service's fee address) can have a history Fulcrum answers empty and electrs refuses. */
+    async getTxOutspend(txid: string, vout: number): Promise<{ spent: boolean; txid: string }> {
+        return (await this.resolveOutspends(txid, vout))[vout] ?? { spent: false, txid: "" };
+    }
+
+    private async resolveOutspends(
+        txid: string,
+        only?: number,
+    ): Promise<{ spent: boolean; txid: string }[]> {
         // Step 1: fetch the creating tx to get its output scripts (1 round trip)
         const [txResult] = await this.chain.fetchTransactions([txid]);
         const tx = Transaction.fromRaw(hex.decode(txResult.hex), {
@@ -640,7 +653,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const outputScriptHashes: (string | undefined)[] = [];
         for (let i = 0; i < outputCount; i++) {
             const output = tx.getOutput(i);
-            outputScriptHashes.push(output.script ? toScriptHash(output.script) : undefined);
+            const wanted = only === undefined || i === only;
+            outputScriptHashes.push(
+                wanted && output.script ? toScriptHash(output.script) : undefined,
+            );
         }
 
         const validScriptHashes = outputScriptHashes.filter((h): h is string => h !== undefined);
@@ -709,7 +725,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                 ambiguousIndices.push(i);
                 ambiguousCandidates.push(candidates);
             }
-            // candidates.length === 0 → mempool eviction, treat as unspent
+            // candidates.length === 0 → mempool eviction, or Fulcrum answering [] past its
+            // max_history: treated as unspent either way
         }
 
         // Step 4 (rare): batch-fetch all ambiguous candidate txs at once

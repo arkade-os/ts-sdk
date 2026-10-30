@@ -1022,6 +1022,45 @@ describe("ElectrumOnchainProvider", () => {
         });
     });
 
+    describe("getTxOutspend", () => {
+        const { txHex, scripts } = buildTestTx();
+        const parentTxid = hex.encode(sha256(sha256(hex.decode(txHex))).reverse());
+
+        it("names the spender from the asked output's script alone", async () => {
+            const spenderHex = buildSpendingTx(parentTxid, 0);
+            const spenderTxid = hex.encode(sha256(sha256(hex.decode(spenderHex))).reverse());
+
+            mockBatch(wsMock.request, [txHex]);
+            mockBatch(wsMock.request, [[]]); // listunspent: vout 0 is gone
+            mockBatch(wsMock.request, [
+                [
+                    { tx_hash: parentTxid, height: 100 },
+                    { tx_hash: spenderTxid, height: 101 },
+                ],
+            ]);
+
+            expect(await provider.getTxOutspend(parentTxid, 0)).toEqual({
+                spent: true,
+                txid: spenderTxid,
+            });
+            const scriptHashesRead = wsMock.request.mock.calls
+                .filter((c) => String(c[0]).startsWith("blockchain.scripthash."))
+                .map((c) => c[1]);
+            const ownScriptHash = hex.encode(sha256(scripts[0]).reverse());
+            expect(scriptHashesRead).toEqual([ownScriptHash, ownScriptHash]);
+        });
+
+        it("reports a vout the tx does not have as unspent, reading no script", async () => {
+            mockBatch(wsMock.request, [txHex]);
+
+            expect(await provider.getTxOutspend(parentTxid, 5)).toEqual({
+                spent: false,
+                txid: "",
+            });
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe("close", () => {
         it("delegates to underlying ws close()", async () => {
             await provider.close();

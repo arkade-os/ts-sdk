@@ -5,6 +5,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     RestArkProvider,
+    type OnchainProvider,
 } from "../src";
 import { jsonResponse } from "./helpers/response";
 
@@ -118,6 +119,62 @@ describe("getBoardingTxs — sweep correlation without outspend txid", () => {
             expect(boarding).toBeDefined();
             expect(boarding!.settled).toBe(true);
             expect(boarding!.key.commitmentTxid).toBe(SWEEP_TXID);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+});
+
+describe("getBoardingTxs — spend status of the boarding output only", () => {
+    it("asks for the boarding output alone when the provider answers per output", async () => {
+        let boardingAddr = "";
+        const fundingTx = {
+            txid: FUNDING_TXID,
+            vin: [{ txid: "ee".repeat(32), vout: 7 }],
+            vout: [
+                { scriptpubkey_address: "", value: BOARDING_VALUE },
+                { scriptpubkey_address: "tb1pservicefee", value: 3_630 },
+            ],
+            status: { confirmed: true, block_time: 1_763_000_000 },
+        };
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply({ vtxos: [] });
+        });
+        const getTxOutspend = vi.fn(async () => ({ spent: false, txid: "" }));
+        const getTxOutspends = vi.fn(async () => []);
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends,
+        } as unknown as OnchainProvider;
+
+        const wallet = await Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+            onchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspend).toHaveBeenCalledWith(FUNDING_TXID, 0);
+            expect(getTxOutspends).not.toHaveBeenCalled();
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding?.settled).toBe(false);
         } finally {
             await wallet.dispose();
         }
