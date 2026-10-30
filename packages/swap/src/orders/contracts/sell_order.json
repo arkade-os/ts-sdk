@@ -1,0 +1,413 @@
+{
+  "formatVersion": 1,
+  "contractName": "SellOrder",
+  "constructorInputs": [
+    {
+      "name": "maker",
+      "type": "pubkey"
+    },
+    {
+      "name": "makerProgram",
+      "type": "bytes32"
+    },
+    {
+      "name": "assetTxid",
+      "type": "bytes32"
+    },
+    {
+      "name": "assetGidx",
+      "type": "int"
+    },
+    {
+      "name": "price",
+      "type": "int"
+    },
+    {
+      "name": "minFill",
+      "type": "int"
+    },
+    {
+      "name": "expiresAt",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "fill",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "qty",
+            "type": "int"
+          }
+        ],
+        "asm": [
+          "<expiresAt>",
+          "<price>",
+          "<assetGidx>",
+          "<assetTxid>",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_2DUP",
+          "OP_SWAP",
+          "OP_4",
+          "OP_PICK",
+          "OP_INSPECTINASSETLOOKUP",
+          "OP_VERIFY",
+          "OP_OVER",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "OP_10",
+          "OP_PICK",
+          "0",
+          "OP_GREATERTHAN",
+          "OP_IF",
+          "OP_10",
+          "OP_PICK",
+          "OP_5",
+          "OP_PICK",
+          "OP_LESSTHANOREQUAL",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_VERIFY",
+          "OP_10",
+          "OP_PICK",
+          "<minFill>",
+          "OP_GREATERTHANOREQUAL",
+          "OP_IF",
+          "OP_1",
+          "OP_ELSE",
+          "OP_10",
+          "OP_PICK",
+          "OP_5",
+          "OP_PICK",
+          "OP_NUMEQUAL",
+          "OP_ENDIF",
+          "OP_VERIFY",
+          "OP_10",
+          "OP_PICK",
+          "OP_9",
+          "OP_PICK",
+          "OP_MUL",
+          "330",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "OP_10",
+          "OP_PICK",
+          "OP_5",
+          "OP_PICK",
+          "OP_NUMEQUAL",
+          "OP_IF",
+          "OP_1",
+          "OP_ELSE",
+          "OP_4",
+          "OP_PICK",
+          "OP_11",
+          "OP_PICK",
+          "OP_SUB",
+          "OP_9",
+          "OP_PICK",
+          "OP_MUL",
+          "330",
+          "OP_GREATERTHANOREQUAL",
+          "OP_ENDIF",
+          "OP_VERIFY",
+          "OP_9",
+          "OP_PICK",
+          "0",
+          "OP_NUMEQUAL",
+          "OP_IF",
+          "OP_1",
+          "OP_ELSE",
+          "OP_9",
+          "OP_PICK",
+          "OP_CHECKTIME",
+          "OP_NOT",
+          "OP_ENDIF",
+          "OP_VERIFY",
+          "OP_3",
+          "OP_ROLL",
+          "1",
+          "OP_NUMEQUALVERIFY",
+          "OP_4",
+          "OP_PICK",
+          "OP_INSPECTOUTPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE",
+          "OP_11",
+          "OP_PICK",
+          "OP_10",
+          "OP_ROLL",
+          "OP_MUL",
+          "OP_ADD",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "OP_8",
+          "OP_PICK",
+          "OP_4",
+          "OP_PICK",
+          "OP_NUMEQUAL",
+          "OP_IF",
+          "OP_2",
+          "OP_PICK",
+          "<makerProgram>",
+          "OP_EQUAL",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_IF",
+          "OP_4",
+          "OP_PICK",
+          "OP_INSPECTOUTASSETCOUNT",
+          "0",
+          "OP_NUMEQUAL",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_IF",
+          "OP_1",
+          "OP_ELSE",
+          "OP_8",
+          "OP_PICK",
+          "OP_4",
+          "OP_PICK",
+          "OP_LESSTHAN",
+          "OP_IF",
+          "OP_3DUP",
+          "OP_NIP",
+          "OP_EQUAL",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_IF",
+          "OP_4",
+          "OP_PICK",
+          "OP_INSPECTOUTASSETCOUNT",
+          "1",
+          "OP_NUMEQUAL",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_IF",
+          "OP_4",
+          "OP_PICK",
+          "OP_6",
+          "OP_PICK",
+          "OP_8",
+          "OP_PICK",
+          "OP_INSPECTOUTASSETLOOKUP",
+          "OP_VERIFY",
+          "OP_4",
+          "OP_PICK",
+          "OP_10",
+          "OP_PICK",
+          "OP_SUB",
+          "OP_NUMEQUAL",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_ENDIF",
+          "OP_VERIFY",
+          "OP_2DROP",
+          "OP_2DROP",
+          "OP_2DROP",
+          "OP_2DROP",
+          "OP_DROP",
+          "OP_1"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "fill",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:fill>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settle",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "<expiresAt>",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "OP_SWAP",
+          "OP_3",
+          "OP_PICK",
+          "0",
+          "OP_GREATERTHAN",
+          "OP_IF",
+          "OP_3",
+          "OP_PICK",
+          "OP_CHECKTIME",
+          "OP_ELSE",
+          "OP_0",
+          "OP_ENDIF",
+          "OP_VERIFY",
+          "<makerProgram>",
+          "OP_EQUALVERIFY",
+          "1",
+          "OP_NUMEQUALVERIFY",
+          "6",
+          "0",
+          "OP_TUNNEL",
+          "OP_NIP"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "settle",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:settle>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "renew",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "OP_INSPECTVERSION",
+          "2",
+          "OP_NUMEQUALVERIFY",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "1",
+          "OP_SUB",
+          "7",
+          "0",
+          "OP_TUNNEL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "renew",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:renew>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cancel",
+      "leaves": [
+        {
+          "name": "cancel",
+          "witness": [
+            {
+              "name": "makerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<maker>",
+            "OP_CHECKSIGVERIFY",
+            "<SERVER_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unilateral",
+      "leaves": [
+        {
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "makerSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<SERVER_EXIT_DELAY>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<maker>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "source": {
+    "entry": "sell_order.ark",
+    "files": {
+      "sell_order.ark": "pragma arkade ^0.1.0;\n\n// Standing order to sell `asset` at `price` sats per unit. The continuation at the order's own input\n// index keeps the unsold units and accumulates proceeds, so two orders can never share one output.\ncontract SellOrder(\n  pubkey maker,\n  bytes32 makerProgram,\n  bytes32 assetTxid, int assetGidx,\n  int price,\n  int minFill,\n  int expiresAt\n) {\n  // The fill that sells the last unit pays the maker directly: a zero-asset continuation would fail\n  // the asset opcodes. Every fill is worth at least 330 sats and never leaves a remainder worth less.\n  function fill(int qty) {\n    int i = this.activeInputIndex;\n    int remaining = tx.inputs[i].assets.lookup(assetTxid, assetGidx);\n    let out = tx.outputs[i].script;\n    let own = tx.input.current.script;\n    require(qty > 0 && qty <= remaining, \"qty\");\n    require(qty >= minFill || qty == remaining, \"below min fill\");\n    require(qty * price >= 330, \"below 330 sats\");\n    require(qty == remaining || (remaining - qty) * price >= 330, \"dust remainder\");\n    require(expiresAt == 0 || !checkTime(expiresAt), \"expired\");\n    require(out.version == 1, \"output version\");\n    require(tx.outputs[i].value >= tx.input.current.value + qty * price, \"proceeds\");\n    require(\n      (qty == remaining && out.program == makerProgram && tx.outputs[i].assets.length == 0) ||\n        (qty < remaining && out.program == own.program &&\n          tx.outputs[i].assets.length == 1 && tx.outputs[i].assets.lookup(assetTxid, assetGidx) == remaining - qty),\n      \"remainder\"\n    );\n  }\n\n  // Anyone may return an expired order to the maker. No asset opcodes: OP_TUNNEL also covers an asset-free coin.\n  function settle() {\n    int i = this.activeInputIndex;\n    let out = tx.outputs[i].script;\n    require(expiresAt > 0 && checkTime(expiresAt), \"still live\");\n    require(out.program == makerProgram, \"maker\");\n    require(out.version == 1, \"maker version\");\n    require(this.tunnel(i, {script: false, value: true, assets: true}), \"settle\");\n  }\n\n  function renew() {\n    require(tx.version == 2, \"intent only\");\n    require(this.tunnel(this.activeInputIndex - 1), \"tunnel\");\n  }\n\n  function cancel(signature makerSig, signature serverSig) tapscript {\n    require(checkMultisig([maker, server], [makerSig, serverSig]));\n  }\n\n  function unilateral(signature makerSig) tapscript {\n    require(older(serverExitDelay));\n    require(checkSig(makerSig, maker));\n  }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-10-29T19:27:38.802959800+00:00",
+  "fingerprint": "sha256:ca14ceaf5719eee570b4f50d5bdb82bc34d04c7425e7878f770555f7cb3af22e"
+}

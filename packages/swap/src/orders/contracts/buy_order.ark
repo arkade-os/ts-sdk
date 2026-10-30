@@ -1,0 +1,64 @@
+pragma arkade ^0.1.0;
+
+// Standing order to buy `asset` at `price` sats per unit from a funded budget. The continuation at the
+// order's own input index keeps the unspent budget (never below `reserve`) and accumulates bought units.
+contract BuyOrder(
+  pubkey maker,
+  bytes32 makerProgram,
+  bytes32 assetTxid, int assetGidx,
+  int price,
+  int minFill,
+  int expiresAt,
+  int reserve
+) {
+  // Every fill spends at least 330 sats. The fill that leaves less budget than the next legal fill
+  // (min fill, and at least 330 sats) pays the maker directly.
+  function fill(int qty) {
+    int i = this.activeInputIndex;
+    int spend = qty * price;
+    int left = tx.input.current.value - spend - reserve;
+    let h = tx.inputs[i].assets.tryLookup(assetTxid, assetGidx);
+    int held = 0;
+    if (h.found) {
+      held = h.amount;
+    }
+    let out = tx.outputs[i].script;
+    let own = tx.input.current.script;
+    require(qty > 0 && left >= 0, "qty");
+    require(expiresAt == 0 || !checkTime(expiresAt), "expired");
+    require(spend >= 330, "below 330 sats");
+    require(qty >= minFill || left < minFill * price || left < 330, "below min fill");
+    require(out.version == 1, "output version");
+    require(tx.outputs[i].value >= tx.input.current.value - spend, "overspend");
+    require(tx.outputs[i].assets.length == 1 && tx.outputs[i].assets.lookup(assetTxid, assetGidx) == held + qty, "delivery");
+    require(
+      ((left < minFill * price || left < 330) && out.program == makerProgram) ||
+        (left >= minFill * price && left >= 330 && out.program == own.program),
+      "continuation"
+    );
+  }
+
+  // Anyone may return an expired order to the maker. No asset opcodes: OP_TUNNEL also covers an asset-free coin.
+  function settle() {
+    int i = this.activeInputIndex;
+    let out = tx.outputs[i].script;
+    require(expiresAt > 0 && checkTime(expiresAt), "still live");
+    require(out.program == makerProgram, "maker");
+    require(out.version == 1, "maker version");
+    require(this.tunnel(i, {script: false, value: true, assets: true}), "settle");
+  }
+
+  function renew() {
+    require(tx.version == 2, "intent only");
+    require(this.tunnel(this.activeInputIndex - 1), "tunnel");
+  }
+
+  function cancel(signature makerSig, signature serverSig) tapscript {
+    require(checkMultisig([maker, server], [makerSig, serverSig]));
+  }
+
+  function unilateral(signature makerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(makerSig, maker));
+  }
+}
