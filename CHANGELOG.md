@@ -859,6 +859,17 @@ style and have not been backfilled.
 
 ### Performance
 
+- **A wallet registers its baseline contracts in one batch.**
+  `initializeContractManager` created each baseline contract (the default,
+  delegate and boarding scripts, per signer and timelock) with its own
+  `createContract`, so a new contract repository read the indexer once per
+  contract and re-posted the whole subscription after each one: eight
+  sequential round trips for four contracts. It now hands the list to
+  `createContracts`, which persists the rows in the same order, hydrates them
+  with one indexer read and posts the subscription once. Registration order,
+  and with it first-wins on a script two kinds share, is unchanged. A wallet
+  whose contract repository is not persisted paid this on every start.
+
 - **Wallet construction asks the delegate for its key alongside server
   info.** `getDelegateInfo()` started only after `getInfo()` resolved,
   though neither depends on the other, so every wallet with a delegate paid

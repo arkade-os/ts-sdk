@@ -2186,6 +2186,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
         ];
         const seenBaselineScripts = new Set<string>();
+        const baseline: CreateContractParams[] = [];
         for (const serverPubKey of baselineSigners) {
             for (const csvTimelock of this.walletContractTimelocks) {
                 const csvTimelockStr = timelockToSequence(csvTimelock).toString();
@@ -2200,7 +2201,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     seenBaselineScripts.add(defaultScriptHex);
                     // Persisted before the boarding baseline below, so in the degenerate
                     // equal-delay collision the index-0 row stays `default` (first-wins).
-                    await manager.createContract({
+                    baseline.push({
                         type: "default",
                         params: {
                             pubKey: hex.encode(defaultScript.options.pubKey),
@@ -2224,7 +2225,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
                     if (seenBaselineScripts.has(delegateScriptHex)) continue;
                     seenBaselineScripts.add(delegateScriptHex);
-                    await manager.createContract({
+                    baseline.push({
                         type: "delegate",
                         params: {
                             pubKey: hex.encode(delegateScript.options.pubKey),
@@ -2256,7 +2257,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
             if (seenBaselineScripts.has(boardingScriptHex)) continue;
             seenBaselineScripts.add(boardingScriptHex);
-            await manager.createContract({
+            baseline.push({
                 type: "boarding",
                 params: {
                     pubKey: hex.encode(baselineBoarding.options.pubKey),
@@ -2268,6 +2269,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 state: "active",
             });
         }
+        await manager.createContracts(baseline);
 
         return manager;
     }
