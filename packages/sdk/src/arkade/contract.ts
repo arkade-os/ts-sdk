@@ -61,7 +61,7 @@ import type { ArkadeInfo, ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
-import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
+import type { ArkadeBroadcaster, Asset, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
@@ -196,6 +196,11 @@ export interface Utxo {
      * swept coin can't be spent offchain, so `.from()` refuses it; recover it into a batch instead.
      */
     isSwept?: boolean;
+    /**
+     * Assets the coin carries, as {@link ArkadeContract.getUtxos} reports them. arkd refuses an
+     * input whose assets the spend does not route, so such a coin needs a `.withAsset()` input.
+     */
+    assets?: readonly Asset[];
     /**
      * Raw bytes of the ark tx that created this VTXO, attached as its input's PrevArkTx. Overrides
      * the indexer-resolved value; supply it when the tx isn't indexable yet (a recursive covenant
@@ -960,6 +965,14 @@ export class ArkadeTransactionBuilder {
             this.inputs.length > 0
                 ? [...this.inputs]
                 : [{ coin: await this.selectCoin(outputsSum), unlocker: this.unlocker }];
+        inputs.forEach(({ coin }, vin) => {
+            const routed = this.assetSpecs.some((spec) => spec.inputs.some((i) => i.vin === vin));
+            if (coin.assets?.length && !routed) {
+                throw new Error(
+                    `coin ${coin.txid}:${coin.vout} carries assets; route them with .withAsset() from input ${vin}`,
+                );
+            }
+        });
         const coinsSum = inputs.reduce((s, { coin }) => s + BigInt(coin.value), 0n);
 
         // Inputs must equal outputs; change takes any surplus (copy keeps `build()` idempotent).

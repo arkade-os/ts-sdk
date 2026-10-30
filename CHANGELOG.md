@@ -193,6 +193,12 @@ style and have not been backfilled.
   spend that includes one. Selection without `.from()` now skips them, and
   `.from()` refuses a coin with `isSwept: true` instead of failing at arkd.
 
+- **`ArkadeTransactionBuilder` refuses an asset coin with no asset route.** arkd
+  refuses an input whose assets the transaction does not route
+  (`ASSET_VALIDATION_FAILED`), so `.from(await contract.getUtxos())` with one
+  asset-carrying coin sank the whole spend. A coin whose `assets` no
+  `.withAsset()` input covers now fails at build, naming the coin and input.
+
 - **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
   returns checkpoints without the condition witness, so finalizing failed with
   `INVALID_SIGNATURE`. The builder now adds it back after signing.

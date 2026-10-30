@@ -895,7 +895,7 @@ describe("ArkadeContract — extended features", () => {
         expect(found).toBe(true);
     });
 
-    it("attaches an asset group alongside the emulator packet", async () => {
+    it("attaches an asset group alongside the emulator packet, and requires one for an asset coin", async () => {
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [COIN]);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
@@ -910,9 +910,21 @@ describe("ArkadeContract — extended features", () => {
         });
 
         const assetId = asset.AssetId.create(hex.encode(new Uint8Array(32).fill(3)), 0);
+        const assetCoin = { ...COIN, assets: [{ assetId: assetId.toString(), amount: 330n }] };
+
+        // arkd refuses an input whose assets the spend does not route.
+        await expect(
+            c.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(assetCoin)
+                .to(p2tr(receiver), AMOUNT)
+                .send(),
+        ).rejects.toThrow(/carries assets; route them with .withAsset\(\) from input 0/);
+        expect(emulator.submitTx).not.toHaveBeenCalled();
+
         await c.functions
             .claim(new Uint8Array(32).fill(0x42))
-            .from(COIN)
+            .from(assetCoin)
             .to(p2tr(receiver), AMOUNT)
             .withAsset({
                 assetId: assetId.toString(),
