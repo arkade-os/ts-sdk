@@ -191,6 +191,16 @@ style and have not been backfilled.
   now reads claimed; any other read leaves it as is. A correction a sink
   refuses stays monitored until the poll lands the write.
 
+- **`@arkade-os/swap` declares a lockup's assets when claiming or refunding
+  it.** Anyone can send an asset vtxo to a swap lockup's address, and arkd
+  refuses to spend an asset-carrying input unless the transaction carries an
+  asset packet saying where the asset goes. `pushClaim` and
+  `pushRefundWithoutReceiver` built one sats output and no packet, so a single
+  such vtxo failed every claim or refund of that lockup with
+  `ASSET_VALIDATION_FAILED`. `LockupVtxo` gains an optional `assets` field,
+  which `findLockupVtxos` fills from the contract manager's rows, and both
+  spends now declare every input's assets onto their one aggregate output.
+
 - **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
   examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
   and `StorageConfig.virtualTxRepository` was still described as inert although
@@ -862,6 +872,17 @@ style and have not been backfilled.
   writes into the caller's object.
 
 ### Performance
+
+- **A wallet registers its baseline contracts in one batch.**
+  `initializeContractManager` created each baseline contract (the default,
+  delegate and boarding scripts, per signer and timelock) with its own
+  `createContract`, so a new contract repository read the indexer once per
+  contract and re-posted the whole subscription after each one: eight
+  sequential round trips for four contracts. It now hands the list to
+  `createContracts`, which persists the rows in the same order, hydrates them
+  with one indexer read and posts the subscription once. Registration order,
+  and with it first-wins on a script two kinds share, is unchanged. A wallet
+  whose contract repository is not persisted paid this on every start.
 
 - **Wallet construction asks the delegate for its key alongside server
   info.** `getDelegateInfo()` started only after `getInfo()` resolved,
