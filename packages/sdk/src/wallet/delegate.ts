@@ -236,23 +236,22 @@ async function delegate(
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
             delegateAt = defaultDelegateAt(expiryTimestamp, arkInfo.sessionDuration);
+            // latest = expiry - 3 batch sessions
+            const latest = new Date(expiryTimestamp - Number(arkInfo.sessionDuration * 3000n));
+            const feeAtDelegateTime = feeAt(delegateAt, arkInfo.fees.intentFee, vtxos);
+            const feeAtLatestTime = feeAt(latest, arkInfo.fees.intentFee, vtxos);
+
+            // if the fees at the latest time are lower than the fees at the delegateAt one
+            // use the latest time instead
+            if (latest > delegateAt && feeAtLatestTime < feeAtDelegateTime) {
+                delegateAt = latest;
+            }
         }
     }
     const { fees, dust, forfeitAddress, network } = arkInfo;
 
     const delegateAtSeconds = delegateAt.getTime() / 1000;
-    const estimator = new Estimator({
-        ...fees.intentFee,
-        // replace now() function with the delegateAt timestamp
-        offchainInput: fees.intentFee.offchainInput?.replace(
-            "now()",
-            `double(${delegateAtSeconds})`,
-        ),
-        offchainOutput: fees.intentFee.offchainOutput?.replace(
-            "now()",
-            `double(${delegateAtSeconds})`,
-        ),
-    });
+    const estimator = estimatorAt(fees.intentFee, delegateAt);
 
     let amount = 0n;
     for (const coin of vtxos) {
@@ -495,4 +494,31 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
         v.forfeitTapLeafScript !== undefined &&
         v.intentTapLeafScript !== undefined
     );
+}
+
+function feeAt(
+    at: Date,
+    intentFee: ArkadeInfo["fees"]["intentFee"],
+    vtxos: NormalizedExtendedVirtualCoin[],
+): number {
+    const estimator = estimatorAt(intentFee, at);
+    return vtxos.reduce(
+        (sum, coin) =>
+            sum +
+            estimator.evalOffchainInput({
+                ...toOffchainInputFeeParams(coin),
+                type: "vtxo",
+            }).satoshis,
+        0,
+    );
+}
+
+function estimatorAt(intentFee: ArkadeInfo["fees"]["intentFee"], at: Date): Estimator {
+    // replace now() function with the delegation timestamp
+    const now = `double(${at.getTime() / 1000})`;
+    return new Estimator({
+        ...intentFee,
+        offchainInput: intentFee.offchainInput?.replace("now()", now),
+        offchainOutput: intentFee.offchainOutput?.replace("now()", now),
+    });
 }

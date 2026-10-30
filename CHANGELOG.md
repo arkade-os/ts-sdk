@@ -152,6 +152,13 @@ style and have not been backfilled.
 
 ### Changed
 
+- **Delegation is scheduled where the intent fee is lowest.** The default
+  `delegateAt` (10% of remaining lifetime before expiry) ignored the operator's
+  fee program, so a short-lived coin could be renewed while still inside a
+  fee window it would have left an hour later. The delegate now also prices
+  the inputs at the latest safe time, three operator sessions before expiry,
+  and takes that time when it is strictly cheaper; ties keep the default.
+
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
