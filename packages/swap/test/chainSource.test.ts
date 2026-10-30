@@ -180,6 +180,23 @@ describe("chainSourceFrom.getSpendingTx", () => {
         expect(getRawTransaction).toHaveBeenCalledWith("spender");
     });
 
+    it("asks for the one output when the provider answers per output", async () => {
+        const getTxOutspend = vi.fn(async () => ({ spent: true, txid: "spender" }));
+        const getTxOutspends = vi.fn(async () => []);
+        const chain = chainSourceFrom(
+            providerWith({
+                getTxOutspend,
+                getTxOutspends,
+                getRawTransaction: vi.fn(async () => Uint8Array.from([0xbe, 0xef])),
+            }) as OnchainProvider,
+            "regtest",
+        );
+
+        expect(await chain.getSpendingTx("funding", 1, HTLC.pkScript)).toEqual({ txHex: "beef" });
+        expect(getTxOutspend).toHaveBeenCalledWith("funding", 1);
+        expect(getTxOutspends).not.toHaveBeenCalled();
+    });
+
     it("reads the outspend at the requested index, not the first one", async () => {
         const chain = chainSourceFrom(
             providerWith({

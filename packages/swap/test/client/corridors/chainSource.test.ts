@@ -102,6 +102,24 @@ describe("the default chain source's adapter", () => {
             expect(getRawTransaction).toHaveBeenCalledWith("c".repeat(64));
         });
 
+        it("asks for the one output when the provider answers per output", async () => {
+            const getTxOutspend = vi.fn(async () => ({ spent: true, txid: "c".repeat(64) }));
+            const getTxOutspends = vi.fn(async () => []);
+            const chain = chainSourceOver(
+                backendOver({
+                    getTxOutspend,
+                    getTxOutspends,
+                    getRawTransaction: async () => hex.decode(SPEND_HEX),
+                }),
+                NETWORK,
+            );
+            expect(await chain.getSpendingTx(FUNDING_TXID, 0, PK_SCRIPT)).toEqual({
+                txHex: SPEND_HEX,
+            });
+            expect(getTxOutspend).toHaveBeenCalledWith(FUNDING_TXID, 0);
+            expect(getTxOutspends).not.toHaveBeenCalled();
+        });
+
         it("scans the spent output's address history when `/outspends` omits the txid", async () => {
             // Some deployments answer `{spent: true}` with no `txid` —
             // `mempool.arkade.sh`, which is `ESPLORA_URL.bitcoin`. The address

@@ -94,8 +94,9 @@ export const chainSourceOver = (
             vout: number,
             pkScript: Uint8Array,
         ): Promise<{ txHex: string } | null> {
-            const outspends = await backend.provider.getTxOutspends(txid);
-            const outspend = outspends[vout];
+            const outspend = backend.provider.getTxOutspend
+                ? await backend.provider.getTxOutspend(txid, vout)
+                : (await backend.provider.getTxOutspends(txid))[vout];
             if (!outspend?.spent) return null;
             // `||`, not `??`: the electrum provider uses `txid: ""` as its unspent sentinel.
             const spender = outspend.txid || (await spenderFromVins(txid, vout, pkScript));

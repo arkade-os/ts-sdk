@@ -90,6 +90,12 @@ export interface OnchainProvider {
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]>;
 
     /**
+     * Fetch the spend status of one output, for providers that can answer it without reading the
+     * transaction's other outputs; callers fall back to {@link getTxOutspends} when absent.
+     */
+    getTxOutspend?(txid: string, vout: number): Promise<{ spent: boolean; txid?: string }>;
+
+    /**
      * Fetch transactions associated with an address.
      *
      * @param address - Bitcoin address to query
