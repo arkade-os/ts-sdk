@@ -60,8 +60,12 @@ export async function setupServiceWorker(
     // register service worker
     const registration = await navigator.serviceWorker.register(path);
 
-    // force update to ensure the service worker is active
-    await registration.update();
+    // Not awaited: only a newer worker depends on this fetch, and its failure must not block the active one.
+    registration
+        .update()
+        .catch((error) =>
+            console.warn("Service worker update failed; continuing with the active worker", error),
+        );
 
     const serviceWorker = registration.active || registration.waiting || registration.installing;
     if (!serviceWorker) {
