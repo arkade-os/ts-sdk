@@ -177,6 +177,16 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap` declares a lockup's assets when claiming or refunding
+  it.** Anyone can send an asset vtxo to a swap lockup's address, and arkd
+  refuses to spend an asset-carrying input unless the transaction carries an
+  asset packet saying where the asset goes. `pushClaim` and
+  `pushRefundWithoutReceiver` built one sats output and no packet, so a single
+  such vtxo failed every claim or refund of that lockup with
+  `ASSET_VALIDATION_FAILED`. `LockupVtxo` gains an optional `assets` field,
+  which `findLockupVtxos` fills from the contract manager's rows, and both
+  spends now declare every input's assets onto their one aggregate output.
+
 - **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
   examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
   and `StorageConfig.virtualTxRepository` was still described as inert although

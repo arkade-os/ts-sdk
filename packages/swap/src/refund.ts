@@ -25,6 +25,7 @@ import {
     CSVMultisigTapscript,
     ConditionWitness,
     type ArkTxInput,
+    type Asset,
     type IContractManager,
     type Identity,
     type ArkProvider,
@@ -35,7 +36,9 @@ import {
     assertSubmittedArkTxid,
     assertValidServerUnrollScript,
     buildOffchainTx,
+    createAssetPacket,
     decodeTapscript,
+    Extension,
     getArkPsbtFields,
     isVtxoSpent,
     matchServerCheckpoints,
@@ -130,6 +133,9 @@ export interface LockupVtxo {
      * refuses these rather than submitting a doomed spend.
      */
     recoverable: boolean;
+    /** Absent on a sats-only output. Anyone can send an asset to the lockup address, and arkd
+     * refuses a spend that does not declare where it goes: see {@link lockupAssetOutputs}. */
+    assets?: readonly Asset[];
 }
 
 /**
@@ -205,6 +211,7 @@ export async function findLockupVtxos(
             vout: vtxo.vout,
             value: Number(vtxo.value),
             recoverable: vtxo.isSwept,
+            ...(vtxo.assets?.length ? { assets: vtxo.assets } : {}),
         });
     }
     return out;
@@ -426,6 +433,27 @@ export const MAX_LOCKUP_SPEND_INPUTS = 16;
 export const boundedLockupSpend = (vtxos: readonly LockupVtxo[]): LockupVtxo[] =>
     [...vtxos].sort((a, b) => b.value - a.value).slice(0, MAX_LOCKUP_SPEND_INPUTS);
 
+/** The extension output moving every asset on `vtxos` (as inputs, in order) onto output 0; none
+ * for a sats-only spend. */
+export const lockupAssetOutputs = (vtxos: readonly LockupVtxo[]) => {
+    const inputs = new Map<number, Asset[]>();
+    const totals = new Map<string, bigint>();
+    vtxos.forEach((vtxo, vin) => {
+        if (!vtxo.assets?.length) return;
+        inputs.set(vin, [...vtxo.assets]);
+        for (const { assetId, amount } of vtxo.assets) {
+            totals.set(assetId, (totals.get(assetId) ?? 0n) + amount);
+        }
+    });
+    if (inputs.size === 0) return [];
+    // Positional: receivers[0] is output 0, so its address is never read.
+    const receiver = {
+        address: "",
+        assets: [...totals].map(([assetId, amount]) => ({ assetId, amount })),
+    };
+    return [Extension.create([createAssetPacket(inputs, [receiver])]).txOut()];
+};
+
 /** Every lockup output as an offchain input spending `leaf`. */
 export const lockupInputs = (
     vtxos: readonly LockupVtxo[],
@@ -494,7 +522,7 @@ export async function pushRefundWithoutReceiver(
     // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
     const { arkTx: tx, checkpoints } = buildOffchainTx(
         lockupInputs(vtxos, input.contract, leaf),
-        [{ script: refundPkScript, amount: BigInt(amount) }],
+        [{ script: refundPkScript, amount: BigInt(amount) }, ...lockupAssetOutputs(vtxos)],
         serverUnrollScript,
     );
 
