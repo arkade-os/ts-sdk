@@ -184,6 +184,16 @@ style and have not been backfilled.
   `WalletBalance.boarding.unconfirmed` said "mainnet" for onchain, and
   `boarding.loaded` had no doc.
 
+- **`@arkade-os/swap` builds an onchain send's lockup with the quoted solo
+  refund delay.** `deriveOnchainSend` always used the base ladder's
+  `unilateralRefundWithoutReceiverDelay`, so a solver that stretches that
+  delay (needed where a short exit delay would let the solo refund open before
+  the solver's last Arkade claim) quoted a lockup the client could not derive,
+  and the client refused to fund. It now reads
+  `profile.refund_without_receiver_delay` when the quote carries one, validates
+  it as `deriveLightningSend` does, and checks it against the refund-window
+  policy. A quote without the field still derives the base ladder.
+
 - **`@arkade-os/swap` migrates Program v0 offer rows.** A wallet upgraded from
   a swap release before 0.1.0-rc.31 kept its offer rows as unsupported Program
   v0 unless a live swap record rebuilt them, so settled offers and offers
@@ -838,6 +848,14 @@ style and have not been backfilled.
   writes into the caller's object.
 
 ### Performance
+
+- **Wallet construction asks the delegate for its key alongside server
+  info.** `getDelegateInfo()` started only after `getInfo()` resolved,
+  though neither depends on the other, so every wallet with a delegate paid
+  both round trips back to back before it could build its scripts — in a
+  service worker, on every page load. Both requests are now in flight
+  together. A delegate that fails or is unreachable still leaves the wallet
+  on the default script.
 
 - **`getVtxos` and `getBalance` no longer read spent history.** Both
   loaded every stored VTXO row, spent ones included, and dropped the
