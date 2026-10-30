@@ -188,7 +188,8 @@ style and have not been backfilled.
   `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
   the background after `ready`, without holding up new swaps or `dispose()`.
   It moves the send to `settled` if the lockup
-  now reads claimed; any other read leaves it as is.
+  now reads claimed; any other read leaves it as is. A correction a sink
+  refuses stays monitored until the poll lands the write.
 
 - **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
   examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),

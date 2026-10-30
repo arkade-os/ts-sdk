@@ -829,8 +829,9 @@ export class RfqSwapManager {
     /**
      * Re-read stored `refunded` Lightning sends with no refund txid, one at a time. A misread
      * could have ended a settled send this way: a `claimed` read settles the record, any other
-     * answer, or a failure, leaves it untouched. Returns the swaps it settled. `stopped` is
-     * checked before each record and before each write, so a caller can walk away mid-run.
+     * answer, or a failure, leaves it untouched. Returns the swaps it settled in every sink; one
+     * a sink refused stays monitored for the poll to retry. `stopped` is checked before each
+     * record and before each write, so a caller can walk away mid-run.
      */
     async recheckRefundedSends(
         options: Pick<RfqRestoreOptions, "params"> & { stopped?: () => boolean } = {},
@@ -855,9 +856,13 @@ export class RfqSwapManager {
                 this.stampLockupSpends(swap, fate.spends);
                 this.stampSettlementPreimage(swap, fate.preimage);
                 this.setState(swap, "settled");
-                await this.save(swap);
-                this.dirty.delete(swap.rfqId);
-                settled.push(swap);
+                if (await this.save(swap)) {
+                    this.dirty.delete(swap.rfqId);
+                    settled.push(swap);
+                } else {
+                    // Restore skips a stored `settled`, so only `pollSwap` can retry this write.
+                    this.track(swap);
+                }
             } catch {
                 // Left as stored: the next start re-reads it.
             }
@@ -1298,6 +1303,9 @@ export class RfqSwapManager {
      * finalization and the per-swap lock belong to `pollSwap`.
      */
     private async runPass(swap: RfqSwap): Promise<void> {
+        // Monitored only until a failed save lands: a fresh read must not rewrite the ending.
+        if (isRfqSwapTerminal(swap.state)) return;
+
         // 0. Register the lockup (no-op after the first pass).
         await this.ensureRegistered(swap);
 

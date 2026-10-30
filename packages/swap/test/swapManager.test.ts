@@ -4580,6 +4580,57 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
         });
 
+        it.each([
+            [
+                "the secondary sink",
+                (_: FakeStore, s: ReturnType<typeof spies>) => {
+                    const saveSwap = s.callbacks.saveSwap;
+                    s.callbacks.saveSwap = async () => {
+                        throw new Error("sink unavailable");
+                    };
+                    return () => {
+                        s.callbacks.saveSwap = saveSwap;
+                    };
+                },
+            ],
+            [
+                "the repository",
+                (store: FakeStore) => {
+                    store.failWrite = true;
+                    return () => {
+                        store.failWrite = false;
+                    };
+                },
+            ],
+        ])("retries a corrected send %s refused, without re-reading", async (_, refuse) => {
+            const store = fakeStore([storedSend({ state: "refunded", updatedAt: 1 })]);
+            const s = spies();
+            const recover = refuse(store, s);
+            const indexer = settlingIndexer();
+            const m = manager({
+                indexer,
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await expect(m.recheckRefundedSends()).resolves.toEqual([]);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+
+            await m.poll();
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+
+            recover();
+            const reads = vi.spyOn(indexer, "getVtxos");
+            await m.poll();
+
+            expect(reads).not.toHaveBeenCalled();
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(s.saved).toContain("settled");
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        });
+
         it("corrects a refunded send without a refund txid that reads claimed", async () => {
             const store = fakeStore([
                 storedSend({
