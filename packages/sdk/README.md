@@ -402,7 +402,7 @@ console.log('Offchain Available:', balance.available)
 console.log('Offchain Settled:', balance.settled)
 console.log('Offchain Preconfirmed:', balance.preconfirmed)
 console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly
-console.log('Locked by an in-flight intent:', balance.intentLocked)
+console.log('Locked by an in-flight intent:', balance.pendingSettlement)
 console.log('Recoverable:', balance.recoverable)
 console.log('Awaiting recovery:', balance.pendingRecovery)
 console.log('Unilaterally exited:', balance.unrolled)
@@ -414,7 +414,7 @@ too, just held under a different predicate. `available` is what generic spending
 will actually pick, and the difference between the two is accounted for exactly:
 
 ```text
-settled + preconfirmed === available + gated + intentLocked
+settled + preconfirmed === available + gated + pendingSettlement
 ```
 
 `unrolled` holds virtual outputs whose unilateral exit already happened: they sit
