@@ -414,7 +414,7 @@ too, just held under a different predicate. `available` is what generic spending
 will actually pick, and the difference between the two is accounted for exactly:
 
 ```text
-settled + preconfirmed === available + gated + pendingSettlement
+settled + preconfirmed === available + gated + pendingSettlement + reserved
 ```
 
 `unrolled` holds virtual outputs whose unilateral exit already happened: they sit
