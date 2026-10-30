@@ -18,7 +18,7 @@
  *
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
- * Lightning sends). Everything else is the user's own data or a trusted constant (the emulator key
+ * sends). Everything else is the user's own data or a trusted constant (the emulator key
  * defaults to the SDK's per-network pin). Anything address-shaped from the solver is compare-only:
  * a mismatch means refuse-to-fund, never "use theirs".
  *
@@ -1058,6 +1058,25 @@ export interface InvoiceFacts {
     expiresAt: number;
 }
 
+/** The quote's solo-refund CSV delay, refused unless it is a seconds rung at or above the claim's. */
+const quotedSoloRefundDelay = (
+    quote: RfqQuote,
+    claimDelay: number,
+    corridor: string,
+): number | undefined => {
+    const delay = quote.profile?.refund_without_receiver_delay;
+    if (delay === undefined) return undefined;
+    if (
+        !Number.isSafeInteger(delay) ||
+        delay < claimDelay ||
+        delay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
+        delay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
+    ) {
+        throw new Error(`${corridor} quote carries an invalid refund_without_receiver_delay`);
+    }
+    return delay;
+};
+
 /**
  * The pure core of {@link requestLightningSend}: derive the Arkade lockup from
  * the quote's binding fields plus the trader's own data, and refuse on a
@@ -1094,17 +1113,13 @@ export function deriveLightningSend(input: {
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
-    const refundWithoutReceiverDelay = quote.profile?.refund_without_receiver_delay;
+    const refundWithoutReceiverDelay = quotedSoloRefundDelay(
+        quote,
+        input.claimDelay,
+        "lightning-send",
+    );
     if (refundWithoutReceiverDelay === undefined) {
         throw new Error("lightning-send quote is missing profile.refund_without_receiver_delay");
-    }
-    if (
-        !Number.isSafeInteger(refundWithoutReceiverDelay) ||
-        refundWithoutReceiverDelay < input.claimDelay ||
-        refundWithoutReceiverDelay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
-        refundWithoutReceiverDelay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
-    ) {
-        throw new Error("lightning-send quote carries an invalid refund_without_receiver_delay");
     }
     if (refundWithoutReceiverDelay < quote.refund_locktime - input.now) {
         throw new Error("lightning-send quote lets the solo refund open before refund_locktime");
@@ -1623,8 +1638,8 @@ export const onchainReceiveRequest = (input: {
  * The pure core of {@link requestOnchainSend}: derive BOTH contracts locally
  * from the quote's binding fields plus the user's own data, and refuse on any
  * mismatch. Binding: `solver_pubkey`, `refund_locktime`, `htlc_pubkey`,
- * `htlc_locktime`, `min_confirmations`; `lockup_address` and `htlc_address`
- * are compare-only.
+ * `htlc_locktime`, `min_confirmations`, `refund_without_receiver_delay` when
+ * present; `lockup_address` and `htlc_address` are compare-only.
  */
 export function deriveOnchainSend(input: {
     quote: RfqQuote;
@@ -1653,6 +1668,8 @@ export function deriveOnchainSend(input: {
      * ({@link onchainSendProfile} reads it). */
     l1Network: OnchainNetwork;
     refundLocktime: number;
+    /** The quote's solo-refund delay; undefined when the lockup uses the base ladder. */
+    refundWithoutReceiverDelay: number | undefined;
     htlcLocktime: number;
     minConfirmations: number;
     expectedAmount: number;
@@ -1674,6 +1691,12 @@ export function deriveOnchainSend(input: {
     ) {
         throw new Error("onchain-send quote is missing a binding field");
     }
+    // Absent from a solver that still builds the base ladder.
+    const refundWithoutReceiverDelay = quotedSoloRefundDelay(
+        quote,
+        input.claimDelay,
+        "onchain-send",
+    );
 
     const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
@@ -1681,6 +1704,7 @@ export function deriveOnchainSend(input: {
         operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
+        refundWithoutReceiverDelay,
         emulatorPubkey: input.emulatorPubkey,
         senderPubkey: input.senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
@@ -1711,6 +1735,7 @@ export function deriveOnchainSend(input: {
         htlcParams,
         l1Network: input.l1Network,
         refundLocktime,
+        refundWithoutReceiverDelay,
         htlcLocktime,
         minConfirmations,
         expectedAmount: quoteExpectedSats(quote.to_amount, "to_amount"),
