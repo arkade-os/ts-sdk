@@ -177,6 +177,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
+  examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
+  and `StorageConfig.virtualTxRepository` was still described as inert although
+  the wallet captures exit branches into it and prunes them on spend.
+  `WalletBalance.boarding.unconfirmed` said "mainnet" for onchain, and
+  `boarding.loaded` had no doc.
+
 - **`@arkade-os/swap` builds an onchain send's lockup with the quoted solo
   refund delay.** `deriveOnchainSend` always used the base ladder's
   `unilateralRefundWithoutReceiverDelay`, so a solver that stretches that

@@ -262,9 +262,9 @@ export type StorageConfig = {
      */
     intentRepository?: IntentRepository;
     /**
-     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository. Currently only a
-     * best-effort raw-PSBT cache used by {@link Unroll} when passed to `Unroll.Session.create`;
-     * normal sync never populates or prunes it and {@link ContractManager} never receives it.
+     * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
+     * VTXO's exit branch into it and prunes it on spend (both best-effort, see
+     * {@link exitDataCapture}), and unilateral exits read it before the indexer.
      */
     virtualTxRepository?: VirtualTxRepository;
     /**
@@ -304,10 +304,12 @@ export interface WalletBalance {
     boarding: {
         /** Confirmed funds ready to swap for virtual outputs. */
         confirmed: number;
-        /** Pending funds awaiting confirmation on mainnet */
+        /** Pending funds awaiting an onchain confirmation. */
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        /** Set on cached and service-worker balances: false until this instance has fetched
+         * boarding inputs, so zero boarding may only mean "not loaded". */
         loaded?: boolean;
     };
     /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
