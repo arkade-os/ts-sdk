@@ -1023,9 +1023,10 @@ describe("ElectrumOnchainProvider", () => {
     });
 
     describe("getTxOutspend", () => {
+        const { txHex, scripts } = buildTestTx();
+        const parentTxid = hex.encode(sha256(sha256(hex.decode(txHex))).reverse());
+
         it("names the spender from the asked output's script alone", async () => {
-            const { txHex, scripts } = buildTestTx();
-            const parentTxid = hex.encode(sha256(sha256(hex.decode(txHex))).reverse());
             const spenderHex = buildSpendingTx(parentTxid, 0);
             const spenderTxid = hex.encode(sha256(sha256(hex.decode(spenderHex))).reverse());
 
@@ -1047,6 +1048,16 @@ describe("ElectrumOnchainProvider", () => {
                 .map((c) => c[1]);
             const ownScriptHash = hex.encode(sha256(scripts[0]).reverse());
             expect(scriptHashesRead).toEqual([ownScriptHash, ownScriptHash]);
+        });
+
+        it("reports a vout the tx does not have as unspent, reading no script", async () => {
+            mockBatch(wsMock.request, [txHex]);
+
+            expect(await provider.getTxOutspend(parentTxid, 5)).toEqual({
+                spent: false,
+                txid: "",
+            });
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
     });
 
