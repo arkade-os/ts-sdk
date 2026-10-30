@@ -332,7 +332,7 @@ describe("ArkadeContract — extended features", () => {
         expect(sign.mock.calls[0][1]).toEqual([1]);
     });
 
-    it("`.from()` refuses no coins, a repeated or swept coin, a coin of another contract, and another client's contract", async () => {
+    it("`.from()` refuses no coins, a repeated, swept or expired coin, a coin of another contract, and another client's contract", async () => {
         const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
         const connect = () =>
             arkade.Arkade.connect({
@@ -350,6 +350,14 @@ describe("ArkadeContract — extended features", () => {
         expect(() => claim().from([])).toThrow(/no coins/);
         expect(() => claim().from(COIN).from([COIN])).toThrow(/already an input/);
         expect(() => claim().from({ ...COIN, isSwept: true })).toThrow(/was swept/);
+        expect(() => claim().from({ ...COIN, expiresAt: new Date(Date.now() - 1_000) })).toThrow(
+            /has expired/,
+        );
+        // Not expired yet, or no expiry at all (an onchain coin): both are accepted.
+        expect(() =>
+            claim().from({ ...COIN, expiresAt: new Date(Date.now() + 60_000) }),
+        ).not.toThrow();
+        expect(() => claim().from(COIN)).not.toThrow();
         expect(() => claim().from({ ...COIN, script: hex.encode(p2tr()) })).toThrow(
             /not locked by the contract of claim/,
         );
@@ -481,13 +489,15 @@ describe("ArkadeContract — extended features", () => {
         ).rejects.toBeInstanceOf(PrevTxUnavailableError);
     });
 
-    it("selects the smallest unswept contract coin covering the outputs", async () => {
+    it("selects the smallest spendable contract coin covering the outputs", async () => {
         const small = mintCoin(5_000);
         const swept = { ...mintCoin(12_000), isSwept: true };
-        const big = mintCoin(20_000);
+        const expired = { ...mintCoin(11_000), expiresAt: new Date(Date.now() - 1_000) };
+        const big = mintCoin(20_000); // no expiry fields: never skipped for expiry
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
             small,
             swept,
+            expired,
             big,
         ]);
         const ark = await arkade.Arkade.connect({
@@ -502,7 +512,7 @@ describe("ArkadeContract — extended features", () => {
             h: new Uint8Array(20),
         });
 
-        // outputs require 10_000 → must pick `big` (5_000 can't cover, 12_000 is swept)
+        // outputs require 10_000 → must pick `big` (5_000 can't cover, 11_000 expired, 12_000 swept)
         await c.functions
             .claim(new Uint8Array(32).fill(0x42))
             .to(p2tr(receiver), AMOUNT)
