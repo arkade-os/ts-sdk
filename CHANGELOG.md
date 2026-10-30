@@ -38,6 +38,19 @@ style and have not been backfilled.
 
 ### Added
 
+- **`waitForIncomingFunds` takes a `NotifiesIncomingFunds` capability
+  instead of the concrete `Wallet` class.** `notifyIncomingFunds` is
+  implemented on `ReadonlyWallet`, but no interface declared it, so the
+  only published type for "something that reports incoming funds" was the
+  whole `Wallet`. A new exported `NotifiesIncomingFunds` interface declares
+  that single method, and `waitForIncomingFunds` now depends on it, so a
+  readonly wallet or a minimal test double satisfies the helper without
+  building a full `Wallet`. It is deliberately not added to
+  `IReadonlyWallet`, because `ServiceWorkerReadonlyWallet`,
+  `ServiceWorkerWallet` and `ExpoWallet` implement that interface without
+  the method; a standalone capability interface follows the pattern the
+  SDK already uses (`HDWalletCapable` and friends). Type-level only, no
+  runtime or breaking change.
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
   so a solver can fund the lockup with dust and learn `P` from that claim.
