@@ -235,16 +235,11 @@ async function delegate(
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            delegateAt = defaultDelegateAt(expiryTimestamp, arkInfo.sessionDuration);
-            // latest = expiry - 3 batch sessions
-            const latest = new Date(expiryTimestamp - Number(arkInfo.sessionDuration * 3000n));
-            const feeAtDelegateTime = feeAt(delegateAt, arkInfo.fees.intentFee, vtxos);
-            const feeAtLatestTime = feeAt(latest, arkInfo.fees.intentFee, vtxos);
-
-            // if the fees at the latest time are lower than the fees at the delegateAt one
-            // use the latest time instead
-            if (latest > delegateAt && feeAtLatestTime < feeAtDelegateTime) {
-                delegateAt = latest;
+            // delegateAt = expiry - 3 batches
+            delegateAt = new Date(expiryTimestamp - Number(arkInfo.sessionDuration * 3000n));
+            if (delegateAt.getTime() < Date.now()) {
+                // if the calculated delegateAt is in the past, delegate 1 minute from now, like recoverable
+                delegateAt = new Date(Date.now() + 1 * 60 * 1000);
             }
         }
     }
@@ -443,20 +438,6 @@ async function makeSignedDelegateIntent(
     };
 }
 
-export function defaultDelegateAt(
-    expiryTimestamp: number,
-    sessionDurationSeconds: bigint,
-    now = Date.now(),
-): Date {
-    const remainingTimeMs = expiryTimestamp - now;
-    if (remainingTimeMs <= 0) return new Date(now + 60_000);
-
-    const sessionLeadMs = Number(sessionDurationSeconds * 1000n);
-    const leadTimeMs = Math.max(remainingTimeMs * 0.1, sessionLeadMs);
-    const delegateAt = expiryTimestamp - leadTimeMs;
-    return new Date(delegateAt > now ? delegateAt : now + 2_000);
-}
-
 /**
  * Finds the index of the output whose script matches the destination script.
  * Returns -1 if no match is found.
@@ -493,23 +474,6 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
         v.tapTree !== undefined &&
         v.forfeitTapLeafScript !== undefined &&
         v.intentTapLeafScript !== undefined
-    );
-}
-
-function feeAt(
-    at: Date,
-    intentFee: ArkadeInfo["fees"]["intentFee"],
-    vtxos: NormalizedExtendedVirtualCoin[],
-): number {
-    const estimator = estimatorAt(intentFee, at);
-    return vtxos.reduce(
-        (sum, coin) =>
-            sum +
-            estimator.evalOffchainInput({
-                ...toOffchainInputFeeParams(coin),
-                type: "vtxo",
-            }).satoshis,
-        0,
     );
 }
 
