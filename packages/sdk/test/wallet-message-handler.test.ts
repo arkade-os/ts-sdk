@@ -2351,14 +2351,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 // available asset rides on.
                 available: 9454,
                 gated: 20000,
-                intentLocked: 0,
+                pendingSettlement: 0,
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
                 availableAssets: [{ assetId: "cc".repeat(32), amount: 3n }],
             },
         });
     });
 
-    it("GET_BALANCE reports an intent-locked VTXO as intentLocked", async () => {
+    it("GET_BALANCE reports an intent-locked VTXO as pendingSettlement", async () => {
         const intents = new InMemoryIntentRepository();
         setupHandler([{ address: "contract-1", script: "s1", type: "default" }], intents);
 
@@ -2389,7 +2389,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(response).toMatchObject({
             type: "BALANCE",
-            payload: { settled: 10000, available: 0, gated: 0, intentLocked: 10000 },
+            payload: { settled: 10000, available: 0, gated: 0, pendingSettlement: 10000 },
         });
     });
 

@@ -50,7 +50,7 @@ describe("reserveVtxos", () => {
         expect(held.reserved).toBe(10_000);
         expect(held.available).toBe(before.available - 10_000);
         expect(held.settled + held.preconfirmed).toBe(
-            held.available + held.gated + held.intentLocked + held.reserved,
+            held.available + held.gated + held.pendingSettlement + held.reserved,
         );
         hold.release();
         hold.release();
@@ -136,8 +136,11 @@ describe("computeOffchainBalance reserved bucket", () => {
             dustCarrier: 0n,
         });
 
-        expect([balance.gated, balance.intentLocked, balance.reserved, balance.available]).toEqual([
-            1, 10, 100, 1_000,
-        ]);
+        expect([
+            balance.gated,
+            balance.pendingSettlement,
+            balance.reserved,
+            balance.available,
+        ]).toEqual([1, 10, 100, 1_000]);
     });
 });

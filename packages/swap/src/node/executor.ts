@@ -80,7 +80,7 @@ export interface NodeSwapRepositoryOptions {
  * sits on the repository because the v2 client has no `dispose()` yet.
  *
  * ```ts
- * await using repository = nodeSwapRepository({ network: "mainnet" });
+ * await using repository = nodeSwapRepository({ network: "bitcoin" });
  * const client = createSwapClient({ wallet, repository });
  * ```
  */
