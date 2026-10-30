@@ -38,7 +38,9 @@ style and have not been backfilled.
 - **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
   `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
   `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,
-  which forbid `bigint`.
+  which forbid `bigint`. `Market` is also no longer an alias of `CardMarketRef`
+  but a superset: a `Market` can still be used as a ref, but a ref no longer
+  assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
 
 ### Added
 

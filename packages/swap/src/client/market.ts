@@ -217,8 +217,8 @@ export interface MarketLeg {
     /**
      * The card's announced bounds, in atomic units. Indicative: the solver can still refuse.
      * `null`: the solver will not pay this leg out; a one-way card still routes it as the give leg.
-     * Only a take-side amount is checked against them: a give-side amount outside them still
-     * resolves, and a feed card still quotes it.
+     * Only an amount pinned with `amountOn: "take"` is checked: a give-pinned amount still resolves,
+     * and a feed card still quotes it, even if the resulting take is out of range.
      */
     readonly limits: { readonly min: bigint; readonly max: bigint } | null;
 }
