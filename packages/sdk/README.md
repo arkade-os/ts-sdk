@@ -399,36 +399,37 @@ const boardingTxId = await new Ramps(wallet).onboard();
 ### Checking Balance
 
 ```typescript
-// Get detailed balance information
 const balance = await wallet.getBalance()
-console.log('Total Balance:', balance.total)
-console.log('Boarding Total:', balance.boarding.total)
-console.log('Offchain Available:', balance.available)
-console.log('Offchain Settled:', balance.settled)
-console.log('Offchain Preconfirmed:', balance.preconfirmed)
-console.log('Gated by a contract:', balance.gated) // swap escrow, chiefly
-console.log('Locked by an in-flight intent:', balance.pendingSettlement)
-console.log('Held by reserveVtxos:', balance.reserved)
-console.log('Recoverable:', balance.recoverable)
-console.log('Awaiting recovery:', balance.pendingRecovery)
-console.log('Unilaterally exited:', balance.unrolled)
 ```
 
-`settled` and `preconfirmed` are the owned offchain buckets this relationship is
-about — `recoverable`, `pendingRecovery` and `unrolled` are the wallet's funds
-too, just held under a different predicate. `available` is what generic spending
-will actually pick, and the difference between the two is accounted for exactly:
+| Field | What it holds |
+| --- | --- |
+| `boarding.confirmed` | Confirmed onchain [boarding](#onboarding) funds, ready to settle into virtual outputs. |
+| `boarding.unconfirmed` | Boarding funds still waiting for an onchain confirmation. |
+| `boarding.total` | `confirmed + unconfirmed`. |
+| `boarding.loaded` | Set on cached and service-worker balances: `false` until this instance has fetched boarding inputs, so a zero may only mean "not loaded" ([Faster startup](#faster-startup-without-changing-existing-reads)). |
+| `settled` | Finalized offchain funds the wallet owns, spendable or not. |
+| `preconfirmed` | Owned offchain funds not yet finalized in a batch. |
+| `available` | What `send` and every other automatic coin selection can spend now. |
+| `gated` | Held by a contract that generic spending refuses (chiefly swap escrow); only that contract can spend it ([Contract Management](#contract-management)). |
+| `pendingSettlement` | Committed to an in-flight settlement intent; back in `available` when the intent ends. Always `0` without `storage.intentRepository`. |
+| `reserved` | Held by [`reserveVtxos`](#holding-vtxos-for-your-own-use) until released. |
+| `recoverable` | Swept or subdust virtual outputs that [`recoverVtxos`](#recovery-reclaim-swept-vtxos) can reclaim; `getRecoverableBalance()` gives what a batch would return today. |
+| `pendingRecovery` | Under a server signer past its cutoff, which the operator no longer co-signs; recovers once swept and re-settled. |
+| `unrolled` | Already [unilaterally exited](#unilateral-exit): onchain behind its CSV timelock, movable only by `Unroll.completeUnroll`. |
+| `total` | Everything the wallet owns: `boarding.total + settled + preconfirmed + recoverable + pendingRecovery + unrolled`. |
+| `assets` | Every [asset](#assets-issue-reissue-burn-send) balance the wallet owns. |
+| `availableAssets` | The subset of `assets` generic spending can move: the asset counterpart of `available`. |
+
+`available` is what remains of the owned offchain funds once everything held for a
+cause is taken out:
 
 ```text
 settled + preconfirmed === available + gated + pendingSettlement + reserved
 ```
 
-When the wallet holds assets, one dust carrier is also kept out of `available`.
-
-`unrolled` holds virtual outputs whose unilateral exit already happened: they sit
-onchain behind their CSV timelock, so nothing offchain can move them and
-`Unroll.completeUnroll` is the only thing that will. They are never `available` and
-never `recoverable` — but they are still your money, so they still count in `total`.
+plus one dust carrier when the wallet holds available assets, since an asset moves
+only with the output that carries it.
 
 To show "your money, minus what is tied up", subtract from `settled + preconfirmed`
 — **not from `total`**, which also contains `boarding.total`, `recoverable`,
@@ -436,8 +437,11 @@ To show "your money, minus what is tied up", subtract from `settled + preconfirm
 from `total` silently drops them from the figure.
 
 ```typescript
-// Get virtual outputs (available for offchain spending)
+// Every virtual output the wallet tracks, spendable or not
 const vtxos = await wallet.getVtxos()
+
+// Only those automatic coin selection may pick
+const spendable = await wallet.getSpendableVtxos()
 
 // Get boarding inputs
 const boardingInputs = await wallet.getBoardingUtxos()
@@ -618,7 +622,7 @@ const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 A virtual output whose unilateral exit already happened is never offered for renewal, and the
 exported `isVtxoExpiringSoon` answers `false` for it regardless of its batch expiry: "expiring
 soon" is a renewal signal, and no batch can take an output that already lives onchain. Its remedy
-is `Unroll.completeUnroll`, and its value shows up in `balance.unrolled`.
+is `Unroll.completeUnroll`, and its value shows up in [`balance.unrolled`](#checking-balance).
 
 #### Boarding Input Sweep
 
@@ -851,7 +855,7 @@ try {
 ```
 
 Held VTXOs stay in `getVtxos()` and in `getBalance().total`, and move from `available` to
-`reserved`. Holding a VTXO that is held or being spent throws `VtxoReservedError`. If the SDK had
+[`reserved`](#checking-balance). Holding a VTXO that is held or being spent throws `VtxoReservedError`. If the SDK had
 already picked a VTXO when you hold it, that spend throws `VtxoReservedError` (`holder: "held"`)
 instead of spending it; exits and renewal pick again or retry on their own.
 
@@ -1138,7 +1142,8 @@ const bus = new MessageBus(walletRepo, contractRepo, {
   tickIntervalMs: 10_000, // default 10s
   // Optional, same opt-in as `storage.intentRepository` on a main-thread
   // wallet. Omit it and the worker persists no settlement intent, reconciles
-  // none on restart, and counts intent-locked VTXOs as available.
+  // none on restart, and counts intent-locked VTXOs as available
+  // (`pendingSettlement` stays 0).
   intentRepository: new IndexedDBIntentRepository(),
 })
 
@@ -1173,7 +1178,7 @@ failures retain the existing offline fallback; terminal errors still reject.
 Contract initialization still awaits synchronization and watcher startup by default.
 
 For a returning wallet with persisted contracts, opt into `lazyInitialization: true`
-and use `getStoredVtxos()` or `getStoredBalance()` for the initial display. These
+and use `getStoredVtxos()` or `getStoredBalance()` (same [fields](#checking-balance) as `getBalance()`) for the initial display. These
 methods return cached data and request background synchronization. They can return
 empty or stale data, so inspect `(await wallet.getContractManager()).getSyncState()`:
 an absent `lastSyncedAt` means no successful sync this session, `syncing` means work

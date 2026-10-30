@@ -66,7 +66,8 @@ An `arkade -> onchain` withdrawal claims the solver's L1 HTLC itself, and that c
 comes out of the HTLC output — so the client grosses the take leg up by the claim's cost and the
 recipient nets exactly the `amount` written, with the estimate folded into the reported `fee`. The
 claim is built and broadcast by the client itself once the fill is claimable, signed by the
-wallet's payout key and priced off a per-network fee-rate floor. A routing UI should raise it in congestion — the claim has a consensus deadline — via
+wallet's payout key and priced off a per-network fee-rate floor. A routing UI should raise it in
+congestion — the claim has a consensus deadline — via
 `corridors: { onchain: { claimFeeRateSatVb } }`; set it to `null` to take the claim over manually
 (the drive then reports the L1 half as your job rather than blocking it). Wire your own builder
 with `corridors: { onchain: { claim } }` and it wins over the default.

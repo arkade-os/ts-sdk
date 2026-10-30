@@ -304,10 +304,12 @@ export interface WalletBalance {
     boarding: {
         /** Confirmed funds ready to swap for virtual outputs. */
         confirmed: number;
-        /** Pending funds awaiting confirmation on mainnet */
+        /** Pending funds awaiting an onchain confirmation. */
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        /** Set on cached and service-worker balances: false until this instance has fetched
+         * boarding inputs, so zero boarding may only mean "not loaded". */
         loaded?: boolean;
     };
     /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
