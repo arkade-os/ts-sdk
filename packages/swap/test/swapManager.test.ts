@@ -161,7 +161,7 @@ const FILL: ChainUtxo = {
  */
 const spendOfLockup = (
     over: {
-        leaf?: "claim" | "refundWithoutReceiver";
+        leaf?: "claim" | "refundWithoutReceiver" | "nonInteractiveRefund";
         conditionWitness?: Uint8Array[];
         finalWitness?: Uint8Array[];
         /** Which covenant was spent — the send lockup unless a receive test
@@ -171,7 +171,11 @@ const spendOfLockup = (
 ): { txid: string; psbt: string } => {
     const script = over.script ?? LOCKUP;
     const leaf =
-        over.leaf === "refundWithoutReceiver" ? script.refundWithoutReceiver() : script.claim();
+        over.leaf === "refundWithoutReceiver"
+            ? script.refundWithoutReceiver()
+            : over.leaf === "nonInteractiveRefund"
+              ? script.nonInteractiveRefund()[0]
+              : script.claim();
     const { checkpoints } = buildOffchainTx(
         [
             {
@@ -1131,7 +1135,73 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
 
     it("reads a refund leaf carrying no preimage as a refund", async () => {
         const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
-        const { swap } = await resolve(fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }));
+        const { swap } = await resolve(
+            fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            REFUND_LOCKTIME + 1,
+        );
+        expect(swap.state).toBe("refunded");
+    });
+
+    it("does not finalize a refund leaf observed before the locktime", async () => {
+        const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
+        const { swap, s } = await resolve(
+            fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+        );
+        expect(swap.state).toBe("pending");
+        expect(swap.lockupSpendTxids).toBeUndefined();
+        expect(s.refunds).toHaveLength(0);
+    });
+
+    it("finalizes a nonInteractiveRefund observed before the locktime", async () => {
+        // The one leaf the solver can push alone before the locktime.
+        const spend = spendOfLockup({ leaf: "nonInteractiveRefund" });
+        const swap = lightningSwap({
+            lockup: { script: LOCKUP, address: LOCKUP.address("tark", key(3)).encode() },
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+        expect(swap.state).toBe("refunded");
+    });
+
+    it("keeps driving an onchain send's L1 claim past a pre-locktime refund read", async () => {
+        const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("claimed");
+        expect(swap.lockupSpendTxids).toBeUndefined();
+        expect(s.claims).toHaveLength(1);
+        expect(s.refunds).toHaveLength(0);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("finalizes an onchain send's nonInteractiveRefund before the locktime", async () => {
+        const spend = spendOfLockup({ leaf: "nonInteractiveRefund" });
+        const swap = onchainSwap({
+            lockup: { script: LOCKUP, address: LOCKUP.address("tark", key(3)).encode() },
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            chain: fakeChain({ utxos: [], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
         expect(swap.state).toBe("refunded");
     });
 
@@ -4510,6 +4580,118 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             await expect(m.waitForSwapCompletion(terminalId)).rejects.toThrow(/not monitored/);
         });
 
+        it.each([
+            [
+                "the secondary sink",
+                (_: FakeStore, s: ReturnType<typeof spies>) => {
+                    const saveSwap = s.callbacks.saveSwap;
+                    s.callbacks.saveSwap = async () => {
+                        throw new Error("sink unavailable");
+                    };
+                    return () => {
+                        s.callbacks.saveSwap = saveSwap;
+                    };
+                },
+            ],
+            [
+                "the repository",
+                (store: FakeStore) => {
+                    store.failWrite = true;
+                    return () => {
+                        store.failWrite = false;
+                    };
+                },
+            ],
+        ])("retries a corrected send %s refused, without re-reading", async (_, refuse) => {
+            const store = fakeStore([storedSend({ state: "refunded", updatedAt: 1 })]);
+            const s = spies();
+            const recover = refuse(store, s);
+            const indexer = settlingIndexer();
+            const m = manager({
+                indexer,
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: s,
+            });
+
+            await expect(m.recheckRefundedSends()).resolves.toEqual([]);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+
+            await m.poll();
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+
+            recover();
+            const reads = vi.spyOn(indexer, "getVtxos");
+            await m.poll();
+
+            expect(reads).not.toHaveBeenCalled();
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(s.saved).toContain("settled");
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        });
+
+        it("corrects a refunded send without a refund txid that reads claimed", async () => {
+            const store = fakeStore([
+                storedSend({
+                    state: "refunded",
+                    lockupSpendTxids: ["cc".repeat(32)],
+                    updatedAt: 1,
+                }),
+            ]);
+            const m = manager({
+                indexer: settlingIndexer(),
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            const states: RfqSwapState[] = [];
+            m.onSwapUpdate((updated) => states.push(updated.state));
+
+            const settled = await m.recheckRefundedSends();
+
+            expect(settled.map((swap) => swap.rfqId)).toEqual([RFQ_ID]);
+            expect(states).toEqual(["settled"]);
+            expect(store.records.get(RFQ_ID)?.state).toBe("settled");
+            expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        });
+
+        it.each([
+            [
+                "a refund",
+                () => {
+                    const refund = spendOfLockup({ leaf: "refundWithoutReceiver" });
+                    return fakeIndexer({ vtxos: spentBy(refund.txid), txs: [refund] });
+                },
+            ],
+            ["nothing", () => fakeIndexer({ vtxos: [] })],
+        ])("leaves a refunded send alone when the lockup reads %s", async (_, indexer) => {
+            const stored = storedSend({
+                state: "refunded",
+                lockupSpendTxids: ["cc".repeat(32)],
+                updatedAt: 1,
+            });
+            const store = fakeStore([stored]);
+            const m = manager({
+                indexer: indexer(),
+                contracts: contractsFor(rowFor(LOCKUP, LOCKUP_ADDRESS)),
+                repository: store,
+                now: SAFE_NOW,
+                spies: spies(),
+            });
+            const states: RfqSwapState[] = [];
+            m.onSwapUpdate((updated) => states.push(updated.state));
+
+            await expect(m.recheckRefundedSends()).resolves.toEqual([]);
+            await expect(m.recheckRefundedSends()).resolves.toEqual([]);
+
+            expect(states).toEqual([]);
+            expect(store.records.get(RFQ_ID)).toEqual(stored);
+            expect(await m.hasSwap(RFQ_ID)).toBe(false);
+        });
+
         it("never replaces a live swap when paging returns it again", async () => {
             const store = fakeStore([storedSend()]);
             const m = manager({ repository: store, now: SAFE_NOW, spies: spies() });
@@ -4983,7 +5165,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             const m = manager({
                 indexer: fakeIndexer({ vtxos: spentBy(refund.txid), txs: [refund] }),
                 repository: store,
-                now: SAFE_NOW,
+                now: REFUND_LOCKTIME + 1,
                 spies: s,
             });
 

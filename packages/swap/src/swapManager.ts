@@ -65,7 +65,12 @@ import {
 } from "./rfqRecord";
 import { RefundNotLocallyPossibleError } from "./refundBlocked";
 import { LOCKUP_RETIRABLE } from "./coverage";
-import { RFQ_SWAP_ACTIVE_STATES, isRfqSwapTerminal, type RfqSwapState } from "./rfqSwapState";
+import {
+    RFQ_SWAP_ACTIVE_STATES,
+    isRecheckableRefundedSend,
+    isRfqSwapTerminal,
+    type RfqSwapState,
+} from "./rfqSwapState";
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -822,6 +827,50 @@ export class RfqSwapManager {
     }
 
     /**
+     * Re-read stored `refunded` Lightning sends with no refund txid, one at a time. A misread
+     * could have ended a settled send this way: a `claimed` read settles the record, any other
+     * answer, or a failure, leaves it untouched. Returns the swaps it settled in every sink; one
+     * a sink refused stays monitored for the poll to retry. `stopped` is checked before each
+     * record and before each write, so a caller can walk away mid-run.
+     */
+    async recheckRefundedSends(
+        options: Pick<RfqRestoreOptions, "params"> & { stopped?: () => boolean } = {},
+    ): Promise<RfqSwap[]> {
+        const repository = this.requireRepository("recheckRefundedSends");
+        const params = options.params ?? this.paramsFromContracts();
+        const settled: RfqSwap[] = [];
+        for (const record of await collectRfqSwaps(repository, { state: "refunded" })) {
+            if (options.stopped?.()) break;
+            if (!isRecheckableRefundedSend(record) || this.monitored.has(record.rfqId)) continue;
+            const removedAt = this.removed.get(record.rfqId);
+            try {
+                const swap = rebuildRfqSwap(record, await params(record));
+                const fate = await readLockupFate(this.deps.indexer, {
+                    swapPkScript: swap.lockupPkScript,
+                    paymentHash: swap.paymentHash,
+                });
+                if (options.stopped?.()) break;
+                if (fate.fate !== "claimed") continue;
+                if (this.monitored.has(record.rfqId)) continue;
+                if (this.removed.get(record.rfqId) !== removedAt) continue;
+                this.stampLockupSpends(swap, fate.spends);
+                this.stampSettlementPreimage(swap, fate.preimage);
+                this.setState(swap, "settled");
+                if (await this.save(swap)) {
+                    this.dirty.delete(swap.rfqId);
+                    settled.push(swap);
+                } else {
+                    // Restore skips a stored `settled`, so only `pollSwap` can retry this write.
+                    this.track(swap);
+                }
+            } catch {
+                // Left as stored: the next start re-reads it.
+            }
+        }
+        return settled;
+    }
+
+    /**
      * Drop stored records that are terminal and past `RFQ_SWAP_RETENTION_SECONDS` (per
      * `shouldRetainRfqSwap`), and return their ids. Explicit only: restore keeps history.
      * Loads every stored record; no backend offers indexed deletion.
@@ -1254,6 +1303,9 @@ export class RfqSwapManager {
      * finalization and the per-swap lock belong to `pollSwap`.
      */
     private async runPass(swap: RfqSwap): Promise<void> {
+        // Monitored only until a failed save lands: a fresh read must not rewrite the ending.
+        if (isRfqSwapTerminal(swap.state)) return;
+
         // 0. Register the lockup (no-op after the first pass).
         await this.ensureRegistered(swap);
 
@@ -1268,6 +1320,19 @@ export class RfqSwapManager {
             });
         } catch {
             // Transient by assumption; the remaining steps are gated on absolute timelocks.
+            fate = { fate: "unknown" };
+        }
+        // Before the locktime the only refund the solver can push alone is
+        // `nonInteractiveRefund`. Any other pre-locktime `returned` verdict is an
+        // indexer read that can still change, so it is not final yet.
+        if (
+            (swap.kind === "lightning_send" || swap.kind === "onchain_send") &&
+            fate.fate === "returned" &&
+            this.config.now() < swap.refundLocktime &&
+            !fate.leafScripts.every(
+                (script) => script === swap.lockup?.script.nonInteractiveRefundScript,
+            )
+        ) {
             fate = { fate: "unknown" };
         }
         // Before the terminal shortcut, and that order is the whole safety

@@ -702,6 +702,7 @@ describe("readLockupFate", () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toMatchObject(
             {
                 fate: "returned",
+                leafScripts: [hex.encode(scriptFromTapLeafScript(leaf))],
             },
         );
     });
@@ -767,6 +768,7 @@ describe("readLockupFate", () => {
                 { checkpointTxid: first.txid, txid: "c1".repeat(32) },
                 { checkpointTxid: second.txid, txid: "c2".repeat(32) },
             ],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
@@ -790,6 +792,7 @@ describe("readLockupFate", () => {
                 { checkpointTxid: first.txid, txid: undefined },
                 { checkpointTxid: second.txid, txid: "c4".repeat(32) },
             ],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
@@ -799,6 +802,7 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [{ checkpointTxid: spend.txid, txid: undefined }],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
