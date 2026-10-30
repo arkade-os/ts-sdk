@@ -38,6 +38,23 @@ export const publicAssetId = (
     return `arkade:${network}/${ARKADE_ASSET_NAMESPACE}:${assetId}`;
 };
 
+/** The public id for one leg of a card: a CAIP-19 id as published, else the legacy id's conversion. */
+export const cardLegAssetId = (
+    card: DiscoveredMarket,
+    side: Side,
+    network: NetworkRef,
+): AssetId | undefined => {
+    const corridor = corridorOfRail(marketCorridor(card, side));
+    if (corridor === undefined) return undefined;
+    const canonical = marketAssetId(card, side);
+    if (canonical !== undefined && isAssetId(canonical)) return canonical;
+    return publicAssetId(
+        corridor,
+        (side === "base" ? card.base_asset : card.quote_asset).id,
+        network,
+    );
+};
+
 /** Every asset the snapshot names, as caller-writable ids and their tickers. */
 export const aliasTableFrom = (
     markets: readonly DiscoveredMarket[],
@@ -46,13 +63,7 @@ export const aliasTableFrom = (
     const rows = new Map<string, RegisteredAsset>();
     const add = (card: DiscoveredMarket, side: Side): void => {
         const info = side === "base" ? card.base_asset : card.quote_asset;
-        const corridor = corridorOfRail(marketCorridor(card, side));
-        if (corridor === undefined) return;
-        const canonical = marketAssetId(card, side);
-        const id =
-            canonical !== undefined && isAssetId(canonical)
-                ? canonical
-                : publicAssetId(corridor, info.id, network);
+        const id = cardLegAssetId(card, side, network);
         if (id === undefined || typeof info.ticker !== "string" || info.ticker === "") return;
         rows.set(`${id} ${info.ticker.toLowerCase()}`, { id, ticker: info.ticker });
     };

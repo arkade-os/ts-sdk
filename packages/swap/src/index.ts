@@ -91,7 +91,7 @@ export type {
     RouteResolution,
     SnapshotRef,
 } from "./client/quote";
-export type { Market } from "./client/market";
+export type { Market, MarketLeg } from "./client/market";
 
 // ── Asset ids and amounts ───────────────────────────────────────────────────
 // CAIP-19 with the rail as the CAIP-2 namespace; `bigint` atomic units inside, `Amount` at the UI

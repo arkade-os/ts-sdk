@@ -35,6 +35,10 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
+  `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
+  `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,
+  which forbid `bigint`.
 
 ### Added
 
@@ -450,6 +454,13 @@ style and have not been backfilled.
   `min_amount` support to deploy, and the call stays the same when it does.
 
 ### Features
+
+- **`@arkade-os/swap`: `client.markets()` reports each market's limits per leg.**
+  A UI had no way to show a market's min and max, or explain an out-of-range
+  amount, without an RFQ that discloses it. `Market` now carries `legs`, each with
+  its `asset`, `decimals` and announced `limits` in atomic units, `null` on a side
+  the solver will not pay out. They are indicative, and routing and the set of
+  markets returned do not change. New export: `MarketLeg`.
 
 - **`onchainProvider` can be a per-network factory, in a service worker
   too.** `WalletConfig.onchainProvider` takes `(network) => OnchainProvider`,
