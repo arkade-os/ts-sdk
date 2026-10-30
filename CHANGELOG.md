@@ -29,6 +29,12 @@ style and have not been backfilled.
   `resolveCheckpointExitDelayPolicy` and `CheckpointExitDelayPolicy` are
   removed, and `assertValidServerUnrollScript(checkpointTapscript, network,
   advertisedForfeitPubkey?)` takes the pinned network and forfeit key directly.
+- **`WalletBalance.intentLocked` is renamed `pendingSettlement`.** The bucket
+  holds funds committed to an in-flight intent, which return to `available`
+  when it terminates; the new name says what the user is waiting for rather
+  than how the wallet enforces it. Same value, same semantics, no alias (see
+  `WalletBalance.available` for how the buckets add up). The service-worker
+  `GET_BALANCE` payload carries the new key too.
 
 ### Added
 

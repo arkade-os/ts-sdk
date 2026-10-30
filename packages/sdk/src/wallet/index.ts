@@ -316,14 +316,14 @@ export interface WalletBalance {
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would pick, so `send` never
-     * refuses it: `settled + preconfirmed - gated - intentLocked - reserved`, minus one dust
+     * refuses it: `settled + preconfirmed - gated - pendingSettlement - reserved`, minus one dust
      * carrier kept back if any of these outputs hold assets.
      */
     available: number;
     /**
      * Owned but refused by the generic-spending gate: a VHTLC lockup, an unmarked `arkade`
      * program, or an unregistered contract type. In `settled`/`preconfirmed` and `total`, never
-     * `available`. Takes precedence over {@link intentLocked} (the gate is durable; a lock clears).
+     * `available`. Takes precedence over {@link pendingSettlement} (the gate is durable; a lock clears).
      *
      * Subtract it from `settled + preconfirmed`, never from `total`, which also carries boarding,
      * recoverable, pending-recovery and unrolled funds.
@@ -334,7 +334,7 @@ export interface WalletBalance {
      * intent terminates. Zero when unknown (no intent repository or a failed read), so it
      * under-reports into `available` rather than misattributing.
      */
-    intentLocked: number;
+    pendingSettlement: number;
     /** Held by `Wallet.reserveVtxos`: in `settled`/`preconfirmed` and `total`, never `available`. */
     reserved: number;
     /**
