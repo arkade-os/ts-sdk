@@ -1048,6 +1048,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractRepository =
             config.storage?.contractRepository ?? new IndexedDBContractRepository();
 
+        // Independent of server info, so its round trip overlaps that one instead of following it.
+        const delegatePubKeyPromise = config.delegateProvider
+            ?.getDelegateInfo()
+            .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
+            .catch(() => undefined);
+
         // The cache is NOT written here but after construction validates the response
         // (saveValidatedArkInfoSnapshot in create()), so a bad live response can't poison it.
         const {
@@ -1128,12 +1134,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
-        const delegatePubKey = config.delegateProvider
-            ? await config.delegateProvider
-                  .getDelegateInfo()
-                  .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
-                  .catch(() => undefined)
-            : undefined;
+        const delegatePubKey = await delegatePubKeyPromise;
 
         const offchainOptions = {
             pubKey,
