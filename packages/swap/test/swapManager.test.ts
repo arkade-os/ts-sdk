@@ -1168,6 +1168,43 @@ describe("RfqSwapManager — resolution is read off chain, and only proof counts
         expect(swap.state).toBe("refunded");
     });
 
+    it("keeps driving an onchain send's L1 claim past a pre-locktime refund read", async () => {
+        const spend = spendOfLockup({ leaf: "refundWithoutReceiver" });
+        const s = spies();
+        const swap = onchainSwap();
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            chain: fakeChain({ utxos: [FILL], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("claimed");
+        expect(swap.lockupSpendTxids).toBeUndefined();
+        expect(s.claims).toHaveLength(1);
+        expect(s.refunds).toHaveLength(0);
+        expect(await m.hasSwap(RFQ_ID)).toBe(true);
+    });
+
+    it("finalizes an onchain send's nonInteractiveRefund before the locktime", async () => {
+        const spend = spendOfLockup({ leaf: "nonInteractiveRefund" });
+        const swap = onchainSwap({
+            lockup: { script: LOCKUP, address: LOCKUP.address("tark", key(3)).encode() },
+        });
+        const m = manager({
+            indexer: fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] }),
+            chain: fakeChain({ utxos: [], mtp: SAFE_NOW }),
+            now: SAFE_NOW,
+            spies: spies(),
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(swap.state).toBe("refunded");
+    });
+
     it("ignores a preimage attached to a spend of somebody else's outpoint", async () => {
         // The witness only counts when it is on the input that spends OUR
         // lockup output; a tx that reveals P against a different outpoint says

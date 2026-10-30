@@ -182,8 +182,9 @@ style and have not been backfilled.
   so an indexer read missing the solver's preimage ended a paid send as
   `refunded` for good (#1105). Before the locktime the only refund the solver
   can push alone is `nonInteractiveRefund`, so any other pre-locktime
-  `returned` read is not final and the swap stays monitored. A `refunded` send
-  stored without a refund txid can now be re-read with
+  `returned` read is not final and the swap stays monitored. The same holds for
+  an onchain send, whose L1 claim would otherwise stop being driven. A
+  `refunded` Lightning send stored without a refund txid can now be re-read with
   `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
   the background after `ready`, without holding up new swaps or `dispose()`.
   It moves the send to `settled` if the lockup

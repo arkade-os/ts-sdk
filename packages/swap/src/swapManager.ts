@@ -1318,7 +1318,7 @@ export class RfqSwapManager {
         // `nonInteractiveRefund`. Any other pre-locktime `returned` verdict is an
         // indexer read that can still change, so it is not final yet.
         if (
-            swap.kind === "lightning_send" &&
+            (swap.kind === "lightning_send" || swap.kind === "onchain_send") &&
             fate.fate === "returned" &&
             this.config.now() < swap.refundLocktime &&
             !fate.leafScripts.every(
