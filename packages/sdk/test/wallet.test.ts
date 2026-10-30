@@ -95,14 +95,13 @@ describe("Wallet", () => {
             ).rejects.toThrow(/indexerProvider is required when arkProvider is provided/);
         });
 
-        it("asks the delegate for its key while server info is still in flight", async () => {
+        it("has the delegate and server-info requests in flight together", async () => {
             let resolveInfo!: (info: unknown) => void;
             const getInfo = vi.fn(() => new Promise((resolve) => (resolveInfo = resolve)));
-            const getDelegateInfo = vi.fn().mockResolvedValue({
-                pubkey: mockServerKeyHex,
-                fee: "0",
-                delegateAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
-            });
+            let resolveDelegate!: (info: unknown) => void;
+            const getDelegateInfo = vi.fn(
+                () => new Promise((resolve) => (resolveDelegate = resolve)),
+            );
 
             const creating = ReadonlyWallet.create({
                 identity: ReadonlySingleKey.fromPublicKey(await mockIdentity.compressedPublicKey()),
@@ -117,10 +116,16 @@ describe("Wallet", () => {
                     getDelegateInfo,
                 } as Partial<DelegateProvider> as DelegateProvider,
             });
-            await vi.waitFor(() => expect(getInfo).toHaveBeenCalled());
+            await vi.waitFor(() => {
+                expect(getInfo).toHaveBeenCalledOnce();
+                expect(getDelegateInfo).toHaveBeenCalledOnce();
+            });
 
-            expect(getDelegateInfo).toHaveBeenCalledOnce();
-
+            resolveDelegate({
+                pubkey: mockServerKeyHex,
+                fee: "0",
+                delegateAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            });
             resolveInfo({
                 signerPubkey: mockServerKeyHex,
                 forfeitPubkey: mockServerKeyHex,
