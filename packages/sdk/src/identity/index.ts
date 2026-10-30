@@ -64,9 +64,12 @@ export type {
     DescriptorOptions,
     SeedIdentityOptions,
     MnemonicOptions,
+    PasskeySource,
+    PasskeyMnemonic,
 } from "./seedIdentity";
 export { SeedIdentity, MnemonicIdentity, ReadonlyDescriptorIdentity } from "./seedIdentity";
 export * from "./serialize";
+export * from "./passkey";
 
 // Descriptor utilities
 export {

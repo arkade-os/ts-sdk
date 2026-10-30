@@ -38,6 +38,20 @@ style and have not been backfilled.
 
 ### Added
 
+- **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`
+  creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
+  `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
+  the passkey syncs to. Both return the identity, the words (for the app to offer as a
+  backup) and the credential id. The words come from HKDF-SHA256 over the PRF secret
+  under a salt and label, `DEFAULT_PASSKEY_DOMAIN` unless an app passes its own `domain`
+  to keep words it derived before. A passkey is used once right after creation and
+  refused (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it
+  gives no 32-byte secret or one different from the secret it returned at creation (an
+  authenticator that returns none at creation has nothing to compare against). The primitives (`createPrfPasskey`, `evaluatePrf`,
+  `mnemonicFromPrf`, `prfSupport`) are exported; every call that prompts takes a
+  `client` in place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
+  in the tree through `@noble/curves`).
+
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
   so a solver can fund the lockup with dust and learn `P` from that claim.
