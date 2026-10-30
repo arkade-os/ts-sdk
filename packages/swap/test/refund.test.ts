@@ -36,6 +36,8 @@ import {
     type LockupSpendIndexer,
     type LockupVtxo,
 } from "../src/refund";
+import { USD_ID } from "./fixtures";
+import { assetFlows } from "./helpers/assetPacket";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -170,6 +172,7 @@ const fakeContracts = (
                         isUnrolled: !!row.isUnrolled,
                         spentBy: row.spentBy ?? "",
                         settledBy: row.settledBy,
+                        assets: row.assets,
                     })),
                 },
             ];
@@ -267,6 +270,19 @@ describe("pushRefundWithoutReceiver", () => {
         expect(operator.finalized).toHaveLength(1);
         expect(operator.finalized[0].txid).toBe(result.txid);
         expect(result.left).toBe(0);
+    });
+
+    it("declares an asset someone sent to the lockup, returning it with the sats", async () => {
+        const operator = fakeOperator();
+        await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: [{ ...VTXOS[0], assets: [{ assetId: USD_ID, amount: 500n }] }, VTXOS[1]],
+        });
+
+        expect(assetFlows(operator.submitted[0].tx)).toEqual([
+            { assetId: USD_ID, inputs: [[0, 500n]], outputs: [[0, 500n]] },
+        ]);
     });
 
     it("spends at most MAX_LOCKUP_SPEND_INPUTS outputs, the largest", async () => {
@@ -422,9 +438,9 @@ describe("pushRefundWithoutReceiver", () => {
 
     describe("the checkpoint script the operator hands out is gated", () => {
         // Sweepable checkpoints, so every refusal must land before anything is signed or sent.
-        it("refuses a checkpoint exit delay below the network's floor", async () => {
+        it("refuses a checkpoint exit delay below the floor", async () => {
             const operator = fakeOperator({
-                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
             });
             await expect(
                 pushRefundWithoutReceiver(operator, {
@@ -475,6 +491,15 @@ describe("findLockupVtxos", () => {
         const contracts = fakeContracts(VTXOS);
         expect(await findLockupVtxos(contracts, contract.pkScript)).toHaveLength(2);
         expect(contracts.asked[0]).toBe(hex.encode(contract.pkScript));
+    });
+
+    it("keeps the assets an output carries, which every spend of it must declare", async () => {
+        const carrying = { ...VTXOS[0], assets: [{ assetId: USD_ID, amount: 5n }] };
+        const found = await findLockupVtxos(
+            fakeContracts([carrying, VTXOS[1]]),
+            swapScript().pkScript,
+        );
+        expect(found).toEqual([carrying, VTXOS[1]]);
     });
 
     it("finds a swept lockup, which a spendable-only read would report as nothing to refund", async () => {

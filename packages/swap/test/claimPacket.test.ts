@@ -19,11 +19,14 @@ const PREIMAGE = new Uint8Array(32).fill(7);
 const COVCLAIMD_SK = new Uint8Array(32).fill(0x22);
 const COVCLAIMD_PK = secp256k1.getPublicKey(COVCLAIMD_SK, true);
 
-const deterministic = () =>
+const MIN_AMOUNT = 50_000n;
+
+const deterministic = (minAmount?: bigint) =>
     sealClaimPacketDeterministic(
         {
             preimage: PREIMAGE,
             covclaimdPubkey: COVCLAIMD_PK,
+            minAmount,
         },
         new Uint8Array(32).fill(0x11),
         new Uint8Array(12).fill(0x0a),
@@ -146,5 +149,46 @@ describe("sealClaimPacket", () => {
             covclaimdPubkey: COVCLAIMD_PK,
         });
         expect(a.ciphertext).not.toBe(b.ciphertext);
+    });
+});
+
+describe("sealClaimPacket with minAmount", () => {
+    it("produces the pinned wire bytes for the fixed ephemeral key and nonce", async () => {
+        const sealed = await deterministic(MIN_AMOUNT);
+        const ciphertext =
+            "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa" +
+            "0a0a0a0a0a0a0a0a0a0a0a0a" +
+            "14ec375e22b0f016fb127e4740e9599f6b07d04bd040751d9fade4c5427b9787" +
+            "0d1f1c805165f490f5a6cfcabdb4f346";
+        expect(claimPacketHex(sealed.ciphertext)).toBe(ciphertext);
+        expect(claimPacketHex(sealed.packet)).toBe(
+            "01005d" +
+                ciphertext +
+                "030021" +
+                hex.encode(COVCLAIMD_PK) +
+                "040008" +
+                "000000000000c350",
+        );
+    });
+
+    it("opens with the bound amount", async () => {
+        const sealed = await deterministic(MIN_AMOUNT);
+        const opened = await openClaimPacket(sealed.ciphertext, COVCLAIMD_SK, MIN_AMOUNT);
+        expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
+    });
+
+    it("refuses to open with another amount, or with the amount stripped", async () => {
+        const { ciphertext } = await deterministic(MIN_AMOUNT);
+        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK, MIN_AMOUNT - 1n)).rejects.toThrow();
+        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK)).rejects.toThrow();
+    });
+
+    it("rejects an amount outside [1, 2^64-1]", async () => {
+        const seal = (minAmount: bigint) =>
+            sealClaimPacket({ preimage: PREIMAGE, covclaimdPubkey: COVCLAIMD_PK, minAmount });
+        for (const minAmount of [0n, -1n, 2n ** 64n, 50_000 as unknown as bigint]) {
+            await expect(seal(minAmount)).rejects.toThrow(/minAmount/);
+        }
+        await expect(seal(2n ** 64n - 1n)).resolves.toHaveProperty("packet");
     });
 });

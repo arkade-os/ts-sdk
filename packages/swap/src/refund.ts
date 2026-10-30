@@ -25,6 +25,7 @@ import {
     CSVMultisigTapscript,
     ConditionWitness,
     type ArkTxInput,
+    type Asset,
     type IContractManager,
     type Identity,
     type ArkProvider,
@@ -35,12 +36,13 @@ import {
     assertSubmittedArkTxid,
     assertValidServerUnrollScript,
     buildOffchainTx,
+    createAssetPacket,
     decodeTapscript,
+    Extension,
     getArkPsbtFields,
     isVtxoSpent,
     matchServerCheckpoints,
     networkFromArkadeInfo,
-    resolveCheckpointExitDelayPolicy,
     scriptFromTapLeafScript,
     toXOnly,
     type IWallet,
@@ -131,6 +133,9 @@ export interface LockupVtxo {
      * refuses these rather than submitting a doomed spend.
      */
     recoverable: boolean;
+    /** Absent on a sats-only output. Anyone can send an asset to the lockup address, and arkd
+     * refuses a spend that does not declare where it goes: see {@link lockupAssetOutputs}. */
+    assets?: readonly Asset[];
 }
 
 /**
@@ -206,6 +211,7 @@ export async function findLockupVtxos(
             vout: vtxo.vout,
             value: Number(vtxo.value),
             recoverable: vtxo.isSwept,
+            ...(vtxo.assets?.length ? { assets: vtxo.assets } : {}),
         });
     }
     return out;
@@ -398,12 +404,13 @@ export const assertNoneSwept = (
 };
 
 /**
- * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a sub-floor or
+ * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a degenerate or
  * wrong-key script lets the operator sweep an in-flight checkpoint before it settles.
  *
- * `network` pins the exit-delay floor to what the CALLER resolved — without it the bound comes
- * from the very response being checked, so an operator naming `regtest` relaxes its own. The
- * forfeit key is that response's own, as `Wallet.create` does at first contact.
+ * `network` pins the exit-delay check to what the CALLER resolved — without it the type bound
+ * comes from the very response being checked, so an operator naming `regtest` unlocks block-typed
+ * delays for its own script. The forfeit key is that response's own, as `Wallet.create` does at
+ * first contact.
  *
  * @throws {ServerResponseMismatchError} when the script is malformed or out of policy.
  */
@@ -414,9 +421,8 @@ export const operatorUnrollScript = async (
     const info = await operator.getInfo();
     return assertValidServerUnrollScript(
         info.checkpointTapscript,
-        resolveCheckpointExitDelayPolicy(network ?? networkFromArkadeInfo(info), {
-            advertisedForfeitPubkey: toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
-        }),
+        network ?? networkFromArkadeInfo(info),
+        toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
     );
 };
 
@@ -426,6 +432,27 @@ export const MAX_LOCKUP_SPEND_INPUTS = 16;
 
 export const boundedLockupSpend = (vtxos: readonly LockupVtxo[]): LockupVtxo[] =>
     [...vtxos].sort((a, b) => b.value - a.value).slice(0, MAX_LOCKUP_SPEND_INPUTS);
+
+/** The extension output moving every asset on `vtxos` (as inputs, in order) onto output 0; none
+ * for a sats-only spend. */
+export const lockupAssetOutputs = (vtxos: readonly LockupVtxo[]) => {
+    const inputs = new Map<number, Asset[]>();
+    const totals = new Map<string, bigint>();
+    vtxos.forEach((vtxo, vin) => {
+        if (!vtxo.assets?.length) return;
+        inputs.set(vin, [...vtxo.assets]);
+        for (const { assetId, amount } of vtxo.assets) {
+            totals.set(assetId, (totals.get(assetId) ?? 0n) + amount);
+        }
+    });
+    if (inputs.size === 0) return [];
+    // Positional: receivers[0] is output 0, so its address is never read.
+    const receiver = {
+        address: "",
+        assets: [...totals].map(([assetId, amount]) => ({ assetId, amount })),
+    };
+    return [Extension.create([createAssetPacket(inputs, [receiver])]).txOut()];
+};
 
 /** Every lockup output as an offchain input spending `leaf`. */
 export const lockupInputs = (
@@ -495,7 +522,7 @@ export async function pushRefundWithoutReceiver(
     // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
     const { arkTx: tx, checkpoints } = buildOffchainTx(
         lockupInputs(vtxos, input.contract, leaf),
-        [{ script: refundPkScript, amount: BigInt(amount) }],
+        [{ script: refundPkScript, amount: BigInt(amount) }, ...lockupAssetOutputs(vtxos)],
         serverUnrollScript,
     );
 

@@ -38,6 +38,41 @@ describe("setupServiceWorker", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it("returns the active worker without waiting for the update check", async () => {
+        const active = { state: "activated" } as ServiceWorker;
+        const update = vi.fn(() => new Promise<never>(() => {}));
+        stubNavigator({
+            register: vi.fn().mockResolvedValue({
+                active,
+                update,
+            } satisfies Partial<ServiceWorkerRegistration>),
+        });
+
+        const result = await Promise.race([
+            setupServiceWorker("/sw.js"),
+            new Promise((resolve) => setTimeout(() => resolve("still waiting"), 50)),
+        ]);
+
+        expect(result).toBe(active);
+        expect(update).toHaveBeenCalledOnce();
+    });
+
+    it("returns the active worker when the update check fails", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const active = { state: "activated" } as ServiceWorker;
+        const update = vi.fn().mockRejectedValue(new TypeError("Failed to update a ServiceWorker"));
+        stubNavigator({
+            register: vi.fn().mockResolvedValue({
+                active,
+                update,
+            } satisfies Partial<ServiceWorkerRegistration>),
+        });
+
+        await expect(setupServiceWorker("/sw.js")).resolves.toBe(active);
+        expect(update).toHaveBeenCalledOnce();
     });
 
     it("waits for navigator.serviceWorker.ready using the configured activation timeout", async () => {

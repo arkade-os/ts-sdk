@@ -25,6 +25,8 @@ import {
 import { lightningReceiveContract } from "../src/rfq";
 import { LockupAmountMismatchError, pushClaim } from "../src/claim";
 import { LockupNeedsRecoveryError, MAX_LOCKUP_SPEND_INPUTS, type LockupVtxo } from "../src/refund";
+import { CHF_ID, USD_ID } from "./fixtures";
+import { assetFlows } from "./helpers/assetPacket";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -156,6 +158,54 @@ describe("pushClaim", () => {
         // …and finalize got the checkpoints back signed.
         expect(operator.finalized).toHaveLength(1);
         expect(operator.finalized[0]!.txid).toBe(result.txid);
+    });
+
+    it("declares every asset on the lockup in a packet that moves it to the destination", async () => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [
+                {
+                    ...VTXOS[0]!,
+                    assets: [
+                        { assetId: USD_ID, amount: 500n },
+                        { assetId: CHF_ID, amount: 7n },
+                    ],
+                },
+                { ...VTXOS[1]!, assets: [{ assetId: USD_ID, amount: 250n }] },
+            ],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(assetFlows(operator.submitted[0]!.tx)).toEqual([
+            {
+                assetId: USD_ID,
+                inputs: [
+                    [0, 500n],
+                    [1, 250n],
+                ],
+                outputs: [[0, 750n]],
+            },
+            { assetId: CHF_ID, inputs: [[0, 7n]], outputs: [[0, 7n]] },
+        ]);
+        expect(operator.finalized).toHaveLength(1);
+    });
+
+    it("adds no extension output to a sats-only claim", async () => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(() => assetFlows(operator.submitted[0]!.tx)).toThrow(/no extension output/);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
@@ -478,9 +528,9 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             });
 
-        it("refuses a checkpoint exit delay below the network's floor", async () => {
+        it("refuses a checkpoint exit delay below the floor", async () => {
             const operator = fakeOperator({
-                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
             });
             await expect(claim(operator)).rejects.toThrow(/checkpoint exit delay rejected/);
             expect(operator.submitted).toEqual([]);
