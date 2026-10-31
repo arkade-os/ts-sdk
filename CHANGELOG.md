@@ -192,9 +192,9 @@ style and have not been backfilled.
   can return a coin that is swept or past its batch expiry; a registered
   contract keeps them so they can be recovered. arkd rejects a spend that
   includes one (`VTXO_RECOVERABLE`). Selection without `.from()` now skips
-  them, and `.from()` refuses a coin with `isSwept: true` or an `expiresAt` in
-  the past instead of failing at arkd. A coin without expiry fields, such as
-  an onchain one, is never refused for expiry.
+  them, and `.from()` refuses a coin with `isSwept: true` or an `expiresAt`
+  that has been reached, instead of failing at arkd. A coin without expiry
+  fields, such as an onchain one, is never refused for expiry.
 
 - **`ArkadeTransactionBuilder` refuses an asset coin with no asset route.** arkd
   refuses an input whose assets the transaction does not route

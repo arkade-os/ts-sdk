@@ -422,6 +422,17 @@ describe("ArkadeContract — extended features", () => {
         expect(() => claim().from({ ...COIN, expiresAt: new Date(Date.now() - 1_000) })).toThrow(
             /has expired/,
         );
+        // A coin is expired from the exact moment of its expiresAt.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+            expect(() => claim().from({ ...COIN, expiresAt: new Date() })).toThrow(/has expired/);
+            expect(() =>
+                claim().from({ ...COIN, expiresAt: new Date(Date.now() + 1) }),
+            ).not.toThrow();
+        } finally {
+            vi.useRealTimers();
+        }
         // Not expired yet, or no expiry at all (an onchain coin): both are accepted.
         expect(() =>
             claim().from({ ...COIN, expiresAt: new Date(Date.now() + 60_000) }),

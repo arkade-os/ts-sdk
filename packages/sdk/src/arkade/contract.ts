@@ -197,9 +197,9 @@ export interface Utxo {
      */
     isSwept?: boolean;
     /**
-     * When a virtual coin's batch expires, as {@link ArkadeContract.getUtxos} reports it. Past it,
-     * `.from()` refuses the coin. A coin without it, such as an onchain one, is never refused for
-     * expiry; height-based expiry isn't checked, since that needs the chain tip.
+     * When a virtual coin's batch expires, as {@link ArkadeContract.getUtxos} reports it. From that
+     * moment on, `.from()` refuses the coin. A coin without it, such as an onchain one, is never
+     * refused for expiry; height-based expiry isn't checked, since that needs the chain tip.
      */
     expiresAt?: Date;
     /**
