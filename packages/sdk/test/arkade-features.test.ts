@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -330,6 +331,74 @@ describe("ArkadeContract — extended features", () => {
         expect(getArkPsbtFields(tx, 0, ConditionWitness)).toHaveLength(1);
         expect(getArkPsbtFields(tx, 1, ConditionWitness)).toHaveLength(0);
         expect(sign.mock.calls[0][1]).toEqual([1]);
+    });
+
+    it("`.from()` refuses a coin of another artifact's contract, and spends it through that contract's unlocker", async () => {
+        const ESCROW_COIN = mintCoin(5_000);
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [
+            COIN,
+            ESCROW_COIN,
+        ]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const htlc = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        const artifact = JSON.parse(
+            readFileSync(
+                new URL("./fixtures/arkadec/escrow.artifact.json", import.meta.url),
+                "utf8",
+            ),
+        );
+        const escrow = ark.contract(arkade.programFromArtifact(artifact), {
+            partyAPk: xOnly(),
+            partyBPk: xOnly(),
+            oraclePk: xOnly(),
+            oracleMessageHash: new Uint8Array(32).fill(0x7a),
+            partyAScript: new Uint8Array(32).fill(0xa1),
+            partyBScript: new Uint8Array(32).fill(0xb2),
+            settlementAmount: 5_000n,
+            timeoutHeight: 0n,
+            exit: 1_008n,
+        });
+        const htlcCoin = { ...COIN, script: hex.encode(htlc.pkScript) };
+        const escrowCoin = { ...ESCROW_COIN, script: hex.encode(escrow.pkScript) };
+        const claim = () => htlc.functions.claim(new Uint8Array(32).fill(0x42));
+
+        // Without its own unlocker, the escrow coin is refused, not skipped.
+        expect(() => claim().from([htlcCoin, escrowCoin])).toThrow(
+            `from(): coin ${escrowCoin.txid}:${escrowCoin.vout} is not locked by the contract of claim`,
+        );
+
+        const { arkTx, checkpoints } = await claim()
+            .from(htlcCoin)
+            .from(escrowCoin, escrow.unlock.cancel())
+            .to([
+                { script: p2tr(receiver), amount: AMOUNT },
+                { script: p2tr(), amount: 5_000n },
+            ])
+            .build();
+
+        const fn = (c: arkade.ArkadeContract, name: string) => c.vtxoScript.functionByName(name)!;
+        const leaf = (i: number) => hex.encode(arkTx.getInput(i).tapLeafScript![0][1]);
+        expect(leaf(0)).toBe(hex.encode(fn(htlc, "claim").tapLeafScript[1]));
+        expect(leaf(1)).toBe(hex.encode(fn(escrow, "cancel").tapLeafScript[1]));
+        // Each checkpoint spends from its own contract's script.
+        const prevout = (i: number) => hex.encode(checkpoints[i].getInput(0).witnessUtxo!.script);
+        expect([prevout(0), prevout(1)]).toEqual([htlcCoin.script, escrowCoin.script]);
+        const ext = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
+            .filter((o) => o.script && Extension.isExtension(o.script))
+            .map((o) => Extension.fromBytes(o.script!))[0];
+        expect(ext.getEmulatorPacket()!.entries.map((e) => [e.vin, hex.encode(e.script)])).toEqual([
+            [0, hex.encode(fn(htlc, "claim").arkadeScript!)],
+            [1, hex.encode(fn(escrow, "cancel").arkadeScript!)],
+        ]);
     });
 
     it("`.from()` refuses no coins, a repeated, swept or expired coin, a coin of another contract, and another client's contract", async () => {
