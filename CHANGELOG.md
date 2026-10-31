@@ -112,6 +112,14 @@ style and have not been backfilled.
   by hand after `build()`. The caller's packet now joins those two in the one
   extension output; a type either of them already uses is refused at build.
 
+- **`ArkadeTransactionBuilder.from` spends several coins, through one function
+  or several.** `.from(coins)` spends a list of coins, and `.from(coins,
+  other.unlock.fn(...args))` spends them through another function or contract
+  on the same client. The builder used to write one emulator entry, for input
+  0, so a covenant spend could use only one coin and anything more had to be
+  built by hand. Each input now gets its own leaf, `PrevArkTx`, condition
+  witness and emulator entry (#1116).
+
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
@@ -158,6 +166,9 @@ style and have not been backfilled.
 
 ### Changed
 
+- **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
+  `.from(a).from(b)` spends both; it used to spend only `b`.
+
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
@@ -182,6 +193,29 @@ style and have not been backfilled.
   `GET_VTXOS`. (#943)
 
 ### Bug Fixes
+
+- **Coin selection and `.from()` skip swept and expired coins.** `getUtxos()`
+  can return a coin that is swept or past its batch expiry; a registered
+  contract keeps them so they can be recovered. arkd rejects a spend that
+  includes one (`VTXO_RECOVERABLE`). Selection without `.from()` now skips
+  them, and `.from()` refuses a coin with `isSwept: true` or an `expiresAt`
+  that has been reached, instead of failing at arkd. A coin without expiry
+  fields, such as an onchain one, is never refused for expiry.
+
+- **`ArkadeTransactionBuilder` refuses an asset coin with no asset route.** arkd
+  refuses an input whose assets the transaction does not route
+  (`ASSET_VALIDATION_FAILED`), so `.from(await contract.getUtxos())` with one
+  asset-carrying coin sank the whole spend. A coin whose `assets` no
+  `.withAsset()` input covers now fails at build, naming the coin and input.
+
+- **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
+  returns checkpoints without the condition witness, so finalizing failed with
+  `INVALID_SIGNATURE`. The builder now adds it back after signing.
+
+- **`send()` refuses a server-only leaf without a covenant, before signing.**
+  arkd rejects an input that only the server signs (`missing tapscript spend
+  sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
+  says so up front, naming the function, whichever route the spend takes.
 
 - **`@arkade-os/swap` declares a lockup's assets when claiming or refunding
   it.** Anyone can send an asset vtxo to a swap lockup's address, and arkd

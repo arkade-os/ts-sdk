@@ -61,7 +61,7 @@ import type { ArkadeInfo, ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
-import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
+import type { ArkadeBroadcaster, Asset, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
@@ -75,7 +75,12 @@ import {
     submitViaEmulator,
     type ArkTxInput,
 } from "../utils/arkTransaction";
-import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
+import {
+    ConditionWitness,
+    getArkPsbtFields,
+    PrevArkTxField,
+    setArkPsbtField,
+} from "../utils/unknownFields";
 import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
@@ -158,17 +163,21 @@ type FnArgs<F extends ArkadeFunction> = F extends {
     ? ArgsTuple<I>
     : [];
 
+/** A contract's functions returning `R`: typed per function for a literal program, else loose. */
+type FunctionMap<P extends Program, R> = string extends keyof P["functions"]
+    ? Record<string, (...args: ArkadeArgValue[]) => R>
+    : {
+          [K in keyof P["functions"]]: (...args: FnArgs<P["functions"][K]>) => R;
+      };
+
 /**
  * The statically-typed `functions` map of a contract: precisely typed per function for a literal
  * program, the loose {@link CallableFunctions} for the widened {@link Program}.
  */
-export type ContractFunctions<P extends Program> = string extends keyof P["functions"]
-    ? CallableFunctions
-    : {
-          [K in keyof P["functions"]]: (
-              ...args: FnArgs<P["functions"][K]>
-          ) => ArkadeTransactionBuilder;
-      };
+export type ContractFunctions<P extends Program> = FunctionMap<P, ArkadeTransactionBuilder>;
+
+/** The statically-typed `unlock` map of a contract, typed like {@link ContractFunctions}. */
+export type ContractUnlockers<P extends Program> = FunctionMap<P, ArkadeUnlocker>;
 
 // --- Spend types -----------------------------------------------------------
 
@@ -178,11 +187,43 @@ export interface Utxo {
     vout: number;
     value: number;
     /**
-     * Raw bytes of the ark tx that created this VTXO, attached as input 0's PrevArkTx. Overrides
+     * The coin's scriptPubKey (hex), as {@link ArkadeContract.getUtxos} returns it. When set,
+     * `.from()` refuses the coin unless it matches the contract spending it.
+     */
+    script?: string;
+    /**
+     * Whether the server swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
+     * swept coin can't be spent offchain, so `.from()` refuses it; recover it into a batch instead.
+     */
+    isSwept?: boolean;
+    /**
+     * When a virtual coin's batch expires, as {@link ArkadeContract.getUtxos} reports it. From that
+     * moment on, `.from()` refuses the coin. A coin without it, such as an onchain one, is never
+     * refused for expiry; height-based expiry isn't checked, since that needs the chain tip.
+     */
+    expiresAt?: Date;
+    /**
+     * Assets the coin carries, as {@link ArkadeContract.getUtxos} reports them. arkd refuses an
+     * input whose assets the spend does not route, so such a coin needs a `.withAsset()` input.
+     */
+    assets?: readonly Asset[];
+    /**
+     * Raw bytes of the ark tx that created this VTXO, attached as its input's PrevArkTx. Overrides
      * the indexer-resolved value; supply it when the tx isn't indexable yet (a recursive covenant
      * spending an ark tx the caller just built).
      */
     sourceTx?: Uint8Array;
+}
+
+/**
+ * A contract function bound to its call arguments, from `contract.unlock.<name>(...args)`.
+ * Pass it to {@link ArkadeTransactionBuilder.from} to spend coins through that function.
+ */
+export interface ArkadeUnlocker {
+    // `<any>`: a concrete `P` would not assign here.
+    readonly contract: ArkadeContract<any>;
+    readonly fn: CompiledProgramFunction;
+    readonly args: Record<string, ArkadeArgValue>;
 }
 
 /**
@@ -644,9 +685,27 @@ export class ArkadeContract<P extends Program = Program> {
         const out: CallableFunctions = Object.create(null);
         for (const fn of this.compiled) {
             out[fn.name] = (...callArgs: ArkadeArgValue[]) =>
-                new ArkadeTransactionBuilder(this, fn, bindInputs(fn, callArgs));
+                new ArkadeTransactionBuilder({
+                    contract: this,
+                    fn,
+                    args: bindInputs(fn, callArgs),
+                });
         }
         return out as unknown as ContractFunctions<P>;
+    }
+
+    /** Spending paths bound to their arguments, for `.from(coins, contract.unlock.<name>(...))`. */
+    get unlock(): ContractUnlockers<P> {
+        const out: Record<string, (...args: ArkadeArgValue[]) => ArkadeUnlocker> =
+            Object.create(null);
+        for (const fn of this.compiled) {
+            out[fn.name] = (...callArgs: ArkadeArgValue[]) => ({
+                contract: this,
+                fn,
+                args: bindInputs(fn, callArgs),
+            });
+        }
+        return out as unknown as ContractUnlockers<P>;
     }
 
     /**
@@ -794,26 +853,57 @@ export class ArkadeTransactionBuilder {
     private readonly fundingCoins: ArkTxInput[] = [];
     private readonly assetSpecs: AssetSpec[] = [];
     private readonly extraPackets: ExtensionPacket[] = [];
-    private coin?: Utxo;
+    private readonly inputs: ContractInput[] = [];
     private changeScript?: Uint8Array;
 
     /** @internal */
-    constructor(
-        // `<any>`: the builder only reads `client`/`tapTree` (program-independent),
-        // and the concrete `P` would otherwise make `this` unassignable here.
-        private readonly contract: ArkadeContract<any>,
-        private readonly fn: CompiledProgramFunction,
-        private readonly args: Record<string, ArkadeArgValue>,
-    ) {}
+    constructor(private readonly unlocker: ArkadeUnlocker) {}
 
-    from(coin: Utxo): this {
-        this.coin = coin;
+    private get client(): Arkade {
+        return this.unlocker.contract.client;
+    }
+
+    /**
+     * Spend coins through this function, or through `unlocker` (`other.unlock.<name>(...args)`,
+     * same client). Calls add up; contract coins come first, in call order, then `.fund()` inputs.
+     *
+     * Every coin's script sees the same outputs: "output 0 pays X" passes once for all of them.
+     * For one payment per coin, the contract must check `INSPECTNUMINPUTS` or `PUSHCURRENTINPUTINDEX`.
+     */
+    from(coins: Utxo | Utxo[], unlocker: ArkadeUnlocker = this.unlocker): this {
+        const list = Array.isArray(coins) ? coins : [coins];
+        if (list.length === 0) throw new Error("from(): no coins given");
+        const { contract, fn } = unlocker;
+        if (contract.client !== this.client) {
+            throw new Error(`from(): ${fn.name} belongs to a contract on another Arkade client`);
+        }
+        const script = hex.encode(contract.pkScript);
+        const taken = new Set(this.inputs.map(({ coin: c }) => `${c.txid}:${c.vout}`));
+        const now = Date.now();
+        for (const coin of list) {
+            const outpoint = `${coin.txid}:${coin.vout}`;
+            if (coin.script && coin.script !== script) {
+                throw new Error(
+                    `from(): coin ${outpoint} is not locked by the contract of ${fn.name}`,
+                );
+            }
+            if (taken.has(outpoint))
+                throw new Error(`from(): coin ${outpoint} is already an input`);
+            const reason = unspendable(coin, now);
+            if (reason) {
+                throw new Error(
+                    `from(): coin ${outpoint} ${reason}; recover it into a batch instead`,
+                );
+            }
+            taken.add(outpoint);
+        }
+        this.inputs.push(...list.map((coin) => ({ coin, unlocker })));
         return this;
     }
 
     /**
      * Add extra inputs the caller funds (e.g. a taker's own coins in a swap).
-     * These become inputs 1..n and are signed with the client identity.
+     * These come after the contract coins and are signed with the client identity.
      */
     fund(coins: ArkTxInput[]): this {
         this.fundingCoins.push(...coins);
@@ -859,25 +949,47 @@ export class ArkadeTransactionBuilder {
 
     /** Assemble the unsigned ark transaction and its checkpoints. */
     async build(): Promise<{ arkTx: Transaction; checkpoints: Transaction[] }> {
-        if (this.fn.def.tapscript.csv) {
-            throw new Error(
-                `${this.fn.name}: CSV leaves require an aged onchain output; the offchain builder creates fresh checkpoints — use the wallet's unilateral exit flow`,
-            );
+        const { arkTx, checkpoints } = await this.assemble();
+        return { arkTx, checkpoints };
+    }
+
+    private async assemble(): Promise<{
+        arkTx: Transaction;
+        checkpoints: Transaction[];
+        inputs: ContractInput[];
+    }> {
+        for (const { fn } of this.unlockers()) {
+            if (fn.def.tapscript.csv) {
+                throw new Error(
+                    `${fn.name}: CSV leaves require an aged onchain output; the offchain builder creates fresh checkpoints — use the wallet's unilateral exit flow`,
+                );
+            }
         }
         if (this.outputs.length === 0) {
             throw new Error("ArkadeTransactionBuilder: at least one output is required");
         }
         const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
-        const coin = this.coin ?? (await this.selectCoin(outputsSum));
-        const def = this.fn.def;
+        const inputs: ContractInput[] =
+            this.inputs.length > 0
+                ? [...this.inputs]
+                : [{ coin: await this.selectCoin(outputsSum), unlocker: this.unlocker }];
+        inputs.forEach(({ coin }, vin) => {
+            const routed = this.assetSpecs.some((spec) => spec.inputs.some((i) => i.vin === vin));
+            if (coin.assets?.length && !routed) {
+                throw new Error(
+                    `coin ${coin.txid}:${coin.vout} carries assets; route them with .withAsset() from input ${vin}`,
+                );
+            }
+        });
+        const coinsSum = inputs.reduce((s, { coin }) => s + BigInt(coin.value), 0n);
 
         // Inputs must equal outputs; change takes any surplus (copy keeps `build()` idempotent).
         const outputs = [...this.outputs];
         const fundingSum = this.fundingCoins.reduce((s, f) => s + BigInt(f.value), 0n);
-        const surplus = BigInt(coin.value) + fundingSum - outputsSum;
+        const surplus = coinsSum + fundingSum - outputsSum;
         if (surplus < 0n) {
             throw new Error(
-                `ArkadeTransactionBuilder: insufficient inputs — outputs ${outputsSum} exceed inputs ${BigInt(coin.value) + fundingSum}`,
+                `ArkadeTransactionBuilder: insufficient inputs — outputs ${outputsSum} exceed inputs ${coinsSum + fundingSum}`,
             );
         }
         if (surplus > 0n) {
@@ -891,30 +1003,30 @@ export class ArkadeTransactionBuilder {
 
         const { arkTx, checkpoints } = buildOffchainTx(
             [
-                {
+                ...inputs.map(({ coin, unlocker }) => ({
                     txid: coin.txid,
                     vout: coin.vout,
                     value: coin.value,
-                    tapLeafScript: this.fn.tapLeafScript,
-                    tapTree: this.contract.tapTree,
-                },
+                    tapLeafScript: unlocker.fn.tapLeafScript,
+                    tapTree: unlocker.contract.tapTree,
+                })),
                 ...this.fundingCoins,
             ],
             outputs,
-            this.contract.client.checkpoint,
+            this.client.checkpoint,
         );
 
         // Set first: the resolver below skips inputs already carrying the field (the emulator
         // refuses an input bearing two).
-        if (coin.sourceTx) {
-            setArkPsbtField(arkTx, 0, PrevArkTxField, coin.sourceTx);
-        }
+        inputs.forEach(({ coin }, i) => {
+            if (coin.sourceTx) setArkPsbtField(arkTx, i, PrevArkTxField, coin.sourceTx);
+        });
 
         // Emulator v0.0.7+ requires PrevArkTx on every input. Ark input i spends checkpoint i,
         // which spends inputs[i], so carry the coin's own creating tx, not the checkpoint.
         // arkd-direct spends stay byte-identical.
-        if (this.fn.arkadeScript) {
-            const indexer = this.contract.client.indexer;
+        if (inputs.some(({ unlocker }) => unlocker.fn.arkadeScript)) {
+            const indexer = this.client.indexer;
             if (!indexer) {
                 throw new PrevTxUnavailableError(
                     "covenant spends require an `indexer` on the Arkade client to resolve the previous ark tx of each input",
@@ -922,67 +1034,82 @@ export class ArkadeTransactionBuilder {
             }
             await attachPrevArkTxs(
                 arkTx,
-                [coin.txid, ...this.fundingCoins.map((c) => c.txid)],
+                [...inputs.map(({ coin }) => coin), ...this.fundingCoins].map((c) => c.txid),
                 indexer,
             );
         }
 
-        const condition = (def.tapscript.witness ?? []).map((w) => this.witnessBytes(w));
-        if (condition.length > 0) {
-            setArkPsbtField(arkTx, 0, ConditionWitness, condition);
-            setArkPsbtField(checkpoints[0], 0, ConditionWitness, condition);
-        }
+        inputs.forEach(({ unlocker }, i) => {
+            const condition = (unlocker.fn.def.tapscript.witness ?? []).map((w) =>
+                witnessBytes(unlocker, w),
+            );
+            if (condition.length === 0) return;
+            setArkPsbtField(arkTx, i, ConditionWitness, condition);
+            setArkPsbtField(checkpoints[i], 0, ConditionWitness, condition);
+        });
 
         // Asset (type 0), emulator (type 1), then caller packets, in one OP_RETURN extension.
         const packets: ExtensionPacket[] = [];
         if (this.assetSpecs.length > 0) {
             packets.push(this.buildAssetPacket());
         }
-        const arkadeScript = this.fn.arkadeScript;
-        if (arkadeScript) {
-            const stack = (def.arkadeScript?.witness ?? []).map((w) => this.witnessBytes(w));
-            packets.push(
-                EmulatorPacket.create([
-                    { vin: 0, script: arkadeScript, witness: RawWitness.encode(stack) },
-                ]) as ExtensionPacket,
-            );
+        const entries = inputs.flatMap(({ unlocker }, vin) => {
+            const { arkadeScript, def } = unlocker.fn;
+            if (!arkadeScript) return [];
+            const stack = (def.arkadeScript?.witness ?? []).map((w) => witnessBytes(unlocker, w));
+            return [{ vin, script: arkadeScript, witness: RawWitness.encode(stack) }];
+        });
+        if (entries.length > 0) {
+            packets.push(EmulatorPacket.create(entries) as ExtensionPacket);
         }
         packets.push(...this.extraPackets);
         if (packets.length > 0) {
             attachExtension(arkTx, packets);
         }
 
-        return { arkTx, checkpoints };
+        return { arkTx, checkpoints, inputs };
     }
 
     /** Build, submit and return the finalized transaction. */
     async send(): Promise<ArkadeSpendResult> {
-        if (
-            this.fn.def.tapscript.signers.some(
-                (signer) => typeof signer === "object" && "tweak" in signer,
-            )
-        ) {
+        const client = this.client;
+        const userKey = client.userKey;
+        for (const { contract, fn } of this.unlockers()) {
+            if (
+                fn.def.tapscript.signers.some(
+                    (signer) => typeof signer === "object" && "tweak" in signer,
+                )
+            ) {
+                throw new Error(
+                    `${fn.name}: covenant-tweaked leaf signing is not supported by Identity; use a signer that supports the covenant tweak with build()`,
+                );
+            }
+            const { serverKey } = contract.keys;
+            if (
+                fn.signerKeys.some(
+                    (key) => !equalBytes(key, serverKey) && (!userKey || !equalBytes(key, userKey)),
+                )
+            ) {
+                throw new Error(
+                    `${fn.name}: external leaf signatures are required; use build() and sign the PSBT with all required signers`,
+                );
+            }
+        }
+        const { arkTx, checkpoints, inputs } = await this.assemble();
+
+        const userInputs = this.userInputIndexes(inputs);
+
+        // arkd refuses an input signed by the server alone; a covenant leaf adds the emulator's key.
+        const serverOnly = inputs.find(
+            ({ unlocker }, i) => !unlocker.fn.arkadeScript && !userInputs.includes(i),
+        );
+        if (serverOnly) {
             throw new Error(
-                `${this.fn.name}: covenant-tweaked leaf signing is not supported by Identity; use a signer that supports the covenant tweak with build()`,
+                `${serverOnly.unlocker.fn.name}: a leaf without a covenant needs the user's signature, and this one has only the server's`,
             );
         }
-        const { serverKey } = this.contract.keys;
-        const userKey = this.contract.client.userKey;
-        if (
-            this.fn.signerKeys.some(
-                (key) => !equalBytes(key, serverKey) && (!userKey || !equalBytes(key, userKey)),
-            )
-        ) {
-            throw new Error(
-                `${this.fn.name}: external leaf signatures are required; use build() and sign the PSBT with all required signers`,
-            );
-        }
-        const { arkTx, checkpoints } = await this.build();
-        const client = this.contract.client;
 
-        const userInputs = this.userInputIndexes();
-
-        if (this.fn.arkadeScript) {
+        if (inputs.some(({ unlocker }) => unlocker.fn.arkadeScript)) {
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
@@ -995,7 +1122,6 @@ export class ArkadeTransactionBuilder {
 
         // Pure-tapscript path → arkd directly: sign the ark tx, submit UNSIGNED checkpoints, then
         // sign the server-returned checkpoints and finalize.
-        // NOTE: not yet covered by integration tests.
         if (!client.identity) {
             throw new Error("a signing identity is required for non-covenant spends");
         }
@@ -1014,9 +1140,15 @@ export class ArkadeTransactionBuilder {
         assertSubmittedArkTxid(res, signedArk, "submitTx");
         const matched = matchServerCheckpoints(res.signedCheckpointTxs, checkpoints, "submitTx");
         const finalCps = await Promise.all(
-            matched.map(async ({ server }) =>
-                base64.encode((await client.identity!.sign(server, [0])).toPSBT()),
-            ),
+            matched.map(async ({ server, local }) => {
+                const signed = await client.identity!.sign(server, [0]);
+                // arkd returns checkpoints without the condition witness; finalize needs it back.
+                const [condition] = getArkPsbtFields(local, 0, ConditionWitness);
+                if (condition && getArkPsbtFields(signed, 0, ConditionWitness).length === 0) {
+                    setArkPsbtField(signed, 0, ConditionWitness, condition);
+                }
+                return base64.encode(signed.toPSBT());
+            }),
         );
         await ark.finalizeTx(res.arkTxid, finalCps);
         return {
@@ -1029,28 +1161,31 @@ export class ArkadeTransactionBuilder {
     /** Sign the client-owned inputs of the ark tx (no-op when there are none). */
     private async signArk(arkTx: Transaction, userInputs: number[]): Promise<Transaction> {
         if (userInputs.length === 0) return arkTx;
-        const { identity } = this.contract.client;
+        const { identity } = this.client;
         if (!identity) {
             throw new Error("this spend requires an `identity` to sign its user/funding inputs");
         }
         return identity.sign(arkTx, userInputs);
     }
 
-    /** Indexes of inputs the client owns and must sign (contract input + funded inputs). */
-    private userInputIndexes(): number[] {
-        const idxs: number[] = [];
-        const userKey = this.contract.client.userKey;
-        if (userKey && this.fn.signerKeys.some((k) => equalBytes(k, userKey))) {
-            idxs.push(0);
-        }
-        for (let i = 0; i < this.fundingCoins.length; i++) {
-            idxs.push(i + 1);
-        }
+    /** The functions this spend goes through: the `.from()` ones, else this builder's own. */
+    private unlockers(): ArkadeUnlocker[] {
+        return this.inputs.length > 0 ? this.inputs.map((i) => i.unlocker) : [this.unlocker];
+    }
+
+    /** Indexes of inputs the client owns and must sign (contract inputs + funded inputs). */
+    private userInputIndexes(inputs: ContractInput[]): number[] {
+        const userKey = this.client.userKey;
+        const idxs = inputs.flatMap(({ unlocker }, i) =>
+            userKey && unlocker.fn.signerKeys.some((k) => equalBytes(k, userKey)) ? [i] : [],
+        );
+        for (let i = 0; i < this.fundingCoins.length; i++) idxs.push(inputs.length + i);
         return idxs;
     }
 
     private async selectCoin(amount: bigint): Promise<Utxo> {
-        const utxos = await this.contract.getUtxos();
+        const now = Date.now();
+        const utxos = (await this.unlocker.contract.getUtxos()).filter((u) => !unspendable(u, now));
         if (utxos.length === 0) throw new Error("no spendable coins for this contract");
         // Smallest covering coin, else the largest (the rest may come via `.fund()`).
         const covering = utxos
@@ -1076,13 +1211,26 @@ export class ArkadeTransactionBuilder {
         });
         return AssetPacket.create(groups) as ExtensionPacket;
     }
+}
 
-    private witnessBytes(ref: WitnessRef): Uint8Array {
-        return witnessRefToBytes(ref, this.args, this.contract.args);
-    }
+/** A contract coin and the function it is spent through. */
+interface ContractInput {
+    coin: Utxo;
+    unlocker: ArkadeUnlocker;
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/** Why `coin` can't be spent offchain, if it can't: swept, or a virtual coin past its expiry. */
+function unspendable(coin: Utxo, now: number): string | undefined {
+    if (coin.isSwept) return "was swept";
+    if (coin.expiresAt && now >= coin.expiresAt.getTime()) return "has expired";
+    return undefined;
+}
+
+function witnessBytes({ contract, args }: ArkadeUnlocker, ref: WitnessRef): Uint8Array {
+    return witnessRefToBytes(ref, args, contract.args);
+}
 
 /** Bind positional call arguments to a function's declared input names. */
 function bindInputs(
