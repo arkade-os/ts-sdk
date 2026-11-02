@@ -9,9 +9,7 @@ import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
 type ContractArtifact = Parameters<typeof arkade.programFromArtifact>[0];
 
-/**
- * `asset-swap` and `sats-swap`, one per payout. An exit delay is appended later
- * ({@link withExitClosure} in `offer.ts`); it is not part of either artifact.
+/** `asset-swap` and `sats-swap`. Exit is appended later; it is not in either artifact.
  *
  * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
