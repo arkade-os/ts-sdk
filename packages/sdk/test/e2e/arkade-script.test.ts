@@ -30,6 +30,7 @@ import {
     createTestIdentity,
     faucetOffchain,
     faucetOnchain,
+    waitFor,
     waitForUtxo,
 } from "./utils";
 
@@ -80,6 +81,37 @@ const offchainProgram = {
             tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// One payment per coin: output i must pay `$receiver` at least input i's value
+// (the pattern of delegatee's claim template).
+const pairedProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+    ],
+    functions: {
+        send: {
+            tapscript: { signers: ["$user", "$server"] },
+            arkadeScript: {
+                asm: [
+                    "PUSHCURRENTINPUTINDEX",
+                    "DUP",
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTOUTPUTVALUE",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTINPUTVALUE",
+                    "GREATERTHANOREQUAL",
+                ],
             },
         },
     },
@@ -314,6 +346,51 @@ describe("arkade", () => {
             .to(alicePkScript, BigInt(fundAmount))
             .send();
         expect(signedArkTx).toBeTruthy();
+    });
+
+    /** Wait until the indexer reports no spendable coin left at `pkScript`. */
+    async function waitForSpent(pkScript: Uint8Array) {
+        await waitFor(async () => {
+            const { vtxos } = await indexerProvider.getVtxos({
+                scripts: [hex.encode(pkScript)],
+                spendableOnly: true,
+            });
+            return vtxos.length === 0;
+        });
+    }
+
+    // Two coins of one covenant contract in one ark tx, each paying its own output.
+    it("TestOffchainMultiCoin", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const aliceAddress = await alice.wallet.getAddress();
+        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const contract = ark.contract(pairedProgram, {
+            receiver: getWitnessProgram(aliceAddress),
+        });
+
+        faucetOffchain(contract.address, 10000);
+        faucetOffchain(contract.address, 5000);
+        await waitForVtxo(contract.pkScript, 2);
+        const coins = (await contract.getUtxos()).sort((a, b) => b.value - a.value);
+
+        // One output for both coins: input 1 has no output 1 to pay. The emulator answers only
+        // "internal error" (its log names `OP_EQUALVERIFY failed vin=1`), so this pins the refusal
+        // to the emulator; the spend below, same coins with two outputs, rules out anything else.
+        await expect(
+            contract.functions.send().from(coins).to(alicePkScript, 15000n).send(),
+        ).rejects.toThrow(/Failed to submit tx to emulator/);
+
+        const { signedArkTx } = await contract.functions
+            .send()
+            .from(coins)
+            .to([
+                { script: alicePkScript, amount: 10000n },
+                { script: alicePkScript, amount: 5000n },
+            ])
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(contract.pkScript);
     });
 
     // Settlement flow via intent + batch session (using arkade script)

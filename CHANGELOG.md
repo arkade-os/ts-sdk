@@ -112,6 +112,14 @@ style and have not been backfilled.
   by hand after `build()`. The caller's packet now joins those two in the one
   extension output; a type either of them already uses is refused at build.
 
+- **`ArkadeTransactionBuilder.from` spends several coins, through one function
+  or several.** `.from(coins)` spends a list of coins, and `.from(coins,
+  other.unlock.fn(...args))` spends them through another function or contract
+  on the same client. The builder used to write one emulator entry, for input
+  0, so a covenant spend could use only one coin and anything more had to be
+  built by hand. Each input now gets its own leaf, `PrevArkTx`, condition
+  witness and emulator entry (#1116).
+
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
@@ -157,6 +165,9 @@ style and have not been backfilled.
   longer reports a txid it did not submit.
 
 ### Changed
+
+- **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
+  `.from(a).from(b)` spends both; it used to spend only `b`.
 
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored

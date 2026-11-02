@@ -14,6 +14,7 @@ import {
     networks,
     getArkPsbtFields,
     PrevArkTxField,
+    ConditionWitness,
     PrevTxUnavailableError,
     ServerResponseMismatchError,
     type EmulatorInfo,
@@ -223,6 +224,137 @@ describe("ArkadeContract — extended features", () => {
         expect(
             sign.mock.calls.some((c2) => Array.isArray(c2[1]) && (c2[1] as number[]).includes(1)),
         ).toBe(true);
+    });
+
+    it("`.from([...])` spends several coins, each with its own fields and emulator entry", async () => {
+        const COIN2 = mintCoin(10_000);
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN, COIN2]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+
+        const preimage = new Uint8Array(32).fill(0x42);
+        const sourceTx = new Uint8Array(64).fill(7);
+
+        const { arkTx, checkpoints } = await c.functions
+            .claim(preimage)
+            .from([COIN, { ...COIN2, sourceTx }])
+            .to(p2tr(receiver), AMOUNT)
+            .change(p2tr())
+            .build();
+
+        expect(arkTx.inputsLength).toBe(2);
+        expect(checkpoints).toHaveLength(2);
+        for (const i of [0, 1]) {
+            expect(getArkPsbtFields(arkTx, i, ConditionWitness)).toEqual([[preimage]]);
+            expect(getArkPsbtFields(checkpoints[i], 0, ConditionWitness)).toEqual([[preimage]]);
+            expect(getArkPsbtFields(arkTx, i, PrevArkTxField)).toHaveLength(1);
+        }
+        // Coin 1's own sourceTx wins; coin 0's is resolved from the indexer.
+        expect(getArkPsbtFields(arkTx, 1, PrevArkTxField)[0]).toEqual(sourceTx);
+        const ext = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
+            .filter((o) => o.script && Extension.isExtension(o.script))
+            .map((o) => Extension.fromBytes(o.script!))[0];
+        expect(ext.getEmulatorPacket()!.entries.map((e) => e.vin)).toEqual([0, 1]);
+    });
+
+    it("`.from(coin, other.unlock.fn())` spends each coin through its own function", async () => {
+        const { identity, sign } = mockIdentity();
+        const COIN2 = mintCoin(5_000);
+        const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
+            COIN,
+            COIN2,
+        ]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity,
+            network: networks.regtest,
+        });
+        const htlc = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        // A second contract whose covenant leaf also needs the user's signature.
+        const vault = ark.contract(
+            {
+                version: 1,
+                params: [
+                    { name: "receiver", type: "pubkey" },
+                    { name: "amount", type: "int" },
+                    { name: "server", type: "pubkey" },
+                    { name: "user", type: "pubkey" },
+                ],
+                functions: {
+                    spend: {
+                        tapscript: { signers: ["$user", "$server"] },
+                        arkadeScript: { asm: payTo, witness: [1] },
+                    },
+                },
+            },
+            { receiver, amount: 5_000n },
+        );
+
+        await htlc.functions
+            .claim(new Uint8Array(32).fill(0x42))
+            .from(COIN)
+            .from(COIN2, vault.unlock.spend())
+            .to([
+                { script: p2tr(receiver), amount: AMOUNT },
+                { script: p2tr(receiver), amount: 5_000n },
+            ])
+            .send();
+
+        const tx = Transaction.fromPSBT(base64.decode(captured.arkTx!));
+        const leaf = (i: number) => hex.encode(tx.getInput(i).tapLeafScript![0][1]);
+        expect(leaf(0)).toBe(hex.encode(htlc.vtxoScript.functionByName("claim")!.tapLeafScript[1]));
+        expect(leaf(1)).toBe(
+            hex.encode(vault.vtxoScript.functionByName("spend")!.tapLeafScript[1]),
+        );
+        const ext = Extension.fromBytes(tx.getOutput(2).script!);
+        expect(ext.getEmulatorPacket()!.entries.map((e) => [e.vin, hex.encode(e.script)])).toEqual([
+            [0, hex.encode(htlc.vtxoScript.functionByName("claim")!.arkadeScript!)],
+            [1, hex.encode(vault.vtxoScript.functionByName("spend")!.arkadeScript!)],
+        ]);
+        // Only the htlc leaf carries a condition witness; only the vault leaf needs the user.
+        expect(getArkPsbtFields(tx, 0, ConditionWitness)).toHaveLength(1);
+        expect(getArkPsbtFields(tx, 1, ConditionWitness)).toHaveLength(0);
+        expect(sign.mock.calls[0][1]).toEqual([1]);
+    });
+
+    it("`.from()` refuses no coins, a repeated coin, a coin of another contract, and another client's contract", async () => {
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        const connect = () =>
+            arkade.Arkade.connect({
+                arkade: arkProvider,
+                emulator,
+                indexer,
+                network: networks.regtest,
+            });
+        const args = { receiver, amount: AMOUNT, h: new Uint8Array(20) };
+        const ark = await connect();
+        const c = ark.contract(claimProgram(), args);
+        const other = (await connect()).contract(claimProgram(), args);
+        const claim = () => c.functions.claim(new Uint8Array(32).fill(0x42));
+
+        expect(() => claim().from([])).toThrow(/no coins/);
+        expect(() => claim().from(COIN).from([COIN])).toThrow(/already an input/);
+        expect(() => claim().from({ ...COIN, script: hex.encode(p2tr()) })).toThrow(
+            /not locked by the contract of claim/,
+        );
+        expect(() => claim().from(COIN, other.unlock.claim(new Uint8Array(32).fill(0x42)))).toThrow(
+            /another Arkade client/,
+        );
     });
 
     it("rejects an emulator reply carrying another ark tx", async () => {
