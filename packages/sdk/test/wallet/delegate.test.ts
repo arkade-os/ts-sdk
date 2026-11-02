@@ -1,5 +1,73 @@
-import { describe, it, expect } from "vitest";
-import { findDestinationOutputIndex } from "../../src/wallet/delegate";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { hex } from "@scure/base";
+import { DelegateManagerImpl, findDestinationOutputIndex } from "../../src/wallet/delegate";
+import type { ArkadeInfo, Identity } from "../../src";
+import type { DelegateProvider } from "../../src/providers/delegate";
+import {
+    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DELEGATE_PUB_KEY,
+    TEST_SERVER_PUB_KEY_HEX,
+    createMockContractVtxo,
+    testDelegateScript,
+} from "../contracts/helpers";
+
+describe("default delegation schedule", () => {
+    const NOW = Date.UTC(2026, 0, 1);
+
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    /** The `valid_at` signed for a coin expiring at `expiry`, delegated with no explicit date. */
+    async function validAt(expiry: number, sessionDuration: bigint): Promise<number> {
+        const delegate = vi.fn(async (_intent: { message: { valid_at: number } }) => {});
+        const provider = {
+            getDelegateInfo: async () => ({
+                pubkey: hex.encode(TEST_DELEGATE_PUB_KEY),
+                fee: "0",
+                delegateAddress: TEST_DEFAULT_ARK_ADDRESS,
+            }),
+            delegate,
+        } as unknown as DelegateProvider;
+        const info = {
+            dust: 100n,
+            fees: { intentFee: {}, txFeeRate: "0" },
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            forfeitPubkey: TEST_SERVER_PUB_KEY_HEX,
+            network: "mutinynet",
+            sessionDuration,
+            signerPubkey: TEST_SERVER_PUB_KEY_HEX,
+        } as ArkadeInfo;
+        const identity = { sign: async (tx: unknown) => tx } as unknown as Identity;
+        const coin = createMockContractVtxo(hex.encode(testDelegateScript.pkScript), {
+            value: 1_000_000,
+            tapTree: testDelegateScript.encode(),
+            forfeitTapLeafScript: testDelegateScript.forfeit(),
+            intentTapLeafScript: testDelegateScript.delegate(),
+            expiresAt: new Date(expiry),
+        });
+
+        const manager = new DelegateManagerImpl(provider, { getInfo: async () => info }, identity);
+        const { failed } = await manager.delegate([coin], TEST_DEFAULT_ARK_ADDRESS);
+
+        expect(failed).toEqual([]);
+        return delegate.mock.calls[0][0].message.valid_at;
+    }
+
+    it("leaves three operator sessions before expiry", async () => {
+        const expiry = NOW + 30 * 86_400_000;
+        expect(await validAt(expiry, 60n)).toBe(expiry / 1000 - 180);
+    });
+
+    it("stays before expiry when already inside that window", async () => {
+        expect(await validAt(NOW + 50_000, 30n)).toBe(NOW / 1000 + 2);
+    });
+});
 
 describe("findDestinationOutputIndex", () => {
     const scriptA = new Uint8Array([0x00, 0x14, 0xaa, 0xbb]);

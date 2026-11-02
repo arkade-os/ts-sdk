@@ -203,8 +203,8 @@ export class DelegateManagerImpl implements IDelegateManager {
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
  * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
- * @param delegateAt - Optional delegation time. By default, scheduling leaves at least 10% of
- *                     the remaining lifetime and one operator session before the earliest expiry.
+ * @param delegateAt - Optional delegation time. By default, three operator sessions before the
+ *                     earliest expiry, or two seconds from now if that time has passed.
  */
 async function delegate(
     identity: Identity,
@@ -235,12 +235,12 @@ async function delegate(
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            // delegateAt = expiry - 3 batches
-            delegateAt = new Date(expiryTimestamp - Number(arkInfo.sessionDuration * 3000n));
-            if (delegateAt.getTime() < Date.now()) {
-                // if the calculated delegateAt is in the past, delegate 1 minute from now, like recoverable
-                delegateAt = new Date(Date.now() + 1 * 60 * 1000);
-            }
+            const nowMs = now.timestamp.getTime();
+            const target = expiryTimestamp - Number(arkInfo.sessionDuration * 3000n);
+            // Inside the window, leave as much of the remaining lifetime as possible.
+            delegateAt = new Date(
+                target > nowMs ? target : expiryTimestamp > nowMs ? nowMs + 2_000 : nowMs + 60_000,
+            );
         }
     }
     const { fees, dust, forfeitAddress, network } = arkInfo;
