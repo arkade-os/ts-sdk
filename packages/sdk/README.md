@@ -183,9 +183,7 @@ const balance = await readonlyWallet.getBalance()
 - Coin type 0 for mainnet, 1 for testnet
 - Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
-Custom signers can implement `Identity` directly and return `TreeSignerSession.random()`
-from `signerSession()`; both are exported from `@arkade-os/sdk`. This creates a local
-ephemeral MuSig2 tree session, separate from the external signer's wallet key.
+For custom `Identity` implementations, see [`TreeSignerSession`](./src/tree/signingSession.ts).
 
 ### Batch Signing for Browser Wallets
 

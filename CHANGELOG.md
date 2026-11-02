@@ -45,8 +45,8 @@ style and have not been backfilled.
 ### Features
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
-  implementations can return `TreeSignerSession.random()` without reaching into
-  an unexported SDK module. The existing session implementation is unchanged.
+  implementations can use the existing session without an internal SDK import.
+  Class and factory TSDoc cover key isolation and nonce/session lifetime.
 
 ### Added
 
