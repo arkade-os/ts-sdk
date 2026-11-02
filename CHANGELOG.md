@@ -281,6 +281,11 @@ style and have not been backfilled.
   sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
   says so up front, naming the function, whichever route the spend takes.
 
+- **Swap SQLite repositories accept the SDK's serialized executor.** Transaction
+  callbacks use the supplied raw executor instead of enqueueing statements behind
+  their own transaction. Initialization, record writes, scan tracking and clearing
+  therefore complete when consumers pass `getSerializedExecutor(db)`.
+
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
   or unrelated settings. Genuine absence still returns null.

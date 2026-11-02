@@ -37,7 +37,8 @@ interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
     prefix?: string;
     /** Opt in only with a dedicated connection or all operations coordinated through
-     * getSerializedExecutor/runInTransaction on the same executor object. Default: false. */
+     * getSerializedExecutor/runInTransaction on the same executor object. Default: false.
+     * All read-modify-write callers must use atomic updates; queued legacy updates can still race. */
     walletStateTransactions?: boolean;
     /** Caller asserts durable backing; requires walletStateTransactions. No storage detection. */
     persistentWalletState?: boolean;

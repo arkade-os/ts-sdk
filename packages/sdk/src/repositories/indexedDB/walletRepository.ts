@@ -382,6 +382,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             try {
                 const store = transaction.objectStore(STORE_WALLET_STATE);
                 const request = store.get("state");
+                // Uncancelled request errors abort automatically; synchronous exceptions need abort().
                 request.onerror = () => {
                     failed = true;
                     failure = request.error;

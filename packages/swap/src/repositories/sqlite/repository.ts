@@ -81,38 +81,38 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
      * while `initPromise` stayed resolved and every later statement failed with
      * `no such table`. */
     private async init(): Promise<void> {
-        await this.withTx(async () => {
-            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.swaps} (
+        await this.withTx(async (tx) => {
+            await tx.run(`CREATE TABLE IF NOT EXISTS ${this.swaps} (
                 id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 data TEXT NOT NULL
             )`);
-            await this.db.run(
+            await tx.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}asset_swaps_status ON ${this.swaps} (status)`,
             );
-            await this.db.run(
+            await tx.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}asset_swaps_created_at ON ${this.swaps} (created_at)`,
             );
             // A separate table rather than a `kind` column on the one above: the
             // two record types have different keys and no consumer wants them
             // interleaved. `state` and `updated_at` are mapped out for querying
             // and for bounded history reads; the record itself still goes in whole.
-            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.rfqSwaps} (
+            await tx.run(`CREATE TABLE IF NOT EXISTS ${this.rfqSwaps} (
                 rfq_id TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
                 data TEXT NOT NULL
             )`);
-            await this.db.run(
+            await tx.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_updated ON ${this.rfqSwaps} (updated_at, rfq_id)`,
             );
-            await this.db.run(
+            await tx.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_history ON ${this.rfqSwaps} (state, updated_at, rfq_id)`,
             );
             // Restore now pages by state and update time.
-            await this.db.run(`DROP INDEX IF EXISTS idx_${this.prefix}rfq_swaps_page`);
-            await this.db.run(
+            await tx.run(`DROP INDEX IF EXISTS idx_${this.prefix}rfq_swaps_page`);
+            await tx.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}rfq_swaps_state ON ${this.rfqSwaps} (state)`,
             );
             // The v2 client's accept records. Its own table for the reason
@@ -121,17 +121,17 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
             // `getAssetSwapsOrThrow`, so sharing `asset_swaps` would pin the v2
             // shape to a v1 filter. `family` and `updated_at` are mapped out
             // for querying; the record goes in whole.
-            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.swapRecords} (
+            await tx.run(`CREATE TABLE IF NOT EXISTS ${this.swapRecords} (
                 id TEXT PRIMARY KEY,
                 family TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
                 data TEXT NOT NULL
             )`);
-            await this.db.run(
+            await tx.run(
                 `CREATE INDEX IF NOT EXISTS idx_${this.prefix}swap_records_family ON ${this.swapRecords} (family)`,
             );
-            await this.db.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
-            await this.db.run(
+            await tx.run(`CREATE TABLE IF NOT EXISTS ${this.scanned} (txid TEXT PRIMARY KEY)`);
+            await tx.run(
                 `CREATE TABLE IF NOT EXISTS ${this.markets} (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
             );
         });
@@ -140,17 +140,17 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
     /** Every write, including the single-statement ones. The chain serializes
      * transaction *blocks*, not bare statements: one issued between a
      * neighbour's BEGIN IMMEDIATE and its COMMIT becomes part of that
-     * transaction and dies with it. `fn` must issue only raw db calls — no
+     * transaction and dies with it. `fn` must use its supplied raw executor — no
      * repository method, no `ensureInit` — since `runInTransaction` cannot
      * nest. */
-    private withTx(fn: () => Promise<void>): Promise<void> {
+    private withTx(fn: (tx: SQLExecutor) => Promise<void>): Promise<void> {
         return runInTransaction(this.db, fn);
     }
 
     async saveSwap(swap: AssetSwap): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(
+        await this.withTx(async (tx) => {
+            await tx.run(
                 `INSERT OR REPLACE INTO ${this.swaps} (id, status, created_at, data)
                  VALUES (?, ?, ?, ?)`,
                 [swap.id, swap.status, swap.createdAt, JSON.stringify(swap)],
@@ -164,8 +164,8 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
 
     async saveRfqSwap(record: RfqSwapRecord): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(
+        await this.withTx(async (tx) => {
+            await tx.run(
                 `INSERT OR REPLACE INTO ${this.rfqSwaps} (rfq_id, state, updated_at, data)
                  VALUES (?, ?, ?, ?)`,
                 [record.rfqId, record.state, record.updatedAt, JSON.stringify(record)],
@@ -221,15 +221,15 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
 
     async removeRfqSwap(rfqId: string): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(`DELETE FROM ${this.rfqSwaps} WHERE rfq_id = ?`, [rfqId]);
+        await this.withTx(async (tx) => {
+            await tx.run(`DELETE FROM ${this.rfqSwaps} WHERE rfq_id = ?`, [rfqId]);
         });
     }
 
     async saveSwapRecord(record: SwapRecord): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(
+        await this.withTx(async (tx) => {
+            await tx.run(
                 `INSERT OR REPLACE INTO ${this.swapRecords} (id, family, updated_at, data)
                  VALUES (?, ?, ?, ?)`,
                 [record.id, record.family, record.updatedAt, JSON.stringify(record)],
@@ -272,8 +272,8 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
 
     async removeSwapRecord(id: string): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(`DELETE FROM ${this.swapRecords} WHERE id = ?`, [id]);
+        await this.withTx(async (tx) => {
+            await tx.run(`DELETE FROM ${this.swapRecords} WHERE id = ?`, [id]);
         });
     }
 
@@ -287,10 +287,10 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         await this.ensureInit();
         const all = [...txids];
         if (all.length === 0) return;
-        await this.withTx(async () => {
+        await this.withTx(async (tx) => {
             for (let i = 0; i < all.length; i += INSERT_CHUNK) {
                 const chunk = all.slice(i, i + INSERT_CHUNK);
-                await this.db.run(
+                await tx.run(
                     `INSERT OR IGNORE INTO ${this.scanned} (txid) VALUES ${chunk
                         .map(() => "(?)")
                         .join(", ")}`,
@@ -318,11 +318,11 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
         entry: MarketsCacheEntry,
     ): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(
-                `INSERT OR REPLACE INTO ${this.markets} (cache_key, data) VALUES (?, ?)`,
-                [marketsCacheKey(network, registry), JSON.stringify(entry)],
-            );
+        await this.withTx(async (tx) => {
+            await tx.run(`INSERT OR REPLACE INTO ${this.markets} (cache_key, data) VALUES (?, ?)`, [
+                marketsCacheKey(network, registry),
+                JSON.stringify(entry),
+            ]);
         });
     }
 
@@ -331,12 +331,12 @@ export class SQLiteAssetSwapRepository implements AssetSwapRepository {
      * partial clear must not be observable. */
     async clear(): Promise<void> {
         await this.ensureInit();
-        await this.withTx(async () => {
-            await this.db.run(`DELETE FROM ${this.swaps}`);
-            await this.db.run(`DELETE FROM ${this.rfqSwaps}`);
-            await this.db.run(`DELETE FROM ${this.swapRecords}`);
-            await this.db.run(`DELETE FROM ${this.scanned}`);
-            await this.db.run(`DELETE FROM ${this.markets}`);
+        await this.withTx(async (tx) => {
+            await tx.run(`DELETE FROM ${this.swaps}`);
+            await tx.run(`DELETE FROM ${this.rfqSwaps}`);
+            await tx.run(`DELETE FROM ${this.swapRecords}`);
+            await tx.run(`DELETE FROM ${this.scanned}`);
+            await tx.run(`DELETE FROM ${this.markets}`);
         });
     }
 

@@ -16,6 +16,7 @@ function enqueue<T>(queue: ExecutorQueue, operation: () => Promise<T>): Promise<
 function queueFor(db: SQLExecutor): ExecutorQueue {
     const existing = executorQueues.get(db);
     if (existing) return existing;
+    // These closures run only after queue has been initialized.
     const facade: SQLExecutor = {
         run: (sql, params) => enqueue(queue, () => db.run(sql, params)),
         get: <T>(sql: string, params?: unknown[]) => enqueue(queue, () => db.get<T>(sql, params)),
