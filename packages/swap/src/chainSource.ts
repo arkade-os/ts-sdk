@@ -56,8 +56,9 @@ export const chainSourceFrom = (
             vout: number,
             pkScript: Uint8Array,
         ): Promise<{ txHex: string } | null> {
-            const outspends = await provider.getTxOutspends(txid);
-            const outspend = outspends[vout];
+            const outspend = provider.getTxOutspend
+                ? await provider.getTxOutspend(txid, vout)
+                : (await provider.getTxOutspends(txid))[vout];
             if (!outspend?.spent) return null;
             // `||`: some deployments omit the txid, electrum sends `""` when
             // unspent. Null here would read a CLAIMED htlc as unfunded.

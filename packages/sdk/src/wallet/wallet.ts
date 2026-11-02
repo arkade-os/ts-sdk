@@ -1632,6 +1632,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
             string,
             Awaited<ReturnType<typeof this.onchainProvider.getTxOutspends>>
         >();
+        const outspendOf = async (txid: string, index: number) => {
+            if (this.onchainProvider.getTxOutspend) {
+                return this.onchainProvider.getTxOutspend(txid, index);
+            }
+            let statuses = outspendCache.get(txid);
+            if (!statuses) {
+                statuses = await this.onchainProvider.getTxOutspends(txid);
+                outspendCache.set(txid, statuses);
+            }
+            return statuses[index];
+        };
 
         for (const tapscript of tapscripts) {
             const boardingAddress = tapscript.onchainAddress(this.network);
@@ -1652,12 +1663,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 for (let i = 0; i < tx.vout.length; i++) {
                     const vout = tx.vout[i];
                     if (vout.scriptpubkey_address === boardingAddress) {
-                        let spentStatuses = outspendCache.get(tx.txid);
-                        if (!spentStatuses) {
-                            spentStatuses = await this.onchainProvider.getTxOutspends(tx.txid);
-                            outspendCache.set(tx.txid, spentStatuses);
-                        }
-                        const spentStatus = spentStatuses[i];
+                        const spentStatus = await outspendOf(tx.txid, i);
 
                         // `||` (not `??`) so the electrum provider's `txid: ""` sentinel for
                         // unspent outputs falls through to the vin lookup.
