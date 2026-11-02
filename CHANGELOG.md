@@ -193,6 +193,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Lazy boarding no longer blocks worker startup on an onchain subscription.**
+  With `lazyBoarding: true`, cached initialization and VTXO background work can
+  finish while subscription setup is pending. Registration and stale cleanup
+  serialize per provider across reinitialization, without blocking a different
+  provider. Default eager startup still waits for registration, and delayed
+  setup cannot recreate a disposed wallet's contract manager.
+
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
   so an indexer read missing the solver's preimage ended a paid send as
