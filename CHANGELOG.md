@@ -36,6 +36,15 @@ style and have not been backfilled.
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
 
+### Features
+
+- **`BridgeIdentity` connects a native signer without exporting private keys.**
+  Applications supply a transport for public-key discovery, unfinalized PSBT
+  signing, and message hashes. The identity verifies signatures against the
+  original transaction and accepts only the requested Taproot signature
+  additions, preserving operator signatures and opaque PSBT fields. Optional
+  batch signing groups multiple requests into one bridge interaction.
+
 ### Added
 
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must

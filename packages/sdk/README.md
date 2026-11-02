@@ -183,6 +183,42 @@ const balance = await readonlyWallet.getBalance()
 - Coin type 0 for mainnet, 1 for testnet
 - Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
+### Native and External Signer Bridges
+
+`BridgeIdentity` adapts an application-provided `IdentityBridge` without exporting
+the signing key. The transport can use a native host, browser extension, or an
+authenticated companion; the SDK does not install or discover one.
+
+```typescript
+import { BridgeIdentity, Wallet, type IdentityBridge } from '@arkade-os/sdk'
+
+declare const nativeSigner: IdentityBridge
+
+const identity = await BridgeIdentity.create(nativeSigner)
+const wallet = await Wallet.create({
+  identity,
+  service: { operatorUrl: 'https://mutinynet.arkade.sh' },
+})
+```
+
+The bridge supplies a compressed secp256k1 public key, signs unfinalized PSBTs,
+and signs 32-byte message hashes. Message signatures are 64-byte BIP340 Schnorr
+or compact ECDSA. The identity pins the public key, verifies signatures against
+the original transaction, and rejects changed fields, removed signatures,
+unrequested signatures, or finalization. It supports Taproot key-path and
+script-path signing with `DEFAULT`, `ALL`, and `ALL|ANYONECANPAY`; code separators
+and nonstandard tapscript versions are refused.
+
+Implement optional `signPsbts(requests)` to group a batch into one native
+interaction. Otherwise `signMultiple` sends the requests sequentially. The host
+owns connection permissions, approval, PIN entry, card identity checks, and
+session cleanup; these are not private-key or PIN methods on `IdentityBridge`.
+
+Use a foreground `Wallet` with this identity. `ServiceWorkerWallet` cannot
+serialize a native signer or its page bridge. `BridgeIdentity` does not advertise
+HD derivation or deterministic signing; contract secrets that cannot be derived
+deterministically require the wallet's persistent state for recovery.
+
 ### Batch Signing for Browser Wallets
 
 Arkade send transactions require N+1 PSBT signatures (N checkpoints + 1 main tx). With local identities like `SingleKey` or `SeedIdentity` this is invisible, but browser wallet extensions (Xverse, UniSat, OKX, etc.) show a confirmation popup per signature. The `BatchSignableIdentity` interface lets wallet providers reduce N+1 popups to a single batch confirmation.
