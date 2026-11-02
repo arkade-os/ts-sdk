@@ -132,6 +132,8 @@ async function main() {
 
     await printBalance("Alice", aliceWallet);
     await printBalance("Bob", bobWallet);
+    await aliceWallet.dispose();
+    await bobWallet.dispose();
 }
 
 main().catch((error) => {

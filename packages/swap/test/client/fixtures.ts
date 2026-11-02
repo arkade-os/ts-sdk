@@ -421,7 +421,11 @@ export const lightningReceiveAnswer = (
 export const onchainSendAnswer = (
     payload: Payload,
     clock: SolverClock,
-    over: { quote?: Partial<RfqQuote>; profile?: Profile } = {},
+    over: {
+        quote?: Partial<RfqQuote>;
+        profile?: Profile;
+        refundWithoutReceiverDelay?: number;
+    } = {},
 ): RfqQuote => {
     const profile = profileOf(payload);
     const paymentHash = profile.payment_hash as string;
@@ -431,6 +435,7 @@ export const onchainSendAnswer = (
         operatorPubkey: OPERATOR_PUBKEY,
         paymentHash,
         claimDelay: CLAIM_DELAY,
+        refundWithoutReceiverDelay: over.refundWithoutReceiverDelay,
         emulatorPubkey: EMULATOR_PUBKEY,
         senderPubkey: hex.decode(profile.client_refund_pubkey as string),
         receiverPkScript: RECEIVER_PK_SCRIPT,
@@ -470,6 +475,9 @@ export const onchainSendAnswer = (
             htlc_locktime: clock.htlcLocktime,
             htlc_address: htlc.address,
             min_confirmations: 2,
+            ...(over.refundWithoutReceiverDelay !== undefined && {
+                refund_without_receiver_delay: over.refundWithoutReceiverDelay,
+            }),
             ...over.profile,
         },
         ...over.quote,

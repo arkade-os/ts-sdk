@@ -28,6 +28,7 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
                 }),
             }) as never,
     ),
+    getFilteredSubscription: vi.fn(),
     getVirtualTxs: vi.fn(),
     getAssetDetails: vi.fn(),
     getVtxoChain: vi.fn(),

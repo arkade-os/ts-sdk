@@ -536,6 +536,14 @@ export type ResponseGetAllSpendingPaths = ResponseEnvelope & {
     payload: { paths: PathSelection[] };
 };
 
+export type RequestGetUnsupportedContracts = RequestEnvelope & {
+    type: "GET_UNSUPPORTED_CONTRACTS";
+};
+export type ResponseGetUnsupportedContracts = ResponseEnvelope & {
+    type: "UNSUPPORTED_CONTRACTS";
+    payload: { contracts: Contract[] };
+};
+
 // broadcast messages
 export type ResponseSettleEvent = ResponseEnvelope & {
     broadcast: true;
@@ -930,6 +938,7 @@ export type WalletUpdaterRequest =
     | RequestDeleteContract
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
+    | RequestGetUnsupportedContracts
     | RequestIsContractManagerWatching
     | RequestRefreshVtxos
     | RequestRefreshOutpoints
@@ -994,6 +1003,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
+        | ResponseGetUnsupportedContracts
         | ResponseIsContractManagerWatching
         | ResponseRefreshVtxos
         | ResponseRefreshOutpoints
@@ -1541,6 +1551,15 @@ export class WalletMessageHandler
                         id,
                         type: "ALL_SPENDING_PATHS",
                         payload: { paths },
+                    });
+                }
+                case "GET_UNSUPPORTED_CONTRACTS": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contracts = await manager.getUnsupportedContracts();
+                    return this.tagged({
+                        id,
+                        type: "UNSUPPORTED_CONTRACTS",
+                        payload: { contracts },
                     });
                 }
                 case "IS_CONTRACT_MANAGER_WATCHING": {

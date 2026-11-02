@@ -2,7 +2,7 @@ import { collectContracts } from "../src/repositories/contractRepository";
 import { collectVtxos } from "../src/repositories/walletRepository";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hex, base64 } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "../src/utils/transaction";
 import {
     Wallet,
     MnemonicIdentity,

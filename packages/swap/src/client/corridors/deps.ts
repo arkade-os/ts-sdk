@@ -17,8 +17,10 @@ import {
     type IWallet,
     type Network,
     type NetworkName,
+    type OnchainProvider,
     type SignerSet,
 } from "@arkade-os/sdk";
+import { chainSourceFrom } from "../../chainSource";
 import type { ChainSource } from "../../onchainHtlc";
 import { L1_NETWORKS, ONCHAIN_CLAIM_VSIZE } from "../../onchainHtlc";
 import type { RfqSwapManagerCallbacks } from "../../swapManager";
@@ -67,13 +69,14 @@ export interface CorridorOverrides {
         /** Default: the package's own {@link decodeBolt11}. */
         decode?: ((bolt11: string) => InvoiceFacts) | null;
         /** Default: none — nothing is sealed and no packet is sent, so the
-         * trader must claim its own lockup before `refund_locktime`. */
+         * trader must claim its own lockup before `refund_locktime`. Set, only a
+         * take-pinned (exact-out) BTC receive is guaranteed one. */
         covclaimd?: { pubkey: Pubkey } | null;
     };
     onchain?: {
-        /** Default: `ESPLORA_URL[network]`. The override is the URL, not a
-         * `ChainSource`: there is no wallet-held provider to substitute. */
-        chain?: { esploraUrl: string } | null;
+        /** Default: Esplora at `ESPLORA_URL[network]`. `{ provider }` reads L1 through the caller's
+         * own `OnchainProvider` instead, e.g. Electrum: `IWallet` carries none to borrow. */
+        chain?: { esploraUrl: string } | { provider: OnchainProvider } | null;
         /** How the trader's L1 claim is built and broadcast. Default: synthesized from
          * {@link claimFeeRateSatVb} when resolvable (see {@link OnchainCorridorDeps.claim}). */
         claim?: OnchainClaim | null;
@@ -278,13 +281,17 @@ export function resolveCorridorDeps(
             const claimVsize =
                 refusedIfMalformed(overrides?.onchain?.claimVsize, "L1 claim vsize") ??
                 ONCHAIN_CLAIM_VSIZE;
+            const l1Network = l1NetworkFromArk(base.networkName);
             return {
                 networkName: base.networkName,
-                chain: esploraChainSource({
-                    esploraUrl: chain?.esploraUrl ?? ESPLORA_URL[base.networkName],
-                    network: L1_NETWORKS[l1NetworkFromArk(base.networkName)],
-                    fetchImpl: base.fetchImpl,
-                }),
+                chain:
+                    chain && "provider" in chain
+                        ? chainSourceFrom(chain.provider, l1Network)
+                        : esploraChainSource({
+                              esploraUrl: chain?.esploraUrl ?? ESPLORA_URL[base.networkName],
+                              network: L1_NETWORKS[l1Network],
+                              fetchImpl: base.fetchImpl,
+                          }),
                 ...(claim === undefined ? {} : { claim }),
                 ...(refund === undefined ? {} : { refund }),
                 ...(claimFeeRateSatVb === undefined ? {} : { claimFeeRateSatVb }),

@@ -15,7 +15,7 @@ export interface OffchainBalance {
     /**
      * VTXOs under a contract {@link BalanceCapabilities.isGenericallySpendable} refuses (VHTLC
      * lockup, unmarked `arkade` program, unregistered handler type). In `settled`/`preconfirmed`
-     * and `total`, never in `available`. Takes precedence over {@link intentLocked}: the gate is
+     * and `total`, never in `available`. Takes precedence over {@link pendingSettlement}: the gate is
      * durable while an intent lock clears on its own.
      */
     gated: number;
@@ -25,7 +25,7 @@ export interface OffchainBalance {
      * repository, or its read fails), so it under-reports into `available` rather than
      * misattributing. Worker and main-thread figures come from different reads and may differ.
      */
-    intentLocked: number;
+    pendingSettlement: number;
     /** Held by `reserveVtxos` and neither gated nor intent-locked; never in `available`. */
     reserved: number;
     recoverable: number;
@@ -82,7 +82,7 @@ export function computeOffchainBalance(
     let preconfirmed = 0;
     let available = 0;
     let gated = 0;
-    let intentLocked = 0;
+    let pendingSettlement = 0;
     let reserved = 0;
     let recoverable = 0;
     let pendingRecovery = 0;
@@ -132,7 +132,7 @@ export function computeOffchainBalance(
         if (!isGenericallySpendable(vtxo)) {
             gated += vtxo.value;
         } else if (!isUnlocked(vtxo)) {
-            intentLocked += vtxo.value;
+            pendingSettlement += vtxo.value;
         } else if (isReserved?.(vtxo)) {
             reserved += vtxo.value;
         } else {
@@ -155,7 +155,7 @@ export function computeOffchainBalance(
         preconfirmed,
         available,
         gated,
-        intentLocked,
+        pendingSettlement,
         reserved,
         recoverable,
         pendingRecovery,
@@ -192,7 +192,7 @@ export function toWalletBalance(
         preconfirmed: offchain.preconfirmed,
         available: offchain.available,
         gated: offchain.gated,
-        intentLocked: offchain.intentLocked,
+        pendingSettlement: offchain.pendingSettlement,
         reserved: offchain.reserved,
         recoverable: offchain.recoverable,
         pendingRecovery: offchain.pendingRecovery,

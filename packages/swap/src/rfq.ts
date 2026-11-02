@@ -10,14 +10,15 @@
  *   key is lost, via the `nonInteractiveRefund` leaf the emulator co-signs under a covenant paying
  *   only the user's pre-committed address.
  * - receive (`lightning|onchain:BTC -> arkade:BTC`): the user generates `P`, pays the hold invoice
- *   or funds the L1 HTLC, and may go offline; the solver funds a lockup pinned to the user's payout
- *   ({@link lightningReceiveContract}), and the claim reveals `P`, settling the user's side.
+ *   or funds the L1 HTLC, and may go offline once a request has sealed `P` to covclaimd; the
+ *   solver funds a lockup pinned to the user's payout ({@link lightningReceiveContract}), and the
+ *   claim reveals `P`, settling the user's side.
  * - `arkade -> arkade`: the user funds an Intents **offer** (`createOffer`) bound to the quote; any
  *   filler may deliver, or the user cancels cooperatively.
  *
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
- * Lightning sends). Everything else is the user's own data or a trusted constant (the emulator key
+ * sends). Everything else is the user's own data or a trusted constant (the emulator key
  * defaults to the SDK's per-network pin). Anything address-shaped from the solver is compare-only:
  * a mismatch means refuse-to-fund, never "use theirs".
  *
@@ -63,6 +64,7 @@ import {
     type ProvisionedClaimSecret,
     type ProvisionedKey,
 } from "@arkade-os/sdk";
+import { bindsClaimAmount } from "./claimAmountGate";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
@@ -1056,6 +1058,25 @@ export interface InvoiceFacts {
     expiresAt: number;
 }
 
+/** The quote's solo-refund CSV delay, refused unless it is a seconds rung at or above the claim's. */
+const quotedSoloRefundDelay = (
+    quote: RfqQuote,
+    claimDelay: number,
+    corridor: string,
+): number | undefined => {
+    const delay = quote.profile?.refund_without_receiver_delay;
+    if (delay === undefined) return undefined;
+    if (
+        !Number.isSafeInteger(delay) ||
+        delay < claimDelay ||
+        delay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
+        delay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
+    ) {
+        throw new Error(`${corridor} quote carries an invalid refund_without_receiver_delay`);
+    }
+    return delay;
+};
+
 /**
  * The pure core of {@link requestLightningSend}: derive the Arkade lockup from
  * the quote's binding fields plus the trader's own data, and refuse on a
@@ -1092,17 +1113,13 @@ export function deriveLightningSend(input: {
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
-    const refundWithoutReceiverDelay = quote.profile?.refund_without_receiver_delay;
+    const refundWithoutReceiverDelay = quotedSoloRefundDelay(
+        quote,
+        input.claimDelay,
+        "lightning-send",
+    );
     if (refundWithoutReceiverDelay === undefined) {
         throw new Error("lightning-send quote is missing profile.refund_without_receiver_delay");
-    }
-    if (
-        !Number.isSafeInteger(refundWithoutReceiverDelay) ||
-        refundWithoutReceiverDelay < input.claimDelay ||
-        refundWithoutReceiverDelay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
-        refundWithoutReceiverDelay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
-    ) {
-        throw new Error("lightning-send quote carries an invalid refund_without_receiver_delay");
     }
     if (refundWithoutReceiverDelay < quote.refund_locktime - input.now) {
         throw new Error("lightning-send quote lets the solo refund open before refund_locktime");
@@ -1585,7 +1602,8 @@ export const lightningReceiveRequest = (input: {
 });
 
 /** The rfq_request for `onchain:BTC->arkade:BTC`. The user funds the L1 HTLC (holding its refund
- * role); P travels sealed to covclaimd so the user can go offline after funding. */
+ * role); when P travels sealed to covclaimd, the user can go offline. Only an exact-out request
+ * is guaranteed to seal it. */
 export const onchainReceiveRequest = (input: {
     rfqId: string;
     paymentHash: string;
@@ -1620,8 +1638,8 @@ export const onchainReceiveRequest = (input: {
  * The pure core of {@link requestOnchainSend}: derive BOTH contracts locally
  * from the quote's binding fields plus the user's own data, and refuse on any
  * mismatch. Binding: `solver_pubkey`, `refund_locktime`, `htlc_pubkey`,
- * `htlc_locktime`, `min_confirmations`; `lockup_address` and `htlc_address`
- * are compare-only.
+ * `htlc_locktime`, `min_confirmations`, `refund_without_receiver_delay` when
+ * present; `lockup_address` and `htlc_address` are compare-only.
  */
 export function deriveOnchainSend(input: {
     quote: RfqQuote;
@@ -1650,6 +1668,8 @@ export function deriveOnchainSend(input: {
      * ({@link onchainSendProfile} reads it). */
     l1Network: OnchainNetwork;
     refundLocktime: number;
+    /** The quote's solo-refund delay; undefined when the lockup uses the base ladder. */
+    refundWithoutReceiverDelay: number | undefined;
     htlcLocktime: number;
     minConfirmations: number;
     expectedAmount: number;
@@ -1671,6 +1691,12 @@ export function deriveOnchainSend(input: {
     ) {
         throw new Error("onchain-send quote is missing a binding field");
     }
+    // Absent from a solver that still builds the base ladder.
+    const refundWithoutReceiverDelay = quotedSoloRefundDelay(
+        quote,
+        input.claimDelay,
+        "onchain-send",
+    );
 
     const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
@@ -1678,6 +1704,7 @@ export function deriveOnchainSend(input: {
         operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
+        refundWithoutReceiverDelay,
         emulatorPubkey: input.emulatorPubkey,
         senderPubkey: input.senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
@@ -1708,6 +1735,7 @@ export function deriveOnchainSend(input: {
         htlcParams,
         l1Network: input.l1Network,
         refundLocktime,
+        refundWithoutReceiverDelay,
         htlcLocktime,
         minConfirmations,
         expectedAmount: quoteExpectedSats(quote.to_amount, "to_amount"),
@@ -2130,7 +2158,7 @@ export function deriveLightningReceive(input: {
 /** Both receive flows' setup; `persistBefore` names the step the warning is for. */
 const provisionReceive = async (
     wallet: IWallet,
-    covclaimdPubkey: Uint8Array | undefined,
+    params: { covclaimdPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
     persistBefore: "paying" | "funding",
 ) => {
     const secrets = await provisionClaimSecret(wallet);
@@ -2146,9 +2174,17 @@ const provisionReceive = async (
         wallet.getArkadeInfo({ requireLive: true }),
         wallet.getAddress(),
     ]);
-    const claimPacket = covclaimdPubkey
-        ? await sealClaimPacket({ preimage, covclaimdPubkey })
-        : undefined;
+    // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets covclaimd
+    // claim dust and hand the solver `P`.
+    const binds = bindsClaimAmount();
+    const claimPacket =
+        params.covclaimdPubkey && (!binds || params.amountSide === "to")
+            ? await sealClaimPacket({
+                  preimage,
+                  covclaimdPubkey: params.covclaimdPubkey,
+                  minAmount: binds ? BigInt(params.amount) : undefined,
+              })
+            : undefined;
     return { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket };
 };
 
@@ -2160,12 +2196,12 @@ const provisionReceive = async (
 const quoteReceive = async (
     wallet: IWallet,
     transport: RfqTransport,
-    covclaimdPubkey: Uint8Array | undefined,
+    params: Parameters<typeof provisionReceive>[1],
     persistBefore: "paying" | "funding",
     request: (provisioned: Awaited<ReturnType<typeof provisionReceive>>) => Record<string, unknown>,
 ) => {
     for (let attempt = 0; ; attempt++) {
-        const provisioned = await provisionReceive(wallet, covclaimdPubkey, persistBefore);
+        const provisioned = await provisionReceive(wallet, params, persistBefore);
         try {
             return { ...provisioned, quote: await transport.requestQuote(request(provisioned)) };
         } catch (error) {
@@ -2199,9 +2235,10 @@ export async function requestLightningReceive(
         /** Co-signer key override (33-byte compressed hex); see
          * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
-        /** covclaimd's 33-byte compressed pubkey; the claim packet seals `P` to it. Unset where
-         * none is deployed: nothing is sent, and claiming before `refund_locktime` is the caller's
-         * job. Never substitute a throwaway key — nobody could open it. */
+        /** covclaimd's 33-byte compressed pubkey; the claim packet seals `P` to it. Only an
+         * exact-out request (`amountSide: "to"`) is guaranteed one, bound to `amount`; an exact-in
+         * one may carry none, and then claiming before `refund_locktime` is the caller's job.
+         * Never substitute a throwaway key — nobody could open it. */
         covclaimdPubkey?: Uint8Array;
         /** The caller's own BOLT11 decoder, applied to the SOLVER's invoice. Required: skipping
          * this check can lose the whole payment. */
@@ -2243,7 +2280,7 @@ export async function requestLightningReceive(
     const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
         wallet,
         transport,
-        params.covclaimdPubkey,
+        params,
         "paying",
         ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
             lightningReceiveRequest({
@@ -2395,7 +2432,8 @@ export async function requestOnchainReceive(
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;
-        /** covclaimd's 33-byte compressed pubkey; see {@link requestLightningReceive}. */
+        /** covclaimd's 33-byte compressed pubkey. Only an exact-out request (`amountSide: "to"`)
+         * is guaranteed a claim packet; see {@link requestLightningReceive}. */
         covclaimdPubkey?: Uint8Array;
         rfqId?: string;
     },
@@ -2424,7 +2462,7 @@ export async function requestOnchainReceive(
     const { secrets, paymentHash, payoutPubkey, info, payoutAddress, quote } = await quoteReceive(
         wallet,
         transport,
-        params.covclaimdPubkey,
+        params,
         "funding",
         ({ paymentHash, payoutAddress, payoutPubkey, claimPacket }) =>
             onchainReceiveRequest({

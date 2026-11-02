@@ -12,8 +12,14 @@
  * Node's `eventsource` package and React Native polyfills are not DOM `EventSource`s.
  */
 export interface EventSourceLike {
-    addEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
-    removeEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
+    addEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void;
+    removeEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void;
     close(): void;
 }
 

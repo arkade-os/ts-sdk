@@ -359,7 +359,8 @@ export interface RfqSwapManagerCallbacks {
      */
     refundOnchain: (swap: OnchainReceiveSwap, utxo: ChainUtxo) => Promise<{ txid: string }>;
     /**
-     * Claim the solver-funded lockup on a receive leg, revealing `P`. Wire it to `pushClaim`.
+     * Claim the solver-funded lockup on a receive leg, revealing `P`. Wire it to
+     * `pushClaim` (the outputs are supplied, so `claimReceiveLockup`'s wait is redundant).
      *
      * **Pass `expectedAmount` and `partiallyClaimed` straight through.** The manager's
      * value check decides WHEN to act; `pushClaim`'s decides whether `P` is published and

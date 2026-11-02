@@ -93,11 +93,7 @@ import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "./batchExpiry"
 import type { BatchExpiryPolicy } from "./batchExpiry";
 import { toTimelock } from "./timelockPolicy";
 import { runWalletRestoreHooks } from "./restoreHooks";
-import {
-    assertValidServerUnrollScript,
-    resolveCheckpointExitDelayPolicy,
-} from "./checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./checkpointExitDelay";
 import {
     assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
@@ -165,6 +161,7 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import { arkadeServiceUrl, resolveArkadeService } from "../arkade/service";
 import type {
     ContractManagerConfig,
     ContractSyncState,
@@ -252,6 +249,25 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
         return params;
     }
     return { recipients: args as [Recipient, ...Recipient[]] };
+}
+
+/**
+ * Fold `mode`/`settlement` into `walletMode`/`settlementConfig`, throwing when both spellings of
+ * one field are set (which one wins would be a guess).
+ */
+function normalizeWalletConfigSpellings(config: WalletConfig): WalletConfig {
+    if (config.mode !== undefined && config.walletMode !== undefined) {
+        throw new Error("Pass either `mode` or `walletMode`, not both");
+    }
+    if (config.settlement !== undefined && config.settlementConfig !== undefined) {
+        throw new Error("Pass either `settlement` or `settlementConfig`, not both");
+    }
+    const { mode, settlement, ...rest } = config;
+    return {
+        ...rest,
+        ...(mode !== undefined ? { walletMode: mode } : {}),
+        ...(settlement !== undefined ? { settlementConfig: settlement } : {}),
+    };
 }
 
 /**
@@ -993,9 +1009,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Shared setup for ReadonlyWallet.create() and Wallet.create(). */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
-        const arkProvider = config.arkProvider || new RestArkProvider();
+        if (
+            config.service &&
+            (config.arkProvider || config.indexerProvider || config.onchainProvider)
+        ) {
+            throw new Error(
+                "Pass either `service` or `arkProvider`/`indexerProvider`/`onchainProvider`, not both",
+            );
+        }
+        const arkProvider =
+            config.arkProvider ||
+            new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
-        if (!indexerProvider) {
+        if (!indexerProvider && !config.service) {
             const derived = extractServerUrl(arkProvider);
             // Refuse to pair a caller's own ark provider with the public default: the wallet would
             // read its VTXOs from a server that has never seen them, and report phantom coins and
@@ -1016,6 +1042,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractRepository =
             config.storage?.contractRepository ?? new IndexedDBContractRepository();
 
+        // Independent of server info, so its round trip overlaps that one instead of following it.
+        const delegatePubKeyPromise = config.delegateProvider
+            ?.getDelegateInfo()
+            .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
+            .catch(() => undefined);
+
         // The cache is NOT written here but after construction validates the response
         // (saveValidatedArkInfoSnapshot in create()), so a bad live response can't poison it.
         const {
@@ -1023,6 +1055,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
             source: serverInfoSource,
             lastOnlineAt: serverInfoLastOnlineAt,
         } = await resolveArkInfo(arkProvider, walletRepository);
+
+        // `info` reused, so `getInfo` is fetched once and the network gate also applies to a cached
+        // snapshot (the same server's last answer). The emulator it resolves is unused here.
+        const resolvedService = config.service
+            ? await resolveArkadeService(config.service, { arkProvider, info })
+            : undefined;
+        if (!indexerProvider) {
+            if (!resolvedService) throw new Error("indexerProvider is unresolved");
+            indexerProvider = resolvedService.indexerProvider;
+        }
 
         const network = networkFromArkadeInfo(info);
 
@@ -1048,7 +1090,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         const onchainProvider =
-            config.onchainProvider || new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
+            typeof config.onchainProvider === "function"
+                ? config.onchainProvider(info.network as NetworkName)
+                : config.onchainProvider ||
+                  resolvedService?.onchainProvider ||
+                  new EsploraProvider(ESPLORA_URL[info.network as NetworkName]);
 
         if (config.exitTimelock) {
             const { value, type } = config.exitTimelock;
@@ -1082,12 +1128,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
 
-        const delegatePubKey = config.delegateProvider
-            ? await config.delegateProvider
-                  .getDelegateInfo()
-                  .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
-                  .catch(() => undefined)
-            : undefined;
+        const delegatePubKey = await delegatePubKeyPromise;
 
         const offchainOptions = {
             pubKey,
@@ -1585,6 +1626,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
             string,
             Awaited<ReturnType<typeof this.onchainProvider.getTxOutspends>>
         >();
+        const outspendOf = async (txid: string, index: number) => {
+            if (this.onchainProvider.getTxOutspend) {
+                return this.onchainProvider.getTxOutspend(txid, index);
+            }
+            let statuses = outspendCache.get(txid);
+            if (!statuses) {
+                statuses = await this.onchainProvider.getTxOutspends(txid);
+                outspendCache.set(txid, statuses);
+            }
+            return statuses[index];
+        };
 
         for (const tapscript of tapscripts) {
             const boardingAddress = tapscript.onchainAddress(this.network);
@@ -1605,12 +1657,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 for (let i = 0; i < tx.vout.length; i++) {
                     const vout = tx.vout[i];
                     if (vout.scriptpubkey_address === boardingAddress) {
-                        let spentStatuses = outspendCache.get(tx.txid);
-                        if (!spentStatuses) {
-                            spentStatuses = await this.onchainProvider.getTxOutspends(tx.txid);
-                            outspendCache.set(tx.txid, spentStatuses);
-                        }
-                        const spentStatus = spentStatuses[i];
+                        const spentStatus = await outspendOf(tx.txid, i);
 
                         // `||` (not `??`) so the electrum provider's `txid: ""` sentinel for
                         // unspent outputs falls through to the vin lookup.
@@ -2139,6 +2186,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
         ];
         const seenBaselineScripts = new Set<string>();
+        const baseline: CreateContractParams[] = [];
         for (const serverPubKey of baselineSigners) {
             for (const csvTimelock of this.walletContractTimelocks) {
                 const csvTimelockStr = timelockToSequence(csvTimelock).toString();
@@ -2153,7 +2201,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     seenBaselineScripts.add(defaultScriptHex);
                     // Persisted before the boarding baseline below, so in the degenerate
                     // equal-delay collision the index-0 row stays `default` (first-wins).
-                    await manager.createContract({
+                    baseline.push({
                         type: "default",
                         params: {
                             pubKey: hex.encode(defaultScript.options.pubKey),
@@ -2177,7 +2225,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
                     if (seenBaselineScripts.has(delegateScriptHex)) continue;
                     seenBaselineScripts.add(delegateScriptHex);
-                    await manager.createContract({
+                    baseline.push({
                         type: "delegate",
                         params: {
                             pubKey: hex.encode(delegateScript.options.pubKey),
@@ -2209,7 +2257,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
             if (seenBaselineScripts.has(boardingScriptHex)) continue;
             seenBaselineScripts.add(boardingScriptHex);
-            await manager.createContract({
+            baseline.push({
                 type: "boarding",
                 params: {
                     pubKey: hex.encode(baselineBoarding.options.pubKey),
@@ -2221,6 +2269,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 state: "active",
             });
         }
+        await manager.createContracts(baseline);
 
         return manager;
     }
@@ -2822,10 +2871,11 @@ export class Wallet
         // Validate the server-controlled checkpoint script FIRST (the provider defaults it to ""
         // when omitted), as `Wallet.create` does, so a bad rotation is side-effect-free and the
         // wallet stays on its previous consistent epoch. The forfeit pubkey doesn't rotate, so the
-        // policy pins it to the boot value rather than trusting this response.
+        // check pins it to the boot value rather than trusting this response.
         const newServerUnrollScript = assertValidServerUnrollScript(
             checkpointTapscript,
-            resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
+            this.network,
+            this.forfeitPubkey,
         );
 
         // Fast path only; the authoritative re-check is inside `_doRotateServerSigner`.
@@ -3217,8 +3267,6 @@ export class Wallet
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
-        /** Overrides for the checkpoint exit delay bounds; defaults derive from `network`. */
-        protected readonly checkpointExitDelayPolicy?: Partial<CheckpointExitDelayPolicy>,
     ) {
         super(
             identity,
@@ -3355,7 +3403,8 @@ export class Wallet
     static create<T extends Wallet>(this: { prototype: T }, config: WalletConfig): Promise<T>;
     static create(config: WalletConfig): Promise<Wallet>;
     static async create(config: WalletConfig): Promise<Wallet> {
-        // Programmer error, not an operational one — surface it before any I/O.
+        // Programmer errors, not operational ones — surface them before any I/O.
+        config = normalizeWalletConfigSpellings(config);
         if (
             config.lookAheadWindow !== undefined &&
             (!Number.isInteger(config.lookAheadWindow) || config.lookAheadWindow <= 0)
@@ -3376,18 +3425,10 @@ export class Wallet
         const forfeitAddress = Address(setup.network).decode(setup.info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
-        // Checkpoint output script. No prior pin at first contact (TOFU, like
-        // `arkServerPublicKey`): the forfeitPubkey check only catches malformed responses; the
-        // exit-delay floor is the real defense against a malicious operator.
-        const checkpointExitDelayOverrides: Partial<CheckpointExitDelayPolicy> = {
-            advertisedForfeitPubkey: forfeitPubkey,
-            ...(config.minCheckpointExitDelaySeconds !== undefined
-                ? { minSeconds: config.minCheckpointExitDelaySeconds }
-                : {}),
-        };
         const serverUnrollScript = assertValidServerUnrollScript(
             setup.info.checkpointTapscript,
-            resolveCheckpointExitDelayPolicy(setup.network, checkpointExitDelayOverrides),
+            setup.network,
+            forfeitPubkey,
         );
 
         // HD boot wiring; `getVtxoManager()` installs the rotator lazily.
@@ -3453,7 +3494,6 @@ export class Wallet
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
-            checkpointExitDelayOverrides,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -4826,7 +4866,8 @@ export class Wallet
         if (spendable.length > 0) {
             const serverUnrollScript = assertValidServerUnrollScript(
                 info.checkpointTapscript,
-                resolveCheckpointExitDelayPolicy(this.network, this.checkpointExitDelayPolicy),
+                this.network,
+                this.forfeitPubkey,
             );
 
             // One tx per VTXO: a rejected input dents only its own sweep, and each output stays

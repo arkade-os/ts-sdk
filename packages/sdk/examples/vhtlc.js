@@ -20,13 +20,14 @@ import {
     buildOffchainTx,
     networks,
     CSVMultisigTapscript,
-} from "../dist/esm/index.js";
+    Transaction,
+} from "../dist/index.js";
 import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
 
 import { execSync } from "child_process";
 
+// From regtest/.env.defaults - verify the key is the same
 const SERVER_PUBLIC_KEY = hex.decode(
     "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb",
 );
@@ -231,8 +232,10 @@ async function main() {
             break;
         }
         case "unilateralRefund": {
-            // Generate 200 blocks to ensure the locktime period has passed
-            execSync(`node regtest/regtest.mjs mine 200`);
+            // Pass refundLocktime (chainTip + 10) but stay inside the VTXO's batch expiry,
+            // or arkd only accepts the VTXO for recovery (VTXO_RECOVERABLE).
+            execSync(`node regtest/regtest.mjs mine 11`);
+            await new Promise((resolve) => setTimeout(resolve, 5000));
 
             // Create and sign the unilateral refund transaction
             const { arkTx, checkpoints } = buildOffchainTx(
@@ -283,6 +286,12 @@ async function main() {
 
 async function fundAddress(address, amount) {
     console.log(`\nFunding address with ${amount} sats...`);
+    // The arkd CLI wallet starts empty and its VTXOs go stale after rounds; top it up from a fresh note.
+    const note = execSync(`${arkdExec} arkd note --amount 200000`, { encoding: "utf8" })
+        .trim()
+        .split(/\s+/)
+        .pop();
+    execSync(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`);
     await new Promise((resolve) => setTimeout(resolve, 2000));
 }

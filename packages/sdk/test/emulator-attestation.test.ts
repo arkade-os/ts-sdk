@@ -87,7 +87,7 @@ function arkProvider() {
 }
 
 const attestation = { pcr0: [hex.encode(PCR0)], roots: [chain.rootDer] };
-const connect = (extra: Partial<arkade.ArkadeConnectOptions> = {}) =>
+const connect = (extra: Partial<arkade.ArkadeConnectProviderOptions> = {}) =>
     arkade.Arkade.connect({
         arkade: arkProvider(),
         emulator: new RestEmulatorProvider(EMULATOR_URL),

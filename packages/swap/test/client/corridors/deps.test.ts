@@ -15,6 +15,7 @@ import {
     REGTEST_EMULATOR_PUBKEY,
     type ArkadeInfo,
     type IWallet,
+    type OnchainProvider,
 } from "@arkade-os/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { decodeBolt11 } from "../../../src/client/corridors/bolt11";
@@ -110,9 +111,7 @@ describe("resolveCorridorDeps", () => {
             });
         });
 
-        it("takes an esplora URL — the override is the URL, not a ChainSource", () => {
-            // There is no wallet-held provider to substitute: `onchainProvider`
-            // is a field of the concrete wallet and never of `IWallet`.
+        it("takes an esplora URL", () => {
             const fetchImpl = vi.fn(async () =>
                 Response.json([{ id: "b", height: 7, mediantime: 42 }]),
             );
@@ -125,6 +124,19 @@ describe("resolveCorridorDeps", () => {
             return chain.getMtp().then(() => {
                 expect(fetchImpl).toHaveBeenCalledWith("http://elsewhere/api/blocks");
             });
+        });
+
+        it("takes a provider, and reads the tip off it rather than Esplora", async () => {
+            const fetchImpl = vi.fn();
+            const getChainTip = vi.fn(async () => ({ height: 7, time: 42, hash: "tip" }));
+            const { chain } = resolveCorridorDeps(
+                "onchain",
+                { onchain: { chain: { provider: { getChainTip } as unknown as OnchainProvider } } },
+                corridorBaseFor("regtest", { fetchImpl: fetchImpl as never }),
+            );
+            expect(await chain.getMtp()).toBe(42);
+            expect(getChainTip).toHaveBeenCalled();
+            expect(fetchImpl).not.toHaveBeenCalled();
         });
 
         it("refuses `null`", () => {

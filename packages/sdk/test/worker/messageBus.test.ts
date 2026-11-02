@@ -3,6 +3,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     InMemoryIntentRepository,
+    ReadonlyWallet,
     Wallet,
     type IntentRepository,
 } from "../../src";
@@ -1423,6 +1424,35 @@ describe("MessageBus default buildServices", () => {
 
     it("leaves it unset when none is configured", async () => {
         expect(await buildServices()).not.toHaveProperty("intentRepository");
+    });
+
+    it("hands the configured onchainProvider factory to both wallet kinds", async () => {
+        const onchainProvider = vi.fn();
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [],
+                onchainProvider,
+            },
+        );
+        const created = { dispose: vi.fn() } as unknown as Wallet;
+        const create = vi.spyOn(Wallet, "create").mockResolvedValue(created);
+        const createReadonly = vi.spyOn(ReadonlyWallet, "create").mockResolvedValue(created);
+        await (bus as any).buildServices(config);
+        await (bus as any).buildServices({
+            ...(config as object),
+            wallet: {
+                type: "readonly-single-key",
+                publicKey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            },
+        });
+        const [signing] = create.mock.calls[0];
+        const [readonly] = createReadonly.mock.calls[0];
+        create.mockRestore();
+        createReadonly.mockRestore();
+        expect(signing.onchainProvider).toBe(onchainProvider);
+        expect(readonly.onchainProvider).toBe(onchainProvider);
     });
 });
 

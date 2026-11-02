@@ -104,6 +104,8 @@ import {
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
+    RequestGetUnsupportedContracts,
+    ResponseGetUnsupportedContracts,
     RequestSend,
     RequestSendWithDeadline,
     RequestSendWithInputExpiryFloor,
@@ -268,6 +270,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
     GET_ALL_SPENDING_PATHS: 20_000,
+    GET_UNSUPPORTED_CONTRACTS: 20_000,
     GET_ASSET_DETAILS: 20_000,
     GET_EXPIRING_VTXOS: 20_000,
     GET_EXPIRED_BOARDING_UTXOS: 20_000,
@@ -341,6 +344,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
+    "GET_UNSUPPORTED_CONTRACTS",
     "GET_ASSET_DETAILS",
     "GET_EXPIRING_VTXOS",
     "RELOAD_WALLET",
@@ -484,17 +488,13 @@ interface ServiceWorkerWalletOptions {
      */
     lookAheadWindow?: number;
     /**
-     * Timelock floors forwarded to the worker wallet. Lowering either below its
+     * Batch expiry floor forwarded to the worker wallet. Lowering it below its
      * per-network default relaxes a fund-safety bound; intended for local
-     * testing. The fast public test networks whose arkd runs below the
-     * mainnet-grade checkpoint floor (signet, mutinynet) are defaulted to their
-     * own advertised value, so neither needs these set.
+     * testing.
      *
      * @see WalletConfig.minBatchExpirySeconds
      */
     minBatchExpirySeconds?: bigint;
-    /** @see WalletConfig.minCheckpointExitDelaySeconds */
-    minCheckpointExitDelaySeconds?: bigint;
     /**
      * Per-request timeout overrides for wallet-updater messages.
      * @see DEFAULT_MESSAGE_TIMEOUTS
@@ -541,7 +541,6 @@ type MessageBusInitConfig = {
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     lookAheadWindow?: number;
     minBatchExpirySeconds?: bigint;
-    minCheckpointExitDelaySeconds?: bigint;
     messageTimeouts?: Record<string, number>;
 };
 
@@ -1627,6 +1626,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
+            async getUnsupportedContracts(): Promise<Contract[]> {
+                const message: RequestGetUnsupportedContracts = {
+                    type: "GET_UNSUPPORTED_CONTRACTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetUnsupportedContracts).payload.contracts;
+                } catch (cause) {
+                    throw new Error(`Failed to get unsupported contracts: ${cause}`, { cause });
+                }
+            },
+
             onContractEvent(callback: ContractEventCallback): () => void {
                 const messageHandler = (event: MessageEvent) => {
                     const response = event.data as WalletUpdaterResponse;
@@ -1849,7 +1862,6 @@ export class ServiceWorkerWallet
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
-            minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
         });
     }
 

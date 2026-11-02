@@ -586,6 +586,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getSpendablePaths: vi.fn().mockResolvedValue(paths),
             isWatching: vi.fn().mockResolvedValue(true),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
+            getUnsupportedContracts: vi.fn().mockResolvedValue(contracts),
         };
         (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue(manager),
@@ -610,6 +611,16 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(getResponse).toMatchObject({
             tag: updater.messageTag,
             type: "CONTRACTS",
+            payload: { contracts },
+        });
+
+        const unsupportedResponse = await updater.handleMessage({
+            ...baseMessage("us"),
+            type: "GET_UNSUPPORTED_CONTRACTS",
+        } as any);
+        expect(unsupportedResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "UNSUPPORTED_CONTRACTS",
             payload: { contracts },
         });
 
@@ -2340,14 +2351,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 // available asset rides on.
                 available: 9454,
                 gated: 20000,
-                intentLocked: 0,
+                pendingSettlement: 0,
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
                 availableAssets: [{ assetId: "cc".repeat(32), amount: 3n }],
             },
         });
     });
 
-    it("GET_BALANCE reports an intent-locked VTXO as intentLocked", async () => {
+    it("GET_BALANCE reports an intent-locked VTXO as pendingSettlement", async () => {
         const intents = new InMemoryIntentRepository();
         setupHandler([{ address: "contract-1", script: "s1", type: "default" }], intents);
 
@@ -2378,7 +2389,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(response).toMatchObject({
             type: "BALANCE",
-            payload: { settled: 10000, available: 0, gated: 0, intentLocked: 10000 },
+            payload: { settled: 10000, available: 0, gated: 0, pendingSettlement: 10000 },
         });
     });
 

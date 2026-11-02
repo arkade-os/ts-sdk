@@ -25,6 +25,7 @@ import { assertPreimageMatches, gateError } from "./onchainHtlc";
 import {
     assertNoneSwept,
     boundedLockupSpend,
+    lockupAssetOutputs,
     lockupInputs,
     type LockupVtxo,
     operatorUnrollScript,
@@ -134,7 +135,10 @@ export async function pushClaim(
         provider: operator,
         inputs: lockupInputs(vtxos, input.contract, leaf),
         // One aggregate output: this leaf inspects nothing about the output set.
-        outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
+        outputs: [
+            { script: input.destinationPkScript, amount: BigInt(locked) },
+            ...lockupAssetOutputs(vtxos),
+        ],
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.contract.options.server },
     });

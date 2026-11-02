@@ -11,10 +11,13 @@ import {
     marketCorridor,
     marketLegKey,
     selectMarkets,
+    sideLimits,
     type DiscoveredMarket,
     type Side,
 } from "@arkade-os/solver-discovery";
+import { cardLegAssetId } from "./aliasTable";
 import type { DiscoveryLeg } from "./aliases";
+import type { AssetId, NetworkRef } from "./assetId";
 import type { DiscoverySnapshot } from "./discovery";
 import type { SwapPolicy } from "./policy";
 import type { CardMarketRef, MarketBackend, MarketRef, SnapshotRef } from "./quote";
@@ -87,7 +90,8 @@ export const marketBackendOf = (card: DiscoveredMarket): MarketBackend =>
 
 /**
  * The cards on a snapshot this client may act on at all: the policy's registry allowlist, then
- * addressability. Shared with `markets()` so it cannot offer a card the quote path would refuse.
+ * addressability. Shared with `markets()`; eligibility is not, so `markets()` can list a card
+ * `quote()` refuses.
  */
 export const usableMarkets = (
     snapshot: DiscoverySnapshot,
@@ -204,9 +208,46 @@ export const cardMarketOf = (
 /** Narrow a `MarketRef` to the card arm — the only one `quote()` mints. */
 export const isCardMarket = (market: MarketRef): market is CardMarketRef => market.kind === "card";
 
+/** One side of a {@link Market}. */
+export interface MarketLeg {
+    /** Absent when the leg has no public id, e.g. an `eip155:` leg. */
+    readonly asset?: AssetId;
+    /** For `Amount.format`. */
+    readonly decimals: number;
+    /**
+     * The card's announced bounds, in atomic units. Indicative: the solver can still refuse.
+     * `null`: the solver will not pay this leg out; a one-way card still routes it as the give leg.
+     * Only an amount pinned with `amountOn: "take"` is checked: a give-pinned amount still resolves,
+     * and a feed card still quotes it, even if the resulting take is out of range.
+     */
+    readonly limits: { readonly min: bigint; readonly max: bigint } | null;
+}
+
 /**
- * A market as the v2 client publishes it — the same {@link CardMarketRef} a quote cites, so a
- * caller picking a market for a custom `quote()` reads the provenance the quote will carry.
- * Discovery's `DiscoveredMarket` never crosses the v2 root, so this carries no discovery asset id.
+ * A market as the v2 client publishes it: the {@link CardMarketRef} a quote would cite, plus its
+ * legs. Find a leg by `asset`, not position: they are in card order. The legs stay off
+ * `CardMarketRef` because that is written into durable records, which forbid `bigint`.
  */
-export type Market = CardMarketRef;
+export interface Market extends CardMarketRef {
+    readonly legs: readonly [MarketLeg, MarketLeg];
+}
+
+const marketLegOf = (card: DiscoveredMarket, side: Side, network: NetworkRef): MarketLeg => {
+    const asset = cardLegAssetId(card, side, network);
+    return {
+        ...(asset === undefined ? {} : { asset }),
+        decimals: (side === "base" ? card.base_asset : card.quote_asset).decimals,
+        limits: sideLimits(card, side),
+    };
+};
+
+/** A card as {@link Market}. `network` is the wallet's, as routing uses, so a legacy leg's id
+ * matches `resolve()` under a `DiscoveryConfig.network` override. */
+export const marketOf = (
+    card: DiscoveredMarket,
+    snapshot: SnapshotRef,
+    network: NetworkRef,
+): Market => ({
+    ...cardMarketOf(card, snapshot, marketKeyOf(card), marketBackendOf(card)),
+    legs: [marketLegOf(card, "base", network), marketLegOf(card, "quote", network)],
+});

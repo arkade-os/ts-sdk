@@ -203,8 +203,9 @@ export class DelegateManagerImpl implements IDelegateManager {
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
  * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
- * @param delegateAt - Optional delegation time. By default, scheduling leaves at least 10% of
- *                     the remaining lifetime and one operator session before the earliest expiry.
+ * @param delegateAt - Optional delegation time. By default, three operator sessions before the
+ *                     earliest expiry, or two seconds from now if that time has passed. With no
+ *                     future expiry, such as only recoverable outputs, one minute from now.
  */
 async function delegate(
     identity: Identity,
@@ -235,24 +236,18 @@ async function delegate(
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            delegateAt = defaultDelegateAt(expiryTimestamp, arkInfo.sessionDuration);
+            const nowMs = now.timestamp.getTime();
+            const target = expiryTimestamp - Number(arkInfo.sessionDuration * 3000n);
+            // Inside the window, leave as much of the remaining lifetime as possible.
+            delegateAt = new Date(
+                target > nowMs ? target : expiryTimestamp > nowMs ? nowMs + 2_000 : nowMs + 60_000,
+            );
         }
     }
     const { fees, dust, forfeitAddress, network } = arkInfo;
 
     const delegateAtSeconds = delegateAt.getTime() / 1000;
-    const estimator = new Estimator({
-        ...fees.intentFee,
-        // replace now() function with the delegateAt timestamp
-        offchainInput: fees.intentFee.offchainInput?.replace(
-            "now()",
-            `double(${delegateAtSeconds})`,
-        ),
-        offchainOutput: fees.intentFee.offchainOutput?.replace(
-            "now()",
-            `double(${delegateAtSeconds})`,
-        ),
-    });
+    const estimator = estimatorAt(fees.intentFee, delegateAt);
 
     let amount = 0n;
     for (const coin of vtxos) {
@@ -444,20 +439,6 @@ async function makeSignedDelegateIntent(
     };
 }
 
-export function defaultDelegateAt(
-    expiryTimestamp: number,
-    sessionDurationSeconds: bigint,
-    now = Date.now(),
-): Date {
-    const remainingTimeMs = expiryTimestamp - now;
-    if (remainingTimeMs <= 0) return new Date(now + 60_000);
-
-    const sessionLeadMs = Number(sessionDurationSeconds * 1000n);
-    const leadTimeMs = Math.max(remainingTimeMs * 0.1, sessionLeadMs);
-    const delegateAt = expiryTimestamp - leadTimeMs;
-    return new Date(delegateAt > now ? delegateAt : now + 2_000);
-}
-
 /**
  * Finds the index of the output whose script matches the destination script.
  * Returns -1 if no match is found.
@@ -495,4 +476,14 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
         v.forfeitTapLeafScript !== undefined &&
         v.intentTapLeafScript !== undefined
     );
+}
+
+function estimatorAt(intentFee: ArkadeInfo["fees"]["intentFee"], at: Date): Estimator {
+    // replace now() function with the delegation timestamp
+    const now = `double(${at.getTime() / 1000})`;
+    return new Estimator({
+        ...intentFee,
+        offchainInput: intentFee.offchainInput?.replace("now()", now),
+        offchainOutput: intentFee.offchainOutput?.replace("now()", now),
+    });
 }
