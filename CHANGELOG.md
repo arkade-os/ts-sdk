@@ -205,6 +205,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
+  returns checkpoints without the condition witness, so finalizing failed with
+  `INVALID_SIGNATURE`. The builder now adds it back after signing.
+
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
   so an indexer read missing the solver's preimage ended a paid send as
