@@ -49,7 +49,7 @@ import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 /**
  * Outpoints (`txid:vout`) of VTXOs whose contract signer is past its cutoff (`EXPIRED`) and that
  * the server has not swept yet. The operator will not co-sign them, so `getBalance` buckets them
- * under `pendingRecovery` and coin selection skips them (a send would fail at submit); they
+ * under `deprecatedSignerLocked` and coin selection skips them (a send would fail at submit); they
  * recover once swept and re-settled under the active signer.
  *
  * Pure + offline: classifies against a cached {@link SignerSet}, never a fresh GetInfo.

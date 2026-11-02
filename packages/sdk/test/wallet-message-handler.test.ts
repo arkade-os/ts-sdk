@@ -2062,7 +2062,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 preconfirmed: 0,
                 available: 100000,
                 recoverable: 0,
-                pendingRecovery: 0,
+                deprecatedSignerLocked: 0,
                 unrolled: 50000,
                 total: 150000,
             },
@@ -2095,7 +2095,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 100000,
                 available: 100000,
                 recoverable: 0,
-                pendingRecovery: 0,
+                deprecatedSignerLocked: 0,
                 unrolled: 50000,
                 total: 150000,
             },
@@ -2130,7 +2130,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 preconfirmed: 0,
                 available: 100000,
                 recoverable: 0,
-                pendingRecovery: 0,
+                deprecatedSignerLocked: 0,
                 unrolled: 0,
                 total: 100000,
             },
@@ -2159,14 +2159,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
             type: "GET_BALANCE",
         } as any);
 
-        // Excluded from the spendable buckets, surfaced under pendingRecovery,
+        // Excluded from the spendable buckets, surfaced under deprecatedSignerLocked,
         // still counted in total.
         expect(response).toMatchObject({
             type: "BALANCE",
             payload: {
                 settled: 100000,
                 available: 100000,
-                pendingRecovery: 70000,
+                deprecatedSignerLocked: 70000,
                 total: 170000,
             },
         });
@@ -2350,8 +2350,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 // The ungated 10000, minus the one dust carrier (546) the
                 // available asset rides on.
                 available: 9454,
-                gated: 20000,
+                contractLocked: 20000,
                 pendingSettlement: 0,
+                gated: 20000, // deprecated alias of contractLocked
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
                 availableAssets: [{ assetId: "cc".repeat(32), amount: 3n }],
             },
@@ -2389,7 +2390,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(response).toMatchObject({
             type: "BALANCE",
-            payload: { settled: 10000, available: 0, gated: 0, pendingSettlement: 10000 },
+            payload: { settled: 10000, available: 0, contractLocked: 0, pendingSettlement: 10000 },
         });
     });
 

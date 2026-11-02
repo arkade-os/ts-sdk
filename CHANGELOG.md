@@ -35,6 +35,15 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
+  is renamed `deprecatedSignerLocked`.** Each name now says what holds the
+  funds: a contract that generic spending refuses, or a server signer past
+  its cutoff. The old names stay as deprecated aliases with the same values,
+  and `intentLocked` returns as a deprecated alias of `pendingSettlement`.
+  Code that reads a balance keeps working. Code that builds a `WalletBalance`
+  itself, such as a test mock, must set the new fields and the aliases. The
+  service-worker `GET_BALANCE` payload carries both names. The `"gated"`
+  transaction history tag is unchanged.
 - **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
   `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
   `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,

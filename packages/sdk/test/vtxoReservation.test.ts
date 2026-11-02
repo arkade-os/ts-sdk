@@ -50,7 +50,7 @@ describe("reserveVtxos", () => {
         expect(held.reserved).toBe(10_000);
         expect(held.available).toBe(before.available - 10_000);
         expect(held.settled + held.preconfirmed).toBe(
-            held.available + held.gated + held.pendingSettlement + held.reserved,
+            held.available + held.contractLocked + held.pendingSettlement + held.reserved,
         );
         hold.release();
         hold.release();
@@ -137,7 +137,7 @@ describe("computeOffchainBalance reserved bucket", () => {
         });
 
         expect([
-            balance.gated,
+            balance.contractLocked,
             balance.pendingSettlement,
             balance.reserved,
             balance.available,
