@@ -3,11 +3,9 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). `asset-swap` and `sats-swap` live in `contracts/`, compiled from
- * `.ark` and loaded by {@link swapPrograms}. `fulfill` pays `receiver` at least `amount` on the
- * output at the spending input's index, and never inspects the deposit. Who meets whom is
- * outside this contract. A funded script from the previous leaf still selects
- * `legacy/swap-want-*.program.v1.json`.
+ * README's Roles section). `fulfill` pays `receiver` at least `amount` on the output at the
+ * spending input's index and never inspects the deposit. The programs are loaded from
+ * `contracts/*.ark` in `program.ts`. A funded script from the previous leaf still selects that tree.
  */
 import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
@@ -30,7 +28,7 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import { legacySwapPrograms, swapPrograms } from "./covenant";
+import { legacySwapPrograms, swapPrograms } from "./program";
 import {
     promoteOfferContract,
     RETIRABLE,
