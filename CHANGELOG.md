@@ -204,8 +204,10 @@ style and have not been backfilled.
   `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
   the background after `ready`, without holding up new swaps or `dispose()`.
   It moves the send to `settled` if the lockup
-  now reads claimed; any other read leaves it as is. A correction a sink
-  refuses stays monitored until the poll lands the write.
+  now reads claimed; any other read leaves it as is. A correction drops the
+  refund spend the record named, even when the claim read names no ark
+  transaction. A correction a sink refuses stays monitored until the poll lands
+  the write.
 
 - **Over Electrum, spend checks on a deposit or an HTLC funding no longer read
   the payer's other outputs.** Electrum has no spend index, so

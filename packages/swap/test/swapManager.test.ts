@@ -4655,6 +4655,8 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(states).toEqual(["settled"]);
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
             expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
+            // The claim read names no ark tx, and the stored refund spend is not what ended it.
+            expect(store.records.get(RFQ_ID)?.lockupSpendTxids).toBeUndefined();
             expect(await m.hasSwap(RFQ_ID)).toBe(false);
         });
 

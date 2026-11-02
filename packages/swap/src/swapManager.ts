@@ -853,6 +853,7 @@ export class RfqSwapManager {
                 if (fate.fate !== "claimed") continue;
                 if (this.monitored.has(record.rfqId)) continue;
                 if (this.removed.get(record.rfqId) !== removedAt) continue;
+                delete swap.lockupSpendTxids;
                 this.stampLockupSpends(swap, fate.spends);
                 this.stampSettlementPreimage(swap, fate.preimage);
                 this.setState(swap, "settled");
