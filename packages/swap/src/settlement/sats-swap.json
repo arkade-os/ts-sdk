@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "contractName": "AssetPayout",
+  "contractName": "SatsSwap",
   "constructorInputs": [
     {
       "name": "receiver",
@@ -8,14 +8,6 @@
     },
     {
       "name": "amount",
-      "type": "int"
-    },
-    {
-      "name": "assetTxid",
-      "type": "bytes32"
-    },
-    {
-      "name": "assetGroupIndex",
       "type": "int"
     },
     {
@@ -31,10 +23,7 @@
         "asm": [
           "OP_PUSHCURRENTINPUTINDEX",
           "OP_DUP",
-          "<assetTxid>",
-          "<assetGroupIndex>",
-          "OP_INSPECTOUTASSETLOOKUP",
-          "OP_VERIFY",
+          "OP_INSPECTOUTPUTVALUE",
           "<amount>",
           "OP_GREATERTHANOREQUAL",
           "OP_VERIFY",
@@ -100,9 +89,9 @@
     }
   ],
   "source": {
-    "entry": "asset-payout.ark",
+    "entry": "sats-swap.ark",
     "files": {
-      "asset-payout.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` of the asset.\n// Coordination of who funds it lives outside the contract.\ncontract AssetPayout(\n    pubkey receiver,\n    int amount,\n    bytes32 assetTxid,\n    int assetGroupIndex,\n    pubkey user\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
+      "sats-swap.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` sats.\n// Coordination of who funds it lives outside the contract.\ncontract SatsSwap(\n    pubkey receiver,\n    int amount,\n    pubkey user\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].value >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
     }
   },
   "compiler": {
@@ -112,6 +101,6 @@
       "optimize": true
     }
   },
-  "updatedAt": "2026-11-02T17:36:33.672095917+00:00",
-  "fingerprint": "sha256:c42a68496fd7209303ce9d65e5a81338c2de71adff0080b0de3a07edaded4faf"
+  "updatedAt": "2026-11-02T17:43:42.616824535+00:00",
+  "fingerprint": "sha256:d7a60ab2178ede40a2e4867816689ea022641531cc662b562bebd7caa1ef96c4"
 }

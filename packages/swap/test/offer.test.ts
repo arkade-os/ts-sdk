@@ -65,7 +65,7 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 describe("swap offer", () => {
     it("loads the asset settlement artifact the binding compiles", () => {
         const compilerArtifact: ContractArtifact = JSON.parse(
-            readFileSync(new URL("../src/settlement/asset-payout.json", import.meta.url), "utf8"),
+            readFileSync(new URL("../src/settlement/asset-swap.json", import.meta.url), "utf8"),
         );
         expect(compilerArtifact.formatVersion).toBe(1);
         expect(
@@ -155,7 +155,7 @@ describe("swap offer", () => {
             operatorPubkey,
         );
         expect(arkade.stringifyArtifact(program)).toBe(
-            '{"version":1,"name":"SatsPayout","params":[{"name":"receiver","type":"pubkey"},' +
+            '{"version":1,"name":"SatsSwap","params":[{"name":"receiver","type":"pubkey"},' +
                 '{"name":"amount","type":"int"},{"name":"user","type":"pubkey"},' +
                 '{"name":"server","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
                 '"functions":{"fulfill":{"group":"fulfill","tapscript":{"signers":["$server"],' +
