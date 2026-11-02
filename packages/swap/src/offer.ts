@@ -3,7 +3,7 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). The settlement contracts live in `settlement/` (`asset-swap`,
+ * README's Roles section). The contracts live in `contracts/` (`asset-swap`,
  * `sats-swap`), compiled from `.ark`. `fulfill` pays `receiver` at least `amount` on the output
  * at the spending input's index, and never inspects the deposit. Who meets whom is outside
  * this contract. A funded script from the previous leaf still selects
@@ -30,8 +30,8 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import assetSwapArtifact from "./settlement/asset-swap.json";
-import satsSwapArtifact from "./settlement/sats-swap.json";
+import assetSwapArtifact from "./contracts/asset-swap.json";
+import satsSwapArtifact from "./contracts/sats-swap.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
 import {
@@ -55,7 +55,7 @@ type Artifact = Parameters<typeof arkade.parseArtifact>[0];
 type SettlementArtifact = Parameters<typeof arkade.programFromArtifact>[0];
 
 /**
- * The settlement contracts, one per payout. An exit delay compiles a third closure that is in
+ * One contract per payout. An exit delay compiles a third closure that is in
  * neither artifact (see {@link withExitClosure}).
  *
  * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
@@ -172,7 +172,7 @@ export function swapProgramBinding(
         offer,
         operatorPubkey,
         offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
-        settlementArgs(offer),
+        contractArgs(offer),
     );
     if (!expected || programMatches(current, expected)) return current;
     const previous = bindSwapProgram(
@@ -185,8 +185,8 @@ export function swapProgramBinding(
     return current;
 }
 
-/** Constructor args of the settlement artifacts. The offer's own names stay at this boundary. */
-function settlementArgs(
+/** Constructor args of `asset-swap` / `sats-swap`. The offer's own names stay at this boundary. */
+function contractArgs(
     offer: Omit<Offer, "swapPkScript">,
 ): Record<string, Uint8Array | bigint | number> {
     const receiver = offer.makerPkScript.subarray(2);

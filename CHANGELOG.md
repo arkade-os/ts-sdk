@@ -16,7 +16,7 @@ style and have not been backfilled.
 
 - **`@arkade-os/swap`: a newly derived offer address changes.** The settlement
   leaf is now the compiler artifact `asset-swap` or `sats-swap`
-  (`settlement/*.ark`). `fulfill` pays `receiver` on the output at the spending
+  (`contracts/*.ark`). `fulfill` pays `receiver` on the output at the spending
   input's index, so the same leaf can sit in a batch where input i is paid at
   output i. The contract does not describe how an intent and a solver meet;
   the RFQ flow still does that and only supplies the constructor args. A

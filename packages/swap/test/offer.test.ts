@@ -63,9 +63,9 @@ const goldens: [Omit<Offer, "swapPkScript">, string][] = [
 ];
 
 describe("swap offer", () => {
-    it("loads the asset settlement artifact the binding compiles", () => {
+    it("loads the asset-swap artifact the binding compiles", () => {
         const compilerArtifact: ContractArtifact = JSON.parse(
-            readFileSync(new URL("../src/settlement/asset-swap.json", import.meta.url), "utf8"),
+            readFileSync(new URL("../src/contracts/asset-swap.json", import.meta.url), "utf8"),
         );
         expect(compilerArtifact.formatVersion).toBe(1);
         expect(
