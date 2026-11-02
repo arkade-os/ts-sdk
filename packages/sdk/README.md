@@ -197,7 +197,7 @@ declare const nativeSigner: IdentityBridge
 const identity = await BridgeIdentity.create(nativeSigner)
 const wallet = await Wallet.create({
   identity,
-  arkServer: { url: 'https://mutinynet.arkade.sh' },
+  service: { operatorUrl: 'https://mutinynet.arkade.sh' },
 })
 ```
 
