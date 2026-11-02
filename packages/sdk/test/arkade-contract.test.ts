@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
@@ -188,6 +188,122 @@ describe("arkade.Arkade / ArkadeContract", () => {
         });
         return { ark, captured };
     }
+
+    it("captures the receipt callback before waiting for the covenant build", async () => {
+        const { ark, captured } = await connect();
+        const builder = ark
+            .contract(htlcProgram(), args)
+            .functions.claim(new Uint8Array(32))
+            .from(COIN)
+            .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT);
+        const getPrevious = ark.indexer!.getVirtualTxs.bind(ark.indexer);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const building = vi
+            .spyOn(ark.indexer!, "getVirtualTxs")
+            .mockImplementation(async (...args) => {
+                await gate;
+                return getPrevious(...args);
+            });
+        const receipt = vi.fn(() => {
+            expect(captured.arkTx).toBeUndefined();
+        });
+        const options: arkade.EmulatorSubmitOptions = { beforeEmulatorSubmit: receipt };
+        const pending = builder.send(options);
+        pending.catch(() => {});
+        try {
+            await vi.waitFor(() => expect(building).toHaveBeenCalledOnce());
+            options.beforeEmulatorSubmit = undefined;
+            expect(captured.arkTx).toBeUndefined();
+        } finally {
+            release();
+            await pending;
+        }
+        expect(receipt).toHaveBeenCalledOnce();
+        expect(captured.arkTx).toBeDefined();
+    });
+
+    it.each([false, true])(
+        "awaits the receipt when only the second input is a covenant (transaction builder: %s)",
+        async (standalone) => {
+            const identity = stubIdentity(xOnly());
+            const sign = vi.spyOn(identity, "sign");
+            const { ark, captured } = await connect({ identity });
+            const pure = ark.contract(exitProgram());
+            const covenant = ark.contract(htlcProgram(), args);
+            const builder = standalone ? ark.transaction() : pure.functions.exit();
+            const error = new Error("receipt storage failed");
+            const beforeEmulatorSubmit = vi.fn(async (proposal: arkade.EmulatorSubmitProposal) => {
+                expect(captured.arkTx).toBeUndefined();
+                const tx = Transaction.fromPSBT(base64.decode(proposal.arkTx));
+                expect(tx.inputsLength).toBe(2);
+                expect(proposal.checkpointTxs).toHaveLength(2);
+                expect(
+                    Extension.fromBytes(tx.getOutput(1).script!)
+                        .getEmulatorPacket()!
+                        .entries.map((entry) => entry.vin),
+                ).toEqual([1]);
+                throw error;
+            });
+            const submit = vi.spyOn(ark.arkProvider, "submitTx");
+            await expect(
+                builder
+                    .from(COIN, pure.unlock.exit())
+                    .from(mintCoin(10_000), covenant.unlock.claim(new Uint8Array(32)))
+                    .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT * 2n)
+                    .send({ beforeEmulatorSubmit }),
+            ).rejects.toBe(error);
+            expect(beforeEmulatorSubmit).toHaveBeenCalledOnce();
+            expect(sign.mock.calls.map((call) => call[1])).toEqual([[0], [0]]);
+            expect(submit).not.toHaveBeenCalled();
+            expect(captured.arkTx).toBeUndefined();
+            await builder.send();
+            expect(captured.arkTx).toBeDefined();
+            expect(submit).not.toHaveBeenCalled();
+        },
+    );
+
+    it("retains server-only rejection for a mixed covenant spend with a receipt callback", async () => {
+        const { ark, captured } = await connect();
+        const pure = ark.contract({
+            version: 1,
+            params: [{ name: "server", type: "pubkey" }],
+            functions: { spend: { tapscript: { signers: ["$server"] } } },
+        });
+        const covenant = ark.contract(htlcProgram(), args);
+        const beforeEmulatorSubmit = vi.fn();
+        await expect(
+            ark
+                .transaction()
+                .from(COIN, pure.unlock.spend())
+                .from(mintCoin(10_000), covenant.unlock.claim(new Uint8Array(32)))
+                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT * 2n)
+                .send({ beforeEmulatorSubmit }),
+        ).rejects.toThrow(/only the server/);
+        expect(beforeEmulatorSubmit).not.toHaveBeenCalled();
+        expect(captured.arkTx).toBeUndefined();
+    });
+
+    it("rejects an emulator receipt callback on a non-covenant spend before signing or broadcasting", async () => {
+        const identity = stubIdentity(xOnly());
+        const sign = vi.spyOn(identity, "sign");
+        const { ark } = await connect({ identity });
+        const submit = vi.spyOn(ark.arkProvider, "submitTx");
+        const beforeEmulatorSubmit = vi.fn();
+        await expect(
+            ark
+                .contract(exitProgram())
+                .functions.exit()
+                .from(COIN)
+                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
+                .send({ beforeEmulatorSubmit }),
+        ).rejects.toThrow(/beforeEmulatorSubmit.*covenant/);
+        expect(sign).not.toHaveBeenCalled();
+        expect(submit).not.toHaveBeenCalled();
+        expect(beforeEmulatorSubmit).not.toHaveBeenCalled();
+    });
 
     it("derives the same address as the hand-built VtxoScript tree", async () => {
         const { ark } = await connect();

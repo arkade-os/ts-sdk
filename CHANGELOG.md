@@ -65,6 +65,17 @@ style and have not been backfilled.
   `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
+- **Opt-in SDK-native execution for a bounded delegatee template subset.**
+  NativeExecutor imports, funds and restores one-input, full-principal offchain
+  covenant plans through the existing wallet, builder and ContractManager. Locked
+  contracts stay outside generic payment selection and unsupported template
+  features reject before funding. RestDelegateeProvider adds generic template and
+  watch endpoints beside the unchanged legacy DelegateProvider.
+- **Native execution can await persistence before emulator dispatch.** The
+  optional beforeEmulatorSubmit callback receives immutable exact proposal bytes;
+  rejection prevents submission. It does not establish server acceptance or retry
+  authority, and the caller owns reconciliation.
+
 - **Wallet-state updates can use an optional backend transaction.** Repository
   implementations expose `atomicWalletState`, which `updateWalletState` uses
   instead of a separate read and save, without changing storage schemas or
@@ -297,6 +308,11 @@ style and have not been backfilled.
   transaction instead of joining it. A repository or serialized-executor call
   made inside a `runInTransaction` callback therefore deadlocks; after 10s the
   SDK warns with that call's stack.
+
+- **Queued native execution keeps its selected source.** Snapshot and validate
+  the outpoint before any wait, then use it for selection and refreshes. Native
+  executors sharing one wallet object serialize attempts; this does not coordinate
+  ordinary Wallet spends, other processes or duplicate SDK modules.
 
 - **Swap SQLite repositories accept the SDK's serialized executor.** Transaction
   callbacks use the supplied raw executor instead of enqueueing statements behind

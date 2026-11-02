@@ -10,6 +10,8 @@ import {
     submitViaEmulator,
     Transaction,
     VtxoScript,
+    type EmulatorSubmitProposal,
+    type EmulatorSubmitOptions,
 } from "../src";
 import { mintCoin } from "./helpers/prevArkTx";
 
@@ -48,6 +50,112 @@ const signers = (tx: Transaction, index: number) =>
     (tx.getInput(index).tapScriptSig ?? []).map(([{ pubKey }]) => hex.encode(pubKey));
 
 describe("submitViaEmulator", () => {
+    it("captures the receipt callback before waiting for the signer", async () => {
+        const emu = emulator();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const sign = vi.fn(async (tx: Transaction, indexes?: number[]) => {
+            await gate;
+            return user.sign(tx, indexes);
+        });
+        const receipt = vi.fn(() => {
+            expect(emu.submitTx).not.toHaveBeenCalled();
+        });
+        const options: EmulatorSubmitOptions & { inputIndexes: number[] } = {
+            inputIndexes: [1],
+            beforeEmulatorSubmit: receipt,
+        };
+        const pending = submitViaEmulator(emu, await spend(), { sign }, options);
+        try {
+            await vi.waitFor(() => expect(sign).toHaveBeenCalledOnce());
+            options.beforeEmulatorSubmit = undefined;
+            expect(emu.submitTx).not.toHaveBeenCalled();
+        } finally {
+            release();
+            await pending;
+        }
+        expect(receipt).toHaveBeenCalledOnce();
+        expect(emu.submitTx).toHaveBeenCalledOnce();
+    });
+
+    it("awaits an immutable receipt containing the exact signed request before dispatch", async () => {
+        const emu = emulator();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let receipt!: EmulatorSubmitProposal;
+        const beforeEmulatorSubmit = vi.fn(async (proposal: EmulatorSubmitProposal) => {
+            receipt = proposal;
+            await gate;
+        });
+        const pending = submitViaEmulator(emu, await spend(), user, {
+            inputIndexes: [1],
+            beforeEmulatorSubmit,
+        });
+        try {
+            await vi.waitFor(() => expect(beforeEmulatorSubmit).toHaveBeenCalledOnce());
+            expect(emu.submitTx).not.toHaveBeenCalled();
+            expect(Object.isFrozen(receipt)).toBe(true);
+            expect(Object.isFrozen(receipt.checkpointTxs)).toBe(true);
+            expect(Reflect.set(receipt, "arkTx", "changed")).toBe(false);
+            expect(Reflect.set(receipt.checkpointTxs, "0", "changed")).toBe(false);
+            const userKey = hex.encode(await user.xOnlyPublicKey());
+            expect(signers(decode(receipt.arkTx), 1)).toEqual([userKey]);
+            expect(signers(decode(receipt.checkpointTxs[1]), 0)).toEqual([userKey]);
+            expect(receipt.txid).toBe(decode(receipt.arkTx).id);
+        } finally {
+            release();
+            await pending;
+        }
+        expect(emu.submitTx).toHaveBeenCalledExactlyOnceWith(receipt.arkTx, [
+            ...receipt.checkpointTxs,
+        ]);
+    });
+
+    it.each([false, true])(
+        "does not submit when receipt persistence rejects (async=%s)",
+        async (async) => {
+            const emu = emulator();
+            const failure = new Error("receipt storage failed");
+            const beforeEmulatorSubmit = () => {
+                if (async) return Promise.reject(failure);
+                throw failure;
+            };
+            await expect(
+                submitViaEmulator(emu, await spend(), user, {
+                    inputIndexes: [1],
+                    beforeEmulatorSubmit,
+                }),
+            ).rejects.toBe(failure);
+            expect(emu.submitTx).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([false, true])(
+        "validates the encoded request despite original transaction mutation (wrongReply=%s)",
+        async (wrongReply) => {
+            const tx = await spend();
+            const originalId = tx.arkTx.id;
+            const emu = emulator((encoded) =>
+                wrongReply ? base64.encode(tx.arkTx.toPSBT()) : encoded,
+            );
+            const pending = submitViaEmulator(emu, tx, undefined, {
+                inputIndexes: [],
+                beforeEmulatorSubmit: async () => {
+                    await Promise.resolve();
+                    tx.arkTx.updateOutput(0, { amount: 1n });
+                },
+            });
+            if (wrongReply)
+                await expect(pending).rejects.toBeInstanceOf(ServerResponseMismatchError);
+            else await expect(pending).resolves.toMatchObject({ txid: originalId });
+            expect(decode(emu.submitTx.mock.calls[0][0]).id).toBe(originalId);
+        },
+    );
+
     it("signs only the user's inputs and their checkpoints, and submits them", async () => {
         const emu = emulator();
         await submitViaEmulator(emu, await spend(), user, { inputIndexes: [1] });
@@ -96,9 +204,14 @@ describe("submitViaEmulator", () => {
 
     it("refuses user inputs without a signer, before submitting", async () => {
         const emu = emulator();
+        const beforeEmulatorSubmit = vi.fn();
         await expect(
-            submitViaEmulator(emu, await spend(), undefined, { inputIndexes: [1] }),
+            submitViaEmulator(emu, await spend(), undefined, {
+                inputIndexes: [1],
+                beforeEmulatorSubmit,
+            }),
         ).rejects.toMatchObject({ message: expect.stringContaining("identity") });
+        expect(beforeEmulatorSubmit).not.toHaveBeenCalled();
         expect(emu.submitTx).not.toHaveBeenCalled();
     });
 });
