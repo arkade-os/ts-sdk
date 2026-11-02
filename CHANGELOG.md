@@ -214,6 +214,15 @@ style and have not been backfilled.
   fields, such as an onchain one, is never refused for expiry. An `expiresAt`
   restored from JSON as a string is read as a date.
 
+- **`ArkadeTransactionBuilder` refuses an asset coin with no asset route.** arkd
+  refuses an input whose assets the transaction does not route
+  (`ASSET_VALIDATION_FAILED`), so `.from(await contract.getUtxos())` with one
+  asset-carrying coin sank the whole spend. `send()` now refuses a coin whose
+  `assets` neither a `.withAsset()` input nor a caller's asset packet
+  (`.withPacket()`) routes, naming the coin and input; `build()` leaves routing
+  to the caller. Selection without `.from()` skips asset coins when the spend
+  routes no assets from input 0, so it picks a plain coin that can pay.
+
 - **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
   returns checkpoints without the condition witness, so finalizing failed with
   `INVALID_SIGNATURE`. The builder now adds it back after signing.

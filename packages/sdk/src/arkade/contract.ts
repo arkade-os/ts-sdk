@@ -61,7 +61,7 @@ import type { ArkadeInfo, ArkProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
-import type { ArkadeBroadcaster, VirtualCoin } from "../wallet";
+import type { ArkadeBroadcaster, Asset, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
@@ -202,6 +202,12 @@ export interface Utxo {
      * refused for expiry; height-based expiry isn't checked, since that needs the chain tip.
      */
     expiresAt?: Date;
+    /**
+     * Assets the coin carries, as {@link ArkadeContract.getUtxos} reports them. arkd refuses an
+     * input whose assets the spend does not route, so `send()` needs a `.withAsset()` input or a
+     * caller's asset packet for such a coin, and selection without `.from()` skips it otherwise.
+     */
+    assets?: readonly Asset[];
     /**
      * Raw bytes of the ark tx that created this VTXO, attached as its input's PrevArkTx. Overrides
      * the indexer-resolved value; supply it when the tx isn't indexable yet (a recursive covenant
@@ -1114,6 +1120,14 @@ export class ArkadeTransactionBuilder {
                 `${serverOnly.unlocker.fn.name}: a leaf without a covenant needs the user's signature, and this one has only the server's`,
             );
         }
+        // arkd refuses an input whose assets the spend does not route.
+        inputs.forEach(({ coin }, vin) => {
+            if (coin.assets?.length && !this.routesAssetsFrom(vin)) {
+                throw new Error(
+                    `coin ${coin.txid}:${coin.vout} carries assets; route them with .withAsset() from input ${vin}`,
+                );
+            }
+        });
 
         if (inputs.some(({ unlocker }) => unlocker.fn.arkadeScript)) {
             // Covenant path: the emulator runs the arkade script, adds the remaining
@@ -1192,7 +1206,11 @@ export class ArkadeTransactionBuilder {
 
     private async selectCoin(unlocker: ArkadeUnlocker, amount: bigint): Promise<Utxo> {
         const now = Date.now();
-        const utxos = (await unlocker.contract.getUtxos()).filter((u) => !unspendable(u, now));
+        // The selected coin is input 0; an asset coin is taken only if its assets are routed.
+        const routed = this.routesAssetsFrom(0);
+        const utxos = (await unlocker.contract.getUtxos()).filter(
+            (u) => !unspendable(u, now) && (routed || !u.assets?.length),
+        );
         if (utxos.length === 0) throw new Error("no spendable coins for this contract");
         // Smallest covering coin, else the largest (the rest may come via `.fund()`).
         const covering = utxos
@@ -1200,6 +1218,17 @@ export class ArkadeTransactionBuilder {
             .sort((a, b) => a.value - b.value);
         if (covering.length > 0) return covering[0];
         return [...utxos].sort((a, b) => b.value - a.value)[0];
+    }
+
+    /**
+     * Whether input `vin`'s assets are routed: by a `.withAsset()` input, or a caller's asset packet.
+     * A caller's packet counts for every input, unread; arkd checks what it actually routes.
+     */
+    private routesAssetsFrom(vin: number): boolean {
+        return (
+            this.extraPackets.some((p) => p.type() === AssetPacket.PACKET_TYPE) ||
+            this.assetSpecs.some((spec) => spec.inputs.some((i) => i.vin === vin))
+        );
     }
 
     private buildAssetPacket(): ExtensionPacket {
