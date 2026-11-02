@@ -3,8 +3,8 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). The contracts live in `contracts/` (`asset-swap`,
- * `sats-swap`), compiled from `.ark`. `fulfill` pays `receiver` at least `amount` on the output
+ * README's Roles section). `asset-swap` and `sats-swap` live in `swap/`, compiled from
+ * `.ark`. `fulfill` pays `receiver` at least `amount` on the output
  * at the spending input's index, and never inspects the deposit. Who meets whom is outside
  * this contract. A funded script from the previous leaf still selects
  * `legacy/swap-want-*.program.v1.json`.
@@ -30,8 +30,8 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import assetSwapArtifact from "./contracts/asset-swap.json";
-import satsSwapArtifact from "./contracts/sats-swap.json";
+import assetSwapArtifact from "./swap/asset-swap.json";
+import satsSwapArtifact from "./swap/sats-swap.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
 import {
