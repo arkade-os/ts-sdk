@@ -704,7 +704,7 @@ console.log('Failed:', delegationResult.failed.length)
 
 The `delegate` method groups virtual outputs by expiry date and submits them to the delegation service.
 
-By default, delegation is scheduled at 90% of each virtual output's remaining lifetime.
+By default, delegation is scheduled three operator sessions before the earliest expiry in each group. This is best effort: a delegator outage near expiry can miss it, leaving the virtual output recoverable.
 
 You can override this with an explicit date:
 
