@@ -65,6 +65,13 @@ style and have not been backfilled.
   `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
+- **Prepared native requests can be persisted and reconciled.** An opt-in
+  NativeExecutionJournal requires asserted persistent atomic storage, admits one
+  exact immutable proposal and keeps the slot occupied. Public indexer evidence
+  must match the saved source, signed checkpoint and full-principal payout. A
+  historical receipt commits only if the exact prepared request still matches;
+  cached reads use no RPC. There is no release, replay or shared coin ownership.
+
 - **Opt-in SDK-native execution for a bounded delegatee template subset.**
   NativeExecutor imports, funds and restores one-input, full-principal offchain
   covenant plans through the existing wallet, builder and ContractManager. Locked
@@ -314,6 +321,10 @@ style and have not been backfilled.
   transaction instead of joining it. A repository or serialized-executor call
   made inside a `runInTransaction` callback therefore deadlocks; after 10s the
   SDK warns with that call's stack.
+
+- **Native reconciliation accepts complete unpaged indexer replies.** The
+  server's page:null envelope is accepted without stripping metadata; malformed
+  or incomplete pagination still leaves the request unresolved.
 
 - **Queued native execution keeps its selected source.** Snapshot and validate
   the outpoint before any wait, then use it for selection and refreshes. Native
