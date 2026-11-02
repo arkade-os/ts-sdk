@@ -204,7 +204,8 @@ export class DelegateManagerImpl implements IDelegateManager {
  * on behalf of the wallet owner.
  * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
  * @param delegateAt - Optional delegation time. By default, three operator sessions before the
- *                     earliest expiry, or two seconds from now if that time has passed.
+ *                     earliest expiry, or two seconds from now if that time has passed. With no
+ *                     future expiry, such as only recoverable outputs, one minute from now.
  */
 async function delegate(
     identity: Identity,
