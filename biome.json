@@ -23,6 +23,7 @@
             "!**/*.md",
             "!packages/swap/src/*.program.json",
             "!packages/swap/src/legacy/*.program.v0.json",
+            "!packages/swap/src/orders/contracts/*.json",
             "!**/fixtures/arkadec/**"
         ]
     },

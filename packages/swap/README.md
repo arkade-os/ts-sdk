@@ -233,6 +233,7 @@ backend.
 | `@arkade-os/swap/node`             | the Node storage default                                          |
 | `@arkade-os/swap/repositories/*`   | the React Native backends                                         |
 | `@arkade-os/swap/nostr`            | the Nostr RFQ transport, for hand-building one                     |
+| `@arkade-os/swap/orders`           | partial-fill limit orders: standing sell and buy covenants         |
 | `@arkade-os/swap/protocol`         | the v1 building blocks, deprecated                                 |
 
 The root is a curated surface — if a name the client's modules define is not on it, it is on

@@ -1,0 +1,58 @@
+pragma arkade ^0.1.0;
+
+// Standing order to sell `asset` at `price` sats per unit. The continuation at the order's own input
+// index keeps the unsold units and accumulates proceeds, so two orders can never share one output.
+contract SellOrder(
+  pubkey maker,
+  bytes32 makerProgram,
+  bytes32 assetTxid, int assetGidx,
+  int price,
+  int minFill,
+  int expiresAt
+) {
+  // The fill that sells the last unit pays the maker directly: a zero-asset continuation would fail
+  // the asset opcodes. Every fill is worth at least 330 sats and never leaves a remainder worth less.
+  function fill(int qty) {
+    int i = this.activeInputIndex;
+    int remaining = tx.inputs[i].assets.lookup(assetTxid, assetGidx);
+    let out = tx.outputs[i].script;
+    let own = tx.input.current.script;
+    require(qty > 0 && qty <= remaining, "qty");
+    require(qty >= minFill || qty == remaining, "below min fill");
+    require(qty * price >= 330, "below 330 sats");
+    require(qty == remaining || (remaining - qty) * price >= 330, "dust remainder");
+    require(expiresAt == 0 || !checkTime(expiresAt), "expired");
+    require(out.version == 1, "output version");
+    require(tx.outputs[i].value >= tx.input.current.value + qty * price, "proceeds");
+    require(
+      (qty == remaining && out.program == makerProgram && tx.outputs[i].assets.length == 0) ||
+        (qty < remaining && out.program == own.program &&
+          tx.outputs[i].assets.length == 1 && tx.outputs[i].assets.lookup(assetTxid, assetGidx) == remaining - qty),
+      "remainder"
+    );
+  }
+
+  // Anyone may return an expired order to the maker. No asset opcodes: OP_TUNNEL also covers an asset-free coin.
+  function settle() {
+    int i = this.activeInputIndex;
+    let out = tx.outputs[i].script;
+    require(expiresAt > 0 && checkTime(expiresAt), "still live");
+    require(out.program == makerProgram, "maker");
+    require(out.version == 1, "maker version");
+    require(this.tunnel(i, {script: false, value: true, assets: true}), "settle");
+  }
+
+  function renew() {
+    require(tx.version == 2, "intent only");
+    require(this.tunnel(this.activeInputIndex - 1), "tunnel");
+  }
+
+  function cancel(signature makerSig, signature serverSig) tapscript {
+    require(checkMultisig([maker, server], [makerSig, serverSig]));
+  }
+
+  function unilateral(signature makerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(makerSig, maker));
+  }
+}
