@@ -105,6 +105,7 @@ export {
     bitcoinNetworkOf,
     BTC_ASSET_PART,
     btcAssetPart,
+    btcAsset,
     btcOn,
     formatAssetId,
     isAssetId,

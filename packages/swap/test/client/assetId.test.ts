@@ -7,7 +7,7 @@ import {
     assetPartOf,
     bitcoinNetworkOf,
     btcAssetPart,
-    btcOn,
+    btcAsset,
     formatAssetId,
     isAssetId,
     isBtcAsset,
@@ -112,10 +112,10 @@ describe("sameness across rails", () => {
     it("crosses rails without a shared id", () => {
         // The whole reason the rail is the namespace: one BTC per rail, and
         // sameness stays a comparison instead of a string both sides must agree on.
-        expect(sameAsset(btcOn("arkade", "bitcoin"), btcOn("bitcoin", "bitcoin"))).toBe(true);
-        expect(sameAsset(btcOn("bolt11", "bitcoin"), btcOn("arkade", "bitcoin"))).toBe(true);
-        expect(btcOn("arkade", "bitcoin")).not.toBe(btcOn("bitcoin", "bitcoin"));
-        expect(assetPartOf(btcOn("arkade", "regtest"))).toBe("slip44:1");
+        expect(sameAsset(btcAsset("arkade", "bitcoin"), btcAsset("bitcoin", "bitcoin"))).toBe(true);
+        expect(sameAsset(btcAsset("bolt11", "bitcoin"), btcAsset("arkade", "bitcoin"))).toBe(true);
+        expect(btcAsset("arkade", "bitcoin")).not.toBe(btcAsset("bitcoin", "bitcoin"));
+        expect(assetPartOf(btcAsset("arkade", "regtest"))).toBe("slip44:1");
     });
 
     it("does not confuse two arkade assets", () => {
@@ -126,18 +126,20 @@ describe("sameness across rails", () => {
 
     it("keeps BTC and an issued asset apart on the same rail", () => {
         const asset0 = arkadeAsset("bitcoin", issued(`${"ff".repeat(32)}0000`));
-        expect(sameAsset(asset0, btcOn("arkade", "bitcoin"))).toBe(false);
-        expect(issuanceOf(btcOn("arkade", "bitcoin"))).toBe(undefined);
+        expect(sameAsset(asset0, btcAsset("arkade", "bitcoin"))).toBe(false);
+        expect(issuanceOf(btcAsset("arkade", "bitcoin"))).toBe(undefined);
     });
 
     it("drops the rail and nothing else: the network still has to agree", () => {
         // Regtest BTC settles nothing on mainnet, on either rail. The asset
         // part is identical in all four of these; the reference is what parts
         // them.
-        expect(sameAsset(btcOn("arkade", "regtest"), btcOn("bitcoin", "bitcoin"))).toBe(false);
-        expect(sameAsset(btcOn("arkade", "regtest"), btcOn("arkade", "bitcoin"))).toBe(false);
-        expect(sameAsset(btcOn("bolt11", "signet"), btcOn("bolt11", "testnet"))).toBe(false);
-        expect(sameAsset(btcOn("arkade", "regtest"), btcOn("bitcoin", "regtest"))).toBe(true);
+        expect(sameAsset(btcAsset("arkade", "regtest"), btcAsset("bitcoin", "bitcoin"))).toBe(
+            false,
+        );
+        expect(sameAsset(btcAsset("arkade", "regtest"), btcAsset("arkade", "bitcoin"))).toBe(false);
+        expect(sameAsset(btcAsset("bolt11", "signet"), btcAsset("bolt11", "testnet"))).toBe(false);
+        expect(sameAsset(btcAsset("arkade", "regtest"), btcAsset("bitcoin", "regtest"))).toBe(true);
     });
 
     it("does not confuse a token with its address twin on another chain", () => {
@@ -189,7 +191,7 @@ describe("arkade asset ids, against the shared vector", () => {
 
 describe("BTC's asset part depends on the network", () => {
     // SLIP-44: coin type 0 is Bitcoin, coin type 1 is "Testnet (all coins)". Discovery's card
-    // validator refuses `slip44:0` off mainnet and `slip44:1` on it, so `btcOn` must agree.
+    // validator refuses `slip44:0` off mainnet and `slip44:1` on it, so `btcAsset` must agree.
     it.each([
         ["bitcoin", "slip44:0"],
         ["testnet", "slip44:1"],
@@ -199,8 +201,8 @@ describe("BTC's asset part depends on the network", () => {
     ] as const)("names BTC on %s with %s", (network, part) => {
         expect(btcAssetPart(network)).toBe(part);
         for (const rail of ["arkade", "bitcoin", "bolt11"] as const) {
-            expect(btcOn(rail, network)).toBe(`${rail}:${network}/${part}`);
-            expect(isBtcAsset(btcOn(rail, network))).toBe(true);
+            expect(btcAsset(rail, network)).toBe(`${rail}:${network}/${part}`);
+            expect(isBtcAsset(btcAsset(rail, network))).toBe(true);
         }
     });
 
@@ -239,12 +241,12 @@ describe("BTC's asset part depends on the network", () => {
 
     it("agrees with discovery's own id grammar on every network it indexes", () => {
         // Discovery's card validator is the other side of the key match. An id it would refuse on
-        // a card is an id no card can carry, so `btcOn` producing one is the bug, not the card.
+        // a card is an id no card can carry, so `btcAsset` producing one is the bug, not the card.
         const forms = ASSET_ID_FORMS.map(({ pattern }) => new RegExp(`^(?:${pattern})$`));
         const carriable = (id: string): boolean => forms.some((form) => form.test(id));
         for (const network of NETWORKS) {
             for (const rail of ["arkade", "bitcoin", "bolt11"] as const) {
-                expect(carriable(btcOn(rail, network)), `${rail} on ${network}`).toBe(true);
+                expect(carriable(btcAsset(rail, network)), `${rail} on ${network}`).toBe(true);
                 const swapped = network === "bitcoin" ? "slip44:1" : "slip44:0";
                 expect(carriable(`${rail}:${network}/${swapped}`)).toBe(false);
             }

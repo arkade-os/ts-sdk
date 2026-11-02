@@ -287,10 +287,17 @@ export const sameAsset = (a: AssetId, b: AssetId): boolean => {
 export const btcAssetPart = (network: NetworkRef): AssetPart =>
     network === "bitcoin" ? "slip44:0" : "slip44:1";
 
-/** BTC on a bitcoin-family rail: the same coin, named once per rail. */
-export const btcOn = <R extends BitcoinRail>(rail: R, network: NetworkRef): AssetId<R> =>
+/**
+ * The CAIP-19 id of BTC on a bitcoin-family rail. BTC is one coin with one id per rail:
+ * `btcAsset("arkade", "bitcoin")` is `arkade:bitcoin/slip44:0`, and `btcAsset("bolt11", "mutinynet")`
+ * is `bolt11:mutinynet/slip44:1`.
+ */
+export const btcAsset = <R extends BitcoinRail>(rail: R, network: NetworkRef): AssetId<R> =>
     // TS won't resolve the conditional against an unbound `R`; the cast stays in this expression.
     `${rail}:${network}/${btcAssetPart(network)}` as AssetId<R>;
+
+/** @deprecated Use {@link btcAsset}. Same function, renamed to match `isBtcAsset` and `arkadeAsset`. */
+export const btcOn = btcAsset;
 
 /**
  * Whether `id` is BTC on its own network: `slip44:0` on mainnet, `slip44:1` elsewhere. Strict, so

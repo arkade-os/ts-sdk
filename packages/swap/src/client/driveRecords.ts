@@ -39,7 +39,7 @@ import {
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { toAtomicDecimal } from "./amount";
-import { arkadeAsset, btcOn, type AssetId, type NetworkRef } from "./assetId";
+import { arkadeAsset, btcAsset, type AssetId, type NetworkRef } from "./assetId";
 import { railOfCorridor, type Corridor } from "./corridor";
 import type { QuoteId } from "./quote";
 import type { CorridorSwapRecord, OfferSwapRecord, SwapRecord } from "./record";
@@ -379,7 +379,7 @@ export const restoredOfferRecord = (
 /** v1's asset spelling — `btc`, or the 68-hex identity — as an arkade id. */
 const restoredAssetId = (network: NetworkRef, id: string): AssetId<"arkade"> =>
     id === BTC_ASSET_ID
-        ? btcOn("arkade", network)
+        ? btcAsset("arkade", network)
         : arkadeAsset(network, asset.AssetId.fromString(id));
 
 /** The corridors each v1 kind gave and took on (`KIND_OF` in `accept.ts`, inverted). */
@@ -411,8 +411,8 @@ export const restoredCorridorRecord = (
               : hex.encode(sha256(hex.decode(v1.settlementPreimageHex)));
     if (hash === undefined) throw new Error(`v1 rfq swap ${v1.rfqId} has no payment hash`);
     const [giveCorridor, takeCorridor] = RESTORED_CORRIDORS[v1.kind];
-    const give = btcOn(railOfCorridor(giveCorridor), network);
-    const take = btcOn(railOfCorridor(takeCorridor), network);
+    const give = btcAsset(railOfCorridor(giveCorridor), network);
+    const take = btcAsset(railOfCorridor(takeCorridor), network);
     const amount = toAtomicDecimal(BigInt(v1.amount ?? 0));
     return {
         id: v1.rfqId,

@@ -148,6 +148,7 @@ const CURATED_ROOT: readonly string[] = [
     "BTC_ASSET_PART",
     "ARKADE_ASSET_NAMESPACE",
     "btcAssetPart",
+    "btcAsset",
     "btcOn",
     "isBtcAsset",
     "isBtcAssetLenient",

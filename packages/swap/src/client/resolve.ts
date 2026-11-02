@@ -14,7 +14,7 @@ import {
     type AssetAliasTable,
     type DiscoveryLeg,
 } from "./aliases";
-import { btcOn, type AssetId } from "./assetId";
+import { btcAsset, type AssetId } from "./assetId";
 import { CORRIDORS, railOfCorridor, type Corridor } from "./corridor";
 import type { CorridorSet } from "./corridors/registry";
 import type { DiscoveryIndex, DiscoverySnapshot } from "./discovery";
@@ -239,7 +239,7 @@ const assetFor = (
     aliases: AssetAliasTable,
 ): AssetId =>
     ref === undefined
-        ? btcOn(railOfCorridor(corridor), network)
+        ? btcAsset(railOfCorridor(corridor), network)
         : // Rail-scoped: BTC has one id per rail, so a whole-table `"BTC"` is ambiguous.
           canonicalAssetId(ref, scopedToRail(aliases, railOfCorridor(corridor)));
 

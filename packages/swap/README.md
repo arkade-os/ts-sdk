@@ -27,7 +27,7 @@ Each is one `quote` → `accept` chain. `quote` returns binding, verified terms 
 durable; `accept` writes the record, then funds.
 
 ```ts
-const BTC = btcOn("arkade", "bitcoin"); // arkade:bitcoin/slip44:0 (slip44:1 on test networks)
+const BTC = btcAsset("arkade", "bitcoin"); // arkade:bitcoin/slip44:0 (slip44:1 on test networks)
 const USDT = "arkade:bitcoin/asset:…";
 
 // arkade -> lightning: pay an invoice. The amount is the invoice's.
@@ -96,7 +96,7 @@ beside it is `AmountMismatch` rather than a silent preference.
 
 Asset ids are CAIP-19 with the rail as the CAIP-2 namespace, `<rail>:<network>/<namespace>:<ref>`.
 `arkade`, `bolt11` and `bitcoin` are the implemented rails, and BTC has one id per rail. Use
-`btcOn(rail, network)` and `arkadeAsset(network, id)` rather than writing the strings, and
+`btcAsset(rail, network)` and `arkadeAsset(network, id)` rather than writing the strings, and
 `canonicalAssetId` when the input is human:
 
 ```ts

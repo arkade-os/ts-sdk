@@ -1,7 +1,7 @@
 import { asset } from "@arkade-os/sdk";
 import { describe, expect, it } from "vitest";
 import { BTC_ASSET_ID } from "../../src/store";
-import { arkadeAsset, btcOn } from "../../src/client/assetId";
+import { arkadeAsset, btcAsset } from "../../src/client/assetId";
 import { type AssetAliasTable, canonicalAssetId, toDiscoveryLeg } from "../../src/client/aliases";
 
 const NETWORK = "regtest";
@@ -13,7 +13,7 @@ const CHF = arkadeAsset(NETWORK, issued(`${"22".repeat(32)}0000`));
 const table: AssetAliasTable = {
     network: NETWORK,
     assets: [
-        { id: btcOn("arkade", NETWORK), ticker: "BTC" },
+        { id: btcAsset("arkade", NETWORK), ticker: "BTC" },
         { id: USD, ticker: "USD" },
         { id: CHF, ticker: "CHF" },
         // another network's listing, so the scoping rule has something to drop
@@ -23,17 +23,17 @@ const table: AssetAliasTable = {
 
 describe("public ids down to discovery legs", () => {
     it("covers every leg of the four implemented routes", () => {
-        expect(toDiscoveryLeg(btcOn("arkade", NETWORK))).toEqual({
+        expect(toDiscoveryLeg(btcAsset("arkade", NETWORK))).toEqual({
             corridor: "arkade",
             assetId: BTC_ASSET_ID,
             marketId: "arkade:regtest/slip44:1",
         });
-        expect(toDiscoveryLeg(btcOn("bolt11", NETWORK))).toEqual({
+        expect(toDiscoveryLeg(btcAsset("bolt11", NETWORK))).toEqual({
             corridor: "lightning",
             assetId: BTC_ASSET_ID,
             marketId: "bolt11:regtest/slip44:1",
         });
-        expect(toDiscoveryLeg(btcOn("bitcoin", NETWORK))).toEqual({
+        expect(toDiscoveryLeg(btcAsset("bitcoin", NETWORK))).toEqual({
             corridor: "onchain",
             assetId: BTC_ASSET_ID,
             marketId: "bitcoin:regtest/slip44:1",
@@ -58,7 +58,7 @@ describe("public ids down to discovery legs", () => {
         // Three public ids, one discovery leg per corridor: the alias layer
         // runs one way, and the reverse is not a function.
         const legs = (["arkade", "bolt11", "bitcoin"] as const).map((rail) =>
-            toDiscoveryLeg(btcOn(rail, NETWORK)),
+            toDiscoveryLeg(btcAsset(rail, NETWORK)),
         );
         expect(new Set(legs.map((l) => l.assetId))).toEqual(new Set([BTC_ASSET_ID]));
         expect(legs.map((l) => l.corridor)).toEqual(["arkade", "lightning", "onchain"]);
@@ -115,12 +115,14 @@ describe("public ids down to discovery legs", () => {
 
 describe("caller input to a public id", () => {
     it("passes an id through", () => {
-        expect(canonicalAssetId(btcOn("arkade", NETWORK), table)).toBe(btcOn("arkade", NETWORK));
+        expect(canonicalAssetId(btcAsset("arkade", NETWORK), table)).toBe(
+            btcAsset("arkade", NETWORK),
+        );
     });
 
     it("canonicalises a ticker case-insensitively", () => {
-        expect(canonicalAssetId("btc", table)).toBe(btcOn("arkade", NETWORK));
-        expect(canonicalAssetId("BTC", table)).toBe(btcOn("arkade", NETWORK));
+        expect(canonicalAssetId("btc", table)).toBe(btcAsset("arkade", NETWORK));
+        expect(canonicalAssetId("BTC", table)).toBe(btcAsset("arkade", NETWORK));
         expect(canonicalAssetId("uSd", table)).toBe(USD);
     });
 

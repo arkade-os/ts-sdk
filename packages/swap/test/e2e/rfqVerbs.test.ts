@@ -51,7 +51,7 @@ import {
     type RfqQuote,
 } from "../../src/protocol";
 import {
-    btcOn,
+    btcAsset,
     createSwapClient,
     createSwapPaymentRouter,
     InMemoryAssetSwapRepository,
@@ -281,7 +281,7 @@ describe("the verbs (regtest)", () => {
         const client = clientOn();
         const before = (await collectSwapRecords(repository)).length;
         // The stub's spread is LOCKUP_SATS - INVOICE_SATS, on the give leg.
-        const maxFee = { amount: 1n, asset: btcOn("arkade", "regtest") };
+        const maxFee = { amount: 1n, asset: btcAsset("arkade", "regtest") };
 
         await expect(client.pay(invoice(), { maxFee })).rejects.toMatchObject({
             name: "MaxFeeExceeded",

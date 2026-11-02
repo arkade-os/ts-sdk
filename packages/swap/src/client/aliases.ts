@@ -12,7 +12,7 @@ import { BTC_ASSET_ID } from "../store";
 import {
     ARKADE_ASSET_NAMESPACE,
     AssetIdError,
-    btcOn,
+    btcAsset,
     type AssetId,
     isAssetId,
     isBtcAsset,
@@ -44,7 +44,7 @@ export const toDiscoveryLeg = (id: AssetId): DiscoveryLeg => {
     if (!isBtc && rail !== "eip155" && (asset === "slip44:0" || asset === "slip44:1")) {
         // BTC's coin type is per network (`slip44:0` mainnet, `slip44:1` elsewhere). The other one
         // is a caller bug, refused here rather than quoted against a key no card carries.
-        const expected = btcOn(rail, reference as NetworkRef);
+        const expected = btcAsset(rail, reference as NetworkRef);
         throw new UnsupportedRoute(`${id} is not BTC on ${reference}: BTC there is ${expected}`);
     }
     if (rail === "arkade") {

@@ -14,7 +14,7 @@ import {
     type AssetId,
     type NetworkRef,
     type Rail,
-    btcOn,
+    btcAsset,
     isAssetId,
 } from "./assetId";
 import { corridorOfRail, railOfCorridor, type Corridor } from "./corridor";
@@ -32,7 +32,7 @@ export const publicAssetId = (
     network: NetworkRef,
 ): AssetId | undefined => {
     const rail = railOfCorridor(corridor);
-    if (assetId === BTC_ASSET_ID) return btcOn(rail, network);
+    if (assetId === BTC_ASSET_ID) return btcAsset(rail, network);
     if (rail !== "arkade") return undefined;
     if (!ARKADE_ASSET_IDENTITY.test(assetId)) return undefined;
     return `arkade:${network}/${ARKADE_ASSET_NAMESPACE}:${assetId}`;

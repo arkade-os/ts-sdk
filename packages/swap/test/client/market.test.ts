@@ -14,7 +14,7 @@ import {
     marketRefOf,
     type MarketCandidate,
 } from "../../src/client/market";
-import { arkadeAsset, btcOn } from "../../src/client/assetId";
+import { arkadeAsset, btcAsset } from "../../src/client/assetId";
 import { toDiscoveryLeg } from "../../src/client/aliases";
 import { asset } from "@arkade-os/sdk";
 import { lightningCard, onchainCard, rivalLightningCard, spotCard, USD_ASSET_ID } from "./fixtures";
@@ -238,7 +238,7 @@ describe("the provenance a card leaves on a quote", () => {
 
 describe("BTC on a test network, against cards carrying a CAIP-19 id", () => {
     // The mutinynet registry's `frenchman` card, verbatim: a legacy `id` plus the `caip19_id`
-    // discovery keys it by, with BTC under SLIP-44's testnet coin type. `btcOn` once spelled BTC
+    // discovery keys it by, with BTC under SLIP-44's testnet coin type. `btcAsset` once spelled BTC
     // `slip44:0` on every network, so the wallet's BTC -> USDT quote matched neither key.
     const frenchman: DiscoveredMarket = {
         base_asset: {
@@ -272,7 +272,7 @@ describe("BTC on a test network, against cards carrying a CAIP-19 id", () => {
 
     it("finds the card from the wallet's own BTC id", () => {
         const legs = {
-            give: toDiscoveryLeg(btcOn("arkade", "mutinynet")),
+            give: toDiscoveryLeg(btcAsset("arkade", "mutinynet")),
             take: toDiscoveryLeg(usdt),
         };
         const candidates = eligibleMarkets(snapshotOf([frenchman, lightningCard]), legs);
@@ -283,8 +283,8 @@ describe("BTC on a test network, against cards carrying a CAIP-19 id", () => {
     it("still finds a legacy card with no CAIP-19 id, by its corridor key", () => {
         // The `ln-solver-mutinynet` cards: `id: "btc"` and nothing else.
         const legs = {
-            give: toDiscoveryLeg(btcOn("arkade", "mutinynet")),
-            take: toDiscoveryLeg(btcOn("bolt11", "mutinynet")),
+            give: toDiscoveryLeg(btcAsset("arkade", "mutinynet")),
+            take: toDiscoveryLeg(btcAsset("bolt11", "mutinynet")),
         };
         const candidates = eligibleMarkets(snapshotOf([frenchman, lightningCard]), legs);
         expect(candidates.map((c) => c.card)).toEqual([lightningCard]);
