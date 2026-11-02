@@ -17,7 +17,6 @@ import {
     encodeOffer,
     legacySwapPrograms,
     restoreOfferCoverage,
-    swapProgramBinding,
     withExitClosure,
     type Offer,
 } from "../src/offer";
@@ -102,10 +101,25 @@ const makeOffer = (wantAsset: boolean, exitDelay?: RelativeTimelock): Offer => {
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay && { exitDelay }),
     };
-    // A v0 row's script is the pre-pairing tree. The record path selects that
-    // tree from the script, which is what migration has to rewrite onto.
+    // A v0 row's script is the previous leaf. Its constructor names are that leaf's.
     const serverKey = hex.decode(SERVER_KEY);
-    const { args, keys } = swapProgramBinding(binding, serverKey);
+    const deposited = wantAsset ? asset.AssetId.fromString("aa".repeat(32) + "0000") : undefined;
+    const args = {
+        makerWP: binding.makerPkScript.subarray(2),
+        wantAmount: binding.wantAmount,
+        server: serverKey,
+        user: binding.makerPublicKey,
+        ...(deposited && {
+            wantAssetTxid: deposited.txid.slice().reverse(),
+            wantAssetGroupIndex: deposited.groupIndex,
+        }),
+        ...(exitDelay && { exitDelay: exitDelay.value }),
+    };
+    const keys = {
+        serverKey,
+        userKey: binding.makerPublicKey,
+        emulatorKey: binding.emulatorPubkey,
+    };
     const program = withExitClosure(
         wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
         exitDelay,
