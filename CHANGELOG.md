@@ -25,6 +25,14 @@ style and have not been backfilled.
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.
 
+- **`@arkade-os/swap`: a newly derived offer address changes.** `fulfill` now
+  pays `$makerWP` on the output at the spending input's index, so the same
+  leaf can sit in a batch where input i is paid at output i. A one-deposit
+  fill is unchanged: the deposit stays input 0 and the maker payout stays
+  output 0. An offer that already carries a `swapPkScript` from the previous
+  tree still compiles that tree, so cancel, fill, classify and restore keep
+  rebuilding the address it was funded at. v0 offer rows migrate onto that
+  same previous tree.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already

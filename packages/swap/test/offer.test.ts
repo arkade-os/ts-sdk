@@ -11,9 +11,9 @@ import {
     Offer,
 } from "../src/offer";
 
-// deterministic keys -> the derived swap addresses must never drift (any
-// change to the program JSONs or the arg binding changes them); goldens from
-// the swap covenant's reference selfCheck
+// deterministic keys -> a fresh derivation must never drift (any change to the
+// program JSONs or the arg binding changes it). The solverd vectors below pin
+// offers funded on the previous tree.
 const operatorPubkey = hex.decode(
     "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
 );
@@ -54,11 +54,11 @@ const directionlessPayload = () =>
 const goldens: [Omit<Offer, "swapPkScript">, string][] = [
     [
         { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
-        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65wq0wnmwgr4nglzx999xqx7xahllp4gfh6638wkrjt5tl3k7c8vy6frzj2",
+        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc6548qm54j2w5y2kcv54vylen7etqtwnp08yung5trd6543g8apzzxwr3jqy",
     ],
     [
         { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys },
-        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65qz8884545l2ka5mps383ntsennz3csywl5t33gghnu9rxjlg5wfv467cj",
+        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65475z7782gk2v39yt8fg9h7jut2dekp4ynu3d65das4n8jrchahy4c39ld",
     ],
 ];
 
@@ -162,7 +162,7 @@ describe("swap offer", () => {
                 '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
                 '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
                 '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +
-                '{"asm":[0,"INSPECTOUTPUTVALUE","$wantAmount","GREATERTHANOREQUAL","VERIFY",0,' +
+                '{"asm":["PUSHCURRENTINPUTINDEX","INSPECTOUTPUTVALUE","$wantAmount","GREATERTHANOREQUAL","VERIFY","PUSHCURRENTINPUTINDEX",' +
                 '"INSPECTOUTPUTSCRIPTPUBKEY",1,"EQUALVERIFY","$makerWP","EQUAL"]}},' +
                 '"cancel":{"tapscript":{"signers":["$user","$server"]}},' +
                 '"exit":{"tapscript":{"signers":["$user"],"csv":{"type":"blocks","value":"$exitDelay"}}}}}',
@@ -384,15 +384,28 @@ describe("swap offer", () => {
 
         it("appends the exit closure, leaving the other two leaves in place", () => {
             // leaf order is part of the address (the tree is assembled from the
-            // list), so an exit inserted anywhere else derives a different swap
-            const withExit = decodeOffer(hex.decode(vectors[1].offerHex));
-            const { exitDelay: _unused, ...withoutExit } = withExit;
-            const before = offerContract(withoutExit, operatorPubkey);
-            const after = offerContract(withExit, operatorPubkey);
+            // list), so an exit inserted anywhere else derives a different swap.
+            // Drop the funded script: these two are fresh derivations of the
+            // current tree, and a carried swapPkScript would select the one
+            // the reference vector was funded on.
+            const decoded = decodeOffer(hex.decode(vectors[1].offerHex));
+            const { exitDelay, swapPkScript: _funded, ...binding } = decoded;
+            const before = offerContract(binding, operatorPubkey);
+            const after = offerContract({ ...binding, exitDelay }, operatorPubkey);
             expect(after.scripts.slice(0, 2).map((s) => hex.encode(s))).toEqual(
                 before.scripts.map((s) => hex.encode(s)),
             );
             expect(after.scripts).toHaveLength(3);
+        });
+
+        it("derives a fresh offer on the input-paired tree", () => {
+            const funded = decodeOffer(hex.decode(vectors[0].offerHex));
+            const { swapPkScript: _funded, ...binding } = funded;
+            const fresh = offerContract(binding, operatorPubkey);
+            expect(hex.encode(fresh.pkScript)).not.toBe(hex.encode(funded.swapPkScript));
+            expect(
+                new ArkAddress(operatorPubkey, fresh.tweakedPublicKey, "tark").encode(),
+            ).not.toBe(vectors[0].address);
         });
     });
 
