@@ -1761,8 +1761,12 @@ export class ContractManager implements IContractManager {
         });
         if (asking.length === 0) return refused;
 
-        const tip = await this.currentChainTip();
-        const walletDescriptorValue = await walletDescriptor?.();
+        // Chain tip and the wallet descriptor are independent reads. Every spend and settle
+        // waits on this, so they share one round trip instead of two.
+        const [tip, walletDescriptorValue] = await Promise.all([
+            this.currentChainTip(),
+            walletDescriptor?.(),
+        ]);
         // Per INPUT: a CSV timelock runs from THIS coin's confirmation, so two vtxos on one
         // contract can disagree about the same leaf.
         for (const vtxo of asking) {

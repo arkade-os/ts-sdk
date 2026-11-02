@@ -92,9 +92,11 @@ export class DelegateManagerImpl implements IDelegateManager {
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
-        // fetch server and delegate info once, shared across all groups
-        const arkInfo = await this.arkInfoProvider.getInfo();
-        const delegateInfo = await this.delegateProvider.getDelegateInfo();
+        // Server info and delegate info come from different providers and share nothing.
+        const [arkInfo, delegateInfo] = await Promise.all([
+            this.arkInfoProvider.getInfo(),
+            this.delegateProvider.getDelegateInfo(),
+        ]);
 
         // keep only vtxos that can be signed by the delegate. The guard
         // narrows ContractVtxo (with optional taproot fields) to the

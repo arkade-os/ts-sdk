@@ -1211,12 +1211,15 @@ export async function requestLightningSend(
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // No preimage: a lightning send's P belongs to the payee.
-    const secrets = await provisionRefundKey(wallet);
+    // The refund key and the operator snapshot do not depend on each other. The address
+    // still comes from the key, so a rotating receive address cannot pair refund_address
+    // with a different refund script.
+    const [secrets, info] = await Promise.all([
+        provisionRefundKey(wallet),
+        wallet.getArkadeInfo({ requireLive: true }),
+    ]);
     const senderPubkey = secrets.pubkey;
-    // One address read for both refund_address and refundPkScript, so a rotating receive address
-    // cannot pair them with different scripts.
     const refundAddress = secrets.address;
-    const info = await wallet.getArkadeInfo({ requireLive: true });
 
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
@@ -1810,7 +1813,11 @@ export async function requestOnchainSend(
     const rfqId = params.rfqId ?? newRfqId();
     // Both halves: the lockup's refund key and the HTLC's P. A supplied P is length-checked first:
     // the L1 claim leaf pins OP_SIZE 32, so any other length funds an unclaimable HTLC.
-    const secrets = await provisionClaimSecret(wallet, { preimage: params.preimage });
+    const [secrets, info, refundAddress] = await Promise.all([
+        provisionClaimSecret(wallet, { preimage: params.preimage }),
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
     if (secrets.mustPersistPreimage) {
         console.warn(
             "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before funding",
@@ -1818,10 +1825,6 @@ export async function requestOnchainSend(
     }
     const paymentHash = hex.encode(secrets.paymentHash);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-    ]);
 
     const quote = await transport.requestQuote(
         onchainSendRequest({
@@ -2161,7 +2164,11 @@ const provisionReceive = async (
     params: { covclaimdPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
     persistBefore: "paying" | "funding",
 ) => {
-    const secrets = await provisionClaimSecret(wallet);
+    const [secrets, info, payoutAddress] = await Promise.all([
+        provisionClaimSecret(wallet),
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
     if (secrets.mustPersistPreimage) {
         console.warn(
             `[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before ${persistBefore}`,
@@ -2170,10 +2177,6 @@ const provisionReceive = async (
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-    ]);
     // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets covclaimd
     // claim dust and hand the solver `P`.
     const binds = bindsClaimAmount();
