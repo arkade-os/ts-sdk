@@ -17,6 +17,7 @@ import { textResponse } from "./helpers/response";
 // The stub enclave's chain root stands in for AWS's, passed through `roots`.
 const chain = makeNitroChain();
 const EMULATOR_URL = "https://emulator.example";
+const OPERATOR_URL = "https://operator.example";
 const PCR0 = new Uint8Array(48).fill(0xab);
 const OTHER_KEY = "03" + "cd".repeat(32);
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -41,6 +42,9 @@ function stubEmulatorEnclave(
         "fetch",
         vi.fn(async (input: string, init?: RequestInit) => {
             const url = new URL(input);
+            if (url.origin === OPERATOR_URL) {
+                return new Response(JSON.stringify(await arkProvider().getInfo()));
+            }
             requests.push(url.pathname);
             if (url.pathname === "/enclave/attestation") {
                 fixture = makeNitroFixture({
@@ -119,7 +123,7 @@ describe("RestEmulatorProvider.getInfo with a signing key", () => {
 });
 
 describe("Arkade.connect with emulatorAttestation", () => {
-    it("keeps the pinned key once the attested emulator proves it signs with it", async () => {
+    it("keeps the pinned key once the attested emulator reports it", async () => {
         const enclave = stubEmulatorEnclave();
         const ark = await connect();
         expect(hex.encode(ark.emulatorKey!)).toBe(REGTEST_EMULATOR_PUBKEY);
@@ -127,7 +131,7 @@ describe("Arkade.connect with emulatorAttestation", () => {
         expect(enclave.requests).toEqual(["/enclave/attestation", "/v1/info"]);
     });
 
-    it("fails closed when the attested emulator signs with another key", async () => {
+    it("fails closed when the attested emulator reports another key", async () => {
         stubEmulatorEnclave({ signerPubkey: OTHER_KEY });
         await expect(connect()).rejects.toThrow(/not the configured key/);
     });
@@ -189,6 +193,17 @@ describe("Arkade.connect with emulatorAttestation", () => {
             /emulatorAttestation needs an emulator/,
         );
         expect(enclave.requests).toEqual([]);
+    });
+
+    it("attests the emulator a service resolves to", async () => {
+        const enclave = stubEmulatorEnclave();
+        const ark = await arkade.Arkade.connect({
+            service: { operatorUrl: OPERATOR_URL, emulatorUrl: EMULATOR_URL },
+            emulatorAttestation: attestation,
+        });
+        expect(enclave.requests).toEqual(["/enclave/attestation", "/v1/info"]);
+        expect(hex.encode(ark.emulatorKey!)).toBe(REGTEST_EMULATOR_PUBKEY);
+        expect(ark.enclaveResponseSigningKey).toBeDefined();
     });
 
     it("leaves the pinned-key path untouched without the option", async () => {

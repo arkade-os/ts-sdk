@@ -907,8 +907,8 @@ connection instead of opening a second one outside its rate gate and caches.
 
 `Arkade.connect` builds covenants against the co-signer key pinned for the network (or
 `emulatorPubkey`), never the emulator's own `/v1/info`: otherwise whoever answers that URL would
-pick the key. When the emulator runs in an AWS Nitro enclave, `emulatorAttestation` also proves
-the emulator actually holds that key:
+pick the key. When the emulator runs in an AWS Nitro enclave, `emulatorAttestation` also checks
+that an enclave image you accept reports that key:
 
 ```typescript
 const emulatorUrl = "https://emulator.example";
@@ -928,7 +928,8 @@ await fetchEmulatorInfo(emulatorUrl, client.enclaveResponseSigningKey!);
 `connect` fetches the enclave's attestation document, checks its AWS Nitro certificate chain,
 COSE signature, nonce and PCR0, and takes the response signing key from it. It then reads
 `/v1/info` with a signed request and requires the `signerPubkey` the enclave signed to equal the
-configured key. Any failure throws `EnclaveAttestationError`: an unlisted image, a bad chain or
+configured key. This relies on the accepted image reporting its key truthfully: the co-signer's
+private key itself is never challenged. Any failure throws `EnclaveAttestationError`: an unlisted image, a bad chain or
 signature, or a different key (a stale pin after a rotation: pass `emulatorPubkey`). After an
 enclave upgrade the signing key changes, so reconnect to re-attest. For other enclaves,
 `attestEnclave(url, { pcr0 })` returns the signing key and `signedGet(url, key)` makes reads

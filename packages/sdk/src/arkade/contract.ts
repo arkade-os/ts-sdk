@@ -241,14 +241,15 @@ interface ArkadeConnectCommonOptions {
      */
     emulatorPubkey?: string;
     /**
-     * Attest the emulator's enclave and check, through its signed `/v1/info`, that it co-signs
-     * with the configured key (the network pin, or `emulatorPubkey`). The configured key stays
-     * the one covenants commit to; attestation proves the emulator actually holds it. Lists the
-     * enclave images (PCR0s) to trust; include old and new during an upgrade. The emulator must
-     * expose its `serverUrl`, as `RestEmulatorProvider` does.
+     * Attest the emulator's enclave and check that its signed `/v1/info` reports the configured
+     * co-signer key (the network pin, or `emulatorPubkey`). The configured key stays the one
+     * covenants commit to. This relies on the attested image reporting its key truthfully: the
+     * private key itself is never challenged. Lists the enclave images (PCR0s) to trust; include
+     * old and new during an upgrade. The emulator must expose its `serverUrl`, as
+     * `RestEmulatorProvider` does.
      *
      * @throws {EnclaveAttestationError} from `connect` when the enclave fails attestation, runs an
-     *   image not listed, its `/v1/info` signature doesn't verify, or it signs with another key.
+     *   image not listed, its `/v1/info` signature doesn't verify, or it reports another key.
      */
     emulatorAttestation?: EnclaveAttestationConfig;
     /**
@@ -356,8 +357,8 @@ export class Arkade {
     /**
      * The co-signer key covenants are built against (33-byte compressed), present only when an
      * emulator is configured. Resolved from the network or `emulatorPubkey`, never the emulator's
-     * own report; with `emulatorAttestation`, `connect` has checked the attested emulator signs
-     * with it. Otherwise, if a claim is refused, compare it with the emulator's `/v1/info`
+     * own report; with `emulatorAttestation`, `connect` has checked the attested emulator reports
+     * it. Otherwise, if a claim is refused, compare it with the emulator's `/v1/info`
      * `signerPubkey`: a difference means the network rotated and this SDK's pin is stale.
      */
     readonly emulatorKey: Uint8Array | undefined;
@@ -458,7 +459,7 @@ export class Arkade {
 
         // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
         // the key covenants commit to. A rotation is invisible until the pin ships;
-        // `emulatorPubkey` covers that window. An attested emulator must sign with the same key,
+        // `emulatorPubkey` covers that window. An attested emulator must report the same key,
         // so a stale pin or wrong override fails here rather than at claim time. The key is
         // resolved first: on a network with no pin, that error names the fix, and attesting
         // would only spend two requests before it.
@@ -470,7 +471,7 @@ export class Arkade {
             : undefined;
         if (attested && attested.signerPubkey !== configured) {
             throw new EnclaveAttestationError(
-                `attested emulator co-signs with ${attested.signerPubkey}, not the configured ` +
+                `attested emulator reports co-signer ${attested.signerPubkey}, not the configured ` +
                     `key ${configured}; if the network rotated, pass emulatorPubkey`,
             );
         }

@@ -48,10 +48,11 @@ style and have not been backfilled.
   `emulatorAttestation: { pcr0: [...] }`, connect verifies the emulator
   enclave's AWS Nitro attestation (certificate chain to the AWS root, COSE
   signature, nonce, an accepted PCR0), then reads `/v1/info` with a signed
-  request and requires the key the enclave signed to equal the configured
+  request and requires the key the enclave reports to equal the configured
   one (the network pin or `emulatorPubkey`). The pin alone says which key
-  covenants commit to, not that the emulator answering holds it, so a stale
-  pin only surfaced as a refused claim. A mismatch, an unlisted image or a
+  covenants commit to, not which key the emulator answering uses, so a stale
+  pin only surfaced as a refused claim. The check relies on the accepted image
+  reporting its key truthfully; it does not challenge the private key. A mismatch, an unlisted image or a
   bad signature fails closed with the new `EnclaveAttestationError`.
   `fetchEmulatorInfo(url, Arkade.enclaveResponseSigningKey)` verifies later
   reads, whatever the provider (`EmulatorProvider.getInfo` takes the key too, but
