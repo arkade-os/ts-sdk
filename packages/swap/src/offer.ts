@@ -122,100 +122,69 @@ export function withExitClosure(
 
 /** Exported for the asset-id vector tests (the args are the only place both asset-id forms are
  * visible). Deliberately absent from the package index -- not public API.
- *
- * A bare binding compiles {@link swapPrograms}. An offer that already names its `swapPkScript`
- * — or an explicit `expectedPkScript` — compiles whichever tree reproduces that script, so a
- * deposit funded on the previous leaf still cancels and fills.
+ * A carried `swapPkScript` selects the tree that compiles to it.
  */
 export function swapProgramBinding(
-    offer: Omit<Offer, "swapPkScript">,
+    offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
     operatorPubkey: Uint8Array,
-    expectedPkScript?: Uint8Array,
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
     if (offer.makerPkScript.length !== FIELDS.makerPkScript.width) {
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
-    const carried = (offer as { swapPkScript?: unknown }).swapPkScript;
-    const expected = expectedPkScript ?? (carried instanceof Uint8Array ? carried : undefined);
-    const current = bindSwapProgram(
-        offer,
-        operatorPubkey,
-        offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
-        contractArgs(offer),
-    );
-    if (!expected || programMatches(current, expected)) return current;
-    const previous = bindSwapProgram(
-        offer,
-        operatorPubkey,
-        offer.wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
-        legacyArgs(offer),
-    );
-    if (programMatches(previous, expected)) return previous;
+    const expected = offer.swapPkScript;
+    const current = bindSwapProgram(offer, operatorPubkey, false);
+    if (!expected || pkOf(current) === hex.encode(expected)) return current;
+    const previous = bindSwapProgram(offer, operatorPubkey, true);
+    if (pkOf(previous) === hex.encode(expected)) return previous;
     return current;
-}
-
-/** Constructor args of `asset-swap` / `sats-swap`. The offer's own names stay at this boundary. */
-function contractArgs(
-    offer: Omit<Offer, "swapPkScript">,
-): Record<string, Uint8Array | bigint | number> {
-    const receiver = offer.makerPkScript.subarray(2);
-    return {
-        receiver,
-        amount: offer.wantAmount,
-        user: offer.makerPublicKey,
-        ...(offer.wantAsset && {
-            // internal byte order
-            assetTxid: offer.wantAsset.txid.slice().reverse(),
-            assetGroupIndex: offer.wantAsset.groupIndex,
-        }),
-    };
-}
-
-/** Constructor args of the previous leaf. A funded script is the only reason these names remain. */
-function legacyArgs(
-    offer: Omit<Offer, "swapPkScript">,
-): Record<string, Uint8Array | bigint | number> {
-    return {
-        makerWP: offer.makerPkScript.subarray(2),
-        wantAmount: offer.wantAmount,
-        user: offer.makerPublicKey,
-        ...(offer.wantAsset && {
-            wantAssetTxid: offer.wantAsset.txid.slice().reverse(),
-            wantAssetGroupIndex: offer.wantAsset.groupIndex,
-        }),
-    };
 }
 
 function bindSwapProgram(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
-    base: ReturnType<typeof arkade.programFromArtifact>,
-    args: Record<string, Uint8Array | bigint | number>,
+    previous: boolean,
 ): SwapProgramBinding {
+    const receiver = offer.makerPkScript.subarray(2);
+    const user = offer.makerPublicKey;
+    const assetId = offer.wantAsset;
+    const programs = previous ? legacySwapPrograms : swapPrograms;
+    // internal byte order
+    const txid = assetId?.txid.slice().reverse();
     return {
-        program: withExitClosure(base, offer.exitDelay),
+        program: withExitClosure(assetId ? programs.wantAsset : programs.wantBtc, offer.exitDelay),
         args: {
-            ...args,
+            ...(previous
+                ? {
+                      makerWP: receiver,
+                      wantAmount: offer.wantAmount,
+                      ...(assetId && {
+                          wantAssetTxid: txid,
+                          wantAssetGroupIndex: assetId.groupIndex,
+                      }),
+                  }
+                : {
+                      receiver,
+                      amount: offer.wantAmount,
+                      ...(assetId && { assetTxid: txid, assetGroupIndex: assetId.groupIndex }),
+                  }),
+            user,
             server: operatorPubkey,
             ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
         },
         keys: {
             serverKey: operatorPubkey,
-            userKey: offer.makerPublicKey,
+            userKey: user,
             emulatorKey: offer.emulatorPubkey,
         },
     };
 }
 
-function programMatches(binding: SwapProgramBinding, expectedPkScript: Uint8Array): boolean {
-    try {
-        const script = new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys);
-        return hex.encode(script.pkScript) === hex.encode(expectedPkScript);
-    } catch {
-        return false;
-    }
+function pkOf(binding: SwapProgramBinding): string {
+    return hex.encode(
+        new arkade.ArkadeProgramScript(binding.program, binding.args, binding.keys).pkScript,
+    );
 }
 
 /** Compile the offer's contract: program + args -> taproot tree.
@@ -507,7 +476,10 @@ function offerContractParams(
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
 ) {
-    const { program, args, keys } = swapProgramBinding(binding, operatorPubkey, expectedPkScript);
+    const { program, args, keys } = swapProgramBinding(
+        { ...binding, swapPkScript: expectedPkScript },
+        operatorPubkey,
+    );
     const contract = new arkade.ArkadeContract(client, program, args, keys);
     // the row is keyed by script: registering any other script would leave the real deposit
     // unwatched and unmarked
@@ -1059,11 +1031,9 @@ export interface SponsorFillInput {
  * `fulfill` spend; it does not weaken or reinterpret the covenant.
  *
  * `fulfill` reads the output at the spending input's index. This builder puts the deposit at
- * input 0 and the maker payout at output 0, so a one-deposit fill lines up; a later deposit in
- * the same transaction would be paid at its own index. For an ASSET want that output carries
- * only a dust carrier ({@link ASSET_CARRIER_SATS}) and the wanted asset arrives through the
- * packet, listed as the first group. Every other asset in the spend goes to the taker's payout;
- * see {@link FillFunding}.
+ * input 0 and the maker payout at output 0. An ASSET want is the first packet group on that
+ * output, which carries only a dust carrier ({@link ASSET_CARRIER_SATS}). Every other asset
+ * goes to the taker's payout; see {@link FillFunding}.
  *
  * Writes NO local swap record: the maker learns the outcome from the chain (RFQ protocol § 7.2).
  * `fund` is explicit because only the caller knows which coins are reserved (e.g. a corridor's
