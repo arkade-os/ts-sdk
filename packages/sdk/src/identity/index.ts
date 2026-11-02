@@ -58,8 +58,6 @@ export function isBatchSignable(identity: Identity): identity is BatchSignableId
 }
 
 export * from "./singleKey";
-export { BridgeIdentity } from "./bridge";
-export type { IdentityBridge, BridgeSigningRequest } from "./bridge";
 // Named, not `*`: `serializeSeedOwned*Identity` are SDK-internal (used only by `./serialize`).
 export type {
     NetworkOptions,

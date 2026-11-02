@@ -44,12 +44,9 @@ style and have not been backfilled.
 
 ### Features
 
-- **`BridgeIdentity` connects a native signer without exporting private keys.**
-  Applications supply a transport for public-key discovery, unfinalized PSBT
-  signing, and message hashes. The identity verifies signatures against the
-  original transaction and accepts only the requested Taproot signature
-  additions, preserving operator signatures and opaque PSBT fields. Optional
-  batch signing groups multiple requests into one bridge interaction.
+- **Export `TreeSignerSession` for custom identities.** External `Identity`
+  implementations can return `TreeSignerSession.random()` without reaching into
+  an unexported SDK module. The existing session implementation is unchanged.
 
 ### Added
 
