@@ -35,6 +35,12 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
+  `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
+  `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,
+  which forbid `bigint`. `Market` is also no longer an alias of `CardMarketRef`
+  but a superset: a `Market` can still be used as a ref, but a ref no longer
+  assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
 
 ### Added
 
@@ -152,6 +158,16 @@ style and have not been backfilled.
 
 ### Changed
 
+- **Delegation is scheduled three operator sessions before expiry.** The
+  default `delegateAt` left 10% of the remaining lifetime before expiry, floored
+  at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
+  three sessions, giving about 10% fewer renewals per coin and a lower fee on
+  programs that decay towards expiry. Delegation close to expiry is best effort:
+  three sessions don't guarantee three batches, and a delegator outage longer
+  than the window can miss expiry and leave the coin recoverable. A coin already
+  inside the window is delegated two seconds from now; with no future expiry,
+  such as only recoverable outputs, delegation stays one minute from now.
+
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
@@ -190,6 +206,18 @@ style and have not been backfilled.
   It moves the send to `settled` if the lockup
   now reads claimed; any other read leaves it as is. A correction a sink
   refuses stays monitored until the poll lands the write.
+
+- **Over Electrum, spend checks on a deposit or an HTLC funding no longer read
+  the payer's other outputs.** Electrum has no spend index, so
+  `ElectrumOnchainProvider.getTxOutspends` reads every output script's history,
+  and `getBoardingTxs` and both `@arkade-os/swap` chain sources call it on
+  transactions someone else built, whose other outputs are the payer's change
+  and any service fee address. Fulcrum answers a history past `max_history`
+  with an empty list (read as unspent), electrs refuses one past 500 entries by
+  default (failing the call), and a large one can exceed Fulcrum's per-client
+  buffer, which drops the connection. The new optional
+  `OnchainProvider.getTxOutspend(txid, vout)` answers one output from its own
+  script; those three callers use it when the provider has it.
 
 - **`@arkade-os/swap` declares a lockup's assets when claiming or refunding
   it.** Anyone can send an asset vtxo to a swap lockup's address, and arkd
@@ -464,6 +492,13 @@ style and have not been backfilled.
   `min_amount` support to deploy, and the call stays the same when it does.
 
 ### Features
+
+- **`@arkade-os/swap`: `client.markets()` reports each market's limits per leg.**
+  A UI had no way to show a market's min and max, or explain an out-of-range
+  amount, without an RFQ that discloses it. `Market` now carries `legs`, each with
+  its `asset`, `decimals` and announced `limits` in atomic units, `null` on a side
+  the solver will not pay out. They are indicative, and routing and the set of
+  markets returned do not change. New export: `MarketLeg`.
 
 - **`onchainProvider` can be a per-network factory, in a service worker
   too.** `WalletConfig.onchainProvider` takes `(network) => OnchainProvider`,
