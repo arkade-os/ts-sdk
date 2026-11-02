@@ -3,14 +3,11 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). One program per WANT side (`swap-want-asset` / `swap-want-btc`
- * `.program.json`). `fulfill` pays `$makerWP` at least `wantAmount` on the output at the spending
- * input's index, and never inspects the deposit, which is what lets asset↔asset swaps ride the
- * want-asset program. Input i and output i stay paired, including when several deposits share
- * one transaction.
- *
- * Offers funded on the previous leaf still compile from `legacy/swap-want-*.program.v1.json`
- * when their `swapPkScript` matches that tree.
+ * README's Roles section). The settlement contracts live in `settlement/` (`AssetPayout`,
+ * `SatsPayout`), compiled from `.ark`. `fulfill` pays `receiver` at least `amount` on the output
+ * at the spending input's index, and never inspects the deposit. Who meets whom is outside
+ * this contract. A funded script from the previous leaf still selects
+ * `legacy/swap-want-*.program.v1.json`.
  */
 import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
@@ -33,8 +30,8 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import wantAssetProgram from "./swap-want-asset.program.json";
-import wantBtcProgram from "./swap-want-btc.program.json";
+import assetPayoutArtifact from "./settlement/asset-payout.json";
+import satsPayoutArtifact from "./settlement/sats-payout.json";
 import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
 import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
 import {
@@ -55,20 +52,20 @@ import {
 // json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
 type Artifact = Parameters<typeof arkade.parseArtifact>[0];
 
+type SettlementArtifact = Parameters<typeof arkade.programFromArtifact>[0];
+
 /**
- * The contracts, one per WANT side — pure data, shared verbatim with any other implementation.
- *
- * An offer carrying an exit delay compiles a third closure that is in neither file (see
- * {@link withExitClosure}); the golden in `offer.test.ts` pins the artifact it produces.
+ * The settlement contracts, one per payout. An exit delay compiles a third closure that is in
+ * neither artifact (see {@link withExitClosure}).
  *
  * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 export const swapPrograms: Record<
     "wantAsset" | "wantBtc",
-    ReturnType<typeof arkade.parseArtifact>
+    ReturnType<typeof arkade.programFromArtifact>
 > = {
-    wantAsset: arkade.parseArtifact(wantAssetProgram as Artifact),
-    wantBtc: arkade.parseArtifact(wantBtcProgram as Artifact),
+    wantAsset: arkade.programFromArtifact(assetPayoutArtifact as SettlementArtifact),
+    wantBtc: arkade.programFromArtifact(satsPayoutArtifact as SettlementArtifact),
 };
 
 /**
@@ -175,34 +172,62 @@ export function swapProgramBinding(
         offer,
         operatorPubkey,
         offer.wantAsset ? swapPrograms.wantAsset : swapPrograms.wantBtc,
+        settlementArgs(offer),
     );
     if (!expected || programMatches(current, expected)) return current;
     const previous = bindSwapProgram(
         offer,
         operatorPubkey,
         offer.wantAsset ? legacySwapPrograms.wantAsset : legacySwapPrograms.wantBtc,
+        legacyArgs(offer),
     );
     if (programMatches(previous, expected)) return previous;
     return current;
 }
 
+/** Constructor args of the settlement artifacts. The offer's own names stay at this boundary. */
+function settlementArgs(
+    offer: Omit<Offer, "swapPkScript">,
+): Record<string, Uint8Array | bigint | number> {
+    const receiver = offer.makerPkScript.subarray(2);
+    return {
+        receiver,
+        amount: offer.wantAmount,
+        user: offer.makerPublicKey,
+        ...(offer.wantAsset && {
+            // internal byte order
+            assetTxid: offer.wantAsset.txid.slice().reverse(),
+            assetGroupIndex: offer.wantAsset.groupIndex,
+        }),
+    };
+}
+
+/** Constructor args of the previous leaf. A funded script is the only reason these names remain. */
+function legacyArgs(
+    offer: Omit<Offer, "swapPkScript">,
+): Record<string, Uint8Array | bigint | number> {
+    return {
+        makerWP: offer.makerPkScript.subarray(2),
+        wantAmount: offer.wantAmount,
+        user: offer.makerPublicKey,
+        ...(offer.wantAsset && {
+            wantAssetTxid: offer.wantAsset.txid.slice().reverse(),
+            wantAssetGroupIndex: offer.wantAsset.groupIndex,
+        }),
+    };
+}
+
 function bindSwapProgram(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
-    base: ReturnType<typeof arkade.parseArtifact>,
+    base: ReturnType<typeof arkade.programFromArtifact>,
+    args: Record<string, Uint8Array | bigint | number>,
 ): SwapProgramBinding {
     return {
         program: withExitClosure(base, offer.exitDelay),
         args: {
-            makerWP: offer.makerPkScript.subarray(2),
-            wantAmount: offer.wantAmount,
+            ...args,
             server: operatorPubkey,
-            user: offer.makerPublicKey,
-            // internal byte order
-            ...(offer.wantAsset && {
-                wantAssetTxid: offer.wantAsset.txid.slice().reverse(),
-                wantAssetGroupIndex: offer.wantAsset.groupIndex,
-            }),
             ...(offer.exitDelay && { exitDelay: offer.exitDelay.value }),
         },
         keys: {

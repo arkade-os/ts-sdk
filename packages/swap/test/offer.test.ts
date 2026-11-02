@@ -54,21 +54,18 @@ const directionlessPayload = () =>
 const goldens: [Omit<Offer, "swapPkScript">, string][] = [
     [
         { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
-        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc6548qm54j2w5y2kcv54vylen7etqtwnp08yung5trd6543g8apzzxwr3jqy",
+        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65p9nuw7ax6smcyx0cu5ftrgttu7qw7c7s9af0nrm7ga504ph6qs4c4p7zf",
     ],
     [
         { wantAmount: BigInt(50_000), offerAsset: testAsset, ...keys },
-        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc65475z7782gk2v39yt8fg9h7jut2dekp4ynu3d65das4n8jrchahy4c39ld",
+        "tark1qp8n2k7uklxq4aegau7vawtptkgxsja4kt99lpv6krctwpq8tpc6440gseh0ur2r8xek73p2urxqxdvhldlyqsft8kuc9h92uz45kehqvxnzsr",
     ],
 ];
 
 describe("swap offer", () => {
-    it("compiles an arkadec artifact byte-identically to the hand-written asset program", () => {
+    it("loads the asset settlement artifact the binding compiles", () => {
         const compilerArtifact: ContractArtifact = JSON.parse(
-            readFileSync(
-                new URL("./fixtures/arkadec/banco-btc-to-asset.artifact.json", import.meta.url),
-                "utf8",
-            ),
+            readFileSync(new URL("../src/settlement/asset-payout.json", import.meta.url), "utf8"),
         );
         expect(compilerArtifact.formatVersion).toBe(1);
         expect(
@@ -127,10 +124,10 @@ describe("swap offer", () => {
             () =>
                 new arkade.ArkadeProgramScript(
                     program,
-                    { ...args, wantAssetTxid: new Uint8Array(length) },
+                    { ...args, assetTxid: new Uint8Array(length) },
                     bound,
                 ),
-        ).toThrow(/wantAssetTxid.*32-byte/);
+        ).toThrow(/assetTxid.*32-byte/);
     });
 
     it("roundtrips the TLV codec for both directions", () => {
@@ -158,13 +155,14 @@ describe("swap offer", () => {
             operatorPubkey,
         );
         expect(arkade.stringifyArtifact(program)).toBe(
-            '{"version":1,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
-                '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
-                '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
-                '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +
-                '{"asm":["PUSHCURRENTINPUTINDEX","INSPECTOUTPUTVALUE","$wantAmount","GREATERTHANOREQUAL","VERIFY","PUSHCURRENTINPUTINDEX",' +
-                '"INSPECTOUTPUTSCRIPTPUBKEY",1,"EQUALVERIFY","$makerWP","EQUAL"]}},' +
-                '"cancel":{"tapscript":{"signers":["$user","$server"]}},' +
+            '{"version":1,"name":"SatsPayout","params":[{"name":"receiver","type":"pubkey"},' +
+                '{"name":"amount","type":"int"},{"name":"user","type":"pubkey"},' +
+                '{"name":"server","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
+                '"functions":{"fulfill":{"group":"fulfill","tapscript":{"signers":["$server"],' +
+                '"emulator":"fulfill","emulatorIndex":1},"arkadeScript":{"asm":["PUSHCURRENTINPUTINDEX","DUP",' +
+                '"INSPECTOUTPUTVALUE","$amount","GREATERTHANOREQUAL","VERIFY","INSPECTOUTPUTSCRIPTPUBKEY",1,' +
+                '"NUMEQUALVERIFY","$receiver","EQUAL"],"witness":[]}},"cancel":{"group":"cancel","tapscript":' +
+                '{"signers":["$user","$server"],"signatures":[{"name":"userSig","type":"signature"}]}},' +
                 '"exit":{"tapscript":{"signers":["$user"],"csv":{"type":"blocks","value":"$exitDelay"}}}}}',
         );
     });
@@ -242,19 +240,19 @@ describe("swap offer", () => {
                 // Serialization order in the covenant, display order in the id.
                 // Getting this backwards makes the lookup report the asset
                 // absent, which the VERIFY turns into an unspendable contract.
-                expect(hex.encode(args.wantAssetTxid as Uint8Array), drift(v.label)).toBe(
+                expect(hex.encode(args.assetTxid as Uint8Array), drift(v.label)).toBe(
                     V.script_txid_hex,
                 );
-                expect(hex.encode(args.wantAssetTxid as Uint8Array), drift(v.label)).not.toBe(
+                expect(hex.encode(args.assetTxid as Uint8Array), drift(v.label)).not.toBe(
                     V.txid_hex,
                 );
 
                 // ...and the index travels as a number, so ArkadeScript encodes
                 // it as a script number -- not as the 2-byte wire blob, which
                 // coincides only at group 258 and reads as -32767 at 65535.
-                expect(args.wantAssetGroupIndex, drift(v.label)).toBe(v.group_index);
+                expect(args.assetGroupIndex, drift(v.label)).toBe(v.group_index);
                 expect(
-                    hex.encode(arkade.ArkadeScript.encode([args.wantAssetGroupIndex as number])),
+                    hex.encode(arkade.ArkadeScript.encode([args.assetGroupIndex as number])),
                     drift(v.label),
                 ).toBe(framed(v.script_group_index_item_hex));
             });

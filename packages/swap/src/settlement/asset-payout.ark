@@ -1,0 +1,23 @@
+pragma arkade ^0.1.0;
+
+// The output at this input's index pays `receiver` at least `amount` of the asset.
+// Coordination of who funds it lives outside the contract.
+contract AssetPayout(
+    pubkey receiver,
+    int amount,
+    bytes32 assetTxid,
+    int assetGroupIndex,
+    pubkey user
+) {
+    function fulfill() {
+        int i = this.activeInputIndex;
+        require(tx.outputs[i].assets.lookup(assetTxid, assetGroupIndex) >= amount);
+        let paid = tx.outputs[i].script;
+        require(paid.version == 1);
+        require(paid.program == receiver);
+    }
+
+    function cancel(signature userSig, signature serverSig) tapscript {
+        require(checkMultisig([user, server], [userSig, serverSig], 2));
+    }
+}

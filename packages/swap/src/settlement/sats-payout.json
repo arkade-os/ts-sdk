@@ -1,0 +1,106 @@
+{
+  "formatVersion": 1,
+  "contractName": "SatsPayout",
+  "constructorInputs": [
+    {
+      "name": "receiver",
+      "type": "pubkey"
+    },
+    {
+      "name": "amount",
+      "type": "int"
+    },
+    {
+      "name": "user",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "fulfill",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_DUP",
+          "OP_INSPECTOUTPUTVALUE",
+          "<amount>",
+          "OP_GREATERTHANOREQUAL",
+          "OP_VERIFY",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "1",
+          "OP_NUMEQUALVERIFY",
+          "<receiver>",
+          "OP_EQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "fulfill",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:fulfill>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cancel",
+      "leaves": [
+        {
+          "name": "cancel",
+          "witness": [
+            {
+              "name": "userSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<user>",
+            "OP_CHECKSIGVERIFY",
+            "<SERVER_KEY>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "source": {
+    "entry": "sats-payout.ark",
+    "files": {
+      "sats-payout.ark": "pragma arkade ^0.1.0;\n\n// The output at this input's index pays `receiver` at least `amount` sats.\n// Coordination of who funds it lives outside the contract.\ncontract SatsPayout(\n    pubkey receiver,\n    int amount,\n    pubkey user\n) {\n    function fulfill() {\n        int i = this.activeInputIndex;\n        require(tx.outputs[i].value >= amount);\n        let paid = tx.outputs[i].script;\n        require(paid.version == 1);\n        require(paid.program == receiver);\n    }\n\n    function cancel(signature userSig, signature serverSig) tapscript {\n        require(checkMultisig([user, server], [userSig, serverSig], 2));\n    }\n}\n"
+    }
+  },
+  "compiler": {
+    "name": "arkadec",
+    "version": "0.1.0-rc.1",
+    "options": {
+      "optimize": true
+    }
+  },
+  "updatedAt": "2026-11-02T17:36:33.673758405+00:00",
+  "fingerprint": "sha256:41e54794affdb9f37e7b40c945b15a65ca1e4f17504bbcfd7084d48c4c43cfd2"
+}
