@@ -193,6 +193,22 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
+  on a misread.** A `returned` lockup read before `refundLocktime` was final,
+  so an indexer read missing the solver's preimage ended a paid send as
+  `refunded` for good (#1105). Before the locktime the only refund the solver
+  can push alone is `nonInteractiveRefund`, so any other pre-locktime
+  `returned` read is not final and the swap stays monitored. The same holds for
+  an onchain send, whose L1 claim would otherwise stop being driven. A
+  `refunded` Lightning send stored without a refund txid can now be re-read with
+  `RfqSwapManager.recheckRefundedSends()`, which `createSwapClient` runs in
+  the background after `ready`, without holding up new swaps or `dispose()`.
+  It moves the send to `settled` if the lockup
+  now reads claimed; any other read leaves it as is. A correction drops the
+  refund spend the record named, even when the claim read names no ark
+  transaction. A correction a sink refuses stays monitored until the poll lands
+  the write.
+
 - **Over Electrum, spend checks on a deposit or an HTLC funding no longer read
   the payer's other outputs.** Electrum has no spend index, so
   `ElectrumOnchainProvider.getTxOutspends` reads every output script's history,
