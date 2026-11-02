@@ -1,8 +1,7 @@
 import { Transaction } from "./utils/transaction";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
+export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
-export { BridgeIdentity } from "./identity/bridge";
-export type { IdentityBridge, BridgeSigningRequest } from "./identity/bridge";
 import {
     SeedIdentity,
     MnemonicIdentity,
