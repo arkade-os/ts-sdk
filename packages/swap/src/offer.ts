@@ -3,10 +3,10 @@
  *
  * The user funds the contract; a solver fills it through `fulfill`, or `cancel` refunds it. The
  * `maker*` fields name the funding side's position in the script, not a product role (see the
- * README's Roles section). `asset-swap` and `sats-swap` live in `swap/`, compiled from
- * `.ark`. `fulfill` pays `receiver` at least `amount` on the output
- * at the spending input's index, and never inspects the deposit. Who meets whom is outside
- * this contract. A funded script from the previous leaf still selects
+ * README's Roles section). `asset-swap` and `sats-swap` live in `contracts/`, compiled from
+ * `.ark` and loaded by {@link swapPrograms}. `fulfill` pays `receiver` at least `amount` on the
+ * output at the spending input's index, and never inspects the deposit. Who meets whom is
+ * outside this contract. A funded script from the previous leaf still selects
  * `legacy/swap-want-*.program.v1.json`.
  */
 import { hex } from "@scure/base";
@@ -30,10 +30,7 @@ import {
     type RelativeTimelock,
 } from "@arkade-os/sdk";
 
-import assetSwapArtifact from "./swap/asset-swap.json";
-import satsSwapArtifact from "./swap/sats-swap.json";
-import wantAssetProgramV1 from "./legacy/swap-want-asset.program.v1.json";
-import wantBtcProgramV1 from "./legacy/swap-want-btc.program.v1.json";
+import { legacySwapPrograms, swapPrograms } from "./covenant";
 import {
     promoteOfferContract,
     RETIRABLE,
@@ -49,33 +46,7 @@ import {
     updateAssetSwapBestEffort,
 } from "./store";
 
-// json imports widen "type": "pubkey" to string; parseArtifact validates at runtime
-type Artifact = Parameters<typeof arkade.parseArtifact>[0];
-
-type SettlementArtifact = Parameters<typeof arkade.programFromArtifact>[0];
-
-/**
- * One contract per payout. An exit delay compiles a third closure that is in
- * neither artifact (see {@link withExitClosure}).
- *
- * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
- */
-export const swapPrograms: Record<
-    "wantAsset" | "wantBtc",
-    ReturnType<typeof arkade.programFromArtifact>
-> = {
-    wantAsset: arkade.programFromArtifact(assetSwapArtifact as SettlementArtifact),
-    wantBtc: arkade.programFromArtifact(satsSwapArtifact as SettlementArtifact),
-};
-
-/**
- * Fulfill leaves that read output 0. A funded offer whose script matches one of these still
- * binds it; {@link swapPrograms} is what a new offer compiles.
- */
-export const legacySwapPrograms: typeof swapPrograms = {
-    wantAsset: arkade.parseArtifact(wantAssetProgramV1 as Artifact),
-    wantBtc: arkade.parseArtifact(wantBtcProgramV1 as Artifact),
-};
+export { legacySwapPrograms, swapPrograms };
 
 // ── Offer ────────────────────────────────────────────────────────────────────
 
