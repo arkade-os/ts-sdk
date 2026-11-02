@@ -332,6 +332,49 @@ describe("ArkadeContract — extended features", () => {
         expect(sign.mock.calls[0][1]).toEqual([1]);
     });
 
+    it("`ark.transaction()` takes every input's function from `.from()`", async () => {
+        const COIN2 = mintCoin(5_000);
+        const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
+            COIN,
+            COIN2,
+        ]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const args = { receiver, amount: AMOUNT, h: new Uint8Array(20) };
+        const a = ark.contract(claimProgram(), args);
+        const b = ark.contract(claimProgram(), { ...args, amount: 5_000n });
+        const preimage = new Uint8Array(32).fill(0x42);
+
+        // With no function of its own, every `.from()` names one, and there is nothing to select.
+        expect(() => ark.transaction().from(COIN)).toThrow(/name the function to spend through/);
+        await expect(ark.transaction().to(p2tr(receiver), AMOUNT).build()).rejects.toThrow(
+            /add coins with \.from/,
+        );
+
+        await ark
+            .transaction()
+            .from(COIN, a.unlock.claim(preimage))
+            .from(COIN2, b.unlock.claim(preimage))
+            .to([
+                { script: p2tr(receiver), amount: AMOUNT },
+                { script: p2tr(receiver), amount: 5_000n },
+            ])
+            .send();
+
+        const tx = Transaction.fromPSBT(base64.decode(captured.arkTx!));
+        const ext = Extension.fromBytes(tx.getOutput(2).script!);
+        const covenant = (c: arkade.ArkadeContract) =>
+            hex.encode(c.vtxoScript.functionByName("claim")!.arkadeScript!);
+        expect(ext.getEmulatorPacket()!.entries.map((e) => [e.vin, hex.encode(e.script)])).toEqual([
+            [0, covenant(a)],
+            [1, covenant(b)],
+        ]);
+    });
+
     it("`.from()` refuses no coins, a repeated coin, a coin of another contract, and another client's contract", async () => {
         const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
         const connect = () =>

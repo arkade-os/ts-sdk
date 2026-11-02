@@ -1,6 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { p2tr, SigHash } from "@scure/btc-signer";
+import { hash160 } from "@scure/btc-signer/utils.js";
 
 import {
     arkade,
@@ -112,6 +113,29 @@ const pairedProgram = {
                     "INSPECTINPUTVALUE",
                     "GREATERTHANOREQUAL",
                 ],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// Hashlock covenant, server-signed: output 1 must pay `$receiver`.
+const hashlockProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "hash", type: "bytes20" },
+    ],
+    functions: {
+        claim: {
+            inputs: [{ name: "preimage", type: "bytes" }],
+            tapscript: {
+                signers: ["$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+            arkadeScript: {
+                asm: [1, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
             },
         },
     },
@@ -391,6 +415,40 @@ describe("arkade", () => {
             .send();
         expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
         await waitForSpent(contract.pkScript);
+    });
+
+    // Coins of two contracts, through two functions, in one ark tx: a user-signed
+    // covenant and a server-signed hashlock covenant with a condition witness. Built with
+    // `ark.transaction()`, so each `.from()` names its function.
+    it("TestOffchainTwoContracts", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const aliceAddress = await alice.wallet.getAddress();
+        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const preimage = crypto.getRandomValues(new Uint8Array(32));
+        const send = ark.contract(offchainProgram, { receiver: getWitnessProgram(aliceAddress) });
+        const claim = ark.contract(hashlockProgram, {
+            receiver: getWitnessProgram(aliceAddress),
+            hash: hash160(preimage),
+        });
+
+        faucetOffchain(send.address, 10000);
+        faucetOffchain(claim.address, 5000);
+        await waitForVtxo(send.pkScript);
+        await waitForVtxo(claim.pkScript);
+
+        const { signedArkTx } = await ark
+            .transaction()
+            .from(await send.getUtxos(), send.unlock.send())
+            .from(await claim.getUtxos(), claim.unlock.claim(preimage))
+            .to([
+                { script: alicePkScript, amount: 10000n },
+                { script: alicePkScript, amount: 5000n },
+            ])
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(send.pkScript);
+        await waitForSpent(claim.pkScript);
     });
 
     // Settlement flow via intent + batch session (using arkade script)

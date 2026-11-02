@@ -593,6 +593,14 @@ export class Arkade {
         }
         return new ArkadeContract(this, program, args);
     }
+
+    /**
+     * Start a spend with no function of its own: each `.from(coins, contract.unlock.<name>(...))`
+     * names the function its coins are spent through.
+     */
+    transaction(): ArkadeTransactionBuilder {
+        return new ArkadeTransactionBuilder(this);
+    }
 }
 
 // --- Contract --------------------------------------------------------------
@@ -824,8 +832,9 @@ export class ArkadeContract<P extends Program = Program> {
 // --- Transaction builder ---------------------------------------------------
 
 /**
- * Fluent builder for a single spend. Obtained from `contract.functions.<name>(...)`;
- * chain `.from()`/`.to()` then `.send()` (broadcast) or `.build()` (assemble only).
+ * Fluent builder for a single spend. Obtained from `contract.functions.<name>(...)`, or from
+ * `ark.transaction()` with no function of its own; chain `.from()`/`.to()` then `.send()`
+ * (broadcast) or `.build()` (assemble only).
  */
 export class ArkadeTransactionBuilder {
     private readonly outputs: TransactionOutput[] = [];
@@ -838,20 +847,23 @@ export class ArkadeTransactionBuilder {
     /** @internal */
     constructor(
         private readonly client: Arkade,
-        private readonly unlocker: ArkadeUnlocker,
+        private readonly unlocker?: ArkadeUnlocker,
     ) {}
 
     /**
      * Spend coins through this builder's function, or through `unlocker`
-     * (`other.unlock.<name>(...args)`, same client). Calls add up; contract coins come first, in
-     * call order, then `.fund()` inputs.
+     * (`other.unlock.<name>(...args)`, same client), which `ark.transaction()` requires. Calls add
+     * up; contract coins come first, in call order, then `.fund()` inputs.
      *
      * Every coin's script sees the same outputs: "output 0 pays X" passes once for all of them.
      * For one payment per coin, the contract must check `INSPECTNUMINPUTS` or `PUSHCURRENTINPUTINDEX`.
      */
-    from(coins: Utxo | Utxo[], unlocker: ArkadeUnlocker = this.unlocker): this {
+    from(coins: Utxo | Utxo[], unlocker: ArkadeUnlocker | undefined = this.unlocker): this {
         const list = Array.isArray(coins) ? coins : [coins];
         if (list.length === 0) throw new Error("from(): no coins given");
+        if (!unlocker) {
+            throw new Error("from(): name the function to spend through: contract.unlock.<name>()");
+        }
         const { contract, fn } = unlocker;
         if (contract.client !== this.client) {
             throw new Error(`from(): ${fn.name} belongs to a contract on another Arkade client`);
@@ -943,6 +955,11 @@ export class ArkadeTransactionBuilder {
         const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
         let inputs: ContractInput[] = [...this.inputs];
         if (inputs.length === 0) {
+            if (!this.unlocker) {
+                throw new Error(
+                    "ArkadeTransactionBuilder: add coins with .from(coins, contract.unlock.<name>())",
+                );
+            }
             inputs = [
                 { coin: await this.selectCoin(this.unlocker, outputsSum), unlocker: this.unlocker },
             ];
@@ -1122,7 +1139,7 @@ export class ArkadeTransactionBuilder {
     /** The functions this spend goes through: the `.from()` ones, else this builder's own. */
     private unlockers(): ArkadeUnlocker[] {
         if (this.inputs.length > 0) return this.inputs.map((i) => i.unlocker);
-        return [this.unlocker];
+        return this.unlocker ? [this.unlocker] : [];
     }
 
     /** Indexes of inputs the client owns and must sign (contract inputs + funded inputs). */

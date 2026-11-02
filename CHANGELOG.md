@@ -118,7 +118,8 @@ style and have not been backfilled.
   on the same client. The builder used to write one emulator entry, for input
   0, so a covenant spend could use only one coin and anything more had to be
   built by hand. Each input now gets its own leaf, `PrevArkTx`, condition
-  witness and emulator entry (#1116).
+  witness and emulator entry (#1116). `ark.transaction()` starts a spend with
+  no function of its own, so every input names its function in `.from()`.
 
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
