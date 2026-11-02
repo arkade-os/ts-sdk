@@ -14,7 +14,7 @@
       "tapscript": { "signers": ["$server"] },
       "arkadeScript": {
         "asm": [
-          0,
+          "PUSHCURRENTINPUTINDEX",
           "$wantAssetTxid",
           "$wantAssetGroupIndex",
           "INSPECTOUTASSETLOOKUP",
@@ -22,7 +22,7 @@
           "$wantAmount",
           "GREATERTHANOREQUAL",
           "VERIFY",
-          0,
+          "PUSHCURRENTINPUTINDEX",
           "INSPECTOUTPUTSCRIPTPUBKEY",
           1,
           "EQUALVERIFY",

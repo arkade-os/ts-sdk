@@ -8,7 +8,7 @@ import { arkade, type IContractManager, type RelativeTimelock } from "@arkade-os
 
 import wantAssetV0 from "./legacy/swap-want-asset.program.v0.json";
 import wantBtcV0 from "./legacy/swap-want-btc.program.v0.json";
-import { OFFER_CONTRACT_KIND, swapPrograms, withExitClosure } from "./offer";
+import { OFFER_CONTRACT_KIND, legacySwapPrograms, withExitClosure } from "./offer";
 
 type ContractManager = Pick<IContractManager, "getUnsupportedContracts" | "createContract">;
 type ProgramJson = { params: unknown[]; functions: Record<string, unknown> };
@@ -26,11 +26,11 @@ function withExitV0(program: ProgramJson, exit: RelativeTimelock["type"] | undef
     };
 }
 
-/** v0 program string → the v1 string the record path writes for the same offer. */
+/** v0 program string → the v1 string that still compiles to that row's script. */
 const V0_TO_V1 = new Map<string, string>();
 for (const [v0, v1] of [
-    [wantBtcV0, swapPrograms.wantBtc],
-    [wantAssetV0, swapPrograms.wantAsset],
+    [wantBtcV0, legacySwapPrograms.wantBtc],
+    [wantAssetV0, legacySwapPrograms.wantAsset],
 ] as const) {
     for (const exit of [undefined, "blocks", "seconds"] as const) {
         // the delay's value is `$exitDelay` in both, so one entry covers every delay

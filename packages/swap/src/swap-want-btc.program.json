@@ -12,12 +12,12 @@
       "tapscript": { "signers": ["$server"] },
       "arkadeScript": {
         "asm": [
-          0,
+          "PUSHCURRENTINPUTINDEX",
           "INSPECTOUTPUTVALUE",
           "$wantAmount",
           "GREATERTHANOREQUAL",
           "VERIFY",
-          0,
+          "PUSHCURRENTINPUTINDEX",
           "INSPECTOUTPUTSCRIPTPUBKEY",
           1,
           "EQUALVERIFY",
