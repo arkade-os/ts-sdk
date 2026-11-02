@@ -2,7 +2,7 @@ pragma arkade ^0.1.0;
 
 // The output at this input's index pays `receiver` at least `amount` sats.
 // Coordination of who funds it lives outside the contract.
-contract SatsPayout(
+contract SatsSwap(
     pubkey receiver,
     int amount,
     pubkey user
