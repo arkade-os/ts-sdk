@@ -65,6 +65,13 @@ style and have not been backfilled.
   `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
+- **Wallet-state updates can use an optional backend transaction.** Repository
+  implementations expose atomic wallet-state v1 without changing storage schemas
+  or required repository versions. SQLite activation requires an explicitly
+  dedicated or coordinated connection; shared-executor repository work uses one
+  queue. Persistence assertions remain explicit caller options. Legacy custom
+  repositories retain their existing update path.
+
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
   so a solver can fund the lockup with dust and learn `P` from that claim.
@@ -273,6 +280,10 @@ style and have not been backfilled.
   arkd rejects an input that only the server signs (`missing tapscript spend
   sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
   says so up front, naming the function, whichever route the spend takes.
+
+- **IndexedDB wallet-state read failures no longer look like an empty wallet.**
+  Read errors propagate before updates can replace persisted pending-submit, cursor
+  or unrelated settings. Genuine absence still returns null.
 
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,

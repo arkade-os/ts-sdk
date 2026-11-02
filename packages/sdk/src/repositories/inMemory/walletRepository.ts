@@ -3,6 +3,8 @@ import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
+    type AtomicWalletState,
+    applyWalletStateUpdate,
     VtxoRepositoryKey,
     assertHistoryPageFilter,
     compareHistoryCursors,
@@ -22,6 +24,7 @@ import { checkSaveVtxosForScript, isVtxoForScript } from "../../contracts/vtxoOw
 /**
  * In-memory implementation of WalletRepository.
  * Data is ephemeral and scoped to the instance.
+ * Atomic updates require structuredClone and cloneable state; they provide no durability.
  */
 export class InMemoryWalletRepository implements WalletRepository {
     readonly version = 2 as const;
@@ -30,6 +33,25 @@ export class InMemoryWalletRepository implements WalletRepository {
     private readonly txsByAddress = new Map<string, ArkTransaction[]>();
 
     private walletState: WalletState | null = null;
+    readonly atomicWalletState?: AtomicWalletState;
+
+    constructor() {
+        const clone =
+            typeof globalThis.structuredClone === "function"
+                ? globalThis.structuredClone.bind(globalThis)
+                : undefined;
+        if (clone) {
+            this.atomicWalletState = {
+                version: 1,
+                update: async (updater) => {
+                    this.walletState = applyWalletStateUpdate(
+                        clone(this.walletState ?? {}),
+                        updater,
+                    );
+                },
+            };
+        }
+    }
 
     async getVtxosPage(
         address: string,

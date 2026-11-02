@@ -173,10 +173,12 @@ describe("Wallet.send validUntil", () => {
         const { wallet, walletRepository } = await makeWallet();
         let now = 1_700_000_000_000;
         vi.spyOn(Date, "now").mockImplementation(() => now);
-        const save = walletRepository.saveWalletState.bind(walletRepository);
-        vi.spyOn(walletRepository, "saveWalletState").mockImplementation(async (state) => {
-            await save(state);
-            if (state.settings?.hasPendingTx) now = 1_700_000_001_000;
+        const atomic = walletRepository.atomicWalletState!;
+        const update = atomic.update.bind(atomic);
+        vi.spyOn(atomic, "update").mockImplementation(async (updater) => {
+            await update(updater);
+            if ((await walletRepository.getWalletState())?.settings?.hasPendingTx)
+                now = 1_700_000_001_000;
         });
         const submit = vi.spyOn(wallet.arkProvider, "submitTx");
         const { page, worker, replies } = deadlinePage(wallet);
@@ -496,10 +498,12 @@ describe("Wallet.send validUntil", () => {
         const selected = coin(wallet);
         let now = 1_700_000_000_000;
         vi.spyOn(Date, "now").mockImplementation(() => now);
-        const saveState = walletRepository.saveWalletState.bind(walletRepository);
-        vi.spyOn(walletRepository, "saveWalletState").mockImplementation(async (state) => {
-            await saveState(state);
-            if (state.settings?.hasPendingTx === true) now = 1_700_000_001_000;
+        const atomic = walletRepository.atomicWalletState!;
+        const update = atomic.update.bind(atomic);
+        vi.spyOn(atomic, "update").mockImplementation(async (updater) => {
+            await update(updater);
+            if ((await walletRepository.getWalletState())?.settings?.hasPendingTx === true)
+                now = 1_700_000_001_000;
         });
         const submit = vi.spyOn(wallet.arkProvider, "submitTx");
 
@@ -518,10 +522,12 @@ describe("Wallet.send validUntil", () => {
         await walletRepository.saveWalletState({ settings: { hasPendingTx: true } });
         let now = 1_700_000_000_000;
         vi.spyOn(Date, "now").mockImplementation(() => now);
-        const saveState = walletRepository.saveWalletState.bind(walletRepository);
-        vi.spyOn(walletRepository, "saveWalletState").mockImplementation(async (state) => {
-            await saveState(state);
-            if (state.settings?.hasPendingTx === true) now = 1_700_000_001_000;
+        const atomic = walletRepository.atomicWalletState!;
+        const update = atomic.update.bind(atomic);
+        vi.spyOn(atomic, "update").mockImplementation(async (updater) => {
+            await update(updater);
+            if ((await walletRepository.getWalletState())?.settings?.hasPendingTx === true)
+                now = 1_700_000_001_000;
         });
 
         await expect(
@@ -541,11 +547,15 @@ describe("Wallet.send validUntil", () => {
         const releaseFinalize = deferred();
         let now = 1_700_000_000_000;
         vi.spyOn(Date, "now").mockImplementation(() => now);
-        const saveState = walletRepository.saveWalletState.bind(walletRepository);
+        const atomic = walletRepository.atomicWalletState!;
+        const update = atomic.update.bind(atomic);
         let first = true;
-        vi.spyOn(walletRepository, "saveWalletState").mockImplementation(async (state) => {
-            await saveState(state);
-            if (state.settings?.hasPendingTx === true && first) {
+        vi.spyOn(atomic, "update").mockImplementation(async (updater) => {
+            await update(updater);
+            if (
+                (await walletRepository.getWalletState())?.settings?.hasPendingTx === true &&
+                first
+            ) {
                 first = false;
                 firstWrite.resolve();
                 await releaseFirstWrite.promise;
@@ -604,11 +614,14 @@ describe("Wallet.send validUntil", () => {
         const selected = coin(wallet);
         vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
         const callbackError = new Error("pending write failed");
-        const saveState = walletRepository.saveWalletState.bind(walletRepository);
-        vi.spyOn(walletRepository, "saveWalletState").mockImplementation((state) =>
-            state.settings?.hasPendingTx === true
-                ? Promise.reject(callbackError)
-                : saveState(state),
+        const atomic = walletRepository.atomicWalletState!;
+        const update = atomic.update.bind(atomic);
+        vi.spyOn(atomic, "update").mockImplementation((updater) =>
+            update((state) => {
+                const next = updater(state);
+                if (next.settings?.hasPendingTx === true) throw callbackError;
+                return next;
+            }),
         );
         const submit = vi.spyOn(wallet.arkProvider, "submitTx");
 

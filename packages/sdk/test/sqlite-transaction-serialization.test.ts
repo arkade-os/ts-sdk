@@ -1,9 +1,11 @@
 import { collectIntents } from "../src/repositories/intentRepository";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
 import { SQLiteVirtualTxRepository } from "../src/repositories/sqlite/virtualTxRepository";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";
+import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
+import type { Contract } from "../src/contracts/types";
 import { runInTransaction } from "../src/repositories/sqlite/transaction";
 import { ChainedTxType, type VirtualTx } from "../src/repositories/virtualTxRepository";
 import type { ArkIntent } from "../src/repositories/intentRepository";
@@ -50,6 +52,91 @@ const LEGACY_VTXOS = LEGACY_VTXOS_V0.replace(
 );
 
 describe("SQLite transaction serialization (shared connection)", () => {
+    it.each([false, true])(
+        "keeps unrelated SDK operations outside an atomic wallet transaction (rollback=%s)",
+        async (rollback) => {
+            const db = createNodeSQLExecutor();
+            const wallet = new SQLiteWalletRepository(db, { walletStateTransactions: true });
+            const contracts = new SQLiteContractRepository(db);
+            const intents = new SQLiteIntentRepository(db);
+            const virtual = new SQLiteVirtualTxRepository(db);
+            const existing: Contract = {
+                script: "existing",
+                address: "existing",
+                type: "test",
+                state: "active",
+                params: {},
+                createdAt: 1,
+            };
+            const added: Contract = { ...existing, script: "added", address: "added" };
+            await wallet.saveWalletState({ settings: { initial: true } });
+            await contracts.saveContract(existing);
+            await collectIntents(intents);
+            await virtual.getVirtualTx("x");
+            let enter!: () => void;
+            const entered = new Promise<void>((resolve) => {
+                enter = resolve;
+            });
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            const get = db.get.bind(db);
+            const read = vi.spyOn(db, "get").mockImplementationOnce(async (sql, params) => {
+                const row = await get(sql, params);
+                enter();
+                await gate;
+                return row;
+            });
+            const error = new Error("wallet update failed");
+            const updating = wallet
+                .atomicWalletState!.update((state) => {
+                    if (rollback) throw error;
+                    return { ...state, settings: { ...state.settings, committed: true } };
+                })
+                .catch((failure) => failure);
+            await entered;
+            const settled: string[] = [];
+            const operations = [
+                contracts.saveContract(added),
+                contracts.getContractsPage(undefined, { limit: 10 }),
+                contracts.deleteContract(existing.script),
+                wallet.saveWalletState({ settings: { outside: true } }),
+                wallet.getWalletState(),
+                intents.saveIntent(intent("outside")),
+                virtual.upsertVirtualTxs([vtx("outside")]),
+            ].map((operation, index) =>
+                operation.then((value) => {
+                    settled.push(String(index));
+                    return value;
+                }),
+            );
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            const settledBeforeRelease = [...settled];
+            release();
+            const outcome = await updating;
+            await Promise.all(operations);
+            read.mockRestore();
+            expect(outcome).toBe(rollback ? error : undefined);
+            expect(
+                (await contracts.getContractsPage(undefined, { limit: 10 })).items.map(
+                    (row) => row.script,
+                ),
+            ).toEqual(["added"]);
+            expect(await wallet.getWalletState()).toEqual({
+                settings: { outside: true },
+                lastSyncTime: undefined,
+            });
+            expect(settledBeforeRelease).toEqual([]);
+            expect((await collectIntents(intents)).map((row) => row.intentTxId)).toEqual([
+                "outside",
+            ]);
+            expect(await virtual.getVirtualTx("outside")).not.toBeNull();
+            await wallet.atomicWalletState!.update((state) => ({ ...state, lastSyncTime: 99 }));
+            expect((await wallet.getWalletState())?.lastSyncTime).toBe(99);
+        },
+    );
+
     it("serializes concurrent transactions across two repos on one executor", async () => {
         const db = createNodeSQLExecutor();
         const intents = new SQLiteIntentRepository(db);

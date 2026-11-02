@@ -3,6 +3,8 @@ import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
+    type AtomicWalletState,
+    applyWalletStateUpdate,
     VtxoRepositoryKey,
     assertHistoryPageFilter,
     compareHistoryCursors,
@@ -46,8 +48,12 @@ export class IndexedDBWalletRepository implements WalletRepository {
     readonly version = 2 as const;
     private readonly connection: ManagedConnection;
 
-    constructor(dbName: string = DEFAULT_DB_NAME) {
+    /** persistentWalletState asserts persistence beyond this process; it cannot detect browser eviction. */
+    constructor(dbName: string = DEFAULT_DB_NAME, options?: { persistentWalletState?: boolean }) {
         this.connection = createManagedConnection(dbName, DB_VERSION, initDatabase);
+        if (options?.persistentWalletState === true) {
+            this.atomicWalletState = { ...this.atomicWalletState, persistent: true };
+        }
     }
 
     async clear(): Promise<void> {
@@ -365,6 +371,48 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
+    readonly atomicWalletState: AtomicWalletState = {
+        version: 1,
+        update: async (updater) => {
+            const db = await this.getDB();
+            const transaction = db.transaction([STORE_WALLET_STATE], "readwrite");
+            const completion = awaitTransaction(transaction);
+            let failed = false;
+            let failure: unknown;
+            try {
+                const store = transaction.objectStore(STORE_WALLET_STATE);
+                const request = store.get("state");
+                request.onerror = () => {
+                    failed = true;
+                    failure = request.error;
+                };
+                request.onsuccess = () => {
+                    try {
+                        const state = applyWalletStateUpdate(request.result?.data ?? {}, updater);
+                        const write = store.put({ key: "state", data: state });
+                        write.onerror = () => {
+                            failed = true;
+                            failure = write.error;
+                        };
+                    } catch (error) {
+                        failed = true;
+                        failure = error;
+                        transaction.abort();
+                    }
+                };
+            } catch (error) {
+                failed = true;
+                failure = error;
+                transaction.abort();
+            }
+            try {
+                await completion;
+            } catch (error) {
+                throw failed ? failure : error;
+            }
+        },
+    };
+
     async getWalletState(): Promise<WalletState | null> {
         try {
             const db = await this.getDB();
@@ -377,7 +425,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             return result?.data ?? null;
         } catch (error) {
             console.error("Failed to get wallet state:", error);
-            return null;
+            throw error;
         }
     }
 

@@ -3,6 +3,8 @@ import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
+    type AtomicWalletState,
+    applyWalletStateUpdate,
     VtxoRepositoryKey,
     assertHistoryPageFilter,
     type TransactionHistoryPageFilter,
@@ -26,7 +28,7 @@ import {
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
-import { runInTransaction } from "./transaction";
+import { getSerializedExecutor, runInTransaction } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
 import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
 import { isVtxoSpent } from "../../wallet/vtxo";
@@ -34,6 +36,11 @@ import { isVtxoSpent } from "../../wallet/vtxo";
 interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
     prefix?: string;
+    /** Opt in only with a dedicated connection or all operations coordinated through
+     * getSerializedExecutor/runInTransaction on the same executor object. Default: false. */
+    walletStateTransactions?: boolean;
+    /** Caller asserts durable backing; requires walletStateTransactions. No storage detection. */
+    persistentWalletState?: boolean;
 }
 
 /**
@@ -53,6 +60,8 @@ const MAX_BOUND_PARAMETERS = 999;
  */
 export class SQLiteWalletRepository implements WalletRepository {
     readonly version = 2 as const;
+    readonly atomicWalletState?: AtomicWalletState;
+    private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly tables: {
@@ -62,10 +71,14 @@ export class SQLiteWalletRepository implements WalletRepository {
         walletState: string;
     };
 
-    constructor(
-        private readonly db: SQLExecutor,
-        options?: SQLiteWalletRepositoryOptions,
-    ) {
+    constructor(db: SQLExecutor, options?: SQLiteWalletRepositoryOptions) {
+        this.db = getSerializedExecutor(db);
+        if (options?.walletStateTransactions === true) {
+            this.atomicWalletState =
+                options.persistentWalletState === true
+                    ? { ...this.atomicState, persistent: true }
+                    : this.atomicState;
+        }
         this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.tables = {
             vtxos: `${this.prefix}vtxos`,
@@ -185,17 +198,17 @@ export class SQLiteWalletRepository implements WalletRepository {
      * leave the next startup seeing no `vtxos` table.
      */
     private async migrateVtxosTable(): Promise<void> {
-        await runInTransaction(this.db, async () => {
-            const tableExists = await this.db.get<{ name: string }>(
+        await runInTransaction(this.db, async (tx) => {
+            const tableExists = await tx.get<{ name: string }>(
                 `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
                 [this.tables.vtxos],
             );
             if (!tableExists) {
-                await this.db.run(this.vtxosCreateSql(this.tables.vtxos));
+                await tx.run(this.vtxosCreateSql(this.tables.vtxos));
                 return;
             }
 
-            const cols = await this.db.all<{ name: string; notnull: number }>(
+            const cols = await tx.all<{ name: string; notnull: number }>(
                 `PRAGMA table_info(${this.tables.vtxos})`,
             );
             const scriptCol = cols.find((c) => c.name === "script");
@@ -209,9 +222,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             let addedCanonicalColumns = false;
             for (const [name, type] of nullableCanonicalColumns) {
                 if (!cols.some((c) => c.name === name)) {
-                    await this.db.run(
-                        `ALTER TABLE ${this.tables.vtxos} ADD COLUMN ${name} ${type}`,
-                    );
+                    await tx.run(`ALTER TABLE ${this.tables.vtxos} ADD COLUMN ${name} ${type}`);
                     addedCanonicalColumns = true;
                 }
             }
@@ -222,7 +233,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             // carries these columns across.
             const hasLegacyBlob = cols.some((c) => c.name === "virtual_status_json");
             if (addedCanonicalColumns && hasLegacyBlob) {
-                await this.backfillCanonicalVtxoColumns();
+                await this.backfillCanonicalVtxoColumns(tx);
             }
             if (scriptCol && scriptCol.notnull === 1 && !hasLegacyBlob) {
                 // Already on v1 schema.
@@ -230,19 +241,19 @@ export class SQLiteWalletRepository implements WalletRepository {
             }
 
             if (!scriptCol) {
-                await this.db.run(`ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`);
+                await tx.run(`ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`);
             }
 
             // Backfill any NULL scripts from the owning address. Derivation
             // is deterministic, so re-running after a rolled-back attempt
             // produces the same values.
-            const nullRows = await this.db.all<{
+            const nullRows = await tx.all<{
                 txid: string;
                 vout: number;
                 address: string;
             }>(`SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`);
             for (const row of nullRows) {
-                await this.db.run(
+                await tx.run(
                     `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
                     [scriptFromArkAddress(row.address), row.txid, row.vout],
                 );
@@ -252,9 +263,9 @@ export class SQLiteWalletRepository implements WalletRepository {
             // do the canonical 12-step table rebuild. Drop any stale temp
             // table from a prior aborted attempt first.
             const tempName = `${this.tables.vtxos}__migrate_tmp`;
-            await this.db.run(`DROP TABLE IF EXISTS ${tempName}`);
-            await this.db.run(this.vtxosCreateSql(tempName));
-            await this.db.run(`
+            await tx.run(`DROP TABLE IF EXISTS ${tempName}`);
+            await tx.run(this.vtxosCreateSql(tempName));
+            await tx.run(`
                 INSERT INTO ${tempName}
                     (txid, vout, value, address, tap_tree,
                      forfeit_cb, forfeit_s, intent_cb, intent_s,
@@ -270,8 +281,8 @@ export class SQLiteWalletRepository implements WalletRepository {
                        spent_by, settled_by, ark_tx_id, extra_witness_json, assets_json, script
                 FROM ${this.tables.vtxos}
             `);
-            await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
-            await this.db.run(`ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`);
+            await tx.run(`DROP TABLE ${this.tables.vtxos}`);
+            await tx.run(`ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`);
         });
     }
 
@@ -284,8 +295,8 @@ export class SQLiteWalletRepository implements WalletRepository {
      * is missing or corrupt are left alone: a migration must not be stopped by one bad row, and
      * the next sync repairs it.
      */
-    private async backfillCanonicalVtxoColumns(): Promise<void> {
-        const rows = await this.db.all<{
+    private async backfillCanonicalVtxoColumns(tx: SQLExecutor): Promise<void> {
+        const rows = await tx.all<{
             txid: string;
             vout: number;
             virtual_status_json: string | null;
@@ -296,7 +307,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         for (const row of rows) {
             const facts = legacyVtxoFacts(row.virtual_status_json);
             if (!facts) continue;
-            await this.db.run(
+            await tx.run(
                 `UPDATE ${this.tables.vtxos}
                  SET is_swept = ?, is_preconfirmed = ?, commitment_txids_json = ?,
                      expires_at = ?, expires_at_height = ?,
@@ -609,6 +620,35 @@ export class SQLiteWalletRepository implements WalletRepository {
     }
 
     // ── Wallet state ───────────────────────────────────────────────────
+
+    private readonly atomicState: AtomicWalletState = {
+        version: 1,
+        update: async (updater) => {
+            await this.ensureInit();
+            await runInTransaction(this.db, async (tx) => {
+                const row = await tx.get<WalletStateRow>(
+                    `SELECT * FROM ${this.tables.walletState} WHERE key = ?`,
+                    ["state"],
+                );
+                const current: WalletState = row
+                    ? {
+                          settings: row.settings_json ? JSON.parse(row.settings_json) : undefined,
+                          lastSyncTime: row.last_sync_time ?? undefined,
+                      }
+                    : {};
+                const state = applyWalletStateUpdate(current, updater);
+                await tx.run(
+                    `INSERT OR REPLACE INTO ${this.tables.walletState}
+                        (key, settings_json, last_sync_time) VALUES (?, ?, ?)`,
+                    [
+                        "state",
+                        state.settings ? JSON.stringify(state.settings) : null,
+                        state.lastSyncTime ?? null,
+                    ],
+                );
+            });
+        },
+    };
 
     async getWalletState(): Promise<WalletState | null> {
         await this.ensureInit();
