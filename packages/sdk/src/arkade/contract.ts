@@ -192,6 +192,17 @@ export interface Utxo {
      */
     script?: string;
     /**
+     * Whether the server swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
+     * swept coin can't be spent offchain, so `.from()` refuses it; recover it into a batch instead.
+     */
+    isSwept?: boolean;
+    /**
+     * When a virtual coin's batch expires, as {@link ArkadeContract.getUtxos} reports it. From that
+     * moment on, `.from()` refuses the coin. A coin without it, such as an onchain one, is never
+     * refused for expiry; height-based expiry isn't checked, since that needs the chain tip.
+     */
+    expiresAt?: Date;
+    /**
      * Raw bytes of the ark tx that created this VTXO, attached as its input's PrevArkTx. Overrides
      * the indexer-resolved value; supply it when the tx isn't indexable yet (a recursive covenant
      * spending an ark tx the caller just built).
@@ -875,6 +886,7 @@ export class ArkadeTransactionBuilder {
         }
         const script = hex.encode(contract.pkScript);
         const taken = new Set(this.inputs.map(({ coin: c }) => `${c.txid}:${c.vout}`));
+        const now = Date.now();
         for (const coin of list) {
             const outpoint = `${coin.txid}:${coin.vout}`;
             if (coin.script && coin.script !== script) {
@@ -884,6 +896,12 @@ export class ArkadeTransactionBuilder {
             }
             if (taken.has(outpoint))
                 throw new Error(`from(): coin ${outpoint} is already an input`);
+            const reason = unspendable(coin, now);
+            if (reason) {
+                throw new Error(
+                    `from(): coin ${outpoint} ${reason}; recover it into a batch instead`,
+                );
+            }
             taken.add(outpoint);
         }
         this.inputs.push(...list.map((coin) => ({ coin, unlocker })));
@@ -1173,7 +1191,8 @@ export class ArkadeTransactionBuilder {
     }
 
     private async selectCoin(unlocker: ArkadeUnlocker, amount: bigint): Promise<Utxo> {
-        const utxos = await unlocker.contract.getUtxos();
+        const now = Date.now();
+        const utxos = (await unlocker.contract.getUtxos()).filter((u) => !unspendable(u, now));
         if (utxos.length === 0) throw new Error("no spendable coins for this contract");
         // Smallest covering coin, else the largest (the rest may come via `.fund()`).
         const covering = utxos
@@ -1208,6 +1227,14 @@ interface ContractInput {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/** Why `coin` can't be spent offchain, if it can't: swept, or a virtual coin past its expiry. */
+function unspendable(coin: Utxo, now: number): string | undefined {
+    if (coin.isSwept) return "was swept";
+    // `new Date()`: a coin restored from JSON carries the expiry as a string.
+    if (coin.expiresAt && now >= new Date(coin.expiresAt).getTime()) return "has expired";
+    return undefined;
+}
 
 function witnessBytes({ contract, args }: ArkadeUnlocker, ref: WitnessRef): Uint8Array {
     return witnessRefToBytes(ref, args, contract.args);

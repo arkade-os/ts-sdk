@@ -205,6 +205,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Coin selection and `.from()` skip swept and expired coins.** `getUtxos()`
+  can return a coin that is swept or past its batch expiry; a registered
+  contract keeps them so they can be recovered. arkd rejects a spend that
+  includes one (`VTXO_RECOVERABLE`). Selection without `.from()` now skips
+  them, and `.from()` refuses a coin with `isSwept: true` or an `expiresAt`
+  that has been reached, instead of failing at arkd. A coin without expiry
+  fields, such as an onchain one, is never refused for expiry. An `expiresAt`
+  restored from JSON as a string is read as a date.
+
 - **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
   returns checkpoints without the condition witness, so finalizing failed with
   `INVALID_SIGNATURE`. The builder now adds it back after signing.

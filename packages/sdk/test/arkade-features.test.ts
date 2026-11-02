@@ -375,7 +375,7 @@ describe("ArkadeContract — extended features", () => {
         ]);
     });
 
-    it("`.from()` refuses no coins, a repeated coin, a coin of another contract, and another client's contract", async () => {
+    it("`.from()` refuses no coins, a repeated, swept or expired coin, a coin of another contract, and another client's contract", async () => {
         const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
         const connect = () =>
             arkade.Arkade.connect({
@@ -392,6 +392,29 @@ describe("ArkadeContract — extended features", () => {
 
         expect(() => claim().from([])).toThrow(/no coins/);
         expect(() => claim().from(COIN).from([COIN])).toThrow(/already an input/);
+        expect(() => claim().from({ ...COIN, isSwept: true })).toThrow(/was swept/);
+        expect(() => claim().from({ ...COIN, expiresAt: new Date(Date.now() - 1_000) })).toThrow(
+            /has expired/,
+        );
+        // A coin restored from JSON carries its expiry as a string.
+        const stored = { ...COIN, expiresAt: new Date(Date.now() - 1_000).toISOString() };
+        expect(() => claim().from(stored as unknown as arkade.Utxo)).toThrow(/has expired/);
+        // A coin is expired from the exact moment of its expiresAt.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+            expect(() => claim().from({ ...COIN, expiresAt: new Date() })).toThrow(/has expired/);
+            expect(() =>
+                claim().from({ ...COIN, expiresAt: new Date(Date.now() + 1) }),
+            ).not.toThrow();
+        } finally {
+            vi.useRealTimers();
+        }
+        // Not expired yet, or no expiry at all (an onchain coin): both are accepted.
+        expect(() =>
+            claim().from({ ...COIN, expiresAt: new Date(Date.now() + 60_000) }),
+        ).not.toThrow();
+        expect(() => claim().from(COIN)).not.toThrow();
         expect(() => claim().from({ ...COIN, script: hex.encode(p2tr()) })).toThrow(
             /not locked by the contract of claim/,
         );
@@ -523,11 +546,15 @@ describe("ArkadeContract — extended features", () => {
         ).rejects.toBeInstanceOf(PrevTxUnavailableError);
     });
 
-    it("selects the smallest contract coin covering the outputs", async () => {
+    it("selects the smallest spendable contract coin covering the outputs", async () => {
         const small = mintCoin(5_000);
-        const big = mintCoin(20_000);
+        const swept = { ...mintCoin(12_000), isSwept: true };
+        const expired = { ...mintCoin(11_000), expiresAt: new Date(Date.now() - 1_000) };
+        const big = mintCoin(20_000); // no expiry fields: never skipped for expiry
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
             small,
+            swept,
+            expired,
             big,
         ]);
         const ark = await arkade.Arkade.connect({
@@ -542,7 +569,7 @@ describe("ArkadeContract — extended features", () => {
             h: new Uint8Array(20),
         });
 
-        // outputs require 10_000 → must pick `big` (5_000 can't cover)
+        // outputs require 10_000 → must pick `big` (5_000 can't cover, 11_000 expired, 12_000 swept)
         await c.functions
             .claim(new Uint8Array(32).fill(0x42))
             .to(p2tr(receiver), AMOUNT)
