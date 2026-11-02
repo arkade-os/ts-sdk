@@ -193,6 +193,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Failed settlement cleanup retains persisted intent locks.** With an
+  `IntentRepository`, failed deletion no longer marks an unresolved intent as
+  cancelled. Reconciliation retries its stored delete proof, including when a
+  lost registration response left the row `waiting_to_submit`. Existing terminal
+  states, expiry and precise no-match handling remain unchanged.
+
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
   so an indexer read missing the solver's preimage ended a paid send as

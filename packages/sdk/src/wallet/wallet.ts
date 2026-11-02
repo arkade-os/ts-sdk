@@ -4005,29 +4005,35 @@ export class Wallet
                 );
                 throw error;
             }
-            // Pre-commit failure: release the server intent so the next settle
-            // doesn't hit "duplicated input", and record the cancellation.
+            // Failed deletion leaves the durable input locks for reconciliation to retry.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
+            let released = !registering;
             if (registering) {
-                await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
-                    // Nothing held: the server refused the registration, or already dropped it.
-                    if (isNoMatchingIntentsError(e)) return;
-                    console.warn(
-                        `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
-                        e,
-                    );
-                });
+                try {
+                    await this.arkProvider.deleteIntent(deleteIntent);
+                    released = true;
+                } catch (e) {
+                    if (isNoMatchingIntentsError(e)) released = true;
+                    else {
+                        console.warn(
+                            `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                            e,
+                        );
+                    }
+                }
             }
-            await this.persistIntentSnapshot(
-                intentTxId,
-                "cancelled",
-                intent,
-                deleteIntent,
-                params.inputs,
-                {
-                    cancellationReason: error instanceof Error ? error.message : String(error),
-                },
-            );
+            if (released) {
+                await this.persistIntentSnapshot(
+                    intentTxId,
+                    "cancelled",
+                    intent,
+                    deleteIntent,
+                    params.inputs,
+                    {
+                        cancellationReason: error instanceof Error ? error.message : String(error),
+                    },
+                );
+            }
             throw error;
         } finally {
             // Clear first so a synchronous handler firing from abort() never sees stale state.
