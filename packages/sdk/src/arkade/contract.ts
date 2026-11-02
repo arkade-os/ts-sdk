@@ -1087,6 +1087,16 @@ export class ArkadeTransactionBuilder {
 
         const userInputs = this.userInputIndexes(inputs);
 
+        // arkd refuses an input signed by the server alone; a covenant leaf adds the emulator's key.
+        const serverOnly = inputs.find(
+            ({ unlocker }, i) => !unlocker.fn.arkadeScript && !userInputs.includes(i),
+        );
+        if (serverOnly) {
+            throw new Error(
+                `${serverOnly.unlocker.fn.name}: a leaf without a covenant needs the user's signature, and this one has only the server's`,
+            );
+        }
+
         if (inputs.some(({ unlocker }) => unlocker.fn.arkadeScript)) {
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.

@@ -209,6 +209,11 @@ style and have not been backfilled.
   returns checkpoints without the condition witness, so finalizing failed with
   `INVALID_SIGNATURE`. The builder now adds it back after signing.
 
+- **`send()` refuses a server-only leaf without a covenant, before signing.**
+  arkd rejects an input that only the server signs (`missing tapscript spend
+  sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
+  says so up front, naming the function, whichever route the spend takes.
+
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
   so an indexer read missing the solver's preimage ended a paid send as
