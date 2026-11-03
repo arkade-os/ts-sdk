@@ -2167,6 +2167,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 100000,
                 available: 100000,
                 deprecatedSignerLocked: 70000,
+                pendingRecovery: 70000,
                 total: 170000,
             },
         });
@@ -2390,7 +2391,13 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(response).toMatchObject({
             type: "BALANCE",
-            payload: { settled: 10000, available: 0, contractLocked: 0, pendingSettlement: 10000 },
+            payload: {
+                settled: 10000,
+                available: 0,
+                contractLocked: 0,
+                pendingSettlement: 10000,
+                intentLocked: 10000,
+            },
         });
     });
 

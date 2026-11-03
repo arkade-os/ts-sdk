@@ -1070,9 +1070,9 @@ export interface IReadonlyWallet {
     getStoredVtxos?(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
-     * The subset of {@link getVtxos} generic spending may select: minus gated contracts,
-     * pending-recovery funds and intent-locked outpoints (all from one contract snapshot). Every
-     * implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
+     * The subset of {@link getVtxos} generic spending may select: minus `contractLocked`,
+     * `deprecatedSignerLocked` and `pendingSettlement` outpoints (all from one contract snapshot).
+     * Every implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
      *
      * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
      * @see GetSpendableVtxosFilter
