@@ -2044,6 +2044,9 @@ export class WalletMessageHandler
         this.incomingFundsEpoch++;
         const emitter = this.newEmitter("incomingFunds");
         const provider = wallet.onchainProvider ?? this;
+        // Serialized per provider: a provider may key watches by script (Electrum
+        // does), so a stale registration finishing late would overwrite, then
+        // unsubscribe, the live one. A timeout or bypass here reopens that race.
         const previousRegistration =
             this.incomingFundsRegistrations.get(provider) ?? Promise.resolve();
         const registration = previousRegistration.then(() =>

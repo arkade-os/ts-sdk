@@ -196,7 +196,8 @@ style and have not been backfilled.
 - **Lazy boarding no longer blocks worker startup on an onchain subscription.**
   With `lazyBoarding: true`, cached initialization and VTXO background work can
   finish while subscription setup is pending. Registration and stale cleanup
-  serialize per provider across reinitialization, without blocking a different
+  serialize per provider across reinitialization, so a stale registration
+  finishing late cannot unsubscribe the live one, without blocking a different
   provider. Default eager startup still waits for registration, and delayed
   setup cannot recreate a disposed wallet's contract manager. A reinitialization
   that fails before registering leaves the existing subscription delivering.
