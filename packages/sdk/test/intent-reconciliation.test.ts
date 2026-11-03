@@ -73,7 +73,7 @@ describe("reconcileIntents", () => {
         expect(done.commitmentTransactionId).toBe("known-ctx");
     });
 
-    it("cancels a never-submitted intent whose inputs are still unspent", async () => {
+    it("keeps waiting_to_submit locked when registration acknowledgement may have been lost", async () => {
         const repo = await seed(
             new InMemoryIntentRepository(),
             intent({ state: "waiting_to_submit" }),
@@ -83,9 +83,9 @@ describe("reconcileIntents", () => {
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
         const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
-        expect(done.state).toBe("cancelled");
-        expect(done.cancellationReason).toMatch(/never submitted/i);
-        expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
+        expect(done.state).toBe("waiting_to_submit");
+        expect(done.cancellationReason).toBeUndefined();
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
     });
 
     it("leaves an active server-held intent locked (unspent, submitted, not expired)", async () => {
@@ -195,7 +195,7 @@ describe("reconcileIntents", () => {
 
         expect(getVtxos).toHaveBeenCalledTimes(1);
         expect(await stateOf(repo, "done")).toBe("batch_succeeded");
-        expect(await stateOf(repo, "stale")).toBe("cancelled");
+        expect(await stateOf(repo, "stale")).toBe("waiting_to_submit");
         expect(await stateOf(repo, "live")).toBe("waiting_for_batch");
     });
 
@@ -310,6 +310,22 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         });
 
         expect(await stateOf(repo)).toBe("cancelled");
+    });
+
+    it("releases a truly unsent waiting_to_submit row after the no-match response", async () => {
+        const repo = await seed(
+            new InMemoryIntentRepository(),
+            stale({ state: "waiting_to_submit" }),
+        );
+        const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+        });
+        expect(deleteIntent).toHaveBeenCalledWith({ proof: "dp", message: deleteMessage });
+        expect(await stateOf(repo)).toBe("cancelled");
+        expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
     });
 
     it("keeps the intent locked when the delete fails for another reason", async () => {

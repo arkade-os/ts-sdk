@@ -205,6 +205,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Failed settlement cleanup retains persisted intent locks.** With an
+  `IntentRepository`, failed deletion no longer marks an unresolved intent as
+  cancelled. Reconciliation retries its stored delete proof, including when a
+  lost registration response left the row `waiting_to_submit`. SDK picks also skip
+  boarding UTXOs those intents still lock. Existing terminal states, expiry and
+  precise no-match handling remain unchanged.
+
 - **Lazy boarding no longer blocks worker startup on an onchain subscription.**
   With `lazyBoarding: true`, cached initialization and VTXO background work can
   finish while subscription setup is pending. Registration and stale cleanup
