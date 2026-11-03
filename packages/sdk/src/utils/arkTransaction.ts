@@ -720,9 +720,10 @@ export async function submitOffchainTx(
 
     const response = await provider.submitTx(
         base64.encode(signedArkTx.toPSBT()),
-        (oneShot ? userSignedCheckpoints! : offchainTx.checkpoints).map((c) =>
-            base64.encode(c.toPSBT()),
-        ),
+        (oneShot
+            ? userSignedCheckpoints!
+            : offchainTx.checkpoints.map((c) => withArkInputWitness(c, signedArkTx))
+        ).map((c) => base64.encode(c.toPSBT())),
     );
     assertSubmittedArkTxid(response, signedArkTx, "submitTx");
     const { arkTxid, signedCheckpointTxs } = response;
@@ -828,6 +829,23 @@ function carryConditionWitness(ours: Transaction, server: Transaction): void {
     if (getArkPsbtFields(server, 0, ConditionWitness).length > 0) return;
     const [witness] = getArkPsbtFields(ours, 0, ConditionWitness);
     if (witness) setArkPsbtField(server, 0, ConditionWitness, witness);
+}
+
+// arkd v0.9.24+ refuses, at submit, a checkpoint whose condition witness differs from that of
+// the ark tx input spending it, and a signer that attaches the witness while signing (a swap
+// claim's) leaves none on the unsigned checkpoint the two-step flow submits.
+function withArkInputWitness(checkpoint: Transaction, signedArkTx: Transaction): Transaction {
+    if (getArkPsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
+    for (let i = 0; i < signedArkTx.inputsLength; i++) {
+        const { txid } = signedArkTx.getInput(i);
+        if (!txid || hex.encode(txid) !== checkpoint.id) continue;
+        const [witness] = getArkPsbtFields(signedArkTx, i, ConditionWitness);
+        if (!witness) return checkpoint;
+        const carried = checkpoint.clone();
+        setArkPsbtField(carried, 0, ConditionWitness, witness);
+        return carried;
+    }
+    return checkpoint;
 }
 
 // Input 0 only: a checkpoint spends exactly one VTXO.

@@ -440,6 +440,29 @@ describe("submitOffchainTx one-shot", () => {
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
     });
 
+    it("submits unsigned checkpoints with the condition witness of the ark tx input spending them", async () => {
+        const cps = local();
+        const preimage = new Uint8Array(32).fill(0x42);
+        const arkTx = new Transaction();
+        for (const c of cps) {
+            arkTx.addInput({ txid: c.id, index: 0, witnessUtxo: { script: P2TR, amount: 900n } });
+        }
+        arkTx.addOutput({ script: P2TR, amount: 1700n });
+        setArkPsbtField(arkTx, 1, ConditionWitness, [preimage]);
+        const p = provider(encode(cps));
+
+        await submitOffchainTx(p, { arkTx, checkpoints: cps }, signer(), undefined, {
+            oneShot: false,
+        });
+
+        const submitted = (p.submitTx.mock.calls[0][1] as string[]).map((c) =>
+            getArkPsbtFields(Transaction.fromPSBT(base64.decode(c)), 0, ConditionWitness).map((w) =>
+                w.map((item) => hex.encode(item)),
+            ),
+        );
+        expect(submitted).toEqual([[], [[hex.encode(preimage)]]]);
+    });
+
     it("carries the local condition witness onto the returned checkpoint it signs when opted out", async () => {
         const cps = local();
         const preimage = new Uint8Array(32).fill(0x42);

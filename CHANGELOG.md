@@ -218,6 +218,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Two-step swap claims pass arkd v0.9.24's submit check.** arkd now refuses a
+  checkpoint whose condition witness differs from that of the ark tx input
+  spending it. `claimWithPreimageIdentity` attaches the preimage only while
+  signing, so the unsigned checkpoints the two-step flow submits carried none.
+  `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
+  before submitting.
+
 - **Lazy boarding no longer blocks worker startup on an onchain subscription.**
   With `lazyBoarding: true`, cached initialization and VTXO background work can
   finish while subscription setup is pending. Registration and stale cleanup
