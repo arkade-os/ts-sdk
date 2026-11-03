@@ -322,6 +322,10 @@ export class ExpoWallet
         return this.wallet.getArkadeBroadcaster();
     }
 
+    get oneShotSubmit(): boolean {
+        return this.wallet.oneShotSubmit;
+    }
+
     getBalance(): Promise<WalletBalance> {
         return this.wallet.getBalance();
     }

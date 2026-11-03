@@ -53,6 +53,18 @@ style and have not been backfilled.
 
 ### Added
 
+- **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
+  submitted already signed, so arkd finalizes the transaction within
+  `submitTx`; an older arkd drops the signatures and the SDK falls back to
+  `finalizeTx` as before. Both flows carry each checkpoint's condition witness
+  (a swap claim's preimage) onto the copy arkd rebuilt. Covers wallet sends,
+  ArkadeCash sweeps, `signAndSubmitOffchainTx`, Arkade contract spends, and swap
+  claims, refunds and offer cancels. Set `WalletConfig.oneShotSubmit: false` to
+  keep the two-step flow. Swaps read it from the new `IWallet.oneShotSubmit`; an
+  `Arkade` client takes `ArkadeConnectOptions.oneShotSubmit` and the helpers
+  `oneShot: false`.
+  `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
+
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
   so a solver can fund the lockup with dust and learn `P` from that claim.
@@ -355,6 +367,13 @@ style and have not been backfilled.
   earlier event handling failed. Subscription request timeouts are validated
   as portable timer delays and must be greater than zero; accepting zero
   caused immediate timeouts and endless retries.
+
+- **Two-step swap claims pass arkd v0.9.24's submit check.** arkd now refuses a
+  checkpoint whose condition witness differs from that of the ark tx input
+  spending it. `claimWithPreimageIdentity` attaches the preimage only while
+  signing, so the unsigned checkpoints the two-step flow submits carried none.
+  `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
+  before submitting, in both flows.
 
 ### Breaking Changes
 

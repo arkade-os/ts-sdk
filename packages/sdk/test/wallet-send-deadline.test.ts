@@ -49,6 +49,9 @@ async function makeWallet() {
             walletRepository,
             contractRepository: new InMemoryContractRepository(),
         },
+        // These tests hold the deadline across the submit → finalize window,
+        // which only the two-step flow has: one-shot finalizes within submitTx.
+        oneShotSubmit: false,
     });
     return { wallet, signer, walletRepository };
 }

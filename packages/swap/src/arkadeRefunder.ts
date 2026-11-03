@@ -89,6 +89,7 @@ export function arkadeRefunder(
             sender,
             vtxos,
             network: await deps.network?.(),
+            oneShot: deps.wallet.oneShotSubmit,
         });
         if (result.left > 0 || done) {
             spentBy.set(swap.rfqId, new Set([...(done ?? []), ...result.spent.map(keyOf)]));
