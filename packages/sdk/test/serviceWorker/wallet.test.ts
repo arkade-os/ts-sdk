@@ -53,35 +53,35 @@ it("normalizes renamed balance buckets from service-worker payloads", async () =
     const sendMessage = vi.fn().mockResolvedValue({ payload });
     const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
 
-    await expect(ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any)).resolves.toEqual(
-        {
-            ...payload,
-            contractLocked: 0,
-            deprecatedSignerLocked: 25,
-        },
-    );
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...payload,
+        contractLocked: 0,
+        deprecatedSignerLocked: 25,
+    });
 
     const legacyContractPayload = { ...payload, contractLocked: undefined };
     sendMessage.mockResolvedValue({ payload: legacyContractPayload });
 
-    await expect(ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any)).resolves.toEqual(
-        {
-            ...legacyContractPayload,
-            contractLocked: payload.gated,
-            deprecatedSignerLocked: payload.deprecatedSignerLocked,
-        },
-    );
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...legacyContractPayload,
+        contractLocked: payload.gated,
+        deprecatedSignerLocked: payload.deprecatedSignerLocked,
+    });
 
     const legacySignerPayload = { ...payload, deprecatedSignerLocked: undefined };
     sendMessage.mockResolvedValue({ payload: legacySignerPayload });
 
-    await expect(ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any)).resolves.toEqual(
-        {
-            ...legacySignerPayload,
-            contractLocked: payload.contractLocked,
-            deprecatedSignerLocked: payload.pendingRecovery,
-        },
-    );
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...legacySignerPayload,
+        contractLocked: payload.contractLocked,
+        deprecatedSignerLocked: payload.pendingRecovery,
+    });
 });
 
 // Errors cross the harness through the REAL structured-clone algorithm, so
