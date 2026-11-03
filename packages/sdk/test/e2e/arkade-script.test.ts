@@ -1,6 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { p2tr, SigHash } from "@scure/btc-signer";
+import { hash160 } from "@scure/btc-signer/utils.js";
 
 import {
     arkade,
@@ -30,6 +31,7 @@ import {
     createTestIdentity,
     faucetOffchain,
     faucetOnchain,
+    waitFor,
     waitForUtxo,
 } from "./utils";
 
@@ -69,8 +71,12 @@ const SPEND_AMOUNT = FUNDING_AMOUNT - FEE_AMOUNT;
 
 // Plain offchain covenant: user + server + arkade-tweaked emulator.
 const offchainProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+    ],
     functions: {
         send: {
             tapscript: { signers: ["$user", "$server"] },
@@ -81,10 +87,90 @@ const offchainProgram = {
     },
 } satisfies arkade.Program;
 
+// One payment per coin: output i must pay `$receiver` at least input i's value
+// (the pattern of delegatee's claim template).
+const pairedProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+    ],
+    functions: {
+        send: {
+            tapscript: { signers: ["$user", "$server"] },
+            arkadeScript: {
+                asm: [
+                    "PUSHCURRENTINPUTINDEX",
+                    "DUP",
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTOUTPUTVALUE",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTINPUTVALUE",
+                    "GREATERTHANOREQUAL",
+                ],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// Hashlock covenant, server-signed: output 1 must pay `$receiver`.
+const hashlockProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "hash", type: "bytes20" },
+    ],
+    functions: {
+        claim: {
+            inputs: [{ name: "preimage", type: "bytes" }],
+            tapscript: {
+                signers: ["$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+            arkadeScript: {
+                asm: [1, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// No covenant: two user-signed leaves, one behind a hashlock.
+const tapscriptProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "hash", type: "bytes20" },
+    ],
+    functions: {
+        cooperative: { tapscript: { signers: ["$user", "$server"] } },
+        reveal: {
+            inputs: [{ name: "preimage", type: "bytes" }],
+            tapscript: {
+                signers: ["$user", "$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
 // Offchain covenant with asset introspection.
 const assetOffchainProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "assetAmount", type: "int" },
+    ],
     functions: {
         send: {
             tapscript: { signers: ["$user", "$server"] },
@@ -112,8 +198,12 @@ const assetOffchainProgram = {
 
 // Settlement contract: arkade covenant + a server+user CSV exit leaf.
 const settlementProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+    ],
     functions: {
         settle: {
             tapscript: { signers: ["$user", "$server"] },
@@ -129,8 +219,13 @@ const settlementProgram = {
 
 // Settle/mint contracts with asset introspection (used by TestSettlementWithAsset).
 const settleAssetProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "assetAmount", type: "int" },
+    ],
     functions: {
         settle: {
             tapscript: { signers: ["$user", "$server"] },
@@ -164,7 +259,13 @@ const settleAssetProgram = {
 // form of `enforcePayTo`) forces output 0 to pay `$amount` to `$receiver`; the
 // leading DUP consumes the witness's `[0]`.
 const spendProgram = {
-    version: 0,
+    version: 1,
+    params: [
+        { name: "bob", type: "pubkey" },
+        { name: "alice", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "amount", type: "int" },
+    ],
     functions: {
         spend: {
             tapscript: { signers: ["$bob", "$alice"] },
@@ -186,8 +287,13 @@ const spendProgram = {
 } satisfies arkade.Program;
 
 const mintAssetProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "assetAmount", type: "int" },
+    ],
     functions: {
         mint: {
             tapscript: { signers: ["$user", "$server"] },
@@ -285,6 +391,107 @@ describe("arkade", () => {
             .to(alicePkScript, BigInt(fundAmount))
             .send();
         expect(signedArkTx).toBeTruthy();
+    });
+
+    /** Wait until the indexer reports no spendable coin left at `pkScript`. */
+    async function waitForSpent(pkScript: Uint8Array) {
+        await waitFor(async () => {
+            const { vtxos } = await indexerProvider.getVtxos({
+                scripts: [hex.encode(pkScript)],
+                spendableOnly: true,
+            });
+            return vtxos.length === 0;
+        });
+    }
+
+    // Two coins of one covenant contract in one ark tx, each paying its own output.
+    it("TestOffchainMultiCoin", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const aliceAddress = await alice.wallet.getAddress();
+        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const contract = ark.contract(pairedProgram, {
+            receiver: getWitnessProgram(aliceAddress),
+        });
+
+        faucetOffchain(contract.address, 10000);
+        faucetOffchain(contract.address, 5000);
+        await waitForVtxo(contract.pkScript, 2);
+        const coins = (await contract.getUtxos()).sort((a, b) => b.value - a.value);
+
+        // One output for both coins: input 1 has no output 1 to pay. The emulator answers only
+        // "internal error" (its log names `OP_EQUALVERIFY failed vin=1`), so this pins the refusal
+        // to the emulator; the spend below, same coins with two outputs, rules out anything else.
+        await expect(
+            contract.functions.send().from(coins).to(alicePkScript, 15000n).send(),
+        ).rejects.toThrow(/Failed to submit tx to emulator/);
+
+        const { signedArkTx } = await contract.functions
+            .send()
+            .from(coins)
+            .to([
+                { script: alicePkScript, amount: 10000n },
+                { script: alicePkScript, amount: 5000n },
+            ])
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(contract.pkScript);
+    });
+
+    // Coins of two contracts, through two functions, in one ark tx: a user-signed
+    // covenant and a server-signed hashlock covenant with a condition witness. Built with
+    // `ark.transaction()`, so each `.from()` names its function.
+    it("TestOffchainTwoContracts", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const aliceAddress = await alice.wallet.getAddress();
+        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const preimage = crypto.getRandomValues(new Uint8Array(32));
+        const send = ark.contract(offchainProgram, { receiver: getWitnessProgram(aliceAddress) });
+        const claim = ark.contract(hashlockProgram, {
+            receiver: getWitnessProgram(aliceAddress),
+            hash: hash160(preimage),
+        });
+
+        faucetOffchain(send.address, 10000);
+        faucetOffchain(claim.address, 5000);
+        await waitForVtxo(send.pkScript);
+        await waitForVtxo(claim.pkScript);
+
+        const { signedArkTx } = await ark
+            .transaction()
+            .from(await send.getUtxos(), send.unlock.send())
+            .from(await claim.getUtxos(), claim.unlock.claim(preimage))
+            .to([
+                { script: alicePkScript, amount: 10000n },
+                { script: alicePkScript, amount: 5000n },
+            ])
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(send.pkScript);
+        await waitForSpent(claim.pkScript);
+    });
+
+    // arkd path (no covenant): two functions of one contract in one ark tx.
+    it("TestTapscriptTwoFunctions", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const preimage = crypto.getRandomValues(new Uint8Array(32));
+        const contract = ark.contract(tapscriptProgram, { hash: hash160(preimage) });
+
+        faucetOffchain(contract.address, 10000);
+        faucetOffchain(contract.address, 5000);
+        await waitForVtxo(contract.pkScript, 2);
+        const [first, second] = await contract.getUtxos();
+
+        const { signedArkTx } = await contract.functions
+            .cooperative()
+            .from(first)
+            .from(second, contract.unlock.reveal(preimage))
+            .to(ArkAddress.decode(await alice.wallet.getAddress()).pkScript, 15000n)
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(contract.pkScript);
     });
 
     // Settlement flow via intent + batch session (using arkade script)
@@ -430,8 +637,12 @@ describe("arkade", () => {
         // delay is the server-provided boarding delay, so the program is built
         // inline rather than as a module constant.
         const boardingProgram = {
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+                { name: "receiver", type: "pubkey" },
+            ],
             functions: {
                 board: {
                     tapscript: { signers: ["$user", "$server"] },

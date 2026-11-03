@@ -465,7 +465,7 @@ describe("getSpendableVtxos", () => {
 
 describe("getBalance", () => {
     /**
-     * `settled + preconfirmed === available + gated + intentLocked + carrier`,
+     * `settled + preconfirmed === available + gated + pendingSettlement + carrier`,
      * where `carrier` is the one dust carrier that leaves `available` whenever an asset is available;
      * and the five owned buckets sum to `total` — which is what catches a bucket added
      * without being counted, or counted twice.
@@ -475,7 +475,7 @@ describe("getBalance", () => {
         preconfirmed: number;
         available: number;
         gated: number;
-        intentLocked: number;
+        pendingSettlement: number;
         recoverable: number;
         pendingRecovery: number;
         unrolled: number;
@@ -485,7 +485,7 @@ describe("getBalance", () => {
     }) => {
         const carrier = balance.available > 0 && balance.availableAssets.length > 0 ? 1000 : 0;
         expect(balance.settled + balance.preconfirmed).toBe(
-            balance.available + balance.gated + balance.intentLocked + carrier,
+            balance.available + balance.gated + balance.pendingSettlement + carrier,
         );
         expect(balance.total).toBe(
             balance.boarding.total +
@@ -522,7 +522,7 @@ describe("getBalance", () => {
         // dust carrier the available assets ride on.
         expect(balance.available).toBe(49_000);
         expect(balance.gated).toBe(20_000);
-        expect(balance.intentLocked).toBe(0);
+        expect(balance.pendingSettlement).toBe(0);
         expectSplit(balance);
     });
 
@@ -637,18 +637,18 @@ describe("getBalance", () => {
 
         const balance = await wallet.getBalance();
         expect(balance.gated).toBe(20_000);
-        expect(balance.intentLocked).toBe(0);
+        expect(balance.pendingSettlement).toBe(0);
         expect(balance.available).toBe(49_000);
         expectSplit(balance);
     });
 
-    it("reports an ungated intent-locked VTXO as intentLocked", async () => {
+    it("reports an ungated intent-locked VTXO as pendingSettlement", async () => {
         const intents = new InMemoryIntentRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
         const balance = await wallet.getBalance();
-        expect(balance.intentLocked).toBe(40_000);
+        expect(balance.pendingSettlement).toBe(40_000);
         expect(balance.gated).toBe(20_000);
         expect(balance.available).toBe(9_000); // only MARKED_SCRIPT survives, minus its carrier
         expectSplit(balance);

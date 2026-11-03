@@ -14,6 +14,7 @@ import {
     ReadonlyWallet,
     Batch,
     DefaultVtxo,
+    DelegateVtxo,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
@@ -92,6 +93,55 @@ describe("Wallet", () => {
                     },
                 }),
             ).rejects.toThrow(/indexerProvider is required when arkProvider is provided/);
+        });
+
+        it("has the delegate and server-info requests in flight together", async () => {
+            let resolveInfo!: (info: unknown) => void;
+            const getInfo = vi.fn(() => new Promise((resolve) => (resolveInfo = resolve)));
+            let resolveDelegate!: (info: unknown) => void;
+            const getDelegateInfo = vi.fn(
+                () => new Promise((resolve) => (resolveDelegate = resolve)),
+            );
+
+            const creating = ReadonlyWallet.create({
+                identity: ReadonlySingleKey.fromPublicKey(await mockIdentity.compressedPublicKey()),
+                arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {} as IndexerProvider,
+                onchainProvider: {} as OnchainProvider,
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                delegateProvider: {
+                    getDelegateInfo,
+                } as Partial<DelegateProvider> as DelegateProvider,
+            });
+            await vi.waitFor(() => {
+                expect(getInfo).toHaveBeenCalledOnce();
+                expect(getDelegateInfo).toHaveBeenCalledOnce();
+            });
+
+            resolveDelegate({
+                pubkey: mockServerKeyHex,
+                fee: "0",
+                delegateAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            });
+            resolveInfo({
+                signerPubkey: mockServerKeyHex,
+                forfeitPubkey: mockServerKeyHex,
+                batchExpiry: 144n,
+                unilateralExitDelay: 86528n,
+                boardingExitDelay: 144n,
+                roundInterval: 144n,
+                network: "bitcoin",
+                dust: 330n,
+                forfeitAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                checkpointTapscript:
+                    "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+            });
+            const wallet = await creating;
+            expect(wallet.offchainTapscript).toBeInstanceOf(DelegateVtxo.Script);
+            await wallet.dispose();
         });
     });
 

@@ -23,6 +23,7 @@ import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transac
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
+import type { EmulatorProvider } from "../providers/emulator";
 import { toXOnly } from "./keys";
 
 export { assertAllowedSighashTypes };
@@ -805,8 +806,9 @@ export async function submitOffchainTx(
         });
     } else {
         finalCheckpoints = await Promise.all(
-            matched.map(async ({ server }) => {
+            matched.map(async ({ server, local }) => {
                 const signed = await signer.signCheckpoint(server);
+                carryConditionWitness(local, signed);
                 return base64.encode(signed.toPSBT());
             }),
         );
@@ -819,12 +821,12 @@ export async function submitOffchainTx(
 }
 
 // A rebuilt checkpoint comes back without the condition witness (e.g. a swap
-// claim's preimage) the signer attached to its own copy, and finalizeTx checks
-// the leaf's condition against it. The taptree is rebuilt server-side, so only
-// this field is carried over, and only when the server's copy has none.
-function carryConditionWitness(userSigned: Transaction, server: Transaction): void {
+// claim's preimage) our own copy carries, and finalizeTx checks the leaf's
+// condition against it. The taptree is rebuilt server-side, so only this field
+// is carried over, and only when the server's copy has none.
+function carryConditionWitness(ours: Transaction, server: Transaction): void {
     if (getArkPsbtFields(server, 0, ConditionWitness).length > 0) return;
-    const [witness] = getArkPsbtFields(userSigned, 0, ConditionWitness);
+    const [witness] = getArkPsbtFields(ours, 0, ConditionWitness);
     if (witness) setArkPsbtField(server, 0, ConditionWitness, witness);
 }
 
@@ -875,6 +877,38 @@ export async function signAndSubmitOffchainTx(params: {
         oneShot: params.oneShot,
     });
     return arkTxid;
+}
+
+/**
+ * Sign the caller's inputs of a pre-built offchain tx and submit it through the emulator, which
+ * co-signs and finalizes it with arkd. The checkpoints of `inputIndexes` are signed up front: the
+ * emulator verifies them before its own arkd handshake. An emulator-only leaf passes no inputs and
+ * no signer.
+ */
+export async function submitViaEmulator(
+    emulator: Pick<EmulatorProvider, "submitTx">,
+    offchainTx: OffchainTx,
+    signer: { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> } | undefined,
+    opts: { inputIndexes: number[] },
+): Promise<{ txid: string; signedArkTx: string; signedCheckpointTxs: string[] }> {
+    const { inputIndexes } = opts;
+    let { arkTx, checkpoints } = offchainTx;
+    if (inputIndexes.length > 0) {
+        if (!signer) {
+            throw new Error(`this spend requires an \`identity\` to sign inputs ${inputIndexes}`);
+        }
+        arkTx = await signer.sign(arkTx, inputIndexes);
+        checkpoints = await Promise.all(
+            checkpoints.map((c, i) => (inputIndexes.includes(i) ? signer.sign(c, [0]) : c)),
+        );
+    }
+    const res = await emulator.submitTx(
+        base64.encode(arkTx.toPSBT()),
+        checkpoints.map((c) => base64.encode(c.toPSBT())),
+    );
+    const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
+    assertSubmittedArkTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
+    return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 
 /**

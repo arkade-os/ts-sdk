@@ -149,7 +149,7 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
             const rendezvous = await rendezvousFor(amount);
             if (!rendezvous) {
                 throw new Error(
-                    `${SOLVER_ONCHAIN_RAIL}: no solver serves arkade:BTC -> onchain:BTC at ${amount} sats`,
+                    `${SOLVER_ONCHAIN_RAIL}: no solver serves onchain payments at ${amount} sats`,
                 );
             }
 

@@ -146,6 +146,7 @@ export {
     type LockupSpend,
     type LockupVtxo,
     pushRefundWithoutReceiver,
+    REFUND_MTP_LAG_SECONDS,
     readLockupFate,
 } from "./refund";
 export {
@@ -200,6 +201,7 @@ export {
     type RfqRefusalReason,
     type RfqStatus,
     type RfqTransport,
+    MIN_CLAIM_WINDOW_SECONDS,
     unilateralClaimDelay,
     unilateralRefundDelay,
     unilateralRefundWithoutReceiverDelay,

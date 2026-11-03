@@ -542,6 +542,13 @@ describe("ServiceWorkerReadonlyWallet", () => {
                         type: "CONTRACT_WATCHING",
                         payload: { isWatching: true },
                     };
+                case "GET_UNSUPPORTED_CONTRACTS":
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "UNSUPPORTED_CONTRACTS",
+                        payload: { contracts },
+                    };
                 default:
                     return null;
             }
@@ -590,6 +597,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             paths,
         );
         await expect(manager.isWatching()).resolves.toBe(true);
+        await expect(manager.getUnsupportedContracts()).resolves.toEqual(contracts);
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -1944,7 +1952,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
     // Structured clone carries the bigints through postMessage untouched, so the
     // worker hands `Wallet.create` the same floors the page asked for.
-    it("ServiceWorkerWallet.create forwards the timelock floor overrides to the worker init config", async () => {
+    it("ServiceWorkerWallet.create forwards the batch expiry floor override to the worker init config", async () => {
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
@@ -1955,16 +1963,14 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             arkServer: { url: "https://ark.test" },
             identity,
             minBatchExpirySeconds: 3_600n,
-            minCheckpointExitDelaySeconds: 2_048n,
             storage: storage(),
         });
 
         const { config } = getInitializeMessage(serviceWorker);
         expect(config.minBatchExpirySeconds).toBe(3_600n);
-        expect(config.minCheckpointExitDelaySeconds).toBe(2_048n);
     });
 
-    it("ServiceWorkerWallet.create omits the timelock floor overrides when unset", async () => {
+    it("ServiceWorkerWallet.create omits the batch expiry floor override when unset", async () => {
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
@@ -1979,7 +1985,6 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         const { config } = getInitializeMessage(serviceWorker);
         expect(config.minBatchExpirySeconds).toBeUndefined();
-        expect(config.minCheckpointExitDelaySeconds).toBeUndefined();
     });
 
     it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {

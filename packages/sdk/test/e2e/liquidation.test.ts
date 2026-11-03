@@ -30,8 +30,11 @@ const LIQUIDATION_PRICE = numberToBytesBE(50_000n, 32);
 // Forces its spend to pay output 0 to `$receiver` — used to mint the asset into
 // the liquidation contract.
 const mintProgram = {
-    version: 0,
-    params: ["server"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+    ],
     functions: {
         mint: {
             tapscript: { signers: ["$server"] },
@@ -44,11 +47,15 @@ const mintProgram = {
 
 // Burns the asset against a valid oracle signature over the liquidation price.
 const liquidationProgram = {
-    version: 0,
-    params: ["server"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "price", type: "bytes32" },
+        { name: "oracle", type: "pubkey" },
+    ],
     functions: {
         liquidate: {
-            inputs: [{ name: "signature", type: "sig" }],
+            inputs: [{ name: "signature", type: "signature" }],
             tapscript: { signers: ["$server"] },
             arkadeScript: {
                 asm: [

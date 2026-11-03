@@ -1,6 +1,12 @@
-import { RestIndexerProvider, SubscriptionResponse, toSubscriptionResponse } from "./indexer";
+import {
+    RestIndexerProvider,
+    SubscriptionEvent,
+    SubscriptionHeartbeat,
+    toSubscriptionMessage,
+} from "./indexer";
 import { isFetchTimeoutError } from "./ark";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
+import { streamFailureError } from "./utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 
 /**
@@ -21,10 +27,10 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
         super(serverUrl);
     }
 
-    override async *getSubscription(
-        subscriptionId: string,
+    protected override async *subscriptionStream(
+        url: string,
         abortSignal: AbortSignal,
-    ): AsyncIterableIterator<SubscriptionResponse> {
+    ): AsyncIterableIterator<SubscriptionEvent | SubscriptionHeartbeat> {
         // Detect if we're running in React Native/Expo environment
         const isReactNative =
             typeof navigator !== "undefined" && navigator.product === "ReactNative";
@@ -41,8 +47,6 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
             throw error;
         });
 
-        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
-
         while (!abortSignal.aborted) {
             try {
                 yield* sseStreamIterator(
@@ -50,16 +54,12 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                     abortSignal,
                     expoFetch,
                     { "Content-Type": "application/json" },
-                    (data): SubscriptionResponse | null => {
-                        // Handle new v8 proto format with heartbeat or event
-                        if (data.heartbeat !== undefined) {
-                            // Skip heartbeat messages
-                            return null;
-                        }
-                        // Process event messages
-                        if (data.event) {
-                            return toSubscriptionResponse(data.event);
-                        }
+                    (data) => {
+                        const message = toSubscriptionMessage(data);
+                        if (message) return message;
+                        // A `failure` event's status, which this reader sees as a plain data line.
+                        // Skipping it would reconnect into the same refusal at once, in a tight loop.
+                        if (data.code !== undefined) throw streamFailureError(data);
                         return null;
                     },
                 );

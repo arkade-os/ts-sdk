@@ -439,4 +439,24 @@ describe("submitOffchainTx one-shot", () => {
         expect(p.submitTx.mock.calls[0][1]).toEqual(encode(cps));
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
     });
+
+    it("carries the local condition witness onto the returned checkpoint it signs when opted out", async () => {
+        const cps = local();
+        const preimage = new Uint8Array(32).fill(0x42);
+        for (const c of cps) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        const p = provider(encode(local()));
+
+        await submitOffchainTx(p, offchainTx(cps), signer(), undefined, { oneShot: false });
+
+        for (const c of p.finalizeTx.mock.calls[0][1] as string[]) {
+            const witnesses = getArkPsbtFields(
+                Transaction.fromPSBT(base64.decode(c)),
+                0,
+                ConditionWitness,
+            );
+            expect(witnesses.map((w) => w.map((item) => hex.encode(item)))).toEqual([
+                [hex.encode(preimage)],
+            ]);
+        }
+    });
 });

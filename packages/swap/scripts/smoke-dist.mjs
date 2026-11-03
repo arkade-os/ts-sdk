@@ -91,6 +91,20 @@ for (const [condition, root, protocol] of [
     ["import", rootEsm, protoEsm],
     ["require", rootCjs, protoCjs],
 ]) {
+    for (const [name, expected] of [
+        ["MIN_CLAIM_WINDOW_SECONDS", 1800],
+        ["REFUND_MTP_LAG_SECONDS", 7200],
+    ]) {
+        if (protocol[name] !== expected) {
+            throw new Error(
+                `@arkade-os/swap/protocol (${condition}) exports ${name}=${protocol[name]}, not ${expected}`,
+            );
+        }
+        if (isValue(root, name)) {
+            throw new Error(`@arkade-os/swap (${condition}) must not export ${name}`);
+        }
+    }
+
     // The v2 surface: the factory, the three verbs, and the taxonomy's base.
     for (const name of ["createSwapClient", "pay", "receive", "exchange"]) {
         if (typeof root[name] !== "function") {

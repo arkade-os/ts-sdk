@@ -400,4 +400,44 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
             await wallet.dispose();
         }
     });
+
+    it("hydrates and subscribes the whole baseline matrix in one round trip each", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockImplementation((url: string) =>
+                Promise.resolve(
+                    jsonResponse(
+                        url.includes("/info")
+                            ? {
+                                  ...mockArkInfo,
+                                  boardingExitDelay: 288,
+                                  deprecatedSigners: [
+                                      { pubkey: PREV_SERVER, cutoffDate: 9_999_999_999 },
+                                  ],
+                              }
+                            : [],
+                    ),
+                ),
+            ),
+        );
+
+        const { wallet, indexer, contractRepository } = await makeStaticWalletForTest();
+        try {
+            await (
+                wallet as unknown as { getContractManager(): Promise<unknown> }
+            ).getContractManager();
+
+            const baseline = (await collectContracts(contractRepository, {})).map((c) => c.script);
+            expect(baseline.length).toBe(4);
+            const reads = indexer.getVtxosCalls.filter((call) =>
+                call.scripts.some((script) => baseline.includes(script)),
+            );
+            expect(reads).toHaveLength(1);
+            expect(new Set(reads[0].scripts)).toEqual(new Set(baseline));
+            expect(indexer.subscribeCalls).toHaveLength(1);
+            expect(new Set(indexer.subscribeCalls[0])).toEqual(new Set(baseline));
+        } finally {
+            await wallet.dispose();
+        }
+    });
 });

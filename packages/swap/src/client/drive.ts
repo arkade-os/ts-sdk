@@ -31,6 +31,7 @@ import { hex } from "@scure/base";
 import { pushClaim } from "../claim";
 import { buildHtlcRefund, claimOnchainFill, nextClaimFeeRate } from "../onchainHtlc";
 import { RETIRABLE, retireSettledOfferContracts } from "../coverage";
+import { migrateV0OfferRows } from "../migrateOfferRows";
 import { restoreOfferCoverage } from "../offer";
 import { LockupContractMissing, lockupContractParams } from "../lockupContract";
 import { arkadeRefunder } from "../arkadeRefunder";
@@ -45,7 +46,7 @@ import {
 import { RefundNotLocallyPossibleError, senderIdentityForSwapRecord } from "../refundBlocked";
 import { rfqClaimDestinationOf, rfqClaimSecretOf, rfqSignerOf } from "../rfqProfileParts";
 import { rebuildRfqSwap, rfqSwapOriginOf } from "../rfqRecord";
-import { isRfqSwapTerminal } from "../rfqSwapState";
+import { isRecheckableRefundedSend, isRfqSwapRestorable, isRfqSwapTerminal } from "../rfqSwapState";
 import { restoreAssetSwaps, toRestoreTx } from "../restore";
 import { preimageForSwapRecord } from "../store";
 import { collectSwapRecords, type AssetSwapRepository } from "../repository";
@@ -273,6 +274,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
     const inFlight = new Set<Promise<unknown>>();
     let queue: Promise<void> = Promise.resolve();
+    /** The refunded-send re-read: off `queue`, so a hung read never holds a registration. */
+    let recheck: Promise<void> | undefined;
 
     const track = <T>(work: Promise<T>): Promise<T> => {
         inFlight.add(work);
@@ -297,6 +300,8 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         do {
             await queue;
             await Promise.allSettled([...inFlight]);
+            // Not after dispose: a hung read must not hold it, and it writes nothing past it.
+            if (!disposed) await recheck;
             await watcher?.idle();
         } while (inFlight.size > 0);
     };
@@ -330,12 +335,12 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 storage(),
                 remember,
                 // Terminal records stay readable but are excluded from the manager's read, sparing
-                // a rebuild per record just to file it `finished`. The index still learns their
-                // `rfqId` (see `getRfqSwapsPage`).
-                (r) => !undrivable.has(r.id) && !isRfqSwapTerminal(r.state),
+                // a rebuild per record just to file it `finished`, except a refunded send restore
+                // re-reads. The index still learns their `rfqId` (see `getRfqSwapsPage`).
+                (r) => !undrivable.has(r.id) && isRfqSwapRestorable(r),
             )),
             storage(),
-            (r) => !undrivableLegacy.has(r.rfqId) && !isRfqSwapTerminal(r.state),
+            (r) => !undrivableLegacy.has(r.rfqId) && isRfqSwapRestorable(r),
         ));
 
     // ── the outcome ──────────────────────────────────────────────────────────
@@ -948,7 +953,23 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
     };
 
+    /** Needs no repository. Never throws. */
+    const migrateOfferRows = async (): Promise<void> => {
+        if (mode === "readonly") return;
+        try {
+            const { skipped } = await migrateV0OfferRows(await wallet.getContractManager());
+            for (const { script, reason } of skipped) {
+                console.warn(`[swap] could not migrate Program v0 offer row ${script}: ${reason}`);
+            }
+        } catch (error) {
+            console.warn("[swap] Program v0 offer row migration did not complete", error);
+        }
+    };
+
     const restore = async (): Promise<void> => {
+        // Not awaited: each migrated row hydrates from the indexer, which `ready` must not wait
+        // on. Racing the record path is safe: both verify the script and write the same program.
+        void track(migrateOfferRows());
         if (!repository) return;
         await adoptLegacyRfqSwaps(repository);
         // The one read `ready` may reject on: unreadable records cannot be driven safely.
@@ -975,8 +996,9 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
 
         // Terminal records stay in `records` (readable, replayed) but are never driven.
         const liveCorridor = corridor.filter((record) => !isRfqSwapTerminal(record.state));
+        const recheckable = corridor.filter(isRecheckableRefundedSend);
         const store = corridorStore();
-        for (const record of liveCorridor) store.index(record);
+        for (const record of [...liveCorridor, ...recheckable]) store.index(record);
         // LEGACY(v1)
         const liveLegacy = await legacyLiveRfqSwaps(repository);
 
@@ -1037,6 +1059,19 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         }
         // Again after: `funding -> funded` is an observation change with no manager transition.
         emitAll();
+        // Off `ready` and off `queue`: one indexer read per record, so a slow indexer holds
+        // up neither `ready` nor a new swap's registration.
+        if (mode !== "readonly" && recheckable.length > 0) {
+            recheck = (async () => {
+                try {
+                    await contractsOf();
+                    managerDeps.repository = store;
+                    await manager.recheckRefundedSends({ stopped: () => disposed });
+                } catch (error) {
+                    console.warn("[swap] the refunded send re-read did not complete", error);
+                }
+            })();
+        }
     };
 
     const ready = (): Promise<void> => (readyPromise ??= restore());

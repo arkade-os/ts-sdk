@@ -343,12 +343,19 @@ export type FakeIndexer = LockupSpendIndexer & { vtxoCalls: number };
  * only; lockup funding is `fakeContracts`' `funded`.
  */
 export const fakeIndexer = (
-    state: { vtxos?: FakeVtxo[]; txs?: { txid: string; psbt: string }[]; fail?: boolean } = {},
+    state: {
+        vtxos?: FakeVtxo[];
+        txs?: { txid: string; psbt: string }[];
+        fail?: boolean;
+        /** Holds every `getVtxos` read open until it resolves. */
+        gate?: Promise<void>;
+    } = {},
 ): FakeIndexer => {
     const indexer = {
         vtxoCalls: 0,
         async getVtxos() {
             indexer.vtxoCalls += 1;
+            await state.gate;
             if (state.fail) throw new Error("indexer unreachable");
             return { vtxos: state.vtxos ?? [] };
         },
