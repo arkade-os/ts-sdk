@@ -223,7 +223,7 @@ style and have not been backfilled.
   spending it. `claimWithPreimageIdentity` attaches the preimage only while
   signing, so the unsigned checkpoints the two-step flow submits carried none.
   `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
-  before submitting.
+  before submitting, in both flows.
 
 - **Lazy boarding no longer blocks worker startup on an onchain subscription.**
   With `lazyBoarding: true`, cached initialization and VTXO background work can

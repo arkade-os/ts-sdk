@@ -708,11 +708,12 @@ export async function submitOffchainTx(
             `signer returned ${batchSigned.length} signed checkpoints, expected ${offchainTx.checkpoints.length}`,
         );
     }
-    const userSignedCheckpoints =
+    const userSignedCheckpoints = (
         batchSigned ??
         (oneShot
             ? await Promise.all(offchainTx.checkpoints.map((c) => signer.signCheckpoint(c.clone())))
-            : undefined);
+            : undefined)
+    )?.map((c) => withArkInputWitness(c, signedArkTx));
 
     // Mark pending before submitting — if the caller crashes between submit and
     // finalize, its recovery hook can retry from persisted state.
