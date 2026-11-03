@@ -1844,14 +1844,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, for SDK
-     * picks. The getter itself lists them: callers that mirror it (the worker's cache and
-     * broadcasts, balances) must not see a settle's inputs vanish, and then stay gone if it fails.
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
+     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
+     * stay gone if it fails.
      */
     async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
-        return (await this.getBoardingUtxos()).filter(
-            (coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`),
-        );
+        const [utxos, locked] = await Promise.all([
+            this.getBoardingUtxos(),
+            this.lockedOutpoints(),
+        ]);
+        return utxos.filter((coin) => {
+            const key = `${coin.txid}:${coin.vout}`;
+            return !this._pendingSpendOutpoints.has(key) && !locked.has(key);
+        });
     }
 
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
@@ -1878,6 +1884,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @returns A function that stops the subscriptions
      */
     async notifyIncomingFunds(eventCallback: (coins: IncomingFunds) => void): Promise<() => void> {
+        const cm = this.indexerProvider ? await this.getContractManager() : undefined;
         const arkAddress = await this.getAddress();
 
         let onchainStopFunc: (() => void) | undefined;
@@ -1955,11 +1962,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         await subscribeOnchain();
 
-        if (this.indexerProvider && arkAddress) {
+        if (cm && arkAddress) {
             // Share the ContractWatcher's single subscription instead of
             // opening a second SSE stream.
-            const cm = await this.getContractManager();
-
             // Serialized: parallel `annotateVtxos` could deliver e.g. `vtxo_spent` before its
             // matching `vtxo_received`.
             let annotationQueue: Promise<void> = Promise.resolve();
@@ -4005,29 +4010,35 @@ export class Wallet
                 );
                 throw error;
             }
-            // Pre-commit failure: release the server intent so the next settle
-            // doesn't hit "duplicated input", and record the cancellation.
+            // Failed deletion leaves the durable input locks for reconciliation to retry.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
+            let released = !registering;
             if (registering) {
-                await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
-                    // Nothing held: the server refused the registration, or already dropped it.
-                    if (isNoMatchingIntentsError(e)) return;
-                    console.warn(
-                        `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
-                        e,
-                    );
-                });
+                try {
+                    await this.arkProvider.deleteIntent(deleteIntent);
+                    released = true;
+                } catch (e) {
+                    if (isNoMatchingIntentsError(e)) released = true;
+                    else {
+                        console.warn(
+                            `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                            e,
+                        );
+                    }
+                }
             }
-            await this.persistIntentSnapshot(
-                intentTxId,
-                "cancelled",
-                intent,
-                deleteIntent,
-                params.inputs,
-                {
-                    cancellationReason: error instanceof Error ? error.message : String(error),
-                },
-            );
+            if (released) {
+                await this.persistIntentSnapshot(
+                    intentTxId,
+                    "cancelled",
+                    intent,
+                    deleteIntent,
+                    params.inputs,
+                    {
+                        cancellationReason: error instanceof Error ? error.message : String(error),
+                    },
+                );
+            }
             throw error;
         } finally {
             // Clear first so a synchronous handler firing from abort() never sees stale state.

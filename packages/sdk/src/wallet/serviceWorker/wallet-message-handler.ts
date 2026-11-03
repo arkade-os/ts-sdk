@@ -1035,8 +1035,11 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRestoreWallet
     );
 
-/** What a generation counter covers: a subscription field, a derived cache, or the request stream. */
-type Scope = "incomingFunds" | "contractEvents" | "boarding" | "request";
+/**
+ * What a generation counter covers: a subscription field, a derived cache, the
+ * request stream, or an initializer run.
+ */
+type Scope = "init" | "incomingFunds" | "contractEvents" | "boarding" | "request";
 
 /**
  * Bound to the generation live when it was created. Re-check `stale` after
@@ -1060,6 +1063,7 @@ export class WalletMessageHandler
     private walletRepository: WalletRepository | undefined;
 
     private incomingFundsSubscription: (() => void) | undefined;
+    private incomingFundsRegistrations = new WeakMap<object, Promise<void>>();
     private contractEventsSubscription: (() => void) | undefined;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
     private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
@@ -1072,6 +1076,11 @@ export class WalletMessageHandler
     // stale, folding requests in would truncate an in-flight settle, and
     // sharing with boarding would kill every lazy refresh (see `boardingEpoch`).
     private incomingFundsEpoch = 0;
+    /**
+     * Supersedes older initializers without touching `incomingFundsEpoch`, so a
+     * re-init that fails before registering leaves the live subscription delivering.
+     */
+    private initEpoch = 0;
     private contractEventsEpoch = 0;
     private boardingEpoch = 0;
     /** Per-request progress callbacks: ends with the handler, not with a re-init. */
@@ -1104,6 +1113,7 @@ export class WalletMessageHandler
         // invoking its progress callback, and without the bumps it would re-arm
         // the tick queue that this just emptied.
         this.requestEpoch++;
+        this.initEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
         this.boardingEpoch++;
@@ -1157,6 +1167,8 @@ export class WalletMessageHandler
 
     private epochOf(scope: Scope): number {
         switch (scope) {
+            case "init":
+                return this.initEpoch;
             case "incomingFunds":
                 return this.incomingFundsEpoch;
             case "contractEvents":
@@ -1993,32 +2005,31 @@ export class WalletMessageHandler
     }
     private async onWalletInitialized() {
         const wallet = this.readonlyWallet;
+        const signingWallet = this.wallet;
+        const lazyBoarding = this.lazyBoardingInit;
         if (!wallet || !this.arkProvider || !this.indexerProvider || !this.walletRepository) {
             return;
         }
 
-        // Bounds each await below to the generation that entered: a stop(),
-        // CLEAR or re-init landing inside one must not let the stale
-        // initializer resume and overwrite the new wallet's subscription.
-        // `incomingFundsEpoch` doubles as mutual exclusion between two
-        // overlapping INIT_WALLETs — whichever reaches the bump first makes the
-        // other return before it can unsubscribe the winner.
-        const init = this.newGeneration("incomingFunds");
+        // The last INIT to start wins: an older one returns at its next check.
+        this.initEpoch++;
+        const init = this.newGeneration("init");
 
         // Initialize contract manager FIRST — this populates the repository
         // with full virtual output history for all contracts (one indexer call per contract)
         await this.ensureContractEventBroadcasting();
         if (init.stale) return;
 
-        await this.refreshCachedData({ lazyBoarding: this.lazyBoardingInit });
+        await this.refreshCachedData({ lazyBoarding });
         if (init.stale) return;
 
         // Recover pending transactions (init-only, not on reload).
         // Pending txs only exist if a send was interrupted mid-finalization.
-        if (this.wallet) {
+        if (signingWallet) {
             try {
                 const vtxos = await this.getVtxosFromRepo();
-                const { pending, finalized } = await this.wallet.finalizePendingTxs(
+                if (init.stale) return;
+                const { pending, finalized } = await signingWallet.finalizePendingTxs(
                     vtxos.filter((vtxo) => vtxo.isSpent || (vtxo.isPreconfirmed && !vtxo.isSwept)),
                 );
                 console.info(
@@ -2030,14 +2041,41 @@ export class WalletMessageHandler
             if (init.stale) return;
         }
 
-        // unsubscribe previous subscription if any
+        this.incomingFundsEpoch++;
+        const emitter = this.newEmitter("incomingFunds");
+        const provider = wallet.onchainProvider ?? this;
+        // Serialized per provider: a provider may key watches by script (Electrum
+        // does), so a stale registration finishing late would overwrite, then
+        // unsubscribe, the live one. A timeout or bypass here reopens that race.
+        const previousRegistration =
+            this.incomingFundsRegistrations.get(provider) ?? Promise.resolve();
+        const registration = previousRegistration.then(() =>
+            this.registerIncomingFunds(wallet, emitter),
+        );
+        this.incomingFundsRegistrations.set(
+            provider,
+            registration.catch((error) => {
+                console.error("Error subscribing to incoming funds:", error);
+            }),
+        );
+
+        if (!lazyBoarding) await registration;
+        if (signingWallet && !emitter.stale) {
+            try {
+                await signingWallet.getVtxoManager();
+            } catch (error) {
+                console.error("Error starting VtxoManager:", error);
+            }
+        }
+    }
+
+    private async registerIncomingFunds(wallet: ReadonlyWallet, emitter: Emitter): Promise<void> {
+        if (emitter.stale) return;
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
         this.incomingFundsSubscription = undefined;
-        this.incomingFundsEpoch++;
-        // The new generation starts here — `init` is stale from now on.
-        const emitter = this.newEmitter("incomingFunds");
 
         const address = await wallet.getAddress();
+        if (emitter.stale) return;
 
         // subscribe for incoming funds and notify all clients when new funds arrive
         const unsubscribe = await wallet.notifyIncomingFunds(async (funds) => {
@@ -2141,17 +2179,6 @@ export class WalletMessageHandler
         // a bare return would leave a callback nothing can unsubscribe.
         if (emitter.stale) return unsubscribe();
         this.incomingFundsSubscription = unsubscribe;
-
-        // Eagerly start the VtxoManager so its background tasks (auto-renewal,
-        // boarding input polling/sweep) run inside the service worker without
-        // waiting for a client to send a VtxoManager message first.
-        if (this.wallet) {
-            try {
-                await this.wallet.getVtxoManager();
-            } catch (error) {
-                console.error("Error starting VtxoManager:", error);
-            }
-        }
     }
 
     /**
@@ -2349,6 +2376,7 @@ export class WalletMessageHandler
         // what stop an in-flight callback from emitting — or writing — a
         // just-wiped wallet's state.
         this.requestEpoch++;
+        this.initEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
         this.boardingEpoch++;

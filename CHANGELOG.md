@@ -121,6 +121,15 @@ style and have not been backfilled.
   by hand after `build()`. The caller's packet now joins those two in the one
   extension output; a type either of them already uses is refused at build.
 
+- **`ArkadeTransactionBuilder.from` spends several coins, through one function
+  or several.** `.from(coins)` spends a list of coins, and `.from(coins,
+  other.unlock.fn(...args))` spends them through another function or contract
+  on the same client. The builder used to write one emulator entry, for input
+  0, so a covenant spend could use only one coin and anything more had to be
+  built by hand. Each input now gets its own leaf, `PrevArkTx`, condition
+  witness and emulator entry (#1116). `ark.transaction()` starts a spend with
+  no function of its own, so every input names its function in `.from()`.
+
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
@@ -167,6 +176,9 @@ style and have not been backfilled.
 
 ### Changed
 
+- **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
+  `.from(a).from(b)` spends both; it used to spend only `b`.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
@@ -206,6 +218,49 @@ style and have not been backfilled.
   When a worker response omits `contractLocked` or `deprecatedSignerLocked`,
   the client now reads the corresponding deprecated `gated` or
   `pendingRecovery` value without changing the other payload fields.
+
+- **Failed settlement cleanup retains persisted intent locks.** With an
+  `IntentRepository`, failed deletion no longer marks an unresolved intent as
+  cancelled. Reconciliation retries its stored delete proof, including when a
+  lost registration response left the row `waiting_to_submit`. SDK picks also skip
+  boarding UTXOs those intents still lock. Existing terminal states, expiry and
+  precise no-match handling remain unchanged.
+
+- **Lazy boarding no longer blocks worker startup on an onchain subscription.**
+  With `lazyBoarding: true`, cached initialization and VTXO background work can
+  finish while subscription setup is pending. Registration and stale cleanup
+  serialize per provider across reinitialization, so a stale registration
+  finishing late cannot unsubscribe the live one, without blocking a different
+  provider. Default eager startup still waits for registration, and delayed
+  setup cannot recreate a disposed wallet's contract manager. A reinitialization
+  that fails before registering leaves the existing subscription delivering.
+
+- **Coin selection and `.from()` skip swept and expired coins.** `getUtxos()`
+  can return a coin that is swept or past its batch expiry; a registered
+  contract keeps them so they can be recovered. arkd rejects a spend that
+  includes one (`VTXO_RECOVERABLE`). Selection without `.from()` now skips
+  them, and `.from()` refuses a coin with `isSwept: true` or an `expiresAt`
+  that has been reached, instead of failing at arkd. A coin without expiry
+  fields, such as an onchain one, is never refused for expiry. An `expiresAt`
+  restored from JSON as a string is read as a date.
+
+- **`ArkadeTransactionBuilder` refuses an asset coin with no asset route.** arkd
+  refuses an input whose assets the transaction does not route
+  (`ASSET_VALIDATION_FAILED`), so `.from(await contract.getUtxos())` with one
+  asset-carrying coin sank the whole spend. `send()` now refuses a coin whose
+  `assets` neither a `.withAsset()` input nor a caller's asset packet
+  (`.withPacket()`) routes, naming the coin and input; `build()` leaves routing
+  to the caller. Selection without `.from()` skips asset coins when the spend
+  routes no assets from input 0, so it picks a plain coin that can pay.
+
+- **A tapscript-only `send()` through a hashlock leaf finalizes.** arkd
+  returns checkpoints without the condition witness, so finalizing failed with
+  `INVALID_SIGNATURE`. The builder now adds it back after signing.
+
+- **`send()` refuses a server-only leaf without a covenant, before signing.**
+  arkd rejects an input that only the server signs (`missing tapscript spend
+  sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
+  says so up front, naming the function, whichever route the spend takes.
 
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,

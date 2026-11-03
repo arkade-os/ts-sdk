@@ -110,7 +110,7 @@ export function solverLightningRail(deps: SolverLightningRailDeps): PaymentRail 
             const rendezvous = await rendezvousFor(facts.amountSats);
             if (!rendezvous) {
                 throw new Error(
-                    `${SOLVER_LIGHTNING_RAIL}: no solver serves arkade:BTC -> lightning:BTC ` +
+                    `${SOLVER_LIGHTNING_RAIL}: no solver serves Lightning payments ` +
                         `at ${facts.amountSats} sats`,
                 );
             }

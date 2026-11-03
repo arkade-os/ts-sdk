@@ -1876,6 +1876,37 @@ describe("Wallet.restore", () => {
         }
     });
 
+    it("notifyIncomingFunds does not recreate the contract manager after disposal during onchain setup", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        await awaitWalletBooted(wallet);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const unsubscribe = vi.fn();
+        const watch = vi
+            .spyOn(wallet.onchainProvider, "watchAddresses")
+            .mockImplementation(async () => {
+                await gate;
+                return unsubscribe;
+            });
+        const pending = wallet.notifyIncomingFunds(() => {});
+        await until(() => watch.mock.calls.length > 0);
+        expect(watch).toHaveBeenCalledOnce();
+        await wallet.dispose();
+        const subscriptionCount = indexer.subscribeCalls.length;
+        release();
+        const stop = await pending;
+        try {
+            expect((wallet as any)._contractManager).toBeUndefined();
+            expect(indexer.subscribeCalls).toHaveLength(subscriptionCount);
+        } finally {
+            stop();
+            await wallet.dispose();
+        }
+        expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
     it("notifyIncomingFunds watches the full boarding-address set (plan §6-IV.2)", async () => {
         const { wallet } = await makeHdWalletForTest();
         try {
