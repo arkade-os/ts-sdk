@@ -1884,6 +1884,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @returns A function that stops the subscriptions
      */
     async notifyIncomingFunds(eventCallback: (coins: IncomingFunds) => void): Promise<() => void> {
+        const cm = this.indexerProvider ? await this.getContractManager() : undefined;
         const arkAddress = await this.getAddress();
 
         let onchainStopFunc: (() => void) | undefined;
@@ -1961,11 +1962,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         await subscribeOnchain();
 
-        if (this.indexerProvider && arkAddress) {
+        if (cm && arkAddress) {
             // Share the ContractWatcher's single subscription instead of
             // opening a second SSE stream.
-            const cm = await this.getContractManager();
-
             // Serialized: parallel `annotateVtxos` could deliver e.g. `vtxo_spent` before its
             // matching `vtxo_received`.
             let annotationQueue: Promise<void> = Promise.resolve();

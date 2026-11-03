@@ -532,7 +532,7 @@ const assetSidesOf = (legs: {
     const giveIsBtc = legs.give.assetId === BTC_ASSET_ID;
     const takeIsBtc = legs.take.assetId === BTC_ASSET_ID;
     if (giveIsBtc && takeIsBtc) {
-        throw new UnsupportedRoute("arkade:BTC -> arkade:BTC moves one asset, it swaps nothing", {
+        throw new UnsupportedRoute("give and take are both BTC, so the route swaps nothing", {
             give: "arkade",
             take: "arkade",
         });

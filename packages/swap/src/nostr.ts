@@ -236,8 +236,9 @@ export const nostrRfqTransport = (options: NostrRfqOptions): RfqTransport => {
             for (const waiter of waiters.values()) waiter.reject(new TransportClosed());
             waiters.clear();
             // The pool is shared (or lent): many transports multiplex over one socket per
-            // relay, so only the subscription closes here. The socket stays for the next
-            // negotiation; teardown is explicit via closeSharedNostrPool().
+            // relay, so only the subscription closes here. The shared pool closes a relay's
+            // socket once it has gone IDLE_CLOSE_MS without use, and closeSharedNostrPool()
+            // closes them all; a lent pool's sockets are its owner's to close.
             subscription.close();
         },
     };
