@@ -834,7 +834,8 @@ function carryConditionWitness(ours: Transaction, server: Transaction): void {
 
 // arkd v0.9.24+ refuses, at submit, a checkpoint whose condition witness differs from that of
 // the ark tx input spending it, and a signer that attaches the witness while signing (a swap
-// claim's) leaves none on the unsigned checkpoint the two-step flow submits.
+// claim's) leaves none on the unsigned checkpoint the two-step flow submits. Matching by txid
+// alone holds because the ark tx spends each checkpoint at vout 0 only; vout 1 is its anchor.
 function withArkInputWitness(checkpoint: Transaction, signedArkTx: Transaction): Transaction {
     if (getArkPsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
     for (let i = 0; i < signedArkTx.inputsLength; i++) {
