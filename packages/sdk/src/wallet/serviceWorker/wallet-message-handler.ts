@@ -1035,8 +1035,11 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRestoreWallet
     );
 
-/** What a generation counter covers: a subscription field, a derived cache, or the request stream. */
-type Scope = "incomingFunds" | "contractEvents" | "boarding" | "request";
+/**
+ * What a generation counter covers: a subscription field, a derived cache, the
+ * request stream, or an initializer run.
+ */
+type Scope = "init" | "incomingFunds" | "contractEvents" | "boarding" | "request";
 
 /**
  * Bound to the generation live when it was created. Re-check `stale` after
@@ -1073,6 +1076,11 @@ export class WalletMessageHandler
     // stale, folding requests in would truncate an in-flight settle, and
     // sharing with boarding would kill every lazy refresh (see `boardingEpoch`).
     private incomingFundsEpoch = 0;
+    /**
+     * Supersedes older initializers without touching `incomingFundsEpoch`, so a
+     * re-init that fails before registering leaves the live subscription delivering.
+     */
+    private initEpoch = 0;
     private contractEventsEpoch = 0;
     private boardingEpoch = 0;
     /** Per-request progress callbacks: ends with the handler, not with a re-init. */
@@ -1105,6 +1113,7 @@ export class WalletMessageHandler
         // invoking its progress callback, and without the bumps it would re-arm
         // the tick queue that this just emptied.
         this.requestEpoch++;
+        this.initEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
         this.boardingEpoch++;
@@ -1158,6 +1167,8 @@ export class WalletMessageHandler
 
     private epochOf(scope: Scope): number {
         switch (scope) {
+            case "init":
+                return this.initEpoch;
             case "incomingFunds":
                 return this.incomingFundsEpoch;
             case "contractEvents":
@@ -2000,8 +2011,9 @@ export class WalletMessageHandler
             return;
         }
 
-        this.incomingFundsEpoch++;
-        const init = this.newGeneration("incomingFunds");
+        // The last INIT to start wins: an older one returns at its next check.
+        this.initEpoch++;
+        const init = this.newGeneration("init");
 
         // Initialize contract manager FIRST — this populates the repository
         // with full virtual output history for all contracts (one indexer call per contract)
@@ -2029,6 +2041,7 @@ export class WalletMessageHandler
             if (init.stale) return;
         }
 
+        this.incomingFundsEpoch++;
         const emitter = this.newEmitter("incomingFunds");
         const provider = wallet.onchainProvider ?? this;
         const previousRegistration =
@@ -2360,6 +2373,7 @@ export class WalletMessageHandler
         // what stop an in-flight callback from emitting — or writing — a
         // just-wiped wallet's state.
         this.requestEpoch++;
+        this.initEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
         this.boardingEpoch++;

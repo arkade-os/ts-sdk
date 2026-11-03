@@ -3427,6 +3427,71 @@ describe("WalletMessageHandler event-push generations", () => {
         }
     });
 
+    it("a failed eager re-init keeps the live subscription delivering", async () => {
+        const unsubscribe = vi.fn();
+        let callback!: (funds: any) => Promise<void>;
+        attach(
+            makeWallet({
+                notifyIncomingFunds: vi.fn(async (cb) => {
+                    callback = cb;
+                    return unsubscribe;
+                }),
+            }),
+        );
+        (updater as any).refreshCachedData = vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error("onchain provider offline"));
+        const message = {
+            ...baseMessage(),
+            type: "INIT_WALLET",
+            payload: { arkServerUrl: "http://localhost:7070" },
+        } as any;
+
+        await updater.handleMessage(message);
+        await expect(updater.handleMessage(message)).rejects.toThrow("onchain provider offline");
+
+        expect((updater as any).incomingFundsSubscription).toBe(unsubscribe);
+        expect(unsubscribe).not.toHaveBeenCalled();
+        await callback(vtxoFunds());
+        expect(emitted("VTXO_UPDATE")).toBe(true);
+        expect(await collectScriptVtxos(repository, TEST_DEFAULT_SCRIPT)).toHaveLength(1);
+        await callback({ type: "utxo", coins: [] });
+        expect(emitted("UTXO_UPDATE")).toBe(true);
+    });
+
+    it("a re-init that fails before registering keeps a pending lazy registration", async () => {
+        const gate = deferred();
+        const unsubscribe = vi.fn();
+        let callback!: (funds: any) => Promise<void>;
+        attach(
+            makeWallet({
+                notifyIncomingFunds: vi.fn(async (cb) => {
+                    callback = cb;
+                    await gate.promise;
+                    return unsubscribe;
+                }),
+            }),
+        );
+        (updater as any).refreshCachedData = vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error("onchain provider offline"));
+        (updater as any).lazyBoardingInit = true;
+        await (updater as any).onWalletInitialized();
+        await flush(30);
+
+        (updater as any).lazyBoardingInit = false;
+        await expect((updater as any).onWalletInitialized()).rejects.toThrow();
+        gate.resolve();
+        await flush(30);
+
+        expect(unsubscribe).not.toHaveBeenCalled();
+        expect((updater as any).incomingFundsSubscription).toBe(unsubscribe);
+        await callback(vtxoFunds());
+        expect(emitted("VTXO_UPDATE")).toBe(true);
+    });
+
     it("lets the later of two overlapping INIT_WALLETs own the subscription", async () => {
         const gate = deferred();
         const unsubFirst = vi.fn();

@@ -198,7 +198,8 @@ style and have not been backfilled.
   finish while subscription setup is pending. Registration and stale cleanup
   serialize per provider across reinitialization, without blocking a different
   provider. Default eager startup still waits for registration, and delayed
-  setup cannot recreate a disposed wallet's contract manager.
+  setup cannot recreate a disposed wallet's contract manager. A reinitialization
+  that fails before registering leaves the existing subscription delivering.
 
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
