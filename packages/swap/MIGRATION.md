@@ -15,7 +15,7 @@ specifier-edit one. Concept mapping:
 | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `new ArkadeSwaps(wallet, config)` + `swapRepository`      | `createSwapClient(config)` — the drive, persistence and events are internal        |
 | `BoltzSwapProvider` (quoting / pair discovery)            | resolved for you inside `client.quote(input)` — markets come from discovery        |
-| `sendViaLightning` / `receiveViaLightning`                | `client.quote({ give, take, amount })` over the `lightning:BTC` ↔ `arkade:BTC` corridor |
+| `sendViaLightning` / `receiveViaLightning`                | `client.quote({ give, take, amount })` with `btcOn("bolt11", network)` and `btcOn("arkade", network)` |
 | `ArkadeLightning` (Expo background swaps)                 | `client.onUpdate(({ swap, outcome, detail }) => …)` driven from your background task |
 | `SwapRepository` / `BoltzRealmSchemas`                    | `AssetSwapRepository` + `AssetSwapRealmSchemas` (schema v5, additive)              |
 
