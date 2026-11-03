@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { CachingArkProvider } from "../src/providers/cachingArk";
 import { ArkadeInfo, ArkProvider, RestArkProvider } from "../src/providers/ark";
-import { extractArkProviderUrl } from "../src/wallet/wallet";
+import { extractServerUrl } from "../src/providers/utils";
 import { jsonResponse } from "./helpers/response";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -221,7 +221,7 @@ describe("CachingArkProvider", () => {
         const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"));
 
         expect(provider.serverUrl).toBe("http://ark.test");
-        expect(extractArkProviderUrl(provider)).toBe("http://ark.test");
+        expect(extractServerUrl(provider)).toBe("http://ark.test");
     });
 
     it("reports no serverUrl when the inner provider has none", () => {
@@ -230,6 +230,6 @@ describe("CachingArkProvider", () => {
         );
 
         expect(provider.serverUrl).toBeUndefined();
-        expect(extractArkProviderUrl(provider)).toBeUndefined();
+        expect(extractServerUrl(provider)).toBeUndefined();
     });
 });

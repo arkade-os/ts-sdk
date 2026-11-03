@@ -11,15 +11,22 @@
  * global `fetch` with their transport-error type unchanged.
  */
 
+import { signedGet } from "../enclave/signedResponse";
 import { Intent } from "../intent";
 import { baseFetch } from "../utils/fetch";
+import { throwIfHttpUnavailable } from "./errors";
 
 export interface EmulatorInfo {
     signerPubkey: string;
 }
 
 export interface EmulatorProvider {
-    getInfo(): Promise<EmulatorInfo>;
+    /**
+     * @param responseSigningKey - the emulator enclave's response signing key (`attestEnclave`).
+     *   When given, the response must carry a valid enclave signature by it. Honouring it is up
+     *   to the implementation: to verify whatever the provider, use {@link fetchEmulatorInfo}.
+     */
+    getInfo(responseSigningKey?: Uint8Array): Promise<EmulatorInfo>;
     submitTx(
         arkTx: string,
         checkpointTxs: string[],
@@ -50,6 +57,44 @@ export interface ConnectorTreeNode {
 }
 
 /**
+ * Read the emulator's `/v1/info` at `serverUrl`. With `responseSigningKey` (`attestEnclave`) the
+ * read is signed, and a 2xx answer must carry a valid enclave signature by that key.
+ *
+ * @throws {ProviderUnavailableError} the emulator answers 429/5xx (503 until its app starts).
+ * @throws {EnclaveAttestationError} a signed read whose signature is missing or invalid.
+ */
+export async function fetchEmulatorInfo(
+    serverUrl: string,
+    responseSigningKey?: Uint8Array,
+): Promise<EmulatorInfo> {
+    // A trailing slash would give `//v1/info`, which servers redirect and a signed read refuses.
+    const url = `${serverUrl.replace(/\/+$/, "")}/v1/info`;
+    // `baseFetch`, not the Ark-server `fetch`: the emulator is a distinct
+    // origin and rejects `X-Build-Version` / `X-SDK-VERSION` in preflight.
+    // `signedGet` uses it too, adding only the enclave's sign nonce.
+    let response: Response;
+    let text: string;
+    if (responseSigningKey) {
+        const signed = await signedGet(url, responseSigningKey);
+        response = signed.response;
+        text = new TextDecoder().decode(signed.body);
+    } else {
+        response = await baseFetch(url);
+        text = await response.text();
+    }
+    throwIfHttpUnavailable(response, "emulator");
+    if (!response.ok) {
+        throw new Error(`Failed to get emulator info: ${text}`);
+    }
+    const data = JSON.parse(text);
+    const signerPubkey = data.signerPubkey;
+    if (typeof signerPubkey !== "string" || !signerPubkey) {
+        throw new Error("Invalid emulator info response: missing signerPubkey");
+    }
+    return { signerPubkey };
+}
+
+/**
  * REST-based emulator client.
  *
  * @example
@@ -62,21 +107,8 @@ export interface ConnectorTreeNode {
 export class RestEmulatorProvider implements EmulatorProvider {
     constructor(public serverUrl: string) {}
 
-    async getInfo(): Promise<EmulatorInfo> {
-        const url = `${this.serverUrl}/v1/info`;
-        // `baseFetch`, not the Ark-server `fetch`: the emulator is a distinct
-        // origin and rejects `X-Build-Version` / `X-SDK-VERSION` in preflight.
-        const response = await baseFetch(url);
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to get emulator info: ${errorText}`);
-        }
-        const data = await response.json();
-        const signerPubkey = data.signerPubkey;
-        if (typeof signerPubkey !== "string" || !signerPubkey) {
-            throw new Error("Invalid emulator info response: missing signerPubkey");
-        }
-        return { signerPubkey };
+    async getInfo(responseSigningKey?: Uint8Array): Promise<EmulatorInfo> {
+        return fetchEmulatorInfo(this.serverUrl, responseSigningKey);
     }
 
     async submitTx(

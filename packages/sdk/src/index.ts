@@ -360,10 +360,13 @@ import {
 } from "./providers/indexer";
 import {
     RestEmulatorProvider,
+    fetchEmulatorInfo,
     type EmulatorProvider,
     type EmulatorInfo,
     type ConnectorTreeNode,
 } from "./providers/emulator";
+import { attestEnclave, type EnclaveAttestationConfig } from "./enclave/attestation";
+import { signedGet } from "./enclave/signedResponse";
 export {
     EventSourceUnavailableError,
     configureEventSource,
@@ -415,6 +418,7 @@ import {
     maybeArkError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
+    EnclaveAttestationError,
 } from "./providers/errors";
 import type { ProviderKind } from "./providers/errors";
 import { isRetryableProviderError } from "./providers/availability";
@@ -679,6 +683,9 @@ export {
     READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
+    fetchEmulatorInfo,
+    attestEnclave,
+    signedGet,
     DEFAULT_VTXO_PAGE_SIZE,
     // Script-related
     ArkAddress,
@@ -834,6 +841,7 @@ export {
     maybeArkError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
+    EnclaveAttestationError,
     SendDeadlineExceededError,
     assertSendDeadline,
     captureSendDeadline,
@@ -975,6 +983,7 @@ export type {
     EmulatorProvider,
     EmulatorInfo,
     ConnectorTreeNode,
+    EnclaveAttestationConfig,
     // Provider types
     OnchainProvider,
     ArkProvider,

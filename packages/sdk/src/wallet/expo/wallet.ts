@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { assertTimerMs } from "../../utils/time";
-import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
+import { extractServerUrl } from "../../providers/utils";
+import { Wallet, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
     ArkadeBroadcaster,
@@ -185,7 +186,7 @@ export class ExpoWallet
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl = extractArkProviderUrl(wallet.arkProvider);
+            const arkServerUrl = extractServerUrl(wallet.arkProvider);
 
             if (typeof arkServerUrl === "string" && arkServerUrl.length > 0) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;

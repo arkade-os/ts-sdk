@@ -144,6 +144,7 @@ import {
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
 import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
 import { isRetryableProviderError } from "../providers/availability";
+import { extractServerUrl } from "../providers/utils";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
@@ -248,13 +249,6 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
         return params;
     }
     return { recipients: args as [Recipient, ...Recipient[]] };
-}
-
-// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
-// The interface does not require it, so custom providers can return undefined.
-export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
-    const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
-    return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
 
 /**
@@ -1028,7 +1022,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
         if (!indexerProvider && !config.service) {
-            const derived = extractArkProviderUrl(arkProvider);
+            const derived = extractServerUrl(arkProvider);
             // Refuse to pair a caller's own ark provider with the public default: the wallet would
             // read its VTXOs from a server that has never seen them, and report phantom coins and
             // missed receipts rather than an error.

@@ -49,8 +49,8 @@ export function isArkError(error: unknown, name?: ArkErrorName): error is ArkErr
  * Which remote dependency an availability failure refers to; labels the
  * {@link ProviderUnavailableError} message and `ProviderConnectionState`. Deliberately *not* a
  * field on the error: structured clone across the service-worker `postMessage` boundary keeps
- * `message`, `stack` and `cause` but drops own-properties and normalizes a custom `name` to
- * `"Error"`.
+ * `message`, `stack` and `cause` but drops own-properties. (It also normalizes a custom `name`
+ * to `"Error"`; the message bus restores that one.)
  */
 export type ProviderKind = "arkade" | "indexer";
 
@@ -72,9 +72,9 @@ export class ProviderUnavailableError extends Error {
 /**
  * A response doesn't reconcile with what the SDK submitted or validated (a checkpoint txid not
  * among those submitted, a commitment tx differing from the one validated at tree signing).
- * Terminal: the two are equal by construction in a well-formed exchange. `retryable` and `name`
- * don't cross the SW boundary (see {@link ProviderKind}), so every distinguishing detail belongs
- * in `message`.
+ * Terminal: the two are equal by construction in a well-formed exchange. `retryable` and
+ * `instanceof` don't survive the service-worker boundary (see {@link ProviderKind}), so every
+ * distinguishing detail belongs in `message`.
  */
 export class ServerResponseMismatchError extends Error {
     readonly retryable = false;
@@ -82,6 +82,22 @@ export class ServerResponseMismatchError extends Error {
     constructor(message: string, options?: { cause?: unknown }) {
         super(message, { cause: options?.cause });
         this.name = "ServerResponseMismatchError";
+    }
+}
+
+/**
+ * An enclave failed verification: its attestation document (AWS Nitro chain, COSE signature,
+ * nonce, accepted PCR0s, signing key) or a response signature made with that key. Terminal:
+ * retrying reaches the same enclave. After an enclave upgrade the signing key changes, so
+ * re-attest (recreate the client) rather than retry. Detail belongs in `message`: `retryable`
+ * and `instanceof` don't survive the service-worker boundary.
+ */
+export class EnclaveAttestationError extends Error {
+    readonly retryable = false;
+
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, { cause: options?.cause });
+        this.name = "EnclaveAttestationError";
     }
 }
 
@@ -97,7 +113,7 @@ export class ServerResponseMismatchError extends Error {
  */
 export function throwIfHttpUnavailable(
     response: Response,
-    kind: ProviderKind,
+    kind: ProviderKind | "emulator" | "enclave",
     body?: string,
 ): void {
     if (body !== undefined && maybeArkError(new Error(body))) return;
