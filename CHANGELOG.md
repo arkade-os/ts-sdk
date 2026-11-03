@@ -60,10 +60,9 @@ style and have not been backfilled.
   (a swap claim's preimage) onto the copy arkd rebuilt. Covers wallet sends,
   ArkadeCash sweeps, `signAndSubmitOffchainTx`, Arkade contract spends, and swap
   claims, refunds and offer cancels. Set `WalletConfig.oneShotSubmit: false` to
-  keep the two-step flow, in which arkd holds no checkpoint signature before the
-  wallet holds the cosigned ark tx. Swaps read it from the new
-  `IWallet.oneShotSubmit`; an `Arkade` client takes
-  `ArkadeConnectOptions.oneShotSubmit` and the helpers `oneShot: false`.
+  keep the two-step flow. Swaps read it from the new `IWallet.oneShotSubmit`; an
+  `Arkade` client takes `ArkadeConnectOptions.oneShotSubmit` and the helpers
+  `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must

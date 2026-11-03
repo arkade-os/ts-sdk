@@ -233,12 +233,9 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     /**
      * Submit offchain transactions with signed checkpoints, so a supporting
      * arkd finalizes them in one call (older arkd falls back to finalizeTx).
-     * ⚠️ Trust tradeoff: the server then holds checkpoint signatures before the
-     * wallet holds the cosigned ark tx, so an operator that withholds it can
-     * publish the checkpoint and sweep it after the checkpoint exit delay. Set
-     * `false` to keep the two-step flow for this wallet's sends and ArkadeCash
-     * sweeps, and for swap claims, refunds and cancels driven through it; an
-     * `Arkade` client takes its own `oneShotSubmit`.
+     * Set `false` to keep the two-step flow for this wallet's sends and
+     * ArkadeCash sweeps, and for swap claims, refunds and cancels driven
+     * through it; an `Arkade` client takes its own `oneShotSubmit`.
      *
      * @defaultValue `true`
      */
