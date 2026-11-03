@@ -326,14 +326,17 @@ export interface WalletBalance {
          * boarding inputs, so zero boarding may only mean "not loaded". */
         loaded?: boolean;
     };
-    /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
+    /**
+     * Settled (finalized) balance the wallet owns, including {@link contractLocked} and
+     * {@link pendingSettlement} funds.
+     */
     settled: number;
     /** Preconfirmed (unfinalized) balance the wallet owns, on the same owned rule as {@link settled}. */
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would pick, so `send` never
-     * refuses it: `settled + preconfirmed - gated - pendingSettlement - reserved`, minus one dust
-     * carrier kept back if any of these outputs hold assets.
+     * refuses it: `settled + preconfirmed - contractLocked - pendingSettlement - reserved`, minus
+     * one dust carrier kept back if any of these outputs hold assets.
      */
     available: number;
     /**
@@ -342,12 +345,12 @@ export interface WalletBalance {
      * `available`. Takes precedence over {@link pendingSettlement} (the gate is durable; a lock clears).
      *
      * Subtract it from `settled + preconfirmed`, never from `total`, which also carries boarding,
-     * recoverable, pending-recovery and unrolled funds.
+     * `recoverable`, `deprecatedSignerLocked` and `unrolled` funds.
      */
-    gated: number;
+    contractLocked: number;
     /**
-     * Committed to an in-flight intent and not {@link gated}; returns to `available` when the
-     * intent terminates. Zero when unknown (no intent repository or a failed read), so it
+     * Committed to an in-flight intent and not {@link contractLocked}; returns to `available` when
+     * the intent terminates. Zero when unknown (no intent repository or a failed read), so it
      * under-reports into `available` rather than misattributing.
      */
     pendingSettlement: number;
@@ -364,7 +367,7 @@ export interface WalletBalance {
      * Unswept funds under a deprecated signer past its cutoff. Not spendable until recovered
      * (excluded from `available`/`settled`/`preconfirmed` and coin selection), but in `total`.
      */
-    pendingRecovery: number;
+    deprecatedSignerLocked: number;
 
     /**
      * Already unilaterally exited: onchain behind its CSV, movable only by
@@ -374,7 +377,8 @@ export interface WalletBalance {
     unrolled: number;
 
     /**
-     * Total across offchain, recoverable, pending-recovery, unrolled and boarding funds.
+     * Total across offchain, `recoverable`, `deprecatedSignerLocked`, `unrolled` and boarding
+     * funds.
      *
      * Known wedge: while a `send`/`sendBitcoin`/`settle` is in flight, its VTXO inputs (not
      * boarding) are withheld from every bucket on the `Wallet` instance driving it; a
@@ -390,6 +394,15 @@ export interface WalletBalance {
      * {@link available}). Assets have no per-cause split of what is held but not selectable.
      */
     availableAssets: Asset[];
+
+    /** @deprecated Use {@link contractLocked}. It holds the same value. */
+    gated: number;
+
+    /** @deprecated Use {@link pendingSettlement}. It holds the same value. */
+    intentLocked: number;
+
+    /** @deprecated Use {@link deprecatedSignerLocked}. It holds the same value. */
+    pendingRecovery: number;
 }
 
 /**
@@ -732,7 +745,7 @@ export interface TxKey {
 /**
  * The categories the history builder itself assigns. Four name the mechanism that moved the
  * coin; `"gated"` names the counterparty: an offchain movement into or out of one of this
- * wallet's gated contracts (swap covenant, lockup — the {@link WalletBalance.gated} money).
+ * wallet's gated contracts (swap covenant, lockup — the {@link WalletBalance.contractLocked} money).
  * History treats that contract as external, so the tag tells "my own escrow" from "a stranger".
  */
 export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch" | "gated";
@@ -1074,9 +1087,9 @@ export interface IReadonlyWallet {
     getStoredVtxos?(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
-     * The subset of {@link getVtxos} generic spending may select: minus gated contracts,
-     * pending-recovery funds and intent-locked outpoints (all from one contract snapshot). Every
-     * implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
+     * The subset of {@link getVtxos} generic spending may select: minus `contractLocked`,
+     * `deprecatedSignerLocked` and `pendingSettlement` outpoints (all from one contract snapshot).
+     * Every implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
      *
      * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
      * @see GetSpendableVtxosFilter

@@ -35,6 +35,15 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
+  is renamed `deprecatedSignerLocked`.** Each name now says what holds the
+  funds: a contract that generic spending refuses, or a server signer past
+  its cutoff. The old names stay as deprecated aliases with the same values,
+  and `intentLocked` returns as a deprecated alias of `pendingSettlement`.
+  Code that reads a balance keeps working. Code that builds a `WalletBalance`
+  itself, such as a test mock, must set the new fields and the aliases. The
+  service-worker `GET_BALANCE` payload carries both names. The `"gated"`
+  transaction history tag is unchanged.
 - **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
   `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
   `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,
@@ -218,12 +227,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
-- **Two-step swap claims pass arkd v0.9.24's submit check.** arkd now refuses a
-  checkpoint whose condition witness differs from that of the ark tx input
-  spending it. `claimWithPreimageIdentity` attaches the preimage only while
-  signing, so the unsigned checkpoints the two-step flow submits carried none.
-  `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
-  before submitting, in both flows.
+- **Service-worker balances normalize renamed buckets from older workers.**
+  When a worker response omits `contractLocked` or `deprecatedSignerLocked`,
+  the client now reads the corresponding deprecated `gated` or
+  `pendingRecovery` value without changing the other payload fields.
 
 - **Failed settlement cleanup retains persisted intent locks.** With an
   `IntentRepository`, failed deletion no longer marks an unresolved intent as
@@ -361,6 +368,13 @@ style and have not been backfilled.
   earlier event handling failed. Subscription request timeouts are validated
   as portable timer delays and must be greater than zero; accepting zero
   caused immediate timeouts and endless retries.
+
+- **Two-step swap claims pass arkd v0.9.24's submit check.** arkd now refuses a
+  checkpoint whose condition witness differs from that of the ark tx input
+  spending it. `claimWithPreimageIdentity` attaches the preimage only while
+  signing, so the unsigned checkpoints the two-step flow submits carried none.
+  `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
+  before submitting, in both flows.
 
 ### Breaking Changes
 
@@ -1054,6 +1068,21 @@ style and have not been backfilled.
   repository still filters in memory. The Expo background poll now
   reads only watched and awaiting-funds contracts too, instead of every
   row.
+
+- **Hot paths no longer wait out independent reads.** Boarding history fetched
+  each address, then each output's spend status, one after another; exit
+  walked each VTXO chain and each confirmation the same way, and a batch of
+  received VTXOs captured exit branches one by one. Those reads now run
+  together. The first failure is still the one reported, and a duplicate
+  outpoint in the service-worker snapshot is still claimed by the earlier
+  contract. Spend checks overlap the chain tip with the wallet descriptor.
+  Recovery and an expiry read overlap the coin list with the chain tip, and
+  deprecated-signer classification overlaps VTXOs with boarding. A quote that
+  needs both a claim secret and a refund key, or a refund key and server info,
+  starts both at once. Restore does the same with contract-manager setup,
+  the static descriptor and server info. Delegate info overlaps server info.
+  None of these share a result, and a step that writes what the next step
+  reads is unchanged.
 
 ## [0.4.77] - 2026-09-30
 

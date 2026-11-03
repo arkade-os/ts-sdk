@@ -41,6 +41,49 @@ it("forwards an offchain change fee cap through the worker request", async () =>
     });
 });
 
+it("normalizes renamed balance buckets from service-worker payloads", async () => {
+    const payload = {
+        total: 100,
+        contractLocked: 0,
+        deprecatedSignerLocked: 25,
+        gated: 10,
+        pendingRecovery: 20,
+        boarding: { confirmed: 5, unconfirmed: 0, total: 5 },
+    };
+    const sendMessage = vi.fn().mockResolvedValue({ payload });
+    const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
+
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...payload,
+        contractLocked: 0,
+        deprecatedSignerLocked: 25,
+    });
+
+    const legacyContractPayload = { ...payload, contractLocked: undefined };
+    sendMessage.mockResolvedValue({ payload: legacyContractPayload });
+
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...legacyContractPayload,
+        contractLocked: payload.gated,
+        deprecatedSignerLocked: payload.deprecatedSignerLocked,
+    });
+
+    const legacySignerPayload = { ...payload, deprecatedSignerLocked: undefined };
+    sendMessage.mockResolvedValue({ payload: legacySignerPayload });
+
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...legacySignerPayload,
+        contractLocked: payload.contractLocked,
+        deprecatedSignerLocked: payload.pendingRecovery,
+    });
+});
+
 // Errors cross the harness through the REAL structured-clone algorithm, so
 // its fidelity is the platform's problem, not a hand-maintained simulation's.
 // A stub that copied `name` verbatim once certified a fix the browser would

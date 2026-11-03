@@ -247,7 +247,7 @@ describe("the v2 cancel (regtest)", () => {
         // preceding cancel may still be landing and a drain that races one
         // leaves a balance this test would misread as its own doing.
         await waitFor(async () => (await wallet.getBalance()).available === FAUCET_SATS);
-        const { available, gated: gatedBefore } = await wallet.getBalance();
+        const { available, contractLocked: contractLockedBefore } = await wallet.getBalance();
 
         const quote = await client.quote({
             give: "BTC",
@@ -271,7 +271,7 @@ describe("the v2 cancel (regtest)", () => {
         // Every sat is escrowed now: still owned, and out of generic reach.
         const after = await wallet.getBalance();
         expect(after.available).toBe(0);
-        expect(after.gated).toBe(gatedBefore + available);
+        expect(after.contractLocked).toBe(contractLockedBefore + available);
 
         // And a zero available balance does not strand it. Cancel names its
         // input outpoint, so it needs no coin of its own to spend with — a
@@ -312,7 +312,7 @@ describe("the v2 cancel (regtest)", () => {
         expect(rebuilt?.market.kind).toBe("restored");
         expect(rebuilt?.outcome).toBe("open");
         await expect(wiped.cancel(swap.id)).rejects.toBeInstanceOf(NotCancellable);
-        expect((await wallet.getBalance()).gated).toBeGreaterThanOrEqual(DEPOSIT_SATS);
+        expect((await wallet.getBalance()).contractLocked).toBeGreaterThanOrEqual(DEPOSIT_SATS);
         await wiped[Symbol.asyncDispose]();
 
         // The same scan as a root export. The txid is named rather than read
