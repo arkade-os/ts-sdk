@@ -56,7 +56,7 @@ export async function compile(
         const code = (error as { code?: unknown } | null)?.code;
         if (
             (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") &&
-            String((error as Error).message).includes(PEER)
+            String((error as Error).message).includes(`'${PEER}'`)
         ) {
             throw new Error(
                 `@arkade-os/sdk/compiler needs the optional peer ${PEER}: npm install --save-exact ${PEER}`,
