@@ -205,6 +205,15 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Lazy boarding no longer blocks worker startup on an onchain subscription.**
+  With `lazyBoarding: true`, cached initialization and VTXO background work can
+  finish while subscription setup is pending. Registration and stale cleanup
+  serialize per provider across reinitialization, so a stale registration
+  finishing late cannot unsubscribe the live one, without blocking a different
+  provider. Default eager startup still waits for registration, and delayed
+  setup cannot recreate a disposed wallet's contract manager. A reinitialization
+  that fails before registering leaves the existing subscription delivering.
+
 - **Coin selection and `.from()` skip swept and expired coins.** `getUtxos()`
   can return a coin that is swept or past its batch expiry; a registered
   contract keeps them so they can be recovered. arkd rejects a spend that
