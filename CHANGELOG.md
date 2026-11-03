@@ -44,6 +44,8 @@ style and have not been backfilled.
 
 ### Added
 
+- **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, and `diagnostics` carries the warnings. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.
+
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
   so a solver can fund the lockup with dust and learn `P` from that claim.
