@@ -1035,6 +1035,21 @@ style and have not been backfilled.
   reads only watched and awaiting-funds contracts too, instead of every
   row.
 
+- **Hot paths no longer wait out independent reads.** Boarding history fetched
+  each address, then each output's spend status, one after another; exit
+  walked each VTXO chain and each confirmation the same way, and a batch of
+  received VTXOs captured exit branches one by one. Those reads now run
+  together. The first failure is still the one reported, and a duplicate
+  outpoint in the service-worker snapshot is still claimed by the earlier
+  contract. Spend checks overlap the chain tip with the wallet descriptor.
+  Recovery and an expiry read overlap the coin list with the chain tip, and
+  deprecated-signer classification overlaps VTXOs with boarding. A quote that
+  needs both a claim secret and a refund key, or a refund key and server info,
+  starts both at once. Restore does the same with contract-manager setup,
+  the static descriptor and server info. Delegate info overlaps server info.
+  None of these share a result, and a step that writes what the next step
+  reads is unchanged.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

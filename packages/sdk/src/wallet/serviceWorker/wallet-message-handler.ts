@@ -2199,7 +2199,8 @@ export class WalletMessageHandler
             const emitter = this.newEmitter("boarding");
             void (async () => {
                 // `emitter` gates every write: a `clear()` or re-init during the onchain fetch
-                // must not repopulate the wiped repository.
+                // must not repopulate the wiped repository. History stays behind this fetch so
+                // init returns with both onchain legs still parked.
                 await this.refreshBoardingCache(emitter);
                 if (emitter.stale) return;
                 this.boardingLoaded = true;
@@ -2211,26 +2212,38 @@ export class WalletMessageHandler
                         payload: { coins },
                     }),
                 );
-                await this.refreshHistoryCache(emitter);
+                await this.storeHistoryCache(await this.loadHistoryCache(), emitter);
             })().catch((error) => {
                 console.warn("[wallet] background refresh failed", error);
             });
             return;
         }
 
+        const history = this.loadHistoryCache();
+        void history.catch(() => undefined);
         await this.refreshBoardingCache();
         this.boardingLoaded = true;
-        await this.refreshHistoryCache();
+        await this.storeHistoryCache(await history);
     }
 
-    /** @param gen - set by a background caller; each write is skipped once it goes stale. */
-    private async refreshHistoryCache(gen?: Generation): Promise<void> {
+    /** History rows plus the address they are stored under. Does not write. */
+    private async loadHistoryCache(): Promise<
+        { address: string; txs: ArkTransaction[] } | undefined
+    > {
         const wallet = this.readonlyWallet;
-        const repository = this.walletRepository;
-        if (!wallet || !repository) return;
+        if (!wallet || !this.walletRepository) return undefined;
         const address = await wallet.getAddress();
         const txs = await this.buildTransactionHistoryFromCache();
-        if (txs && !gen?.stale) await repository.saveTransactions(address, txs);
+        if (!txs) return undefined;
+        return { address, txs };
+    }
+
+    private async storeHistoryCache(
+        history: { address: string; txs: ArkTransaction[] } | undefined,
+        gen?: Generation,
+    ): Promise<void> {
+        if (!history || gen?.stale || !this.walletRepository) return;
+        await this.walletRepository.saveTransactions(history.address, history.txs);
     }
 
     /**
@@ -2251,11 +2264,17 @@ export class WalletMessageHandler
 
         // If fetching or its save fails, leave the previous snapshot intact. saveUtxos
         // merges, so prune stale rows afterward.
-        for (const { tapscript, coins } of groups) {
+        if (gen?.stale) return;
+        const cachedByAddress = await Promise.all(
+            groups.map(({ tapscript }) =>
+                collectUtxos(repository, tapscript.onchainAddress(wallet.network)),
+            ),
+        );
+        for (const [i, { tapscript, coins }] of groups.entries()) {
             if (gen?.stale) return;
             const address = tapscript.onchainAddress(wallet.network);
             const freshKeys = new Set(coins.map((coin) => `${coin.txid}:${coin.vout}`));
-            const cached = await collectUtxos(repository, address);
+            const cached = cachedByAddress[i];
             const kept = cached.filter((coin) => freshKeys.has(`${coin.txid}:${coin.vout}`));
             if (kept.length === cached.length) continue;
             if (gen?.stale) return;
@@ -2443,7 +2462,9 @@ export class WalletMessageHandler
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
         vtxos: NormalizedExtendedVirtualCoin[];
     }> {
-        if (!this.walletRepository || !this.readonlyWallet) return { snapshot: [], vtxos: [] };
+        const repository = this.walletRepository;
+        const wallet = this.readonlyWallet;
+        if (!repository || !wallet) return { snapshot: [], vtxos: [] };
         const seen = new Set<string>();
         const allVtxos: NormalizedExtendedVirtualCoin[] = [];
 
@@ -2464,25 +2485,25 @@ export class WalletMessageHandler
         // buckets may carry legacy duplicate rows from other contracts; gate
         // each bucket by its owning contract script before deduplication so a
         // wrong-script row never wins the txid:vout race.
-        const manager = await this.readonlyWallet.getContractManager();
+        const addressPromise = wallet.getAddress();
+        void addressPromise.catch(() => undefined);
+        const manager = await wallet.getContractManager();
         const contracts = await manager.getContracts();
-        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
-        for (const contract of contracts) {
-            if (!options.includeRecoveryOnly && isRecoveryOnlyContract(contract)) continue;
-            snapshot.push({
-                contract,
-                vtxos: addVtxos(
-                    await getVtxosForContract(this.walletRepository, contract, options),
-                ),
-            });
-        }
-
+        const eligible = contracts.filter(
+            (contract) => options.includeRecoveryOnly || !isRecoveryOnlyContract(contract),
+        );
+        // One read per contract. Merge in repository order so the first row still wins a
+        // duplicate outpoint; folding the lists as they resolve would let a later contract claim it.
+        const listsPromise = Promise.all(
+            eligible.map((contract) => getVtxosForContract(repository, contract, options)),
+        );
+        void listsPromise.catch(() => undefined);
+        const walletAddress = await addressPromise;
         // Also check the wallet's primary address. Decode it to its script
         // and apply the same script gate. Failing to decode the wallet's own
         // address is a structural bug — surfacing the error is safer than
         // silently dropping the primary bucket and zeroing the user's
         // visible balance.
-        const walletAddress = await this.readonlyWallet.getAddress();
         let walletScript: string;
         try {
             walletScript = scriptFromArkAddress(walletAddress);
@@ -2491,17 +2512,26 @@ export class WalletMessageHandler
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
-        // Routed through the same helper as the contract buckets rather than reading the
-        // repository directly, so this bucket normalizes too. Anything left here
-        // is outside every contract row, so it carries no contract to judge it
-        // by — the wallet's own receive address, which is never gated.
-        addVtxos(
-            await getVtxosForContract(
-                this.walletRepository,
+        const [lists, primaryVtxos] = await Promise.all([
+            listsPromise,
+            // Routed through the same helper as the contract buckets rather than reading the
+            // repository directly, so this bucket normalizes too. Anything left here
+            // is outside every contract row, so it carries no contract to judge it
+            // by — the wallet's own receive address, which is never gated.
+            getVtxosForContract(
+                repository,
                 { script: walletScript, address: walletAddress },
                 options,
             ),
-        );
+        ]);
+        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
+        for (const [i, contract] of eligible.entries()) {
+            snapshot.push({
+                contract,
+                vtxos: addVtxos(lists[i]),
+            });
+        }
+        addVtxos(primaryVtxos);
 
         return { snapshot, vtxos: allVtxos };
     }

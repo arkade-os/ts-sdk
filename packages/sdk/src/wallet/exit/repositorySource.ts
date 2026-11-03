@@ -67,11 +67,12 @@ export class RepositoryExitDataSource implements ExitDataSource {
     }
 
     async getVirtualTxs(txids: string[]): Promise<Map<string, string>> {
+        const stored = await Promise.all(txids.map((txid) => this.repo.getVirtualTx(txid)));
         const out = new Map<string, string>();
-        for (const txid of txids) {
-            const stored = await this.repo.getVirtualTx(txid);
-            if (stored?.psbt) out.set(txid, stored.psbt);
-        }
+        txids.forEach((txid, i) => {
+            const row = stored[i];
+            if (row?.psbt) out.set(txid, row.psbt);
+        });
         return out;
     }
 }
