@@ -1154,7 +1154,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetBalance).payload;
+            const balance = (response as ResponseGetBalance).payload;
+            return {
+                ...balance,
+                contractLocked: balance.contractLocked ?? balance.gated,
+                deprecatedSignerLocked: balance.deprecatedSignerLocked ?? balance.pendingRecovery,
+            };
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
         }

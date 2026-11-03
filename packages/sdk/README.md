@@ -411,21 +411,25 @@ const balance = await wallet.getBalance()
 | `settled` | Finalized offchain funds the wallet owns, spendable or not. |
 | `preconfirmed` | Owned offchain funds not yet finalized in a batch. |
 | `available` | What `send` and every other automatic coin selection can spend now. |
-| `gated` | Held by a contract that generic spending refuses (chiefly swap escrow); only that contract can spend it ([Contract Management](#contract-management)). |
+| `contractLocked` | Held by a contract that generic spending refuses (chiefly swap escrow); only that contract can spend it ([Contract Management](#contract-management)). |
 | `pendingSettlement` | Committed to an in-flight settlement intent; back in `available` when the intent ends. Always `0` without `storage.intentRepository`. |
 | `reserved` | Held by [`reserveVtxos`](#holding-vtxos-for-your-own-use) until released. |
 | `recoverable` | Swept or subdust virtual outputs that [`recoverVtxos`](#recovery-reclaim-swept-vtxos) can reclaim; `getRecoverableBalance()` gives what a batch would return today. |
-| `pendingRecovery` | Under a server signer past its cutoff, which the operator no longer co-signs; recovers once swept and re-settled. |
+| `deprecatedSignerLocked` | Under a server signer past its cutoff, which the operator no longer co-signs; recovers once swept and re-settled. |
 | `unrolled` | Already [unilaterally exited](#unilateral-exit): onchain behind its CSV timelock, movable only by `Unroll.completeUnroll`. |
-| `total` | Everything the wallet owns: `boarding.total + settled + preconfirmed + recoverable + pendingRecovery + unrolled`. |
+| `total` | Everything the wallet owns: `boarding.total + settled + preconfirmed + recoverable + deprecatedSignerLocked + unrolled`. |
 | `assets` | Every [asset](#assets-issue-reissue-burn-send) balance the wallet owns. |
 | `availableAssets` | The subset of `assets` generic spending can move: the asset counterpart of `available`. |
+
+Older code can read `gated`, `intentLocked`, and `pendingRecovery`. These deprecated aliases
+hold the same values as `contractLocked`, `pendingSettlement`, and `deprecatedSignerLocked`,
+so new code should use those names.
 
 `available` is what remains of the owned offchain funds once everything held for a
 cause is taken out:
 
 ```text
-settled + preconfirmed === available + gated + pendingSettlement + reserved
+settled + preconfirmed === available + contractLocked + pendingSettlement + reserved
 ```
 
 plus one dust carrier when the wallet holds available assets, since an asset moves
@@ -433,7 +437,7 @@ only with the output that carries it.
 
 To show "your money, minus what is tied up", subtract from `settled + preconfirmed`
 — **not from `total`**, which also contains `boarding.total`, `recoverable`,
-`pendingRecovery` and `unrolled`. Those are still your funds, so subtracting a bucket
+`deprecatedSignerLocked` and `unrolled`. Those are still your funds, so subtracting a bucket
 from `total` silently drops them from the figure.
 
 ```typescript
