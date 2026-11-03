@@ -151,21 +151,34 @@ export {
 
 // --- Static typing of contract functions -----------------------------------
 
+/**
+ * A scalar or whole struct/array value, flattened to dotted names (`owners.0.key`).
+ * Struct fields are checked at runtime so interface types need no index signature.
+ */
+export type ArkadeNestedValue = ArkadeArgValue | object;
+
 /** The argument tuple of a function, derived from its declared `inputs`. */
 type ArgsTuple<I extends readonly InputDef[]> = {
     [K in keyof I]: ArkadeValueType[I[K]["type"]];
 };
 
-/** The call signature arguments for one function (nullary when `inputs` is absent). */
+/**
+ * The call signature arguments for one function (nullary when `inputs` is absent). Dotted input
+ * names group into one struct or array argument at runtime; dotted or widened names stay loose.
+ */
 type FnArgs<F extends ArkadeFunction> = F extends {
     inputs: infer I extends readonly InputDef[];
 }
-    ? ArgsTuple<I>
+    ? string extends I[number]["name"]
+        ? ArkadeNestedValue[]
+        : Extract<I[number]["name"], `${string}.${string}`> extends never
+          ? ArgsTuple<I>
+          : ArkadeNestedValue[]
     : [];
 
 /** A contract's functions returning `R`: typed per function for a literal program, else loose. */
 type FunctionMap<P extends Program, R> = string extends keyof P["functions"]
-    ? Record<string, (...args: ArkadeArgValue[]) => R>
+    ? Record<string, (...args: ArkadeNestedValue[]) => R>
     : {
           [K in keyof P["functions"]]: (...args: FnArgs<P["functions"][K]>) => R;
       };
@@ -253,7 +266,7 @@ export interface ArkadeSpendResult {
 /** The callable spending paths of a contract. */
 export type CallableFunctions = Record<
     string,
-    (...args: ArkadeArgValue[]) => ArkadeTransactionBuilder
+    (...args: ArkadeNestedValue[]) => ArkadeTransactionBuilder
 >;
 
 // --- Arkade client ---------------------------------------------------------
@@ -577,10 +590,11 @@ export class Arkade {
      *
      * Declared `server`/`user` params default to the client's keys. Compiler
      * artifacts reserve the server key and exit delay to the connected server.
+     * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
      */
     contract<const P extends Program>(
         program: P,
-        args: Record<string, ArkadeParamValue> = {},
+        args: Record<string, ArkadeNestedValue> = {},
     ): ArkadeContract<P> {
         const declared = (program.params ?? []).map((p) => p.name);
         if (declared.includes("server") && args.server === undefined) {
@@ -637,19 +651,23 @@ export class ArkadeContract<P extends Program = Program> {
     readonly keys: ProgramKeys;
     /** Spending paths in declaration order. */
     private readonly compiled: CompiledProgramFunction[];
+    /** Constructor bindings by flattened name (`owners.0.key`), as persisted. */
+    readonly args: Record<string, ArkadeParamValue>;
 
     constructor(
         readonly client: Arkade,
         readonly program: P,
-        readonly args: Record<string, ArkadeParamValue> = {},
+        args: Record<string, ArkadeNestedValue> = {},
         keys?: ProgramKeys,
     ) {
+        this.args = Object.create(null);
+        for (const [name, value] of Object.entries(args)) flattenValue(name, value, this.args);
         this.keys = keys ?? {
             serverKey: client.serverKey,
             userKey: client.userKey,
             emulatorKey: client.emulatorKey,
         };
-        this.vtxoScript = new ArkadeProgramScript(program, args, this.keys);
+        this.vtxoScript = new ArkadeProgramScript(program, this.args, this.keys);
         this.tapTree = this.vtxoScript.encode();
         this.compiled = this.vtxoScript.compiled;
     }
@@ -693,7 +711,7 @@ export class ArkadeContract<P extends Program = Program> {
     get functions(): ContractFunctions<P> {
         const out: CallableFunctions = Object.create(null);
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArkadeArgValue[]) =>
+            out[fn.name] = (...callArgs: ArkadeNestedValue[]) =>
                 new ArkadeTransactionBuilder(this.client, {
                     contract: this,
                     fn,
@@ -705,10 +723,10 @@ export class ArkadeContract<P extends Program = Program> {
 
     /** Spending paths bound to their arguments, for `.from(coins, contract.unlock.<name>(...))`. */
     get unlock(): ContractUnlockers<P> {
-        const out: Record<string, (...args: ArkadeArgValue[]) => ArkadeUnlocker> =
+        const out: Record<string, (...args: ArkadeNestedValue[]) => ArkadeUnlocker> =
             Object.create(null);
         for (const fn of this.compiled) {
-            out[fn.name] = (...callArgs: ArkadeArgValue[]) => ({
+            out[fn.name] = (...callArgs: ArkadeNestedValue[]) => ({
                 contract: this,
                 fn,
                 args: bindInputs(fn, callArgs),
@@ -1269,24 +1287,70 @@ function witnessBytes({ contract, args }: ArkadeUnlocker, ref: WitnessRef): Uint
     return witnessRefToBytes(ref, args, contract.args);
 }
 
-/** Bind positional call arguments to a function's declared input names. */
+/**
+ * Flatten `value` into `out` under the compiler's dotted names: a struct field or array index
+ * appends `.field` / `.index`, so `owners: [{ key }]` binds `owners.0.key`.
+ */
+function flattenValue(
+    name: string,
+    value: ArkadeNestedValue,
+    out: Record<string, ArkadeArgValue>,
+): void {
+    if (typeof value !== "object" || value === null || ArrayBuffer.isView(value)) {
+        if (Object.hasOwn(out, name)) throw new Error(`duplicate argument '${name}'`);
+        out[name] = value as ArkadeArgValue;
+        return;
+    }
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+            if (!Object.hasOwn(value, i))
+                throw new Error(`argument '${name}.${i}' is a sparse array element`);
+        }
+    }
+    const entries = Object.entries(value);
+    if (entries.length === 0)
+        throw new Error(`argument '${name}' must not be an empty struct or array`);
+    for (const [key, item] of entries) flattenValue(`${name}.${key}`, item, out);
+}
+
+/**
+ * Bind positional call arguments to a function's declared inputs: one argument per source
+ * parameter, with a struct or array passed whole and flattened to its dotted input names.
+ */
 function bindInputs(
     fn: CompiledProgramFunction,
-    callArgs: ArkadeArgValue[],
+    callArgs: ArkadeNestedValue[],
 ): Record<string, ArkadeArgValue> {
     const inputs = fn.def.inputs ?? [];
-    if (callArgs.length !== inputs.length) {
+    const declared = new Set<string>();
+    for (const def of inputs) {
+        if (declared.has(def.name)) throw new Error(`${fn.name}: duplicate input '${def.name}'`);
+        declared.add(def.name);
+    }
+    // ponytail: Scalar/struct collisions need separate slots until covenant/tapscript params split.
+    const params = [
+        ...new Map(
+            inputs.map(({ name }) => {
+                const root = name.split(".")[0];
+                return [name.includes(".") ? `${root}.` : root, root];
+            }),
+        ).values(),
+    ];
+    if (callArgs.length !== params.length) {
         throw new Error(
-            `${fn.name}: expected ${inputs.length} argument(s), got ${callArgs.length}`,
+            `${fn.name}: expected ${params.length} argument(s), got ${callArgs.length}`,
         );
     }
     const bound: Record<string, ArkadeArgValue> = Object.create(null);
-    inputs.forEach((def, i) => {
-        if (Object.hasOwn(bound, def.name))
-            throw new Error(`${fn.name}: duplicate input '${def.name}'`);
-        validateParamValue(def, callArgs[i]);
-        bound[def.name] = callArgs[i];
-    });
+    params.forEach((param, i) => flattenValue(param, callArgs[i], bound));
+    for (const name of Object.keys(bound)) {
+        if (!declared.has(name)) throw new Error(`${fn.name}: unexpected input '${name}'`);
+    }
+    for (const def of inputs) {
+        if (bound[def.name] === undefined)
+            throw new Error(`${fn.name}: missing input '${def.name}'`);
+        validateParamValue(def, bound[def.name]);
+    }
     return bound;
 }
 
