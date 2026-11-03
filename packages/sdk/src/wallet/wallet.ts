@@ -1844,14 +1844,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, for SDK
-     * picks. The getter itself lists them: callers that mirror it (the worker's cache and
-     * broadcasts, balances) must not see a settle's inputs vanish, and then stay gone if it fails.
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
+     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
+     * stay gone if it fails.
      */
     async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
-        return (await this.getBoardingUtxos()).filter(
-            (coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`),
-        );
+        const [utxos, locked] = await Promise.all([
+            this.getBoardingUtxos(),
+            this.lockedOutpoints(),
+        ]);
+        return utxos.filter((coin) => {
+            const key = `${coin.txid}:${coin.vout}`;
+            return !this._pendingSpendOutpoints.has(key) && !locked.has(key);
+        });
     }
 
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
