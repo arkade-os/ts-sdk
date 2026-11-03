@@ -202,6 +202,11 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Service-worker balances normalize renamed buckets from older workers.**
+  When a worker response omits `contractLocked` or `deprecatedSignerLocked`,
+  the client now reads the corresponding deprecated `gated` or
+  `pendingRecovery` value without changing the other payload fields.
+
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
   so an indexer read missing the solver's preimage ended a paid send as
