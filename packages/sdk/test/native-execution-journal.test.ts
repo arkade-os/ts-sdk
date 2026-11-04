@@ -360,6 +360,30 @@ describe("NativeExecutionJournal receipts", () => {
 });
 
 describe("NativeExecutionJournal observation", () => {
+    it.each(
+        (["observe", "reconcile"] as const).flatMap((method) =>
+            (["vtxos", "txs"] as const).flatMap((field) =>
+                [
+                    { current: 99, next: 0, total: 1 },
+                    { current: 1, next: 0, total: 0 },
+                ].map((page) => ({ method, field, page })),
+            ),
+        ),
+    )(
+        "leaves inconsistent $field page $page unknown through $method",
+        async ({ method, field, page }) => {
+            const f = await observationFixture();
+            const indexer = {
+                getVtxos: async () => ({ vtxos: f.coins, ...(field === "vtxos" ? { page } : {}) }),
+                getVirtualTxs: async () => ({ txs: f.txs, ...(field === "txs" ? { page } : {}) }),
+            };
+            expect((await f.journal[method](source, indexer))?.state).toBe("unknown");
+            expect(await f.journal.getReceipt(source)).toBeUndefined();
+            expect(await f.journal.get(source)).toEqual(f.record);
+            await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
+        },
+    );
+
     it.each(["observe", "reconcile"] as const)(
         "accepts unpaged wire envelopes with page:null through %s",
         async (method) => {
@@ -414,11 +438,14 @@ describe("NativeExecutionJournal observation", () => {
         expect(Object.isFrozen(result?.record.proposal.checkpointTxs)).toBe(true);
         expect(f.indexer.getVtxos).toHaveBeenCalledExactlyOnceWith({
             outpoints: [source, { txid: f.record.operationId, vout: 0 }],
+            pageIndex: 0,
+            pageSize: 2,
+            maxResponseBytes: 4 * 1024 * 1024,
         });
-        expect(f.indexer.getVirtualTxs).toHaveBeenCalledExactlyOnceWith([
-            f.tx.checkpoints[0].id,
-            f.record.operationId,
-        ]);
+        expect(f.indexer.getVirtualTxs).toHaveBeenCalledExactlyOnceWith(
+            [f.tx.checkpoints[0].id, f.record.operationId],
+            { pageIndex: 0, pageSize: 2, maxResponseBytes: 4 * 1024 * 1024 },
+        );
         expect(await f.repo.getWalletState()).toEqual(before);
         await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
     });
@@ -524,10 +551,10 @@ describe("NativeExecutionJournal observation", () => {
             record: f.record,
         });
         expect(f.indexer.getVtxos).toHaveBeenCalledOnce();
-        expect(f.indexer.getVirtualTxs).toHaveBeenCalledExactlyOnceWith([
-            f.tx.checkpoints[0].id,
-            f.record.operationId,
-        ]);
+        expect(f.indexer.getVirtualTxs).toHaveBeenCalledExactlyOnceWith(
+            [f.tx.checkpoints[0].id, f.record.operationId],
+            { pageIndex: 0, pageSize: 2, maxResponseBytes: 4 * 1024 * 1024 },
+        );
         expect(await f.repo.getWalletState()).toEqual(before);
         await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
     });
