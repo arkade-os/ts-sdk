@@ -975,9 +975,9 @@ describe("Common", () => {
                 } catch (error: any) {
                     expect(error).toBeDefined();
                     expect(error).toBeInstanceOf(ArkError);
-                    expect(error.message).toContain("INVALID_ARKADE_PSBT (1)");
+                    expect(error.message).toContain("INVALID_ARK_PSBT (1)");
                     expect(error.code).toBe(1);
-                    expect(error.name).toBe("INVALID_ARKADE_PSBT");
+                    expect(error.name).toBe("INVALID_ARK_PSBT");
                     expect(error.metadata).toStrictEqual({ tx: "invalid" });
                 }
             });
