@@ -191,6 +191,50 @@ describe("NativeExecutor with existing SQLite contracts", () => {
         );
     });
 
+    it("uses the stored payout after reopen even when the exposed bytes change during assembly", async () => {
+        const first = await open();
+        const imported = await first.native.importTemplate(document);
+        const script = hex.encode(imported.contract.pkScript);
+        await close();
+        const session = await open();
+        const execution = await session.native.restore(script);
+        const source = new Transaction();
+        source.addInput({ txid: "99".repeat(32), index: 0 });
+        source.addOutput({ script: execution.contract.pkScript, amount: 50_000n });
+        const coin = {
+            txid: source.id,
+            vout: 0,
+            value: 50_000,
+            isSpent: false,
+            isUnrolled: false,
+            createdAt: new Date(0),
+            script,
+            status: { confirmed: false },
+        };
+        vi.spyOn(execution.contract, "getUtxos").mockResolvedValue([coin]);
+        vi.spyOn(manager!, "refreshOutpoints").mockResolvedValue(undefined);
+        vi.spyOn(manager!, "refreshVtxos").mockResolvedValue(undefined);
+        vi.mocked(session.indexer.getVirtualTxs).mockImplementation(async () => {
+            execution.destination.fill(1);
+            return { txs: [base64.encode(source.toPSBT())] };
+        });
+        const submit = vi
+            .spyOn(session.client.emulator!, "submitTx")
+            .mockImplementation(async (arkTx, checkpointTxs) => ({
+                signedArkTx: arkTx,
+                signedCheckpointTxs: checkpointTxs,
+            }));
+        execution.destination.fill(0);
+        const result = await session.native.execute(execution, coin);
+        const sent = Transaction.fromPSBT(base64.decode(submit.mock.calls[0][0]));
+        expect(result.txid).toBe(sent.id);
+        expect(hex.encode(sent.getOutput(0).script!)).toBe(document.outputs[0].locking);
+        expect(sent.getOutput(0).amount).toBe(50_000n);
+        expect(hex.encode((await session.native.restore(script)).destination)).toBe(
+            document.outputs[0].locking,
+        );
+    });
+
     it.each(["inline", "reference"])(
         "restores a %s import without artifacts after key changes",
         async (definition) => {
@@ -248,15 +292,11 @@ describe("NativeExecutor with existing SQLite contracts", () => {
                     status: "active",
                 })),
             };
-            await next.native.delegate(restored, provider as never, "release");
-            provider.getInfo.mockResolvedValue({
-                serverPubkey: `02${hex.encode(next.client.serverKey)}`,
-                emulatorPubkey: hex.encode(next.client.emulatorKey!),
-            });
             await expect(
                 next.native.delegate(restored, provider as never, "release"),
-            ).rejects.toThrow(/keys differ/);
-            expect(provider.registerDelegation).toHaveBeenCalledTimes(1);
+            ).rejects.toThrow(/re-import.*delegat/);
+            expect(provider.getInfo).not.toHaveBeenCalled();
+            expect(provider.registerDelegation).not.toHaveBeenCalled();
         },
     );
 

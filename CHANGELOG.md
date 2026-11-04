@@ -246,6 +246,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Native execution preserves its imported payout and delegation binding.**
+  Mutating a handle's destination no longer changes its spend. Remote watches
+  must match the captured template, artifact and variables; restored handles
+  require re-import before delegation. Post-submit refresh failures are reported
+  without hiding the accepted transaction result; submission failures still reject.
+
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
   or unrelated settings. Genuine absence still returns null.

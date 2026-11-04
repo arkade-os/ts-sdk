@@ -127,7 +127,147 @@ async function twoPositions() {
     return { ...s, other };
 }
 
+function remote(s: Awaited<ReturnType<typeof setup>>) {
+    return {
+        getInfo: vi.fn(async () => ({ serverPubkey: s.key, emulatorPubkey: s.key })),
+        registerArtifact: vi.fn(async (_document: unknown) => ({ id: "artifact-id" })),
+        registerTemplate: vi.fn(async (_document: unknown) => ({ id: "renew-template" })),
+        registerDelegation: vi.fn(async (_id: string, _variables?: Record<string, string>) => ({
+            address: s.contract.address,
+            status: "active",
+        })),
+    };
+}
+
 describe("SDK native template execution", () => {
+    it("rejects a different template ID even when its watch has the same input address", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const provider = remote(s);
+        await expect(
+            s.executor.delegate(execution, provider as never, "other-payout-template"),
+        ).rejects.toThrow(/template.*match/);
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it("rejects different payout variables before creating a remote watch", async () => {
+        const s = await setup();
+        const doc = { ...template(), variables: { destination: "bytes" } };
+        doc.outputs[0].locking = "<destination>";
+        const variables = { destination: `5120${payout}` };
+        const execution = await s.executor.importTemplate(
+            doc,
+            { "artifact-id": artifact },
+            variables,
+        );
+        const provider = remote(s);
+        await expect(
+            s.executor.delegate(execution, provider as never, "renew-template", {
+                destination: `5120${"22".repeat(32)}`,
+            }),
+        ).rejects.toThrow(/variables.*match/);
+        expect(provider.registerDelegation).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])(
+        "delegates only captured documents, artifacts and variables (inline: %s)",
+        async (inline) => {
+            const s = await setup();
+            const capturedArtifact = structuredClone(artifact);
+            const doc: any = { ...template(), variables: { destination: "bytes" } };
+            doc.outputs[0].locking = "<destination>";
+            if (inline) doc.inputs[0].contract.definition = capturedArtifact;
+            const expected = structuredClone(doc);
+            const variables = { destination: `5120${payout}` };
+            const pending = s.executor.importTemplate(
+                doc,
+                { "artifact-id": capturedArtifact },
+                variables,
+            );
+            doc.outputs[0].locking = `5120${"22".repeat(32)}`;
+            capturedArtifact.functions[0].arkade!.asm = ["OP_0"];
+            variables.destination = `5120${"33".repeat(32)}`;
+            const execution = await pending;
+            const provider = remote(s);
+            provider.registerArtifact.mockResolvedValue({ id: "registered-artifact" });
+            if (!inline) expected.inputs[0].contract.definition.artifact = "registered-artifact";
+            const supplied = { destination: `5120${payout}` };
+            const delegated = s.executor.delegate(
+                execution,
+                provider as never,
+                "renew-template",
+                supplied,
+            );
+            supplied.destination = `5120${"44".repeat(32)}`;
+            await delegated;
+            if (inline) expect(provider.registerArtifact).not.toHaveBeenCalled();
+            else expect(provider.registerArtifact).toHaveBeenCalledExactlyOnceWith(artifact);
+            expect(provider.registerTemplate).toHaveBeenCalledExactlyOnceWith(expected);
+            expect(provider.registerDelegation).toHaveBeenCalledWith(
+                "renew-template",
+                { destination: `5120${payout}` },
+                0,
+            );
+            expect(hex.encode(execution.destination)).toBe(`5120${payout}`);
+        },
+    );
+
+    it("keeps imported payout bytes private across exposed and builder mutations", async () => {
+        const s = await twoPositions();
+        const execution = await s.importTemplate();
+        const expected = hex.decode(`5120${payout}`);
+        execution.destination.fill(0);
+        const received: Uint8Array[] = [];
+        s.builder.to.mockImplementation((script: Uint8Array) => {
+            received.push(script.slice());
+            script.fill(1);
+            return s.builder;
+        });
+        await s.executor.execute(execution, s.coin);
+        execution.destination.fill(2);
+        await s.executor.execute(execution, s.other);
+        expect(received).toEqual([expected, expected]);
+        expect(s.contract.pkScript).toEqual(expected);
+    });
+
+    it.each(["refreshOutpoints", "refreshVtxos"] as const)(
+        "returns the accepted result when post-submit %s fails",
+        async (method) => {
+            const s = await setup();
+            const execution = await s.importTemplate();
+            const failure = new Error("indexer unavailable after acceptance");
+            if (method === "refreshOutpoints") {
+                s.manager.refreshOutpoints
+                    .mockResolvedValueOnce(undefined)
+                    .mockRejectedValueOnce(failure);
+            } else s.manager.refreshVtxos.mockRejectedValueOnce(failure);
+            const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+            try {
+                await expect(s.executor.execute(execution, s.coin)).resolves.toEqual({
+                    txid: "bb".repeat(32),
+                });
+                expect(s.send).toHaveBeenCalledOnce();
+                await expect(s.executor.execute(execution, s.coin)).rejects.toThrow(/spent/);
+                expect(s.send).toHaveBeenCalledOnce();
+            } finally {
+                warning.mockRestore();
+            }
+        },
+    );
+
+    it("propagates pre-submit refresh and submission failures unchanged", async () => {
+        const s = await setup();
+        const execution = await s.importTemplate();
+        const refreshFailure = new Error("refresh before dispatch failed");
+        s.manager.refreshOutpoints.mockRejectedValueOnce(refreshFailure);
+        await expect(s.executor.execute(execution, s.coin)).rejects.toBe(refreshFailure);
+        expect(s.send).not.toHaveBeenCalled();
+        const submitFailure = new Error("response lost");
+        s.send.mockRejectedValueOnce(submitFailure);
+        await expect(s.executor.execute(execution, s.coin)).rejects.toBe(submitFailure);
+        expect(s.manager.refreshVtxos).not.toHaveBeenCalled();
+    });
+
     it("captures a queued source before an earlier pre-submit hook fails without dispatch", async () => {
         const s = await twoPositions();
         const execution = await s.importTemplate();
@@ -553,10 +693,11 @@ describe("SDK native template execution", () => {
     it("checks pinned keys and the independently derived address before funding", async () => {
         const s = await setup();
         const execution = await s.importTemplate();
-        const provider = {
-            getInfo: vi.fn(async () => ({ serverPubkey: s.key, emulatorPubkey: s.key })),
-            registerDelegation: vi.fn(async () => ({ address: "wrong-address", status: "active" })),
-        };
+        const provider = remote(s);
+        provider.registerDelegation.mockResolvedValue({
+            address: "wrong-address",
+            status: "active",
+        });
         await expect(
             s.executor.delegate(execution, provider as never, "renew-template"),
         ).rejects.toThrow(/different address/);

@@ -12,6 +12,12 @@ import type { Program } from "./program";
 import type { EmulatorSubmitOptions } from "../utils/arkTransaction";
 
 type ObjectValue = Record<string, unknown>;
+type DelegationBinding = {
+    document: string;
+    artifact: string;
+    artifactReference: boolean;
+    variables: Readonly<Record<string, string>>;
+};
 const scriptNum = ScriptNum(undefined, true);
 const executionTails = new WeakMap<IWallet, Promise<unknown>>();
 
@@ -98,7 +104,10 @@ export interface NativeExecution {
  * intent repository. No second wallet, repository, scheduler or daemon is created.
  */
 export class NativeExecutor {
-    private readonly imported = new WeakSet<NativeExecution>();
+    private readonly imported = new WeakMap<
+        NativeExecution,
+        { destination: Uint8Array; delegation?: DelegationBinding }
+    >();
 
     constructor(
         readonly arkade: Arkade,
@@ -120,7 +129,6 @@ export class NativeExecutor {
         artifacts: Readonly<Record<string, ContractArtifact>> = {},
         variables: Record<string, string> = {},
     ): Promise<NativeExecution> {
-        await this.manager();
         if (!this.arkade.indexer) throw new Error("NativeExecutor: an indexer is required");
         const t = object(
             document,
@@ -224,12 +232,20 @@ export class NativeExecutor {
         const packets = object(t.packets, ["output_index"], ["output_index"]);
         if (packets.output_index !== 1)
             throw new Error("NativeExecutor: emulator extension must be output 1");
+        const delegation: DelegationBinding = {
+            document: JSON.stringify(document),
+            artifact: JSON.stringify(artifact),
+            artifactReference: Object.hasOwn(definition, "artifact"),
+            variables: Object.freeze({ ...variables }),
+        };
+        destination = destination.slice();
+        await this.manager();
         const registered = await contract.register({
             metadata: {
                 genericallySpendable: false,
                 nativeExecution: {
-                    document,
-                    variables,
+                    document: JSON.parse(delegation.document),
+                    variables: { ...delegation.variables },
                     plan: { version: 1, functionName, destinationHex: hex.encode(destination) },
                 },
             },
@@ -257,12 +273,13 @@ export class NativeExecutor {
                 );
             }
         }
-        return this.own(contract, functionName, destination);
+        return this.own(contract, functionName, destination, delegation);
     }
 
     /**
      * Restore the authoritative versioned plan using the contract's stored keys.
      * The original template is inspection data; no registration or refresh occurs.
+     * Re-import the original template, artifacts and variables before remote delegation.
      */
     async restore(script: string): Promise<NativeExecution> {
         const manager = await this.manager();
@@ -294,9 +311,14 @@ export class NativeExecutor {
         contract: ArkadeContract,
         functionName: string,
         destination: Uint8Array,
+        delegation?: DelegationBinding,
     ): NativeExecution {
-        const execution = Object.freeze({ contract, functionName, destination });
-        this.imported.add(execution);
+        const execution = Object.freeze({
+            contract,
+            functionName,
+            destination: destination.slice(),
+        });
+        this.imported.set(execution, { destination: destination.slice(), delegation });
         return execution;
     }
 
@@ -307,7 +329,7 @@ export class NativeExecutor {
         return this.wallet.send({ address: execution.contract.address, amount });
     }
 
-    /** Compare the independently derived address and pinned keys before funding a watch. */
+    /** Bind the imported template and variables before creating a watch; restored handles require re-import. */
     async delegate(
         execution: NativeExecution,
         provider: DelegateeProvider,
@@ -315,8 +337,21 @@ export class NativeExecutor {
         variables: Record<string, string> = {},
         expiresAt = 0,
     ): Promise<DelegateeDelegation> {
-        await this.manager();
+        const supplied = { ...variables };
         this.check(execution);
+        const binding = this.imported.get(execution)!.delegation;
+        if (!binding) throw new Error("NativeExecutor: re-import the template before delegation");
+        if (
+            Object.keys(supplied).length !== Object.keys(binding.variables).length ||
+            Object.entries(binding.variables).some(([name, value]) => supplied[name] !== value)
+        ) {
+            throw new Error(
+                "NativeExecutor: delegation variables do not match the imported template",
+            );
+        }
+        if (typeof templateId !== "string" || !templateId)
+            throw new Error("NativeExecutor: invalid delegation template ID");
+        await this.manager();
         const info = await provider.getInfo();
         const key = (encoded: string) => hex.encode(toXOnly(hex.decode(encoded), "delegatee key"));
         const { serverKey, emulatorKey } = execution.contract.keys;
@@ -329,7 +364,23 @@ export class NativeExecutor {
                 "NativeExecutor: delegatee keys differ from the contract's stored keys",
             );
         }
-        const delegation = await provider.registerDelegation(templateId, variables, expiresAt);
+        const document = JSON.parse(binding.document);
+        if (binding.artifactReference) {
+            const artifact = await provider.registerArtifact(JSON.parse(binding.artifact));
+            if (typeof artifact.id !== "string" || !artifact.id)
+                throw new Error("NativeExecutor: invalid registered artifact ID");
+            document.inputs[0].contract.definition = { artifact: artifact.id };
+        }
+        const template = await provider.registerTemplate(document);
+        if (template.id !== templateId)
+            throw new Error(
+                "NativeExecutor: delegation template ID does not match the imported template",
+            );
+        const delegation = await provider.registerDelegation(
+            templateId,
+            { ...binding.variables },
+            expiresAt,
+        );
         if (delegation.address !== execution.contract.address || delegation.status !== "active") {
             throw new Error(
                 "NativeExecutor: delegatee returned a different address or an inactive watch",
@@ -404,10 +455,14 @@ export class NativeExecutor {
             }
             const result = await execution.contract.functions[execution.functionName]()
                 .from({ ...coin, sourceTx })
-                .to(execution.destination, BigInt(coin.value))
+                .to(this.imported.get(execution)!.destination.slice(), BigInt(coin.value))
                 .send({ beforeEmulatorSubmit });
-            await manager.refreshOutpoints([sourceOutpoint]);
-            await manager.refreshVtxos();
+            try {
+                await manager.refreshOutpoints([sourceOutpoint]);
+                await manager.refreshVtxos();
+            } catch (error) {
+                console.warn("NativeExecutor: refresh after accepted spend failed", error);
+            }
             return result;
         });
         executionTails.set(
