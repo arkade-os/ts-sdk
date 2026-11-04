@@ -14,7 +14,7 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
-- **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened copy. `ArkadeNestedValue` accepts struct interfaces and arrays, with runtime validation of missing, extra or duplicated fields; empty containers and sparse arrays are rejected.
+- **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already

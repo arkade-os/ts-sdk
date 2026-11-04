@@ -650,6 +650,29 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(() => spend({ ...request, outs: sparseOuts }, 1n)).toThrow(
             /argument 'request.outs.2'.*sparse/,
         );
+        for (const opaque of [Promise.resolve(receiver), new ArrayBuffer(32), new Map()]) {
+            expect(() => spend(opaque, 1n)).toThrow(
+                /argument 'request' must be bytes, a number, a struct or an array/,
+            );
+        }
+        class Owner {
+            constructor(readonly owner: Uint8Array) {}
+            readonly outs = outs;
+        }
+        expect({ ...contract.unlock.spend(new Owner(oracles[0]), 1n).args }).toEqual({
+            ...flat("request", oracles[0]),
+            flag: 1n,
+        });
+        const cyclic: Record<string, unknown> = { ...request };
+        cyclic.self = cyclic;
+        expect(() => spend(cyclic, 1n)).toThrow(/argument 'request.self' must not be cyclic/);
+        const sharedOut = { txid: outs[0].txid, vout: 0n };
+        expect(
+            ark.contract(program, {
+                policy: { owner: receiver, outs: [sharedOut, sharedOut] },
+                oracles,
+            }).args["policy.outs.1.vout"],
+        ).toBe(0n);
     });
 
     it("fails locally when leaf signing needs another identity or a covenant tweak", async () => {

@@ -1295,12 +1295,14 @@ function flattenValue(
     name: string,
     value: ArkadeNestedValue,
     out: Record<string, ArkadeArgValue>,
+    ancestors = new Set<object>(),
 ): void {
     if (typeof value !== "object" || value === null || ArrayBuffer.isView(value)) {
         if (Object.hasOwn(out, name)) throw new Error(`duplicate argument '${name}'`);
         out[name] = value as ArkadeArgValue;
         return;
     }
+    if (ancestors.has(value)) throw new Error(`argument '${name}' must not be cyclic`);
     if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
             if (!Object.hasOwn(value, i))
@@ -1308,9 +1310,16 @@ function flattenValue(
         }
     }
     const entries = Object.entries(value);
-    if (entries.length === 0)
+    if (entries.length === 0) {
+        // A Promise, ArrayBuffer, Map or Date has no own keys: name the type, not emptiness.
+        const proto = Object.getPrototypeOf(value);
+        if (proto !== Object.prototype && proto !== Array.prototype && proto !== null)
+            throw new Error(`argument '${name}' must be bytes, a number, a struct or an array`);
         throw new Error(`argument '${name}' must not be an empty struct or array`);
-    for (const [key, item] of entries) flattenValue(`${name}.${key}`, item, out);
+    }
+    ancestors.add(value);
+    for (const [key, item] of entries) flattenValue(`${name}.${key}`, item, out, ancestors);
+    ancestors.delete(value);
 }
 
 /**
