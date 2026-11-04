@@ -8,7 +8,7 @@ import { ProviderUnavailableError } from "./errors";
  *
  * Retryable:
  *  - {@link ProviderUnavailableError} — already-classified 5xx/429/unavailable
- *    (see e.g. {@link https | RestArkProvider.getInfo}'s non-2xx branch);
+ *    (see e.g. {@link https | RestArkadeProvider.getInfo}'s non-2xx branch);
  *  - {@link FetchError} — transport-level `fetch` rejection (DNS failure,
  *    connection refused, TLS/CORS), which also carries undici timeouts as its
  *    `cause`;

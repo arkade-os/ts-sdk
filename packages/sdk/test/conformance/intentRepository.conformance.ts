@@ -2,11 +2,11 @@ import { collectIntents } from "../../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import {
     IntentRepository,
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
 } from "../../src/repositories/intentRepository";
 
-const intent = (intentTxId: string, over: Partial<ArkIntent> = {}): ArkIntent => ({
+const intent = (intentTxId: string, over: Partial<BatchRegistration> = {}): BatchRegistration => ({
     intentTxId,
     state: "waiting_to_submit",
     createdAt: 1,
@@ -158,7 +158,7 @@ export function intentRepositoryConformance(
             // balance is offline-first and this set is its only coin lock, so an
             // in-progress batch's inputs must stay hidden. See
             // getLockedVtxoOutpoints docs.
-            const cases: [ArkIntentState, boolean][] = [
+            const cases: [BatchRegistrationState, boolean][] = [
                 ["waiting_to_submit", true],
                 ["waiting_for_batch", true],
                 ["batch_in_progress", true],

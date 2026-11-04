@@ -1,6 +1,6 @@
 import type { IReadonlyWallet, IWallet, Recipient } from ".";
 import {
-    ArkAddress,
+    ArkadeAddress,
     type Coin,
     type ExtendedCoin,
     type ExtendedVirtualCoin,
@@ -238,7 +238,7 @@ export type RecipientArkadeAddressContext = {
  */
 export function assertRecipientArkadeAddress(
     encoded: string,
-    address: ArkAddress,
+    address: ArkadeAddress,
     context: RecipientArkadeAddressContext,
 ): void {
     if (address.hrp !== context.hrp) {
@@ -268,7 +268,11 @@ export function assertRecipientArkadeAddress(
  * Compared against `pkScript`, not the output script: a sub-dust output pays the
  * `RETURN` form of the same key.
  */
-function assertTapTreeDerivesAddress(encoded: string, tapTree: Bytes, address: ArkAddress): void {
+function assertTapTreeDerivesAddress(
+    encoded: string,
+    tapTree: Bytes,
+    address: ArkadeAddress,
+): void {
     let derived: Bytes;
     try {
         derived = VtxoScript.decode(tapTree).pkScript;
@@ -294,9 +298,9 @@ export function validateRecipients(
     const validatedRecipients: ValidatedRecipient[] = [];
 
     for (const recipient of recipients) {
-        let address: ArkAddress;
+        let address: ArkadeAddress;
         try {
-            address = ArkAddress.decode(recipient.address);
+            address = ArkadeAddress.decode(recipient.address);
         } catch (e) {
             throw new Error(`Invalid Arkade address: ${recipient.address}`);
         }

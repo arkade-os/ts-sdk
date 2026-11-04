@@ -1,7 +1,7 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
     IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
@@ -87,7 +87,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveIntent(intent: BatchRegistration): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
         await runInTransaction(this.db, async (tx) => {
@@ -146,7 +146,7 @@ export class SQLiteIntentRepository implements IntentRepository {
     async getIntentsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         await this.ensureInit();
         if (filter?.states?.length === 0) return { items: [] };
@@ -155,7 +155,7 @@ export class SQLiteIntentRepository implements IntentRepository {
             : "";
         const stateParams = filter?.states ?? [];
         const batchSize = Math.max(64, page.limit + 1);
-        const rows: ArkIntent[] = [];
+        const rows: BatchRegistration[] = [];
         let after = page.after;
         // SQL narrows by indexed state; the shared filter handles the remaining predicates.
         while (rows.length <= page.limit) {
@@ -180,7 +180,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         const rows = await this.db.all<IntentRow>(`SELECT * FROM ${this.t}`);
         const out: Outpoint[] = [];
         for (const r of rows) {
-            if (isTerminalIntentState(r.state as ArkIntentState)) continue;
+            if (isTerminalIntentState(r.state as BatchRegistrationState)) continue;
             for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
@@ -189,11 +189,11 @@ export class SQLiteIntentRepository implements IntentRepository {
     async [Symbol.asyncDispose](): Promise<void> {}
 }
 
-function rowToIntent(r: IntentRow): ArkIntent {
+function rowToIntent(r: IntentRow): BatchRegistration {
     return {
         intentTxId: r.intent_tx_id,
         intentId: r.intent_id ?? undefined,
-        state: r.state as ArkIntentState,
+        state: r.state as BatchRegistrationState,
         validFrom: r.valid_from ?? undefined,
         validUntil: r.valid_until ?? undefined,
         createdAt: r.created_at,

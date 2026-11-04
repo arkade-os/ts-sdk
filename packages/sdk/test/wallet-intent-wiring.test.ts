@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import { applySettlementEventToIntent } from "../src/wallet/intentStateReducer";
 import { SettlementEventType } from "../src/providers/arkade";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 
 // Exercises the persist + event-reduce contract the settle() path relies on:
 // waiting_to_submit -> waiting_for_batch -> (BatchFinalized) batch_succeeded,
@@ -11,7 +11,7 @@ import type { ArkIntent } from "../src/repositories/intentRepository";
 describe("settle intent persistence contract", () => {
     it("advances state from events and releases locked outpoints when terminal", async () => {
         const repo = new InMemoryIntentRepository();
-        const base: ArkIntent = {
+        const base: BatchRegistration = {
             intentTxId: "i1",
             state: "waiting_to_submit",
             createdAt: 1,

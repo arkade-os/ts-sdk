@@ -2,7 +2,10 @@ import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { Wallet } from "../src/wallet/wallet";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent, ArkIntentState } from "../src/repositories/intentRepository";
+import type {
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../src/repositories/intentRepository";
 
 // persistIntentSnapshot is private; exercise the terminal-stickiness guard by
 // invoking it against a minimal `this`. When the persisted intent is already
@@ -10,17 +13,17 @@ import type { ArkIntent, ArkIntentState } from "../src/repositories/intentReposi
 // this with "cancelled") must NOT overwrite the recorded outcome.
 type PersistFn = (
     intentTxId: string,
-    state: ArkIntentState,
+    state: BatchRegistrationState,
     intent: unknown,
     deleteIntent: unknown,
     inputs: unknown,
-    patch?: Partial<ArkIntent>,
+    patch?: Partial<BatchRegistration>,
 ) => Promise<void>;
 
 const persistIntentSnapshot = (Wallet.prototype as unknown as { persistIntentSnapshot: PersistFn })
     .persistIntentSnapshot;
 
-const terminalIntent = (state: ArkIntentState): ArkIntent => ({
+const terminalIntent = (state: BatchRegistrationState): BatchRegistration => ({
     intentTxId: "i1",
     state,
     createdAt: 1,

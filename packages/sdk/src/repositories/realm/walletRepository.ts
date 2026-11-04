@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { ArkadeTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
@@ -265,7 +265,7 @@ export class RealmWalletRepository implements WalletRepository {
     async getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,
         page: PageRequest<TransactionHistoryPageCursor>,
-    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+    ): Promise<PageResult<ArkadeTransaction, TransactionHistoryPageCursor>> {
         assertPageRequest(page);
         assertHistoryPageFilter(filter);
         let results = this.realm
@@ -275,7 +275,7 @@ export class RealmWalletRepository implements WalletRepository {
             "createdAt >= $0",
             Math.max(filter.since ?? 0, page.after?.createdAt ?? 0),
         );
-        const rows: ArkTransaction[] = [];
+        const rows: ArkadeTransaction[] = [];
         for (const row of results.sorted([
             ["createdAt", false],
             ["boardingTxid", false],
@@ -294,7 +294,7 @@ export class RealmWalletRepository implements WalletRepository {
         return pageResult(rows, page.limit, (tx) => ({ createdAt: tx.createdAt, key: tx.key }));
     }
 
-    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
+    async saveTransactions(address: string, txs: ArkadeTransaction[]): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
             for (const tx of txs) {
@@ -464,14 +464,14 @@ function utxoObjectToDomain(obj: any): ExtendedCoin {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function txObjectToDomain(obj: any): ArkTransaction {
-    const tx: ArkTransaction = {
+function txObjectToDomain(obj: any): ArkadeTransaction {
+    const tx: ArkadeTransaction = {
         key: {
             boardingTxid: obj.boardingTxid,
             commitmentTxid: obj.commitmentTxid,
             arkTxid: obj.arkTxid,
         },
-        type: obj.type as ArkTransaction["type"],
+        type: obj.type as ArkadeTransaction["type"],
         amount: obj.amount,
         settled: obj.settled,
         createdAt: obj.createdAt,

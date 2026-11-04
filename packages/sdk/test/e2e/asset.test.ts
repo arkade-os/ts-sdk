@@ -4,7 +4,7 @@ import {
     EsploraProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     RestDelegateProvider,
 } from "../../src";
 import {
@@ -585,7 +585,7 @@ describe("Asset integration tests", () => {
         // Phase 1 — No delegate: fund and issue asset on default address
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -610,7 +610,7 @@ describe("Asset integration tests", () => {
         // Phase 2 — Add delegate: fund and issue asset on delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -691,7 +691,7 @@ describe("Asset integration tests", () => {
         // Phase 3 — Remove delegate: spend via forfeit path with assets
         const wallet3 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -780,7 +780,7 @@ describe("Asset integration tests", () => {
         // Step 1 — No delegate: fund default address and issue asset
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -805,7 +805,7 @@ describe("Asset integration tests", () => {
         // Step 2 — Enable delegate: fund delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -910,7 +910,7 @@ describe("Asset integration tests", () => {
         // Step 1 — Create wallet without delegate
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -922,7 +922,7 @@ describe("Asset integration tests", () => {
         // Step 2 — Enable delegate before funding
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),

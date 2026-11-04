@@ -2,13 +2,13 @@
  * The activity resolver against a real wallet history.
  *
  * Every transaction in `buildActivities`' unit suite is hand-built, which is
- * what it cannot check: a hand-built `ArkTransaction` agrees with the resolver
+ * what it cannot check: a hand-built `ArkadeTransaction` agrees with the resolver
  * by construction, whether or not the real `getTransactionHistory()` populates
  * `key.boardingTxid`, `type` and `tag` the same way. These rows come from a real
  * boarding, settle and offchain send.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { boardingResolver, TxType, type ActivityResolver, type ArkTransaction } from "../../src";
+import { boardingResolver, TxType, type ActivityResolver, type ArkadeTransaction } from "../../src";
 import {
     beforeEachFaucet,
     createTestArkadeWallet,
@@ -109,7 +109,7 @@ describe("a custom resolver over real transactions (regtest)", () => {
     it("collapses the boarding and the send into one activity that nets", async () => {
         const activities = await activitiesWith({
             id: "test:both",
-            resolve: (tx: ArkTransaction) =>
+            resolve: (tx: ArkadeTransaction) =>
                 tx.key.boardingTxid === boardingTxid || tx.key.arkTxid === sendTxid
                     ? [{ groupId: "test:group", label: "Both", kind: "test" }]
                     : undefined,

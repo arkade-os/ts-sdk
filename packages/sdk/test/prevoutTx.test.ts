@@ -4,14 +4,14 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
     Transaction,
     resolvePrevTxs,
-    attachPrevArkTxs,
+    attachPrevArkadeTxs,
     attachPrevoutTxs,
     withPrevTxs,
     PrevTxUnavailableError,
-    PrevArkTxField,
+    PrevArkadeTxField,
     PrevoutTxField,
-    getArkPsbtFields,
-    setArkPsbtField,
+    getArkadePsbtFields,
+    setArkadePsbtField,
 } from "../src";
 
 function p2tr(seed = 1): Uint8Array {
@@ -149,19 +149,19 @@ describe("resolvePrevTxs", () => {
     });
 });
 
-describe("attachPrevArkTxs", () => {
+describe("attachPrevArkadeTxs", () => {
     it("sets exactly one field on every input, keyed by the coin txid", async () => {
         const coins = [prevTx(11), prevTx(12), prevTx(13)];
         const arkTx = arkadeTxWith(3);
 
-        await attachPrevArkTxs(
+        await attachPrevArkadeTxs(
             arkTx,
             coins.map((c) => c.txid),
             indexerOf(coins),
         );
 
         for (const [i, coin] of coins.entries()) {
-            const fields = getArkPsbtFields(arkTx, i, PrevArkTxField);
+            const fields = getArkadePsbtFields(arkTx, i, PrevArkadeTxField);
             expect(fields).toHaveLength(1);
             expect(Transaction.fromRaw(fields[0]).id).toBe(coin.txid);
         }
@@ -171,10 +171,10 @@ describe("attachPrevArkTxs", () => {
         const coins = [prevTx(14), prevTx(15)];
         const supplied = prevTx(16);
         const arkTx = arkadeTxWith(2);
-        setArkPsbtField(arkTx, 0, PrevArkTxField, supplied.raw);
+        setArkadePsbtField(arkTx, 0, PrevArkadeTxField, supplied.raw);
         const indexer = indexerOf(coins);
 
-        await attachPrevArkTxs(
+        await attachPrevArkadeTxs(
             arkTx,
             coins.map((c) => c.txid),
             indexer,
@@ -183,18 +183,18 @@ describe("attachPrevArkTxs", () => {
         // Only the uncovered input is fetched — and input 0 keeps one field, the
         // caller's, since the emulator refuses an input bearing two.
         expect(indexer.getVirtualTxs.mock.calls[0][0]).toEqual([coins[1].txid]);
-        const first = getArkPsbtFields(arkTx, 0, PrevArkTxField);
+        const first = getArkadePsbtFields(arkTx, 0, PrevArkadeTxField);
         expect(first).toHaveLength(1);
         expect(hex.encode(first[0])).toBe(hex.encode(supplied.raw));
-        expect(getArkPsbtFields(arkTx, 1, PrevArkTxField)).toHaveLength(1);
+        expect(getArkadePsbtFields(arkTx, 1, PrevArkadeTxField)).toHaveLength(1);
     });
 
     it("fetches nothing when every input is already covered", async () => {
         const arkTx = arkadeTxWith(1);
-        setArkPsbtField(arkTx, 0, PrevArkTxField, prevTx(17).raw);
+        setArkadePsbtField(arkTx, 0, PrevArkadeTxField, prevTx(17).raw);
         const indexer = indexerOf([]);
 
-        await attachPrevArkTxs(arkTx, ["deadbeef"], indexer);
+        await attachPrevArkadeTxs(arkTx, ["deadbeef"], indexer);
 
         expect(indexer.getVirtualTxs).not.toHaveBeenCalled();
     });
@@ -202,7 +202,7 @@ describe("attachPrevArkTxs", () => {
     it("refuses an input with no source txid rather than submitting a tx the emulator rejects", async () => {
         const arkTx = arkadeTxWith(2);
         await expect(
-            attachPrevArkTxs(arkTx, [prevTx(18).txid], indexerOf([])),
+            attachPrevArkadeTxs(arkTx, [prevTx(18).txid], indexerOf([])),
         ).rejects.toBeInstanceOf(PrevTxUnavailableError);
     });
 });
@@ -220,7 +220,7 @@ describe("attachPrevoutTxs", () => {
 
         await attachPrevoutTxs(tx, { getRawTransaction: async () => funding.raw });
 
-        const fields = getArkPsbtFields(tx, 0, PrevoutTxField);
+        const fields = getArkadePsbtFields(tx, 0, PrevoutTxField);
         expect(fields).toHaveLength(1);
         expect(Transaction.fromRaw(fields[0]).id).toBe(funding.txid);
     });

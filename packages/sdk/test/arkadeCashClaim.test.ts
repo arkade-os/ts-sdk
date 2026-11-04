@@ -11,7 +11,7 @@ import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRep
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { SingleKey } from "../src/identity/singleKey";
 import { ArkadeCash } from "../src/arkadeCash";
-import { ArkAddress } from "../src/script/address";
+import { ArkadeAddress } from "../src/script/address";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { buildOffchainTx } from "../src/utils/arkadeTransaction";
 import { timelockToSequence } from "../src/utils/timelock";
@@ -288,7 +288,7 @@ describe("claimCash drain-pending accounting", () => {
             finalizeTx,
         });
 
-        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const myPkScript = ArkadeAddress.decode(await wallet.getAddress()).pkScript;
         const sweep = pendingSweep(cash, myPkScript);
         sweep.signedCheckpointTxs = sweep.signedCheckpointTxs.map((c) => {
             const tx = Transaction.fromPSBT(base64.decode(c));
@@ -315,7 +315,7 @@ describe("claimCash drain-pending accounting", () => {
         });
 
         // The crashed claim swept to this very wallet.
-        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const myPkScript = ArkadeAddress.decode(await wallet.getAddress()).pkScript;
         getPendingTxs.mockResolvedValue([pendingSweep(cash, myPkScript)]);
 
         const result = await wallet.claimCash(cash.toString());
@@ -371,7 +371,7 @@ describe("claimCash drain-pending accounting", () => {
 
         // Every batch surfaces the same pending sweep; dedup by arkTxid must
         // collapse them so the tx is finalized exactly once.
-        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const myPkScript = ArkadeAddress.decode(await wallet.getAddress()).pkScript;
         getPendingTxs.mockResolvedValue([pendingSweep(cash, myPkScript, drainable[0].txid)]);
 
         await wallet.claimCash(cash.toString());
@@ -398,7 +398,7 @@ describe("claimCash drain-pending accounting", () => {
             finalizeTx,
         });
 
-        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const myPkScript = ArkadeAddress.decode(await wallet.getAddress()).pkScript;
         // Same VTXO, but a checkpoint locked to a different server key: its
         // output script — and so its txid — is not the one we build.
         getPendingTxs.mockResolvedValue([
@@ -432,7 +432,7 @@ describe("claimCash drain-pending accounting", () => {
             })),
         });
 
-        const myPkScript = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const myPkScript = ArkadeAddress.decode(await wallet.getAddress()).pkScript;
         getPendingTxs.mockResolvedValue([
             pendingSweep(
                 cash,

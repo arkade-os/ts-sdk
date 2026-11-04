@@ -8,7 +8,7 @@ import {
     InMemoryContractRepository,
     ProviderUnavailableError,
     isRetryableProviderError,
-    type ArkProvider,
+    type ArkadeProvider,
     type IndexerProvider,
     type OnchainProvider,
     type ReadonlyWalletConfig,
@@ -338,7 +338,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         }) as Partial<IndexerProvider> as IndexerProvider;
 
     async function createWallet(
-        getInfo: ArkProvider["getInfo"],
+        getInfo: ArkadeProvider["getInfo"],
         repos: {
             walletRepository: InMemoryWalletRepository;
             contractRepository: InMemoryContractRepository;
@@ -348,7 +348,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
     ) {
         return ReadonlyWallet.create({
             identity: await readonlyIdentity(),
-            arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
+            arkProvider: { getInfo } as Partial<ArkadeProvider> as ArkadeProvider,
             indexerProvider: { ...indexerStub(), ...indexer } as IndexerProvider,
             onchainProvider,
             storage: repos,
@@ -570,7 +570,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
                 identity: SingleKey.fromHex(privKeyHex),
                 arkProvider: {
                     getInfo: async () => makeArkadeInfo({ checkpointTapscript: "zz" }),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: indexerStub(),
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },
@@ -596,7 +596,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
                 arkProvider: {
                     getInfo: async () =>
                         makeArkadeInfo({ checkpointTapscript: oneBlockCheckpoint }),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: indexerStub(),
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },
@@ -623,7 +623,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
                 arkProvider: {
                     getInfo: async () =>
                         makeArkadeInfo({ checkpointTapscript: wrongPubkeyCheckpoint }),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: indexerStub(),
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },

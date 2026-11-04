@@ -12,8 +12,8 @@ import {
     UnknownPacket,
     Transaction,
     networks,
-    getArkPsbtFields,
-    PrevArkTxField,
+    getArkadePsbtFields,
+    PrevArkadeTxField,
     ConditionWitness,
     PrevTxUnavailableError,
     ServerResponseMismatchError,
@@ -271,12 +271,12 @@ describe("ArkadeContract — extended features", () => {
         expect(arkTx.inputsLength).toBe(2);
         expect(checkpoints).toHaveLength(2);
         for (const i of [0, 1]) {
-            expect(getArkPsbtFields(arkTx, i, ConditionWitness)).toEqual([[preimage]]);
-            expect(getArkPsbtFields(checkpoints[i], 0, ConditionWitness)).toEqual([[preimage]]);
-            expect(getArkPsbtFields(arkTx, i, PrevArkTxField)).toHaveLength(1);
+            expect(getArkadePsbtFields(arkTx, i, ConditionWitness)).toEqual([[preimage]]);
+            expect(getArkadePsbtFields(checkpoints[i], 0, ConditionWitness)).toEqual([[preimage]]);
+            expect(getArkadePsbtFields(arkTx, i, PrevArkadeTxField)).toHaveLength(1);
         }
         // Coin 1's own sourceTx wins; coin 0's is resolved from the indexer.
-        expect(getArkPsbtFields(arkTx, 1, PrevArkTxField)[0]).toEqual(sourceTx);
+        expect(getArkadePsbtFields(arkTx, 1, PrevArkadeTxField)[0]).toEqual(sourceTx);
         const ext = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
             .filter((o) => o.script && Extension.isExtension(o.script))
             .map((o) => Extension.fromBytes(o.script!))[0];
@@ -344,8 +344,8 @@ describe("ArkadeContract — extended features", () => {
             [1, hex.encode(vault.vtxoScript.functionByName("spend")!.arkadeScript!)],
         ]);
         // Only the htlc leaf carries a condition witness; only the vault leaf needs the user.
-        expect(getArkPsbtFields(tx, 0, ConditionWitness)).toHaveLength(1);
-        expect(getArkPsbtFields(tx, 1, ConditionWitness)).toHaveLength(0);
+        expect(getArkadePsbtFields(tx, 0, ConditionWitness)).toHaveLength(1);
+        expect(getArkadePsbtFields(tx, 1, ConditionWitness)).toHaveLength(0);
         expect(sign.mock.calls[0][1]).toEqual([1]);
     });
 
@@ -493,7 +493,7 @@ describe("ArkadeContract — extended features", () => {
         // Arkade transaction input i spends checkpoint i, which spends the coin — so the tx
         // carried by input i must hash to that coin's txid, not the checkpoint's.
         for (const [i, coin] of [COIN, funding].entries()) {
-            const fields = getArkPsbtFields(arkTx, i, PrevArkTxField);
+            const fields = getArkadePsbtFields(arkTx, i, PrevArkadeTxField);
             expect(fields).toHaveLength(1);
             expect(Transaction.fromRaw(fields[0]).id).toBe(coin.txid);
         }
@@ -532,10 +532,10 @@ describe("ArkadeContract — extended features", () => {
 
         // Exactly one field, the caller's — the emulator rejects an input
         // carrying two.
-        const fields = getArkPsbtFields(
+        const fields = getArkadePsbtFields(
             Transaction.fromPSBT(base64.decode(captured.arkTx!)),
             0,
-            PrevArkTxField,
+            PrevArkadeTxField,
         );
         expect(fields).toHaveLength(1);
         expect(hex.encode(fields[0])).toBe(hex.encode(sourceTx));
@@ -636,7 +636,7 @@ describe("ArkadeContract — extended features", () => {
         // Prevout resolution is emulator-only: arkd-direct spends must keep the
         // bytes they had before v0.0.7 support landed.
         const arkd = Transaction.fromPSBT(base64.decode(captured.arkTx!));
-        expect(getArkPsbtFields(arkd, 0, PrevArkTxField)).toHaveLength(0);
+        expect(getArkadePsbtFields(arkd, 0, PrevArkadeTxField)).toHaveLength(0);
         expect(indexer.getVirtualTxs).not.toHaveBeenCalled();
     });
 

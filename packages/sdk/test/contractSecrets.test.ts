@@ -33,7 +33,7 @@ import {
     provisionClaimSecret,
     provisionRefundKey,
 } from "../src/wallet/contractSecrets";
-import { ArkAddress } from "../src/script/address";
+import { ArkadeAddress } from "../src/script/address";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -53,12 +53,12 @@ let descriptorAt: (index: number) => string;
  */
 const DUMMY_SERVER_PUBKEY = new Uint8Array(32).fill(0x02);
 
-/** Encode a valid ArkAddress whose vtxo taproot key is the identity's pubkey. */
+/** Encode a valid ArkadeAddress whose vtxo taproot key is the identity's pubkey. */
 async function fakeGetAddress(identity: {
     xOnlyPublicKey(): Promise<Uint8Array>;
 }): Promise<string> {
     const vtxoKey = await identity.xOnlyPublicKey();
-    return new ArkAddress(DUMMY_SERVER_PUBKEY, vtxoKey, "tark").encode();
+    return new ArkadeAddress(DUMMY_SERVER_PUBKEY, vtxoKey, "tark").encode();
 }
 
 const hdWallet = async (repository = new InMemoryWalletRepository()) => {
@@ -259,11 +259,11 @@ describe("provisionRefundKey", () => {
             expect(isPerArtifactDescriptor(first.descriptor)).toBe(false);
             // pkScript matches the wallet address
             const address = await wallet.getAddress();
-            const { pkScript } = ArkAddress.decode(address);
+            const { pkScript } = ArkadeAddress.decode(address);
             expect(hex.encode(first.pkScript)).toBe(hex.encode(pkScript));
             // address comes back alongside, decoding to that same script
             expect(first.address).toBe(address);
-            expect(hex.encode(ArkAddress.decode(first.address).pkScript)).toBe(
+            expect(hex.encode(ArkadeAddress.decode(first.address).pkScript)).toBe(
                 hex.encode(first.pkScript),
             );
         }
@@ -277,7 +277,7 @@ describe("provisionRefundKey", () => {
         // this fails if a second read ever feeds either.
         const { wallet } = await hdWallet();
         const first = await wallet.getAddress();
-        const rotated = new ArkAddress(
+        const rotated = new ArkadeAddress(
             DUMMY_SERVER_PUBKEY,
             new Uint8Array(32).fill(0x07),
             "tark",
@@ -291,7 +291,9 @@ describe("provisionRefundKey", () => {
         const key = await provisionRefundKey(rotating);
         expect(addressReads).toBe(1);
         expect(key.address).toBe(first);
-        expect(hex.encode(ArkAddress.decode(key.address).pkScript)).toBe(hex.encode(key.pkScript));
+        expect(hex.encode(ArkadeAddress.decode(key.address).pkScript)).toBe(
+            hex.encode(key.pkScript),
+        );
     });
 
     it("refuses when the identity key diverges between the descriptor and the guard read", async () => {

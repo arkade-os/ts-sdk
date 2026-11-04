@@ -18,13 +18,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
-    ArkNote,
+    ArkadeAddress,
+    ArkadeNote,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -73,7 +73,7 @@ let assetId: string;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -88,7 +88,7 @@ beforeAll(async () => {
     const address = await wallet.getAddress();
     const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
     await wallet.settle({
-        inputs: [ArkNote.fromString(note)],
+        inputs: [ArkadeNote.fromString(note)],
         outputs: [{ address, amount: BigInt(FAUCET_SATS) }],
     });
     await waitFor(async () => (await wallet.getBalance()).available >= FAUCET_SATS);
@@ -100,7 +100,7 @@ beforeAll(async () => {
         ),
     );
 
-    operatorPubkey = ArkAddress.decode(address).serverPubKey;
+    operatorPubkey = ArkadeAddress.decode(address).serverPubKey;
 }, 240_000);
 
 describe("the asset -> BTC offer direction (regtest)", () => {

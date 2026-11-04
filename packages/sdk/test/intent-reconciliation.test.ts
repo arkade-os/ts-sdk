@@ -6,11 +6,14 @@ import {
     releaseIntents,
     type IntentReconcilerIndexer,
 } from "../src/wallet/intentReconciliation";
-import type { ArkIntent, ArkIntentState } from "../src/repositories/intentRepository";
+import type {
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../src/repositories/intentRepository";
 import type { VirtualCoin } from "../src/wallet";
-import { ArkError } from "../src/providers/errors";
+import { ArkadeError } from "../src/providers/errors";
 
-const intent = (over: Partial<ArkIntent>): ArkIntent => ({
+const intent = (over: Partial<BatchRegistration>): BatchRegistration => ({
     intentTxId: "i1",
     state: "waiting_for_batch",
     createdAt: 1,
@@ -32,13 +35,15 @@ const indexerReturning = (vtxos: VirtualCoin[]): IntentReconcilerIndexer => ({
     getVtxos: vi.fn().mockResolvedValue({ vtxos }),
 });
 
-const seed = async (repo: InMemoryIntentRepository, i: ArkIntent) => {
+const seed = async (repo: InMemoryIntentRepository, i: BatchRegistration) => {
     await repo.saveIntent(i);
     return repo;
 };
 
-const stateOf = async (repo: InMemoryIntentRepository, id = "i1"): Promise<ArkIntentState> =>
-    (await collectIntents(repo, { intentTxIds: [id] }))[0].state;
+const stateOf = async (
+    repo: InMemoryIntentRepository,
+    id = "i1",
+): Promise<BatchRegistrationState> => (await collectIntents(repo, { intentTxIds: [id] }))[0].state;
 
 describe("reconcileIntents", () => {
     it("marks batch_succeeded when all inputs are consumed by a batch", async () => {
@@ -276,11 +281,11 @@ describe("reconcileIntents", () => {
 
 describe("reconcileIntents: releasing stale intents from the server", () => {
     const deleteMessage = { type: "delete", expire_at: 0 } as const;
-    const stale = (over: Partial<ArkIntent> = {}) =>
+    const stale = (over: Partial<BatchRegistration> = {}) =>
         intent({ deleteProofMessage: JSON.stringify(deleteMessage), ...over });
     const unspent = () => indexerReturning([coin("v", 0, { isSpent: false })]);
     const noMatch = () =>
-        new ArkError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
+        new ArkadeError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
 
     it("deletes a submitted intent left by a dead process and cancels it", async () => {
         const repo = await seed(new InMemoryIntentRepository(), stale());
@@ -346,7 +351,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         const repo = await seed(new InMemoryIntentRepository(), stale());
         const deleteIntent = vi
             .fn()
-            .mockRejectedValue(new ArkError(23, "invalid intent proof", "INVALID_INTENT_PROOF"));
+            .mockRejectedValue(new ArkadeError(23, "invalid intent proof", "INVALID_INTENT_PROOF"));
 
         await reconcileIntents({
             intentRepository: repo,
@@ -370,23 +375,24 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         expect(await stateOf(repo)).toBe("batch_succeeded");
     });
 
-    it.each<ArkIntentState>(["waiting_to_submit", "waiting_for_batch", "batch_in_progress"])(
-        "leaves a %s intent with an in-flight input to its live settle",
-        async (state) => {
-            const repo = await seed(new InMemoryIntentRepository(), stale({ state }));
-            const deleteIntent = vi.fn().mockRejectedValue(noMatch());
+    it.each<BatchRegistrationState>([
+        "waiting_to_submit",
+        "waiting_for_batch",
+        "batch_in_progress",
+    ])("leaves a %s intent with an in-flight input to its live settle", async (state) => {
+        const repo = await seed(new InMemoryIntentRepository(), stale({ state }));
+        const deleteIntent = vi.fn().mockRejectedValue(noMatch());
 
-            await reconcileIntents({
-                intentRepository: repo,
-                indexerProvider: unspent(),
-                deleteIntent,
-                isOutpointInFlight: (o) => o.txid === "v" && o.vout === 0,
-            });
+        await reconcileIntents({
+            intentRepository: repo,
+            indexerProvider: unspent(),
+            deleteIntent,
+            isOutpointInFlight: (o) => o.txid === "v" && o.vout === 0,
+        });
 
-            expect(deleteIntent).not.toHaveBeenCalled();
-            expect(await stateOf(repo)).toBe(state);
-        },
-    );
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(await stateOf(repo)).toBe(state);
+    });
 
     it("does not delete a stale intent sharing an input with a live settle", async () => {
         const repo = await seed(
@@ -413,7 +419,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
 });
 
 describe("releaseIntents", () => {
-    const pending = (over: Partial<ArkIntent> = {}) =>
+    const pending = (over: Partial<BatchRegistration> = {}) =>
         intent({ deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }), ...over });
 
     it("is true when every non-terminal intent is deleted, skipping terminal ones", async () => {
@@ -431,7 +437,7 @@ describe("releaseIntents", () => {
         const deleteIntent = vi
             .fn()
             .mockRejectedValue(
-                new ArkError(
+                new ArkadeError(
                     23,
                     "no matching intents found for intent proof",
                     "INVALID_INTENT_PROOF",

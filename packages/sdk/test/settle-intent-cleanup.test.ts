@@ -4,7 +4,7 @@ import { mkdtempSync, rmdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { base64, hex } from "@scure/base";
-import { ArkError, Transaction, Wallet, type ExtendedVirtualCoin } from "../src";
+import { ArkadeError, Transaction, Wallet, type ExtendedVirtualCoin } from "../src";
 import { SQLiteIntentRepository, type SQLExecutor } from "../src/repositories/sqlite";
 import { collectIntents } from "../src/repositories/intentRepository";
 import { reconcileIntents } from "../src/wallet/intentReconciliation";
@@ -23,7 +23,7 @@ const input = {
 const outpoint = { txid: input.txid, vout: input.vout };
 const deleteMessage = { type: "delete", expire_at: 0 } as const;
 const noMatch = () =>
-    new ArkError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
+    new ArkadeError(23, "no matching intents found for intent proof", "INVALID_INTENT_PROOF");
 
 describe("Wallet settlement cleanup with SQLite intent locks", () => {
     const directory = mkdtempSync(join(tmpdir(), "ark-intent-cleanup-"));

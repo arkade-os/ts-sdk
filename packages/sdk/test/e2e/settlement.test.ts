@@ -5,8 +5,8 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkError,
-    RestArkProvider,
+    ArkadeError,
+    RestArkadeProvider,
     RestDelegateProvider,
 } from "../../src";
 import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
@@ -20,7 +20,7 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
         // Settlement enabled with fast polling so the auto-settle triggers quickly
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -77,7 +77,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
         // This ensures the poll loop sees already-expired UTXOs.
         const setupWallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -122,7 +122,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
         // The poll loop should detect the expired UTXO and auto-sweep it.
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -170,7 +170,7 @@ describe("Settlement - VtxoManager Recovery", () => {
         // with the manual recover/renew calls in these tests
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -247,7 +247,7 @@ describe("Settlement - VtxoManager Recovery", () => {
 
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -323,7 +323,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
         // vtxo_received → auto-delegate via initializeSubscription.
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -387,7 +387,7 @@ describe("Settlement - VtxoManager Lifecycle", () => {
 
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -424,7 +424,7 @@ describe("Settlement - VtxoManager Lifecycle", () => {
 
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -464,7 +464,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
         const identityA = SingleKey.fromRandomBytes();
         const walletA = await Wallet.create({
             identity: identityA,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -483,7 +483,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const identityB = SingleKey.fromRandomBytes();
             const walletB = await Wallet.create({
                 identity: identityB,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
                 onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
@@ -559,7 +559,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
         const identityA = SingleKey.fromRandomBytes();
         const walletA = await Wallet.create({
             identity: identityA,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -578,7 +578,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const identityB = SingleKey.fromRandomBytes();
             const walletB = await Wallet.create({
                 identity: identityB,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
                 onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,
@@ -627,8 +627,8 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     // The background renew can win the race and consume the same
                     // preconfirmed VTXO first. That still leaves the wallet in the
                     // expected settled state for the remainder of the test.
-                    expect(error).toBeInstanceOf(ArkError);
-                    const arkadeError = error as ArkError;
+                    expect(error).toBeInstanceOf(ArkadeError);
+                    const arkadeError = error as ArkadeError;
                     expect(arkadeError.code).toBe(6);
                     expect(arkadeError.message).toContain("VTXO_ALREADY_SPENT");
                 }
@@ -683,7 +683,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
         const identityA = SingleKey.fromRandomBytes();
         const walletA = await Wallet.create({
             identity: identityA,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -701,7 +701,7 @@ describe("Settlement - VtxoManager concurrent operations", () => {
             const identityB = SingleKey.fromRandomBytes();
             const walletB = await Wallet.create({
                 identity: identityB,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
                 onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                     forcePolling: true,
                     pollingInterval: 2000,

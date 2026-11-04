@@ -1,4 +1,4 @@
-import { ArkAddress, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, type IWallet } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { retireOfferContract, type OfferContractRetirer } from "../coverage";
 import { collectRfqSwaps, collectSwapRecords, type AssetSwapRepository } from "../repository";
@@ -31,7 +31,7 @@ export const retireUnsubmittedFunding = async (
                                 : ("pending" as const),
                 }));
                 const legacy = (await collectRfqSwaps(repository)).map((row) => ({
-                    swapPkScript: hex.encode(ArkAddress.decode(row.lockupAddress).pkScript),
+                    swapPkScript: hex.encode(ArkadeAddress.decode(row.lockupAddress).pkScript),
                     createdAt: row.createdAt * 1000,
                     status:
                         row.state === "settled" || row.state === "refunded"

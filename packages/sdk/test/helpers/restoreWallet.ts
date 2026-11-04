@@ -5,7 +5,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestArkadeProvider,
 } from "../../src";
 import type { IndexerProvider } from "../../src/providers/indexer";
 import type { OnchainProvider } from "../../src/providers/onchain";
@@ -280,7 +280,7 @@ export async function makeStaticWalletForTest(
     const wallet = await Wallet.create({
         identity: SingleKey.fromHex(SINGLEKEY_HEX),
         walletMode: "static",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },
@@ -334,7 +334,7 @@ export async function makeHdWalletForTest(
                   walletRepository,
               )
             : "hd",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         indexerProvider: indexer,
         onchainProvider: makeMockOnchain(fundedOnchain),
         storage: { walletRepository, contractRepository },

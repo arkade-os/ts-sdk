@@ -5,7 +5,7 @@ import { VarBytes } from "@scure/btc-signer/script.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import * as P from "micro-packed";
 import { hex } from "@scure/base";
-import { ArkAddress } from "./address";
+import { ArkadeAddress } from "./address";
 import { timelockToSequence } from "../utils/timelock";
 import {
     CLTVMultisigTapscript,
@@ -37,7 +37,7 @@ export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
  * VtxoScript is a script that contains a list of tapleaf scripts.
  * It is used to create virtual output scripts.
  *
- * @see ArkAddress
+ * @see ArkadeAddress
  *
  * @example
  * ```typescript
@@ -143,10 +143,10 @@ export class VtxoScript {
      * @param prefix - Bech32 human-readable prefix
      * @param serverPubKey - 32-byte Arkade server public key
      * @returns Arkade address for this script
-     * @see ArkAddress
+     * @see ArkadeAddress
      */
-    address(prefix: string = DEFAULT_NETWORK.hrp, serverPubKey: Bytes): ArkAddress {
-        return new ArkAddress(serverPubKey, this.tweakedPublicKey, prefix);
+    address(prefix: string = DEFAULT_NETWORK.hrp, serverPubKey: Bytes): ArkadeAddress {
+        return new ArkadeAddress(serverPubKey, this.tweakedPublicKey, prefix);
     }
 
     /**

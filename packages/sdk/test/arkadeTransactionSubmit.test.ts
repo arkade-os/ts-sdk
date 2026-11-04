@@ -9,7 +9,11 @@ import {
     type OffchainTxSigner,
     type OffchainTxSubmitProvider,
 } from "../src/utils/arkadeTransaction";
-import { ConditionWitness, getArkPsbtFields, setArkPsbtField } from "../src/utils/unknownFields";
+import {
+    ConditionWitness,
+    getArkadePsbtFields,
+    setArkadePsbtField,
+} from "../src/utils/unknownFields";
 
 const P2TR = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
 
@@ -372,13 +376,13 @@ describe("submitOffchainTx one-shot", () => {
         const cps = local();
         const preimage = new Uint8Array(32).fill(0x42);
         const signed = [userSigned(cps[0], 1), userSigned(cps[1], 2)];
-        for (const c of signed) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        for (const c of signed) setArkadePsbtField(c, 0, ConditionWitness, [preimage]);
         const p = provider(encode(cps));
 
         await submitOffchainTx(p, offchainTx(cps), signer(signed));
 
         for (const c of p.finalizeTx.mock.calls[0][1] as string[]) {
-            const witnesses = getArkPsbtFields(
+            const witnesses = getArkadePsbtFields(
                 Transaction.fromPSBT(base64.decode(c)),
                 0,
                 ConditionWitness,
@@ -393,16 +397,16 @@ describe("submitOffchainTx one-shot", () => {
         const cps = local();
         const preimage = new Uint8Array(32).fill(0x42);
         const signed = [userSigned(cps[0], 1), userSigned(cps[1], 2)];
-        for (const c of signed) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        for (const c of signed) setArkadePsbtField(c, 0, ConditionWitness, [preimage]);
         const returned = cps.map((c) => Transaction.fromPSBT(c.toPSBT()));
-        for (const c of returned) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        for (const c of returned) setArkadePsbtField(c, 0, ConditionWitness, [preimage]);
         const p = provider(encode(returned));
 
         await submitOffchainTx(p, offchainTx(cps), signer(signed));
 
         for (const c of p.finalizeTx.mock.calls[0][1] as string[]) {
             expect(
-                getArkPsbtFields(Transaction.fromPSBT(base64.decode(c)), 0, ConditionWitness),
+                getArkadePsbtFields(Transaction.fromPSBT(base64.decode(c)), 0, ConditionWitness),
             ).toHaveLength(1);
         }
     });
@@ -461,7 +465,7 @@ describe("submitOffchainTx one-shot", () => {
                 });
             }
             arkTx.addOutput({ script: P2TR, amount: 1700n });
-            setArkPsbtField(arkTx, 1, ConditionWitness, [preimage]);
+            setArkadePsbtField(arkTx, 1, ConditionWitness, [preimage]);
             const p = provider(encode(cps));
 
             await submitOffchainTx(p, { arkTx, checkpoints: cps }, signer(), undefined, {
@@ -469,9 +473,11 @@ describe("submitOffchainTx one-shot", () => {
             });
 
             const submitted = (p.submitTx.mock.calls[0][1] as string[]).map((c) =>
-                getArkPsbtFields(Transaction.fromPSBT(base64.decode(c)), 0, ConditionWitness).map(
-                    (w) => w.map((item) => hex.encode(item)),
-                ),
+                getArkadePsbtFields(
+                    Transaction.fromPSBT(base64.decode(c)),
+                    0,
+                    ConditionWitness,
+                ).map((w) => w.map((item) => hex.encode(item))),
             );
             expect(submitted).toEqual([[], [[hex.encode(preimage)]]]);
         },
@@ -480,13 +486,13 @@ describe("submitOffchainTx one-shot", () => {
     it("carries the local condition witness onto the returned checkpoint it signs when opted out", async () => {
         const cps = local();
         const preimage = new Uint8Array(32).fill(0x42);
-        for (const c of cps) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
+        for (const c of cps) setArkadePsbtField(c, 0, ConditionWitness, [preimage]);
         const p = provider(encode(local()));
 
         await submitOffchainTx(p, offchainTx(cps), signer(), undefined, { oneShot: false });
 
         for (const c of p.finalizeTx.mock.calls[0][1] as string[]) {
-            const witnesses = getArkPsbtFields(
+            const witnesses = getArkadePsbtFields(
                 Transaction.fromPSBT(base64.decode(c)),
                 0,
                 ConditionWitness,

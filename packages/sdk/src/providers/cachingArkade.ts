@@ -3,7 +3,7 @@ import { Intent } from "../intent";
 import { assertNonNegativeMs } from "../utils/time";
 import {
     ArkadeInfo,
-    ArkProvider,
+    ArkadeProvider,
     PendingTx,
     SettlementEvent,
     SignedIntent,
@@ -17,12 +17,12 @@ type ServerInfoEventSource = Partial<{
 }>;
 
 /**
- * Decorates an {@link ArkProvider}, caching {@link ArkProvider.getInfo} for
+ * Decorates an {@link ArkadeProvider}, caching {@link ArkadeProvider.getInfo} for
  * `ttlMs` (default 60s). Other provider methods pass through.
  * Expired-cache refresh failures propagate; persisted wallet boot fallback
  * lives in `arkInfoSnapshot`.
  */
-export class CachingArkProvider implements ArkProvider {
+export class CachingArkadeProvider implements ArkadeProvider {
     private cached?: ArkadeInfo;
     private expiresAt = 0;
     private inflight?: Promise<ArkadeInfo>;
@@ -31,7 +31,7 @@ export class CachingArkProvider implements ArkProvider {
     private readonly unsubscribe: () => void;
 
     constructor(
-        private readonly inner: ArkProvider,
+        private readonly inner: ArkadeProvider,
         private readonly ttlMs: number = DEFAULT_TTL_MS,
     ) {
         assertNonNegativeMs("ttlMs", ttlMs);

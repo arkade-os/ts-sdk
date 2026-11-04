@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
-import { ArkAddress } from "../../src";
+import { ArkadeAddress } from "../../src";
 import { onchainRail } from "../../src/payment/rails/onchain";
 import { Ramps } from "../../src/wallet/ramps";
 import type { RouterContext } from "../../src/payment/types";
 
 const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const arkadeAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
+const arkadeAddr = new ArkadeAddress(
+    new Uint8Array(32).fill(1),
+    new Uint8Array(32).fill(2),
+).encode();
 
 const fees = { intentFee: {}, txFeeRate: "1" };
 

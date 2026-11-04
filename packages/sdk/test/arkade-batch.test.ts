@@ -23,7 +23,7 @@ import { networks } from "../src/networks";
 import type { Recipient } from "../src/wallet";
 import type { SignerSession } from "../src/tree/signingSession";
 import type {
-    ArkProvider,
+    ArkadeProvider,
     BatchStartedEvent,
     TreeSigningStartedEvent,
 } from "../src/providers/arkade";
@@ -61,7 +61,7 @@ function makeArkadeProvider() {
         submitTreeNonces: vi.fn(async () => {}),
         submitTreeSignatures: vi.fn(async () => {}),
         submitSignedForfeitTxs: vi.fn(async () => {}),
-    } as unknown as ArkProvider;
+    } as unknown as ArkadeProvider;
 }
 
 function makeEmulator() {
@@ -114,7 +114,7 @@ function proofDeclaring(outputs: { script: Uint8Array; amount: bigint }[] = []):
 
 function makeHandler(
     session: SignerSession,
-    arkProvider: ArkProvider,
+    arkProvider: ArkadeProvider,
     recipients?: Recipient[],
     emulator: EmulatorProvider = {} as unknown as EmulatorProvider,
     signedProof: string = proofDeclaring(),

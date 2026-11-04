@@ -17,7 +17,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 
 import {
-    ArkAddress,
+    ArkadeAddress,
     DescriptorIdentity,
     HDDescriptorProvider,
     InMemoryWalletRepository,
@@ -75,7 +75,7 @@ const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 const L1_REFUND_PUBKEY = key(7);
 const HTLC_CLAIM_PUBKEY = key(11);
 const COVCLAIMD_PK = secp256k1.getPublicKey(new Uint8Array(32).fill(0x22), true);
-const PAYOUT_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
+const PAYOUT_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 /** What every wallet below answers `getArkadeInfo()` with: the server info the
  * receive flows used to fetch over the wire, now sourced off the wallet. */
@@ -274,7 +274,7 @@ const receiveQuote = (
         emulatorPubkey: EMULATOR_PUBKEY,
         solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
         payoutPubkey: hex.decode(profile.payout_pubkey as string),
-        payoutPkScript: ArkAddress.decode(PAYOUT_ADDRESS).pkScript,
+        payoutPkScript: ArkadeAddress.decode(PAYOUT_ADDRESS).pkScript,
     });
     return {
         v: 1,
@@ -395,7 +395,7 @@ describe("deriveLightningReceive — the two lockup shapes", () => {
         emulatorPubkey: EMULATOR_PUBKEY,
         solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
         payoutPubkey: TRADER_PAYOUT_PUBKEY,
-        payoutPkScript: ArkAddress.decode(PAYOUT_ADDRESS).pkScript,
+        payoutPkScript: ArkadeAddress.decode(PAYOUT_ADDRESS).pkScript,
     };
     const fullSuite = lightningReceiveContract(contractParams);
     const legacySuite = lightningReceiveContract({
@@ -1150,7 +1150,7 @@ describe("a static wallet's receive record hands P back", () => {
     it("reads the claim destination off the corridor, and refuses a wrong-shaped one", async () => {
         // What the cast this replaced could not do: `profile` is
         // `Record<string, unknown>`, so `as { payoutAddress?: string }` passed
-        // any truthy value straight to `ArkAddress.decode`.
+        // any truthy value straight to `ArkadeAddress.decode`.
         const flow = await lightningReceiveFlow({ wallet: staticWallet() });
         const record = recordFor(await flow.run());
         expect(rfqClaimDestinationOf(record)).toBe(record.profile.payoutAddress as string);
@@ -1187,7 +1187,7 @@ describe("requestOnchainReceive on an HD wallet", () => {
                     emulatorPubkey: EMULATOR_PUBKEY,
                     solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
                     payoutPubkey: hex.decode(profile.payout_pubkey as string),
-                    payoutPkScript: ArkAddress.decode(PAYOUT_ADDRESS).pkScript,
+                    payoutPkScript: ArkadeAddress.decode(PAYOUT_ADDRESS).pkScript,
                 });
                 const htlc = onchainHtlcScript(
                     {

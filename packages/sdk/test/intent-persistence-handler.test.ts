@@ -2,7 +2,7 @@ import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi } from "vitest";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 import { Batch } from "../src/wallet/batch";
 import {
     SettlementEventType,
@@ -32,7 +32,7 @@ const intentTxId = "i1";
 
 function seededRepo(): InMemoryIntentRepository {
     const repo = new InMemoryIntentRepository();
-    const intent: ArkIntent = {
+    const intent: BatchRegistration = {
         intentTxId,
         state: "waiting_for_batch",
         createdAt: 1,
@@ -133,7 +133,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("swallows a repo write failure on finalized (money flow unaffected)", async () => {
         const repo = {
-            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
+            getIntentsPage: async () => ({
+                items: [{ state: "waiting_for_batch" } as BatchRegistration],
+            }),
             saveIntent: async () => {
                 throw new Error("db down");
             },
@@ -148,7 +150,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("still re-propagates the reason on failed when the repo write fails", async () => {
         const repo = {
-            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
+            getIntentsPage: async () => ({
+                items: [{ state: "waiting_for_batch" } as BatchRegistration],
+            }),
             saveIntent: async () => {
                 throw new Error("db down");
             },

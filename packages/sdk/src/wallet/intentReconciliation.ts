@@ -1,12 +1,12 @@
 import { collectIntents } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
-import { ArkErrorName, isArkError } from "../providers/errors";
+import { ArkadeErrorName, isArkadeError } from "../providers/errors";
 import type { Intent } from "../intent";
 import type { SignedIntent } from "../providers/arkade";
 import {
     ALL_INTENT_STATES,
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
     IntentRepository,
     isTerminalIntentState,
 } from "../repositories/intentRepository";
@@ -21,9 +21,8 @@ import { getNormalizedVtxos, isVtxoSpent } from "./vtxo";
  * Derived from {@link ALL_INTENT_STATES} so a newly added state only has to be
  * classified terminal-or-not in one place ({@link isTerminalIntentState}).
  */
-export const NON_TERMINAL_INTENT_STATES: readonly ArkIntentState[] = ALL_INTENT_STATES.filter(
-    (s) => !isTerminalIntentState(s),
-);
+export const NON_TERMINAL_INTENT_STATES: readonly BatchRegistrationState[] =
+    ALL_INTENT_STATES.filter((s) => !isTerminalIntentState(s));
 
 /** Minimal indexer surface the reconciler needs. */
 export type IntentReconcilerIndexer = Pick<IndexerProvider, "getVtxos">;
@@ -70,10 +69,10 @@ function isConsumed(vtxo: VirtualCoin | undefined): boolean {
  *     {@link reconcileIntents} releases it from the server.
  */
 export async function classifyIntent(
-    intent: ArkIntent,
+    intent: BatchRegistration,
     vtxosByOutpoint: Map<string, VirtualCoin>,
     now: number,
-): Promise<ArkIntent | undefined> {
+): Promise<BatchRegistration | undefined> {
     if (isTerminalIntentState(intent.state)) return undefined;
 
     const inputs = intent.intentVtxos;
@@ -127,7 +126,7 @@ export async function classifyIntent(
  */
 export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<void> {
     const now = deps.now ?? Date.now;
-    let intents: ArkIntent[];
+    let intents: BatchRegistration[];
     try {
         intents = await collectIntents(deps.intentRepository, {
             states: [...NON_TERMINAL_INTENT_STATES],
@@ -185,7 +184,7 @@ type ReleaseDeps = Pick<
  * there is nothing to release.
  */
 export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
-    let intents: ArkIntent[];
+    let intents: BatchRegistration[];
     try {
         intents = await collectIntents(deps.intentRepository, {
             states: [...NON_TERMINAL_INTENT_STATES],
@@ -202,7 +201,7 @@ export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
     return released;
 }
 
-function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
+function isInFlight(intent: BatchRegistration, deps: ReleaseDeps): boolean {
     const inFlight = deps.isOutpointInFlight;
     return inFlight !== undefined && intent.intentVtxos.some((o) => inFlight(o));
 }
@@ -212,10 +211,10 @@ function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
  * signer). Only a confirmed removal cancels it: any other failure leaves the inputs locked.
  */
 async function releaseFromServer(
-    intent: ArkIntent,
+    intent: BatchRegistration,
     deps: ReleaseDeps,
     now: number,
-): Promise<ArkIntent | undefined> {
+): Promise<BatchRegistration | undefined> {
     // Re-checked: a settle may have claimed these inputs since the loop's check.
     if (!deps.deleteIntent || isInFlight(intent, deps)) return undefined;
     try {
@@ -238,17 +237,17 @@ async function releaseFromServer(
  */
 export function isNoMatchingIntentsError(e: unknown): boolean {
     return (
-        isArkError(e, ArkErrorName.INVALID_INTENT_PROOF) &&
+        isArkadeError(e, ArkadeErrorName.INVALID_INTENT_PROOF) &&
         e.message.includes("no matching intents found")
     );
 }
 
 function terminal(
-    intent: ArkIntent,
-    state: ArkIntentState,
+    intent: BatchRegistration,
+    state: BatchRegistrationState,
     now: number,
-    patch: Partial<ArkIntent>,
-): ArkIntent {
+    patch: Partial<BatchRegistration>,
+): BatchRegistration {
     return { ...intent, ...patch, state, updatedAt: now };
 }
 

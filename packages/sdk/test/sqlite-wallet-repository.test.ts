@@ -8,7 +8,7 @@ import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";
 import type { SQLExecutor } from "../src/repositories/sqlite/types";
-import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
+import type { ExtendedVirtualCoin, ExtendedCoin, ArkadeTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { createMockSQLExecutor } from "./helpers/mockSqlExecutor";
@@ -118,7 +118,7 @@ function createMockTransaction(
     type: TxType,
     amount: number,
     createdAt?: number,
-): ArkTransaction {
+): ArkadeTransaction {
     return {
         key: {
             boardingTxid: key.boardingTxid || "",
@@ -630,7 +630,7 @@ describe("SQLiteWalletRepository", () => {
         });
 
         it("should handle transactions with assets", async () => {
-            const tx: ArkTransaction = {
+            const tx: ArkadeTransaction = {
                 key: {
                     boardingTxid: "",
                     commitmentTxid: "",

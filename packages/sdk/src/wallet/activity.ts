@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { TxType, type ArkTransaction } from "./index";
+import { TxType, type ArkadeTransaction } from "./index";
 import { AssetId } from "../extension/asset/assetId";
 
 /** One transaction's participation in one logical action. */
@@ -51,7 +51,7 @@ export interface ActivityResolver {
      */
     prepare?(): Promise<void>;
     /** Pure and synchronous. The groups this tx belongs to, or undefined to leave it plain. */
-    resolve(tx: ArkTransaction): GroupMembership[] | undefined;
+    resolve(tx: ArkadeTransaction): GroupMembership[] | undefined;
 }
 
 /** The non-id, non-amount part of a {@link GroupMembership}. */
@@ -77,7 +77,7 @@ export interface Activity {
     /** Merged intent for the group, if any resolver tagged it. */
     intent?: ActivityIntent;
     /** Member txs, oldest-first. */
-    txs: ArkTransaction[];
+    txs: ArkadeTransaction[];
     /** Signed net sats: positive received, negative sent; same-key change rows are excluded. */
     amount: number;
     /** Earliest member createdAt (ms since epoch). */
@@ -100,7 +100,7 @@ export interface Activity {
  *   non-finite `amount` is dropped the same way.
  */
 export async function buildActivities(
-    txs: ArkTransaction[],
+    txs: ArkadeTransaction[],
     resolvers: ActivityResolver[],
 ): Promise<Activity[]> {
     const preparedResolvers = (
@@ -116,7 +116,7 @@ export async function buildActivities(
         )
     ).filter((r): r is ActivityResolver => r !== undefined);
 
-    const keyOf = (tx: ArkTransaction) =>
+    const keyOf = (tx: ArkadeTransaction) =>
         tx.key.arkTxid || tx.key.commitmentTxid || tx.key.boardingTxid;
 
     const merge = (a: GroupMembership, b: GroupMembership): GroupMembership => ({
@@ -128,15 +128,15 @@ export async function buildActivities(
         amount: a.amount ?? b.amount,
     });
 
-    const isSent = (tx: ArkTransaction) => tx.type === TxType.TxSent;
-    const signedAmount = (tx: ArkTransaction, amount = tx.amount) => {
+    const isSent = (tx: ArkadeTransaction) => tx.type === TxType.TxSent;
+    const signedAmount = (tx: ArkadeTransaction, amount = tx.amount) => {
         const magnitude = Math.abs(amount);
         return isSent(tx) ? -magnitude : magnitude;
     };
 
     type Bucket = {
         intent?: Activity["intent"];
-        members: { tx: ArkTransaction; amount: number }[];
+        members: { tx: ArkadeTransaction; amount: number }[];
     };
     const buckets = new Map<string, Bucket>();
 
@@ -178,7 +178,7 @@ export async function buildActivities(
         }
     }
 
-    const netAmount = (members: { tx: ArkTransaction; amount: number }[]) => {
+    const netAmount = (members: { tx: ArkadeTransaction; amount: number }[]) => {
         const sentKeys = new Set(members.filter((x) => isSent(x.tx)).map((x) => keyOf(x.tx)));
         return members.reduce((s, x) => {
             // Same-key receives are change for sent rows.

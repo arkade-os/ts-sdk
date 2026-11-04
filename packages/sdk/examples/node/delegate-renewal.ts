@@ -26,7 +26,7 @@ import {
     InMemoryContractRepository,
     EsploraProvider,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     RestDelegateProvider,
     SingleKey,
     Wallet,
@@ -84,7 +84,7 @@ async function main() {
     log("Creating wallet with settlement + delegation enabled (in-memory storage)...");
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARKADE_OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(ARKADE_OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),

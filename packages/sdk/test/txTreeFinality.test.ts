@@ -3,7 +3,7 @@ import { DEFAULT_SEQUENCE } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../src/utils/transaction";
 import { TxTree } from "../src/tree/txTree";
-import { CosignerPublicKey, getArkPsbtFields } from "../src/utils/unknownFields";
+import { CosignerPublicKey, getArkadePsbtFields } from "../src/utils/unknownFields";
 
 const P2TR = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
 
@@ -103,7 +103,7 @@ describe("TxTree finality", () => {
             { txid: tx.id, tx: base64.encode(tx.toPSBT()), children: {} },
         ]);
 
-        const cosigners = getArkPsbtFields(decoded.root, 0, CosignerPublicKey);
+        const cosigners = getArkadePsbtFields(decoded.root, 0, CosignerPublicKey);
         expect(cosigners).toHaveLength(1);
         expect(hex.encode(cosigners[0]!.key)).toBe(hex.encode(cosignerKey));
     });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, asset, type ArkadeInfo, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, asset, type ArkadeInfo, type IWallet } from "@arkade-os/sdk";
 import { requestArkadeSwap, type RfqTransport } from "../src/rfq";
 import { acceptWallet } from "./client/fixtures";
 import { decodeOffer, deriveOffer } from "../src/offer";
@@ -8,8 +8,8 @@ import { decodeOffer, deriveOffer } from "../src/offer";
 const server = hex.decode("4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa");
 const makerKey = hex.decode("3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1");
 const recipientKey = hex.decode("466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27");
-const makerAddress = new ArkAddress(server, makerKey, "tark").encode();
-const recipientAddress = new ArkAddress(server, recipientKey, "tark").encode();
+const makerAddress = new ArkadeAddress(server, makerKey, "tark").encode();
+const recipientAddress = new ArkadeAddress(server, recipientKey, "tark").encode();
 const info = {
     network: "regtest",
     signerPubkey: `02${hex.encode(server)}`,
@@ -52,7 +52,7 @@ describe("offer receive payout derivation", () => {
             receiveAddress: recipientAddress,
         });
         const decoded = decodeOffer(hex.decode(derived.offerHex));
-        expect(decoded.makerPkScript).toEqual(ArkAddress.decode(recipientAddress).pkScript);
+        expect(decoded.makerPkScript).toEqual(ArkadeAddress.decode(recipientAddress).pkScript);
         expect(decoded.makerPublicKey).toEqual(makerKey);
         expect(derived.binding.makerPublicKey).toEqual(makerKey);
         expect(f.getArkadeInfo).toHaveBeenCalledWith({ requireLive: true });
@@ -61,7 +61,10 @@ describe("offer receive payout derivation", () => {
 
     it("retains the supplied quote maker without re-reading a rotated address or key", async () => {
         const f = fixture();
-        const maker = { pkScript: ArkAddress.decode(makerAddress).pkScript, publicKey: makerKey };
+        const maker = {
+            pkScript: ArkadeAddress.decode(makerAddress).pkScript,
+            publicKey: makerKey,
+        };
         const derived = await deriveOffer(f.wallet, {
             ...params,
             info,
@@ -69,7 +72,9 @@ describe("offer receive payout derivation", () => {
             receiveAddress: recipientAddress,
         });
         expect(derived.binding.makerPublicKey).toEqual(makerKey);
-        expect(derived.binding.makerPkScript).toEqual(ArkAddress.decode(recipientAddress).pkScript);
+        expect(derived.binding.makerPkScript).toEqual(
+            ArkadeAddress.decode(recipientAddress).pkScript,
+        );
         expect(derived.info).toBe(info);
         expect(f.getAddress).not.toHaveBeenCalled();
         expect(f.xOnlyPublicKey).not.toHaveBeenCalled();
@@ -77,16 +82,16 @@ describe("offer receive payout derivation", () => {
     });
 
     it.each([
-        ["wrong network", new ArkAddress(server, recipientKey, "ark").encode(), /network/],
+        ["wrong network", new ArkadeAddress(server, recipientKey, "ark").encode(), /network/],
         [
             "different server",
-            new ArkAddress(makerKey, recipientKey, "tark").encode(),
+            new ArkadeAddress(makerKey, recipientKey, "tark").encode(),
             /server public key/,
         ],
         ["noncanonical uppercase", recipientAddress.toUpperCase(), /canonical/],
         [
             "raw script",
-            hex.encode(ArkAddress.decode(recipientAddress).pkScript),
+            hex.encode(ArkadeAddress.decode(recipientAddress).pkScript),
             /valid Arkade address/,
         ],
         ["Bitcoin address", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", /valid Arkade address/],
@@ -101,8 +106,8 @@ describe("RFQ offer receive payout", () => {
     const setup = async (receiveAddress?: string) => {
         const f = await acceptWallet();
         const address = await f.wallet.getAddress();
-        const owner = ArkAddress.decode(address);
-        const receiver = new ArkAddress(owner.serverPubKey, recipientKey, owner.hrp).encode();
+        const owner = ArkadeAddress.decode(address);
+        const receiver = new ArkadeAddress(owner.serverPubKey, recipientKey, owner.hrp).encode();
         const destination = receiveAddress === "receiver" ? receiver : receiveAddress;
         const expected = await deriveOffer(f.wallet, { ...params, receiveAddress: destination });
         const requestQuote = vi.fn(async () => ({
@@ -140,7 +145,7 @@ describe("RFQ offer receive payout", () => {
         expect(f.requestQuote).toHaveBeenCalledWith(
             expect.objectContaining({
                 profile: expect.objectContaining({
-                    maker_pk_script: hex.encode(ArkAddress.decode(f.address).pkScript),
+                    maker_pk_script: hex.encode(ArkadeAddress.decode(f.address).pkScript),
                 }),
             }),
         );
@@ -164,12 +169,12 @@ describe("RFQ offer receive payout", () => {
         const result = await requestArkadeSwap(f.wallet, f.transport, requestParams);
         const decoded = decodeOffer(hex.decode(result.offerHex));
         expect(result.offerHex).toBe(f.expected.offerHex);
-        expect(decoded.makerPkScript).toEqual(ArkAddress.decode(f.receiver).pkScript);
+        expect(decoded.makerPkScript).toEqual(ArkadeAddress.decode(f.receiver).pkScript);
         expect(decoded.makerPublicKey).toEqual(buyerKey);
         expect(f.requestQuote).toHaveBeenCalledWith(
             expect.objectContaining({
                 profile: expect.objectContaining({
-                    maker_pk_script: hex.encode(ArkAddress.decode(f.receiver).pkScript),
+                    maker_pk_script: hex.encode(ArkadeAddress.decode(f.receiver).pkScript),
                     maker_public_key: hex.encode(buyerKey),
                 }),
             }),
@@ -184,16 +189,16 @@ describe("RFQ offer receive payout", () => {
     });
 
     it.each([
-        ["wrong network", new ArkAddress(server, recipientKey, "ark").encode(), /network/],
+        ["wrong network", new ArkadeAddress(server, recipientKey, "ark").encode(), /network/],
         [
             "different server",
-            new ArkAddress(makerKey, recipientKey, "tark").encode(),
+            new ArkadeAddress(makerKey, recipientKey, "tark").encode(),
             /server public key/,
         ],
         ["uppercase", recipientAddress.toUpperCase(), /canonical/],
         [
             "raw script",
-            hex.encode(ArkAddress.decode(recipientAddress).pkScript),
+            hex.encode(ArkadeAddress.decode(recipientAddress).pkScript),
             /valid Arkade address/,
         ],
     ])(

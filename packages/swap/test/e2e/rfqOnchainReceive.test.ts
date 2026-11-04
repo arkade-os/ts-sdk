@@ -11,12 +11,12 @@ import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
@@ -121,7 +121,7 @@ const stubTransport = (): RfqTransport => ({
             emulatorPubkey,
             solverRefundPkScript,
             payoutPubkey: hex.decode(profile.payout_pubkey as string),
-            payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
+            payoutPkScript: ArkadeAddress.decode(profile.payout_address as string).pkScript,
         });
         return {
             v: 1,
@@ -152,7 +152,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARKADE_URL),
+        arkProvider: new RestArkadeProvider(ARKADE_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -171,12 +171,12 @@ beforeAll(async () => {
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
 
     traderRefundKey = schnorr.getPublicKey(new Uint8Array(32).fill(11));
-    solverRefundPkScript = ArkAddress.decode(address).pkScript;
+    solverRefundPkScript = ArkadeAddress.decode(address).pkScript;
 
     const info = await wallet.getArkadeInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
-    hrp = ArkAddress.decode(address).hrp;
+    hrp = ArkadeAddress.decode(address).hrp;
     emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
 }, 180_000);
 

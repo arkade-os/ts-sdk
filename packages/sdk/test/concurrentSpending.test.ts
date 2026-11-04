@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, InMemoryIntentRepository } from "../src";
+import { ArkadeAddress, InMemoryIntentRepository } from "../src";
 import { Wallet } from "../src/wallet/wallet";
 import { markSdkPicked } from "../src/wallet/utils";
 import { BTC_ADDR, fundedWallet, parkSettle, stallSubmits } from "./concurrentSpendingFixture";
@@ -13,7 +13,7 @@ describe("send without concurrentSpending", () => {
         const { wallet, outpoints } = await fundedWallet();
         const submits = stallSubmits(wallet);
         const to = await wallet.getAddress();
-        const own = hex.encode(ArkAddress.decode(to).pkScript);
+        const own = hex.encode(ArkadeAddress.decode(to).pkScript);
 
         const first = wallet.send({ address: to, amount: 2_000 });
         const second = wallet.send({ address: to, amount: 2_000 });

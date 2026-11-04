@@ -8,8 +8,8 @@
  * machinery those calls stand for is pinned by `test/client/`.
  */
 import { describe, expect, it, vi } from "vitest";
-import { PaymentRouter, arkRail, onchainRail, type PaymentHandle } from "@arkade-os/sdk";
-import { ArkAddress } from "@arkade-os/sdk";
+import { PaymentRouter, arkadeRail, onchainRail, type PaymentHandle } from "@arkade-os/sdk";
+import { ArkadeAddress } from "@arkade-os/sdk";
 import { UnsupportedRoute } from "../../src/client/errors";
 import type { Outcome, SwapUpdate, Unsubscribe } from "../../src/client/outcome";
 import type { Quote, QuoteInput, RouteResolution } from "../../src/client/quote";
@@ -32,7 +32,7 @@ const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const INVOICE = invoiceFor(PAYMENT_HASH, CLOCK);
-const ARKADE_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
+const ARKADE_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
 
 /** 1 sat/vB, so the claim estimate is the vsize itself. */
 const CLAIM_RATE = 1;
@@ -271,7 +271,7 @@ describe("ranking against core's rails", () => {
     // `match`/`available`, both fee-free — so the fee source stays a stub.
     const router = (client: SwapRailClient): PaymentRouter =>
         new PaymentRouter({ wallet: ctxWallet, prefs: { priority: [...SWAP_ROUTER_PRIORITY] } })
-            .use(arkRail())
+            .use(arkadeRail())
             .use(onchainRail({ feeInfo: async () => ({}) as never }))
             .use(lightningRail(client))
             .use(onchainSwapRail(client, { claimFeeRateSatVb: CLAIM_RATE }));

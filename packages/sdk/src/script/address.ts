@@ -4,7 +4,7 @@ import { Script } from "@scure/btc-signer/script.js";
 import { DEFAULT_NETWORK } from "../networks";
 
 /**
- * ArkAddress allows creating and decoding bech32m-encoded Arkade addresses: an hrp plus a
+ * ArkadeAddress allows creating and decoding bech32m-encoded Arkade addresses: an hrp plus a
  * 65-byte payload of version byte ‖ 32-byte server pubkey ‖ 32-byte VTXO taproot key.
  *
  * @remarks
@@ -15,7 +15,7 @@ import { DEFAULT_NETWORK } from "../networks";
  *
  * @example
  * ```typescript
- * const address = new ArkAddress(
+ * const address = new ArkadeAddress(
  *     new Uint8Array(32), // server public key
  *     new Uint8Array(32), // vtxo taproot public key
  *     "ark"
@@ -24,10 +24,10 @@ import { DEFAULT_NETWORK } from "../networks";
  * const encoded = address.encode();
  * console.log("address: ", encoded);
  *
- * const decoded = ArkAddress.decode(encoded);
+ * const decoded = ArkadeAddress.decode(encoded);
  * ```
  */
-export class ArkAddress {
+export class ArkadeAddress {
     /**
      * Create an Arkade address from its server public key, Taproot output key, and prefix.
      *
@@ -65,7 +65,7 @@ export class ArkAddress {
      * @throws Error if the address is malformed or has an invalid payload length
      * @see encode
      */
-    static decode(address: string): ArkAddress {
+    static decode(address: string): ArkadeAddress {
         const decoded = bech32m.decodeUnsafe(address, 1023);
         if (!decoded) {
             throw new Error("Invalid address");
@@ -80,7 +80,7 @@ export class ArkAddress {
         const serverPubKey = data.slice(1, 33);
         const vtxoTaprootPubKey = data.slice(33, 65);
 
-        return new ArkAddress(serverPubKey, vtxoTaprootPubKey, decoded.prefix, version);
+        return new ArkadeAddress(serverPubKey, vtxoTaprootPubKey, decoded.prefix, version);
     }
 
     /**

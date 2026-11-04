@@ -28,7 +28,7 @@ import {
     ConditionWitness,
     SingleKey,
     buildOffchainTx,
-    setArkPsbtField,
+    setArkadePsbtField,
 } from "@arkade-os/sdk";
 import { createSwapDrive, SwapDriveRefusedError, type SwapDrive } from "../../src/client/drive";
 import { corridorOutcome, type SwapUpdate } from "../../src/client/outcome";
@@ -133,7 +133,7 @@ const claimSpend = (): { txid: string; psbt: string } => {
         }),
     );
     const checkpoint = checkpoints[0];
-    setArkPsbtField(checkpoint, 0, ConditionWitness, [PREIMAGE]);
+    setArkadePsbtField(checkpoint, 0, ConditionWitness, [PREIMAGE]);
     return { txid: checkpoint.id, psbt: base64.encode(checkpoint.toPSBT()) };
 };
 

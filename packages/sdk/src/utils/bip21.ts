@@ -28,9 +28,9 @@ export enum BIP21Error {
 /**
  * The Arkade address prefixes, matched case-INSENSITIVELY.
  *
- * Bech32m forbids a case *mix*, not upper case, and `ArkAddress.decode`
+ * Bech32m forbids a case *mix*, not upper case, and `ArkadeAddress.decode`
  * accepts an all-upper address — so a case-sensitive filter dropped, with a
- * `console.warn`, an address the bare classifier (`arkTarget`) claims happily.
+ * `console.warn`, an address the bare classifier (`arkadeTarget`) claims happily.
  * One destination classifying differently bare than as an `ark=` param is the
  * defect; this is the only place the two forms are told apart.
  */

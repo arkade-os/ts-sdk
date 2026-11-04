@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { base64 } from "@scure/base";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
-import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
+import { CosignerPublicKey, getArkadePsbtFields } from "../utils/unknownFields";
 import { Transaction } from "../utils/transaction";
 
 export const ErrInvalidSettlementTxOutputs = new Error("invalid settlement transaction outputs");
@@ -108,7 +108,7 @@ export function validateVtxoTxGraph(
                 throw new Error(`parent output ${childIndex} has invalid script`);
             }
 
-            const cosigners = getArkPsbtFields(child.root, 0, CosignerPublicKey);
+            const cosigners = getArkadePsbtFields(child.root, 0, CosignerPublicKey);
 
             if (cosigners.length === 0) {
                 throw ErrMissingCosignersPublicKeys;

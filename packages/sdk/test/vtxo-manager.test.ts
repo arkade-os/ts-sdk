@@ -3603,7 +3603,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
 
     // Helper: produce an error message whose body is the JSON-serialised
     // gRPC-gateway error envelope the server actually emits, so
-    // `maybeArkError` can extract the `vtxo_outpoint` metadata.
+    // `maybeArkadeError` can extract the `vtxo_outpoint` metadata.
     const makeStructuredVtxoSpentError = (outpoint: string): Error => {
         const body = JSON.stringify({
             code: 3,
@@ -3799,7 +3799,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
 describe("VtxoManager - intent fee pricing", () => {
     /**
      * A decodable ark address: the offchain output fee is priced against its
-     * pkScript, so a placeholder would fail inside `ArkAddress.decode` rather
+     * pkScript, so a placeholder would fail inside `ArkadeAddress.decode` rather
      * than inside the code under test.
      */
     const ADDRESS =

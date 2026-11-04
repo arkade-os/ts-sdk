@@ -7,7 +7,7 @@
  * range drops the swap rail at `available()` and the collaborative exit wins, no error.
  */
 import type { PaymentRouter, RouterPreferences, Wallet } from "@arkade-os/sdk";
-import { PaymentRouter as Router, arkRail, onchainRail, walletFeeSource } from "@arkade-os/sdk";
+import { PaymentRouter as Router, arkadeRail, onchainRail, walletFeeSource } from "@arkade-os/sdk";
 import { LIGHTNING_RAIL, lightningRail } from "./lightning";
 import { ONCHAIN_SWAP_RAIL, onchainSwapRail, type OnchainSwapRailDeps } from "./onchainSwap";
 import type { SwapRailClient } from "./swapRail";
@@ -41,7 +41,7 @@ export function createSwapPaymentRouter(
         wallet,
         prefs: { priority: [...SWAP_ROUTER_PRIORITY], ...config.prefs },
     })
-        .use(arkRail())
+        .use(arkadeRail())
         .use(onchainRail({ feeInfo: walletFeeSource(wallet) }))
         .use(lightningRail(client))
         .use(onchainSwapRail(client, config));

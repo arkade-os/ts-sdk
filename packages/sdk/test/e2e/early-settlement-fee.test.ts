@@ -2,12 +2,12 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
     Wallet,
     EsploraProvider,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     Estimator,
-    ArkError,
+    ArkadeError,
 } from "../../src";
 import { arkdExec, beforeEachFaucet, clearFees, execCommand, setFees, waitFor } from "./utils";
 
@@ -41,7 +41,7 @@ const esploraUrl = "http://localhost:3000/api";
 function testWallet(): Promise<Wallet> {
     return Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(arkdUrl),
+        arkProvider: new RestArkadeProvider(arkdUrl),
         onchainProvider: new EsploraProvider(esploraUrl, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -133,8 +133,8 @@ describe("Settlement fee premium", () => {
                     () => undefined,
                     (e: unknown) => e,
                 );
-            expect(underpaid).toBeInstanceOf(ArkError);
-            expect((underpaid as ArkError).name).toBe("INTENT_INSUFFICIENT_FEE");
+            expect(underpaid).toBeInstanceOf(ArkadeError);
+            expect((underpaid as ArkadeError).name).toBe("INTENT_INSUFFICIENT_FEE");
 
             // The server prices later, so its premium is <= the prediction.
             const netAmount = vtxo.value - predicted;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { asset, ArkAddress, Transaction } from "@arkade-os/sdk";
+import { asset, ArkadeAddress, Transaction } from "@arkade-os/sdk";
 import { encodeOffer, offerContract, OFFER_CONTRACT_KIND, type Offer } from "../src/offer";
 import { InMemoryAssetSwapRepository } from "../src/repository";
 import { addAssetSwap, getAssetSwaps, type AssetSwap } from "../src/store";
@@ -60,8 +60,8 @@ const spendPsbt = (offer: Offer, via: "cancel" | "fulfill", vout = 0) => {
  */
 const makeWallet = (getVirtualTxs: (txids: string[]) => Promise<{ txs: string[] }>) => {
     const callbacks = new Set<(event: any) => void>();
-    // a real ark address, so ArkAddress.decode recovers OPERATOR_KEY from it
-    const address = new ArkAddress(OPERATOR_KEY, key("66"), "tark").encode();
+    // a real ark address, so ArkadeAddress.decode recovers OPERATOR_KEY from it
+    const address = new ArkadeAddress(OPERATOR_KEY, key("66"), "tark").encode();
     const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
     const wallet = {
         getAddress: async () => address,

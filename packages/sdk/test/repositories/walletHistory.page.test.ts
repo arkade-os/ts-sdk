@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { IDBCursor as FakeIDBCursor } from "fake-indexeddb";
 import { createMockRealm } from "../../../../config/test-helpers/mockRealm";
 import { createNodeSQLExecutor } from "../../../../config/test-helpers/nodeSqlExecutor";
-import { TxType, type ArkTransaction } from "../../src/wallet";
+import { TxType, type ArkadeTransaction } from "../../src/wallet";
 import type { WalletRepository } from "../../src/repositories/walletRepository";
 import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
@@ -17,7 +17,7 @@ const backends: [string, () => WalletRepository][] = [
     ["sqlite", () => new SQLiteWalletRepository(createNodeSQLExecutor())],
 ];
 
-const tx = (arkTxid: string, createdAt: number): ArkTransaction => ({
+const tx = (arkTxid: string, createdAt: number): ArkadeTransaction => ({
     key: { boardingTxid: "", commitmentTxid: "", arkTxid },
     type: TxType.TxSent,
     amount: 100,

@@ -28,7 +28,7 @@ import type { LockupSpendIndexer } from "../refund";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "../store";
 import type { OfferSpendChanges, OfferSwapFacts, OfferSwapSource } from "../watch";
 import {
-    ArkAddress,
+    ArkadeAddress,
     asset,
     assertPageRequest,
     pageResult,
@@ -430,7 +430,7 @@ export const restoredCorridorRecord = (
         kind: v1.kind,
         rfqId: v1.rfqId,
         lockupAddress: v1.lockupAddress,
-        lockupPkScript: hex.encode(ArkAddress.decode(v1.lockupAddress).pkScript),
+        lockupPkScript: hex.encode(ArkadeAddress.decode(v1.lockupAddress).pkScript),
         lock: { hash },
         refundLocktime,
         profile: v1.profile,

@@ -26,7 +26,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     MnemonicIdentity,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     Wallet,
     deriveDescriptorLeafPubKey,
@@ -40,7 +40,7 @@ import {
     WalletMessageHandler,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
-import { ArkAddress } from "../src/script/address";
+import { ArkadeAddress } from "../src/script/address";
 import { MockEventSource } from "./mocks/eventSource";
 import {
     WalletCannotSignError,
@@ -114,7 +114,7 @@ async function makeInnerWallet(opts: {
     const wallet = await Wallet.create({
         identity: opts.identity,
         walletMode: opts.hd ? "hd" : "static",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         storage: {
             walletRepository: opts.walletRepository,
             contractRepository: new InMemoryContractRepository(),
@@ -327,7 +327,7 @@ describe("contract secrets behind the service worker", () => {
         // address is the string it was decoded from — one read, one pair.
         expect(pkScript).toBeInstanceOf(Uint8Array);
         expect(pkScript.length).toBeGreaterThan(0);
-        expect(ArkAddress.decode(address).pkScript).toEqual(pkScript);
+        expect(ArkadeAddress.decode(address).pkScript).toEqual(pkScript);
 
         const signer = await contractSigner(sw as unknown as IWallet, descriptor);
         await expect(signsUnderDescriptorKey(signer, descriptor)).resolves.toBe(true);

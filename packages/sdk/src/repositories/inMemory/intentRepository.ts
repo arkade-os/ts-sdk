@@ -1,6 +1,6 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
+    BatchRegistration,
     assertIntentIdUnique,
     IntentPageFilter,
     IntentRepository,
@@ -11,13 +11,13 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
 
 export class InMemoryIntentRepository implements IntentRepository {
     readonly version = 1 as const;
-    private byId = new Map<string, ArkIntent>();
+    private byId = new Map<string, BatchRegistration>();
 
     async clear(): Promise<void> {
         this.byId.clear();
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveIntent(intent: BatchRegistration): Promise<void> {
         assertIntentIdUnique(intent, this.byId.values());
         this.byId.set(intent.intentTxId, {
             ...intent,
@@ -30,7 +30,7 @@ export class InMemoryIntentRepository implements IntentRepository {
     async getIntentsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         const rows = [...this.byId.values()]
             .filter(
@@ -56,7 +56,7 @@ export class InMemoryIntentRepository implements IntentRepository {
     async [Symbol.asyncDispose](): Promise<void> {}
 }
 
-const clone = (i: ArkIntent): ArkIntent => ({
+const clone = (i: BatchRegistration): BatchRegistration => ({
     ...i,
     intentVtxos: i.intentVtxos.map((o) => ({ ...o })),
     partialForfeits: [...i.partialForfeits],

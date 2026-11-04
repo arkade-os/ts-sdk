@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { ArkadeTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
@@ -30,7 +30,7 @@ export class InMemoryWalletRepository implements WalletRepository {
     readonly version = 2 as const;
     private readonly vtxosByAddress = new Map<string, ExtendedVirtualCoin[]>();
     private readonly utxosByAddress = new Map<string, ExtendedCoin[]>();
-    private readonly txsByAddress = new Map<string, ArkTransaction[]>();
+    private readonly txsByAddress = new Map<string, ArkadeTransaction[]>();
 
     private walletState: WalletState | null = null;
     readonly atomicWalletState?: AtomicWalletState;
@@ -146,7 +146,7 @@ export class InMemoryWalletRepository implements WalletRepository {
     async getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,
         page: PageRequest<TransactionHistoryPageCursor>,
-    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+    ): Promise<PageResult<ArkadeTransaction, TransactionHistoryPageCursor>> {
         assertPageRequest(page);
         assertHistoryPageFilter(filter);
         const rows = (this.txsByAddress.get(filter.address) ?? [])
@@ -169,7 +169,7 @@ export class InMemoryWalletRepository implements WalletRepository {
         return pageResult(rows, page.limit, (tx) => ({ createdAt: tx.createdAt, key: tx.key }));
     }
 
-    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
+    async saveTransactions(address: string, txs: ArkadeTransaction[]): Promise<void> {
         const existing = this.txsByAddress.get(address) ?? [];
         const next = mergeByKey(existing, txs, serializeTxKey);
         this.txsByAddress.set(address, next);
@@ -200,7 +200,7 @@ export class InMemoryWalletRepository implements WalletRepository {
     }
 }
 
-function serializeTxKey(tx: ArkTransaction): string {
+function serializeTxKey(tx: ArkadeTransaction): string {
     const key = tx.key;
     return `${key.boardingTxid}:${key.commitmentTxid}:${key.arkTxid}`;
 }

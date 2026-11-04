@@ -1,8 +1,8 @@
-import { ArkTransaction, Asset, BuiltinTxTag, TxKey, TxType, VirtualCoin } from "../wallet";
+import { ArkadeTransaction, Asset, BuiltinTxTag, TxKey, TxType, VirtualCoin } from "../wallet";
 import { normalizeVtxo, type NormalizedVirtualCoin } from "../wallet/vtxo";
 import { isGatedVtxo, type GatedContracts } from "../contracts/spendability";
 
-type ExtendedArkadeTransaction = ArkTransaction & {
+type ExtendedArkadeTransaction = ArkadeTransaction & {
     tag: BuiltinTxTag;
 };
 
@@ -61,8 +61,8 @@ const txKey: TxKey = {
 };
 
 function consumeBoardingReceive(
-    boardingTxs: ArkTransaction[],
-    predicate: (tx: ArkTransaction) => boolean,
+    boardingTxs: ArkadeTransaction[],
+    predicate: (tx: ArkadeTransaction) => boolean,
 ): boolean {
     const index = boardingTxs.findIndex(predicate);
     if (index === -1) return false;
@@ -70,7 +70,7 @@ function consumeBoardingReceive(
     return true;
 }
 
-function isSettledBoardingReceive(tx: ArkTransaction): boolean {
+function isSettledBoardingReceive(tx: ArkadeTransaction): boolean {
     return tx.type === TxType.TxReceived && tx.settled && tx.key.boardingTxid !== "";
 }
 
@@ -127,7 +127,7 @@ function collectArkadeTxidsNeedingCreatedAt(
  * History is sorted from newest to oldest and is composed only of SENT and RECEIVED transactions.
  *
  * @param {VirtualCoin[]} vtxos - An array of virtual outputs representing the user's transactions and balances.
- * @param {ArkTransaction[]} allBoardingTxs - An array of boarding transactions to include in the history.
+ * @param {ArkadeTransaction[]} allBoardingTxs - An array of boarding transactions to include in the history.
  * @param {Set<string>} commitmentsToIgnore - A set of commitment IDs that should be excluded from processing.
  * @param resolveTxCreatedAt - Batched `createdAt` resolver, called at most once; missing txids
  * fall back to the spent output's `createdAt + 1`.
@@ -144,7 +144,7 @@ function collectArkadeTxidsNeedingCreatedAt(
  */
 export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
-    allBoardingTxs: ArkTransaction[],
+    allBoardingTxs: ArkadeTransaction[],
     commitmentsToIgnore: Set<string>,
     resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
     gatedScripts: GatedContracts = new Map(),

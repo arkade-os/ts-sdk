@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildVersion, sdkVersion } from "../src/utils/fetch";
 
 /**
- * The Expo SSE providers reach two different origins: `ExpoArkProvider` talks to
+ * The Expo SSE providers reach two different origins: `ExpoArkadeProvider` talks to
  * arkd, whose compatibility guard reads `X-Build-Version`/`X-SDK-VERSION`, and
  * `ExpoIndexerProvider` talks to an indexer that may be deployed on its own
  * origin, where those custom headers fail the CORS preflight and the request is
@@ -123,8 +123,8 @@ describe.each([
     }
 
     async function arkProvider() {
-        const { ExpoArkProvider } = await import("../src/providers/expoArkade");
-        return new ExpoArkProvider("https://ark.test");
+        const { ExpoArkadeProvider } = await import("../src/providers/expoArkade");
+        return new ExpoArkadeProvider("https://ark.test");
     }
 
     async function indexerProvider() {
@@ -132,7 +132,7 @@ describe.each([
         return new ExpoIndexerProvider("https://indexer.test");
     }
 
-    describe("ExpoArkProvider — arkd reads the version headers", () => {
+    describe("ExpoArkadeProvider — arkd reads the version headers", () => {
         it("sends them on the batch event stream", async () => {
             const provider = await arkProvider();
 

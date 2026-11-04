@@ -1,6 +1,11 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import type { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, TxType } from "../../src/wallet";
+import type {
+    ArkadeTransaction,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    TxType,
+} from "../../src/wallet";
 import type { TapLeafScript } from "../../src/script/base";
 
 export type RepositoryTestItem<T> = {
@@ -66,7 +71,7 @@ export function createMockTransaction(
     key: { boardingTxid?: string; commitmentTxid?: string; arkTxid?: string },
     type: TxType,
     amount: number,
-): ArkTransaction {
+): ArkadeTransaction {
     if (!key.boardingTxid && !key.commitmentTxid && !key.arkTxid) {
         throw new Error("Key must have one of boardingTxid, commitmentTxid, or arkTxid");
     }

@@ -11,8 +11,8 @@ import { hex } from "@scure/base";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
-    ArkAddress,
-    RestArkProvider,
+    ArkadeAddress,
+    RestArkadeProvider,
     RestEmulatorProvider,
     RestIndexerProvider,
     arkade,
@@ -20,7 +20,7 @@ import {
     networkFromArkadeInfo,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
-    type ArkTxInput,
+    type ArkadeTxInput,
     type ArkadeInfo,
     type EmulatorProvider,
     type IWallet,
@@ -547,7 +547,7 @@ export async function restoreOfferCoverage(
 
 /**
  * The exit delay from the server's scalar `unilateralExitDelay`, with arkd's own threshold: below
- * 512 it is blocks, otherwise seconds. A missing value arrives as `0` (`RestArkProvider` defaults
+ * 512 it is blocks, otherwise seconds. A missing value arrives as `0` (`RestArkadeProvider` defaults
  * it) and is refused: an offer claiming an exit it does not have is worse than one that never did.
  */
 function serverExitDelay(delay: bigint): RelativeTimelock {
@@ -671,9 +671,9 @@ export function resolveReceivePkScript(
     serverPubKey: Uint8Array,
 ): Uint8Array {
     if (receiveAddress === undefined) return walletPkScript;
-    let address: ArkAddress;
+    let address: ArkadeAddress;
     try {
-        address = ArkAddress.decode(receiveAddress);
+        address = ArkadeAddress.decode(receiveAddress);
     } catch (cause) {
         throw new Error("receiveAddress is not a valid Arkade address", { cause });
     }
@@ -711,7 +711,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
                     wallet.getAddress(),
                     wallet.identity.xOnlyPublicKey(),
                 ]);
-                return { pkScript: ArkAddress.decode(address).pkScript, publicKey };
+                return { pkScript: ArkadeAddress.decode(address).pkScript, publicKey };
             })(),
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
@@ -748,7 +748,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
     return Object.freeze({
         offerHex: hex.encode(payload),
         extension: { type: OFFER_PACKET_TYPE, payload },
-        // the contract's .address() builds the address; assembling an ArkAddress
+        // the contract's .address() builds the address; assembling an ArkadeAddress
         // from tweakedPublicKey here would silently miss any future step it gains
         address: script.address(network.hrp, operatorPubKey).encode(),
         swapPkScript: script.pkScript,
@@ -928,7 +928,7 @@ export async function prepareOfferCancel(
 
     // the offer's own keys, not the client's, so the script matches the funded address exactly
     const operatorPubkey = swapAddress
-        ? ArkAddress.decode(swapAddress).serverPubKey
+        ? ArkadeAddress.decode(swapAddress).serverPubKey
         : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
     // a mismatch means the wrong operator key; getUtxos would just return nothing, so fail with the
@@ -948,7 +948,7 @@ export async function prepareOfferCancel(
     const [vtxos, makerAddress] = await Promise.all([contract.getUtxos(), wallet.getAddress()]);
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
 
-    const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const makerPkScript = ArkadeAddress.decode(makerAddress).pkScript;
     const cancel = contract.functions
         .cancel()
         .from({ txid: vtxo.txid, vout: vtxo.vout, value: vtxo.value })
@@ -976,11 +976,11 @@ export async function prepareOfferCancel(
 export const ASSET_CARRIER_SATS = BigInt(SDK_ASSET_CARRIER_SATS);
 
 /**
- * A coin the taker supplies, plus the assets it carries. `ArkTxInput` is sats-only, and **arkd
+ * A coin the taker supplies, plus the assets it carries. `ArkadeTxInput` is sats-only, and **arkd
  * refuses a spend whose asset packet omits an asset one of its inputs owns** (`ASSET_NOT_FOUND`), so
  * every asset on a funding coin must be declared. A wallet's own coins already carry this shape.
  */
-export type FillFunding = ArkTxInput & {
+export type FillFunding = ArkadeTxInput & {
     assets?: readonly { assetId: string; amount: bigint | number }[];
 };
 
@@ -1070,7 +1070,7 @@ export async function fillOffer(
         offer,
         vtxo,
         solverFund: fund,
-        solverPayout: payoutScript ?? ArkAddress.decode(takerAddress).pkScript,
+        solverPayout: payoutScript ?? ArkadeAddress.decode(takerAddress).pkScript,
         assetCarrierSats,
     });
     const { txid } = await fill.send();
@@ -1090,7 +1090,7 @@ export async function connectFillContract(
     const { swapAddress, emulator, emulatorPubkey } = opts;
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
+        arkade: new RestArkadeProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
         contractManager,
@@ -1103,7 +1103,9 @@ export async function connectFillContract(
         ...(emulatorPubkey ? { emulatorPubkey } : {}),
     });
 
-    const serverKey = swapAddress ? ArkAddress.decode(swapAddress).serverPubKey : client.serverKey;
+    const serverKey = swapAddress
+        ? ArkadeAddress.decode(swapAddress).serverPubKey
+        : client.serverKey;
     const { program, args, keys } = swapProgramBinding(offer, serverKey);
     const rebuilt = new arkade.ArkadeProgramScript(program, args, keys);
     if (hex.encode(rebuilt.pkScript) !== hex.encode(offer.swapPkScript)) {

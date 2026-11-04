@@ -9,7 +9,7 @@
  */
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     asset,
     networkFromArkadeInfo,
     provisionClaimSecret,
@@ -428,7 +428,7 @@ const quoteArkadeAsset = async (
         assetPayment = {
             receiveAddress:
                 receiveAddress ??
-                new ArkAddress(
+                new ArkadeAddress(
                     toXOnly(hex.decode(input.info.signerPubkey), "operator signer key"),
                     maker.pkScript.slice(2),
                     networkFromArkadeInfo(input.info).hrp,
@@ -558,7 +558,7 @@ const makerPosition = async (
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    return { pkScript: ArkAddress.decode(address).pkScript, publicKey };
+    return { pkScript: ArkadeAddress.decode(address).pkScript, publicKey };
 };
 
 const quoteLightningSend = async (

@@ -4,9 +4,9 @@ import { Transaction } from "../src/utils/transaction";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-    getArkPsbtFields,
+    getArkadePsbtFields,
     MultisigTapscript,
-    PrevArkTxField,
+    PrevArkadeTxField,
     VtxoScript,
     type IntentCoin,
 } from "../src";
@@ -118,8 +118,8 @@ describe("Intent", () => {
 
             const proof = Intent.create("msg", [vtxoCoin(1, prevTx)]);
 
-            expect(getArkPsbtFields(proof, 0, PrevArkTxField)).toHaveLength(0);
-            const onCoin = getArkPsbtFields(proof, 1, PrevArkTxField);
+            expect(getArkadePsbtFields(proof, 0, PrevArkadeTxField)).toHaveLength(0);
+            const onCoin = getArkadePsbtFields(proof, 1, PrevArkadeTxField);
             expect(onCoin).toHaveLength(1);
             expect(hex.encode(onCoin[0])).toBe(hex.encode(prevTx));
         });
@@ -140,7 +140,7 @@ describe("Intent", () => {
         it("attaches nothing when the coin carries no prevTx", () => {
             const proof = Intent.create("msg", [vtxoCoin(9)]);
 
-            expect(getArkPsbtFields(proof, 1, PrevArkTxField)).toHaveLength(0);
+            expect(getArkadePsbtFields(proof, 1, PrevArkadeTxField)).toHaveLength(0);
         });
     });
 

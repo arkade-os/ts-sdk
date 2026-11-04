@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
+import { ArkadeTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
@@ -563,7 +563,7 @@ export class SQLiteWalletRepository implements WalletRepository {
     async getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,
         page: PageRequest<TransactionHistoryPageCursor>,
-    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+    ): Promise<PageResult<ArkadeTransaction, TransactionHistoryPageCursor>> {
         assertPageRequest(page);
         assertHistoryPageFilter(filter);
         await this.ensureInit();
@@ -595,7 +595,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         }));
     }
 
-    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
+    async saveTransactions(address: string, txs: ArkadeTransaction[]): Promise<void> {
         await this.ensureInit();
         await this.insertOrReplace(
             this.tables.transactions,
@@ -809,14 +809,14 @@ function utxoRowToDomain(row: UtxoRow): ExtendedCoin {
     return deserializeUtxo(serialized);
 }
 
-function txRowToDomain(row: TransactionRow): ArkTransaction {
-    const tx: ArkTransaction = {
+function txRowToDomain(row: TransactionRow): ArkadeTransaction {
+    const tx: ArkadeTransaction = {
         key: {
             boardingTxid: row.boarding_txid,
             commitmentTxid: row.commitment_txid,
             arkTxid: row.ark_txid,
         },
-        type: row.type as ArkTransaction["type"],
+        type: row.type as ArkadeTransaction["type"],
         amount: row.amount,
         settled: row.settled === 1,
         createdAt: row.created_at,

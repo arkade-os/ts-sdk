@@ -15,12 +15,12 @@ import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import {
     ConditionWitness,
-    getArkPsbtFields,
-    setArkPsbtField,
+    getArkadePsbtFields,
+    setArkadePsbtField,
     VtxoTaprootTree,
 } from "./unknownFields";
 import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import { Extension } from "../extension";
 import { ServerResponseMismatchError } from "../providers/errors";
 import type { EmulatorProvider } from "../providers/emulator";
@@ -28,7 +28,7 @@ import { toXOnly } from "./keys";
 
 export { assertAllowedSighashTypes };
 
-export type ArkTxInput = {
+export type ArkadeTxInput = {
     // the script used to spend the virtual output
     tapLeafScript: TapLeafScript;
 } & EncodedVtxoScript &
@@ -52,7 +52,7 @@ export type OffchainTx = {
  * @returns Object containing the virtual transaction and checkpoint transactions
  */
 export function buildOffchainTx(
-    inputs: ArkTxInput[],
+    inputs: ArkadeTxInput[],
     outputs: TransactionOutput[],
     serverUnrollScript: CSVMultisigTapscript.Type,
 ): OffchainTx {
@@ -90,7 +90,7 @@ export function buildOffchainTx(
     };
 }
 
-function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
+function buildVirtualTx(inputs: ArkadeTxInput[], outputs: TransactionOutput[]) {
     let lockTime = 0n;
     for (const input of inputs) {
         const tapscript = decodeTapscript(scriptFromTapLeafScript(input.tapLeafScript));
@@ -125,7 +125,7 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
             tapLeafScript: [input.tapLeafScript],
         });
 
-        setArkPsbtField(tx, i, VtxoTaprootTree, input.tapTree);
+        setArkadePsbtField(tx, i, VtxoTaprootTree, input.tapTree);
     }
 
     for (const output of outputs) {
@@ -151,9 +151,9 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
  * expect from their own VTXO data and reject any other one.
  */
 export function buildCheckpointTx(
-    vtxo: ArkTxInput,
+    vtxo: ArkadeTxInput,
     serverUnrollScript: CSVMultisigTapscript.Type,
-): { tx: Transaction; input: ArkTxInput } {
+): { tx: Transaction; input: ArkadeTxInput } {
     // create the checkpoint virtual output script from collaborative closure
     const collaborativeClosure = decodeTapscript(scriptFromTapLeafScript(vtxo.tapLeafScript));
 
@@ -397,9 +397,9 @@ export function combineTapscriptSigs(signedTx: Transaction, originalTx: Transact
  * @param address The Arkade address to validate.
  * @returns True if the address is valid, false otherwise.
  */
-export function isValidArkAddress(address: string): boolean {
+export function isValidArkadeAddress(address: string): boolean {
     try {
-        ArkAddress.decode(address);
+        ArkadeAddress.decode(address);
         return true;
     } catch (e) {
         return false;
@@ -408,7 +408,7 @@ export function isValidArkAddress(address: string): boolean {
 
 /**
  * Minimal Arkade provider surface required to submit and finalize an offchain
- * transaction. Both {@link ArkProvider} implementations satisfy it
+ * transaction. Both {@link ArkadeProvider} implementations satisfy it
  * structurally, so declaring it here keeps this module free of a provider
  * import (and of the dependency cycle that would create).
  */
@@ -512,7 +512,7 @@ export function matchServerCheckpoints(
  * legitimately change either — with the same taproot-only caveat as
  * {@link matchServerCheckpoints}.
  */
-export function assertSubmittedArkTxid(
+export function assertSubmittedArkadeTxid(
     response: { arkTxid: string; finalArkTx?: string },
     signedArkTx: Transaction,
     context: string,
@@ -626,7 +626,7 @@ function assertServerSignedLeaf(
  */
 export function assertCheckpointsMatchInputs(
     checkpoints: Transaction[],
-    inputs: ArkTxInput[],
+    inputs: ArkadeTxInput[],
     unrollCandidates: CSVMultisigTapscript.Type[],
     context: string,
 ): void {
@@ -726,7 +726,7 @@ export async function submitOffchainTx(
             : offchainTx.checkpoints.map((c) => withArkadeInputWitness(c, signedArkTx))
         ).map((c) => base64.encode(c.toPSBT())),
     );
-    assertSubmittedArkTxid(response, signedArkTx, "submitTx");
+    assertSubmittedArkadeTxid(response, signedArkTx, "submitTx");
     const { arkTxid, signedCheckpointTxs } = response;
 
     // The server returns one signed checkpoint per submitted checkpoint, and
@@ -752,7 +752,7 @@ export async function submitOffchainTx(
     const verify = options?.verifyServerSignatures;
     if (verify) {
         // Fail closed: `finalArkTx` is optional in the wire type and
-        // `assertSubmittedArkTxid` skips it when absent, but a check that was
+        // `assertSubmittedArkadeTxid` skips it when absent, but a check that was
         // asked for and cannot be run is a failed check, not a passed one.
         if (response.finalArkTx === undefined) {
             throw new ServerResponseMismatchError(
@@ -827,9 +827,9 @@ export async function submitOffchainTx(
 // condition against it. The taptree is rebuilt server-side, so only this field
 // is carried over, and only when the server's copy has none.
 function carryConditionWitness(ours: Transaction, server: Transaction): void {
-    if (getArkPsbtFields(server, 0, ConditionWitness).length > 0) return;
-    const [witness] = getArkPsbtFields(ours, 0, ConditionWitness);
-    if (witness) setArkPsbtField(server, 0, ConditionWitness, witness);
+    if (getArkadePsbtFields(server, 0, ConditionWitness).length > 0) return;
+    const [witness] = getArkadePsbtFields(ours, 0, ConditionWitness);
+    if (witness) setArkadePsbtField(server, 0, ConditionWitness, witness);
 }
 
 // arkd v0.9.24+ refuses, at submit, a checkpoint whose condition witness differs from that of
@@ -837,14 +837,14 @@ function carryConditionWitness(ours: Transaction, server: Transaction): void {
 // claim's) leaves none on the unsigned checkpoint the two-step flow submits. Matching by txid
 // alone holds because the Arkade transaction spends each checkpoint at vout 0 only; vout 1 is its anchor.
 function withArkadeInputWitness(checkpoint: Transaction, signedArkTx: Transaction): Transaction {
-    if (getArkPsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
+    if (getArkadePsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
     for (let i = 0; i < signedArkTx.inputsLength; i++) {
         const { txid } = signedArkTx.getInput(i);
         if (!txid || hex.encode(txid) !== checkpoint.id) continue;
-        const [witness] = getArkPsbtFields(signedArkTx, i, ConditionWitness);
+        const [witness] = getArkadePsbtFields(signedArkTx, i, ConditionWitness);
         if (!witness) return checkpoint;
         const carried = checkpoint.clone();
-        setArkPsbtField(carried, 0, ConditionWitness, witness);
+        setArkadePsbtField(carried, 0, ConditionWitness, witness);
         return carried;
     }
     return checkpoint;
@@ -877,7 +877,7 @@ function carriesTapscriptSigs(server: Transaction, userSigned: Transaction): boo
 export async function signAndSubmitOffchainTx(params: {
     identity: { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> };
     provider: OffchainTxSubmitProvider;
-    inputs: ArkTxInput[];
+    inputs: ArkadeTxInput[];
     outputs: TransactionOutput[];
     serverUnrollScript: CSVMultisigTapscript.Type;
     /** Forwarded to {@link submitOffchainTx}; omitted, nothing is checked. */
@@ -927,7 +927,7 @@ export async function submitViaEmulator(
         checkpoints.map((c) => base64.encode(c.toPSBT())),
     );
     const txid = Transaction.fromPSBT(base64.decode(res.signedArkTx)).id;
-    assertSubmittedArkTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
+    assertSubmittedArkadeTxid({ arkTxid: txid }, arkTx, "emulator submitTx");
     return { txid, signedArkTx: res.signedArkTx, signedCheckpointTxs: res.signedCheckpointTxs };
 }
 
@@ -957,7 +957,7 @@ export function claimWithPreimageIdentity<
             const indexes =
                 inputIndexes ?? Array.from({ length: signed.inputsLength }, (_, i) => i);
             for (const index of indexes) {
-                setArkPsbtField(signed, index, ConditionWitness, [preimage]);
+                setArkadePsbtField(signed, index, ConditionWitness, [preimage]);
             }
             return signed;
         },

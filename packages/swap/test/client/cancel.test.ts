@@ -16,7 +16,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
-import { ArkAddress, Transaction, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, Transaction, type IWallet } from "@arkade-os/sdk";
 import { cancelSwap } from "../../src/client/cancel";
 import { createSwapDrive, type SwapDrive } from "../../src/client/drive";
 import type { SwapUpdate } from "../../src/client/outcome";
@@ -360,7 +360,7 @@ describe("cancel() — the pinned operator key", () => {
     it("names the rebuild mismatch rather than reporting a missing deposit", async () => {
         // The pinned address is not the one funded: a corrupt record, or a
         // wrong `swapAddress`. Typed, and before any broadcast.
-        const wrong = new ArkAddress(key(4), key(21), HRP).encode();
+        const wrong = new ArkadeAddress(key(4), key(21), HRP).encode();
         const h = await build({ record: record({ swapAddress: wrong }) });
 
         await expect(h.cancel({ swapAddress: wrong })).rejects.toBeInstanceOf(
@@ -380,7 +380,7 @@ describe("cancel() — the pinned operator key", () => {
         // A corrupt record can pin bytes that are not a curve point: the
         // taproot encoder throws before there is a script to compare. Same
         // diagnosis, same rollback — never a raw "OutScript/tr_ns" error.
-        const corrupt = new ArkAddress(new Uint8Array(32).fill(0x11), key(21), HRP).encode();
+        const corrupt = new ArkadeAddress(new Uint8Array(32).fill(0x11), key(21), HRP).encode();
         const h = await build({ record: record({ swapAddress: corrupt }) });
 
         await expect(h.cancel({ swapAddress: corrupt })).rejects.toBeInstanceOf(
@@ -394,7 +394,7 @@ describe("cancel() — the pinned operator key", () => {
 
 describe("the swap address is what pins the key", () => {
     it("decodes the funded address to the covenant's own operator key", () => {
-        expect(hex.encode(ArkAddress.decode(WALLET_ADDRESS).serverPubKey)).toBe(
+        expect(hex.encode(ArkadeAddress.decode(WALLET_ADDRESS).serverPubKey)).toBe(
             hex.encode(OPERATOR),
         );
     });

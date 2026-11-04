@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     asset,
     type Contract,
     type IndexerProvider,
@@ -56,7 +56,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     );
     return {
         ...mod,
-        RestArkProvider: class {
+        RestArkadeProvider: class {
             async getInfo() {
                 state.getInfoCalls++;
                 return {
@@ -101,7 +101,7 @@ const wallet = {
         state.managerCalls++;
         return contractManager;
     },
-    getArkadeInfo: async () => new RestArkProvider("http://ark").getInfo(),
+    getArkadeInfo: async () => new RestArkadeProvider("http://ark").getInfo(),
 } as unknown as IWallet;
 
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");
@@ -110,7 +110,7 @@ const makeOffer = (wantAmount = BigInt(50_000)): Offer => {
     const binding: Omit<Offer, "swapPkScript"> = {
         wantAmount,
         wantAsset: testAsset,
-        makerPkScript: ArkAddress.decode(makerAddress).pkScript,
+        makerPkScript: ArkadeAddress.decode(makerAddress).pkScript,
         makerPublicKey: makerKey,
         emulatorPubkey: EMULATOR_KEY,
         exitDelay: { type: "seconds", value: BigInt(4096) },

@@ -1,5 +1,5 @@
 import { base64, hex } from "@scure/base";
-import { ArkAddress, Extension, P2A, Transaction, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, Extension, P2A, Transaction, type IWallet } from "@arkade-os/sdk";
 import {
     ASSET_CARRIER_SATS,
     assembleOfferFill,
@@ -66,7 +66,7 @@ export async function buildOfferFillPlan(
     const contract = await connectFillContract(wallet, arkServerUrl, offer, { swapAddress });
     const vtxos = await contract.getUtxos();
     const vtxo = resolveDeposit(vtxos, { fundingTxid, fundingOutpoint });
-    const solverPayout = payoutScript ?? ArkAddress.decode(await wallet.getAddress()).pkScript;
+    const solverPayout = payoutScript ?? ArkadeAddress.decode(await wallet.getAddress()).pkScript;
     const sponsorLeg =
         sponsor !== undefined ? normalizeSponsor(sponsor, assetCarrierSats) : undefined;
     const fill = contract.functions.fulfill();

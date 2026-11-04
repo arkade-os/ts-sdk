@@ -1,18 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { ArkAddress } from "../../src";
+import { ArkadeAddress } from "../../src";
 import {
-    isValidArkAddress,
+    isValidArkadeAddress,
     isBtcAddress,
     isLightningInvoice,
     isLnurl,
 } from "../../src/payment/predicates";
 
-const arkadeAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
+const arkadeAddr = new ArkadeAddress(
+    new Uint8Array(32).fill(1),
+    new Uint8Array(32).fill(2),
+).encode();
 
 describe("payment predicates", () => {
-    it("isValidArkAddress decodes ark addresses, rejects others", () => {
-        expect(isValidArkAddress(arkadeAddr)).toBe(true);
-        expect(isValidArkAddress("bcrt1qexample")).toBe(false);
+    it("isValidArkadeAddress decodes ark addresses, rejects others", () => {
+        expect(isValidArkadeAddress(arkadeAddr)).toBe(true);
+        expect(isValidArkadeAddress("bcrt1qexample")).toBe(false);
     });
     it("isBtcAddress matches segwit/legacy, rejects ark", () => {
         expect(isBtcAddress("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080")).toBe(true);

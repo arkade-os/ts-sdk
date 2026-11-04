@@ -8,13 +8,13 @@ import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRep
 import type { Contract } from "../src/contracts/types";
 import { getSerializedExecutor, runInTransaction } from "../src/repositories/sqlite/transaction";
 import { ChainedTxType, type VirtualTx } from "../src/repositories/virtualTxRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 
 // Regression coverage for the shared-connection transaction races: SQLite
 // cannot nest BEGIN IMMEDIATE, so overlapping transactions on one executor
 // used to fail with "cannot start a transaction within a transaction".
 
-const intent = (id: string): ArkIntent => ({
+const intent = (id: string): BatchRegistration => ({
     intentTxId: id,
     state: "waiting_for_batch",
     createdAt: 1,

@@ -86,7 +86,7 @@ describe("ArkadeCash", () => {
     });
 
     describe("vtxo script", () => {
-        it("should derive a valid ArkAddress", () => {
+        it("should derive a valid ArkadeAddress", () => {
             const cash = new ArkadeCash(testPrivKey, testServerPubKey, {
                 type: "blocks",
                 value: 144n,

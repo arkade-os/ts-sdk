@@ -5,7 +5,7 @@ import { Estimator } from "../arkadeFee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
 import { MAX_VTXOS_PER_SETTLEMENT } from "./vtxo-manager";
 import { bySelectionOrder } from "./wallet";
@@ -283,7 +283,7 @@ export class Ramps {
 
         // Calculate offchain output fee using Estimator
         const offchainAddress = await this.wallet.getAddress();
-        const offchainAddr = ArkAddress.decode(offchainAddress);
+        const offchainAddr = ArkadeAddress.decode(offchainAddress);
         const offchainScript = hex.encode(offchainAddr.pkScript);
 
         const outputFee = estimator.evalOffchainOutput({
@@ -524,7 +524,7 @@ export class Ramps {
         if (left <= 0n) return { change: 0n };
 
         const changeAddress = await this.wallet.getAddress();
-        const changeScript = hex.encode(ArkAddress.decode(changeAddress).pkScript);
+        const changeScript = hex.encode(ArkadeAddress.decode(changeAddress).pkScript);
         const { change } = changeAfterOutputFee(left, (amount) =>
             BigInt(estimator.evalOffchainOutput({ amount, script: changeScript }).satoshis),
         );

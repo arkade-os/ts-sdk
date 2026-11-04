@@ -28,7 +28,7 @@ import { hex } from "@scure/base";
 import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     assertTimerMs,
     VHTLC,
     asset,
@@ -1430,7 +1430,7 @@ export async function requestArkadeSwap(
         wallet.getAddress(),
         wallet.identity.xOnlyPublicKey(),
     ]);
-    const ownPkScript = ArkAddress.decode(makerAddress).pkScript;
+    const ownPkScript = ArkadeAddress.decode(makerAddress).pkScript;
     const info =
         receiveAddress === undefined
             ? undefined
@@ -1711,7 +1711,7 @@ export function deriveOnchainSend(input: {
         emulatorPubkey: input.emulatorPubkey,
         senderPubkey: input.senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
-        refundPkScript: ArkAddress.decode(input.refundAddress).pkScript,
+        refundPkScript: ArkadeAddress.decode(input.refundAddress).pkScript,
     };
     const { script, address } = matchQuotedLockup(
         quote,
@@ -2093,7 +2093,7 @@ const matchReceiveLockup = (
         emulatorPubkey: input.emulatorPubkey,
         solverRefundPkScript: solverHex(solverRefundPkScriptHex, "profile.solver_refund_pk_script"),
         payoutPubkey: input.payoutPubkey,
-        payoutPkScript: ArkAddress.decode(input.payoutAddress).pkScript,
+        payoutPkScript: ArkadeAddress.decode(input.payoutAddress).pkScript,
     };
     const matched = matchQuotedLockup(input.quote, input.hrp, input.operatorPubkey, (legacy) =>
         lightningReceiveContract({ ...contractParams, ...(legacy !== undefined && { legacy }) }),

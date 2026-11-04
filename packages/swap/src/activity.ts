@@ -1,7 +1,7 @@
 import {
-    ArkAddress,
+    ArkadeAddress,
     type ActivityResolver,
-    type ArkTransaction,
+    type ArkadeTransaction,
     type GroupMembership,
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
@@ -70,7 +70,7 @@ export function swapActivityResolver(deps: {
             }
             byTxid = index;
         },
-        resolve(tx: ArkTransaction): GroupMembership[] | undefined {
+        resolve(tx: ArkadeTransaction): GroupMembership[] | undefined {
             const key = tx.key.arkTxid || tx.key.commitmentTxid || tx.key.boardingTxid;
             const swap = key ? byTxid.get(key) : undefined;
             if (!swap) return undefined;
@@ -159,7 +159,7 @@ async function lockupTxids(
 ): Promise<string[]> {
     let script: string;
     try {
-        script = hex.encode(ArkAddress.decode(record.lockupAddress).pkScript);
+        script = hex.encode(ArkadeAddress.decode(record.lockupAddress).pkScript);
     } catch {
         return []; // an address that will not decode names no lockup to read
     }

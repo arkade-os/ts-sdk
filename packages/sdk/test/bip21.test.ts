@@ -72,9 +72,9 @@ describe("BIP21", () => {
             expect(BIP21.parse(`bitcoin:${upper}`).params.address).toBe(upper);
         });
 
-        it("keeps an upper-case `ark=` param, which `arkTarget` claims bare", () => {
+        it("keeps an upper-case `ark=` param, which `arkadeTarget` claims bare", () => {
             // Bech32m forbids a case MIX, not upper case, and
-            // `ArkAddress.decode` accepts an all-upper address — so a
+            // `ArkadeAddress.decode` accepts an all-upper address — so a
             // case-sensitive filter dropped, with a `console.warn`, an address
             // the bare classifier claims happily.
             const upper = "TARK1QZ4EXAMPLE";

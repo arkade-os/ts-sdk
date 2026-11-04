@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider, RestArkProvider, ProviderUnavailableError, ArkError } from "../src";
+import {
+    RestIndexerProvider,
+    RestArkadeProvider,
+    ProviderUnavailableError,
+    ArkadeError,
+} from "../src";
 import { throwIfHttpUnavailable, toProviderUnavailable } from "../src/providers/errors";
 import { FetchError } from "../src/utils/fetch";
 import { rateGate } from "../src/providers/rateGate";
@@ -153,9 +158,9 @@ describe("RestIndexerProvider availability classification", () => {
     });
 });
 
-describe("RestArkProvider availability classification", () => {
+describe("RestArkadeProvider availability classification", () => {
     beforeEach(() => mockFetch.mockReset());
-    const provider = () => new RestArkProvider("http://localhost:7070");
+    const provider = () => new RestArkadeProvider("http://localhost:7070");
 
     it("getInfo maps a 503 to ProviderUnavailableError(arkade)", async () => {
         mockFetch.mockResolvedValueOnce({
@@ -196,7 +201,7 @@ describe("RestArkProvider availability classification", () => {
         // which grpc-gateway renders as HTTP 500 with a structured ErrorDetails
         // body. authedFetch must NOT reclassify that as ProviderUnavailableError —
         // it is a deliberate application rejection and must reach the caller as an
-        // ArkError.
+        // ArkadeError.
         const body = JSON.stringify({
             message: "INTERNAL_ERROR (0): input already registered by another intent",
             details: [
@@ -219,7 +224,7 @@ describe("RestArkProvider availability classification", () => {
             .submitTx("tx", [])
             .catch((e) => e);
         expect(err).not.toBeInstanceOf(ProviderUnavailableError);
-        expect(err).toBeInstanceOf(ArkError);
+        expect(err).toBeInstanceOf(ArkadeError);
         expect(err.name).toBe("INTERNAL_ERROR");
         expect(err.code).toBe(0);
     });

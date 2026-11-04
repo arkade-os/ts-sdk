@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     CSVMultisigTapscript,
     Extension,
     MultisigTapscript,
@@ -35,7 +35,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
     return {
         ...mod,
-        RestArkProvider: class {
+        RestArkadeProvider: class {
             async getInfo() {
                 return {
                     signerPubkey: `02${hex.encode(SERVER_KEY)}`,
@@ -117,7 +117,7 @@ const identity = {
 const wallet = {
     identity,
     getAddress: async () =>
-        new ArkAddress(SERVER_KEY, hex.decode("22".repeat(32)), "tark").encode(),
+        new ArkadeAddress(SERVER_KEY, hex.decode("22".repeat(32)), "tark").encode(),
     getContractManager: async () => state.managed,
 } as unknown as IWallet;
 

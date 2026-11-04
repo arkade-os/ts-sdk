@@ -10,7 +10,7 @@ import type { DiscoveredMarket, OfferPlan, Side } from "@arkade-os/solver-discov
 import type { Asset, PaymentRail, RouteQuote, RouterContext } from "@arkade-os/sdk";
 import {
     ASSET_CARRIER_SATS,
-    arkTarget,
+    arkadeTarget,
     asset as assetExt,
     assetsOf,
     makeHandle,
@@ -98,7 +98,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
 
     return {
         id: CROSS_ASSET_RAIL,
-        match: (req) => arkTarget(req.raw) !== undefined,
+        match: (req) => arkadeTarget(req.raw) !== undefined,
 
         available: async (req) => {
             const assets = assetsOf(req);
@@ -112,7 +112,7 @@ export function crossAssetRail(deps: CrossAssetRailDeps): PaymentRail {
         },
 
         quote: async (req, ctx: RouterContext): Promise<RouteQuote> => {
-            const payTo = arkTarget(req.raw)!;
+            const payTo = arkadeTarget(req.raw)!;
             const asset = resolveAssetAmount(CROSS_ASSET_RAIL, req);
             const wantAsset = parseAssetId(asset.assetId);
             if (!wantAsset) {

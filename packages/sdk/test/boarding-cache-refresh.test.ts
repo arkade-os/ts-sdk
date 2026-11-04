@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { RestArkProvider, toXOnlySignerHex, type Coin } from "../src";
+import { RestArkadeProvider, toXOnlySignerHex, type Coin } from "../src";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { collectUtxos } from "../src/repositories/walletRepository";
 import {
@@ -84,7 +84,7 @@ async function setup(hd: boolean) {
 
     const handler = new WalletMessageHandler();
     await handler.start(
-        { readonlyWallet: wallet, arkProvider: new RestArkProvider("http://localhost:7070") },
+        { readonlyWallet: wallet, arkProvider: new RestArkadeProvider("http://localhost:7070") },
         { walletRepository },
     );
     onTestFinished(() => handler.stop());

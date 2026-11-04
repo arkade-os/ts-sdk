@@ -1,5 +1,5 @@
 import { BIP21 } from "../utils/bip21";
-import { isBtcAddress, isLightningInvoice, isValidArkAddress } from "./predicates";
+import { isBtcAddress, isLightningInvoice, isValidArkadeAddress } from "./predicates";
 
 /**
  * Per-rail target extraction from a raw request — bare target, or the matching
@@ -21,8 +21,8 @@ const fromBip21 = (
 };
 
 /** The ark address in `raw`: bare, or the `ark=` param. */
-export const arkTarget = (raw: string): string | undefined =>
-    isValidArkAddress(raw) ? raw : fromBip21(raw, "ark", isValidArkAddress);
+export const arkadeTarget = (raw: string): string | undefined =>
+    isValidArkadeAddress(raw) ? raw : fromBip21(raw, "ark", isValidArkadeAddress);
 
 /** The on-chain BTC address in `raw`: bare, or the URI's address. */
 export const btcTarget = (raw: string): string | undefined =>

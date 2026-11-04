@@ -6,7 +6,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -93,7 +93,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     const makeWallet = async (): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(),
-            arkProvider: new RestArkProvider(arkadeUrl),
+            arkProvider: new RestArkadeProvider(arkadeUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -106,8 +106,8 @@ describe("server-info digest mismatch across a real signer rotation", () => {
         });
 
     /**
-     * `onServerInfoChanged` and the cached `_digest` live on `RestArkProvider`,
-     * not the `ArkProvider` interface `wallet.arkProvider` is typed as (the
+     * `onServerInfoChanged` and the cached `_digest` live on `RestArkadeProvider`,
+     * not the `ArkadeProvider` interface `wallet.arkProvider` is typed as (the
      * wallet duck-types `onServerInfoChanged` at setup). Reach them via this
      * structural cast — the same `_digest` probe the unit suite
      * (`arkadeProviderDigest.test.ts`) uses.

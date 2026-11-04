@@ -14,7 +14,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkAddress, CSVMultisigTapscript, SingleKey, asset, type IWallet } from "@arkade-os/sdk";
+import {
+    ArkadeAddress,
+    CSVMultisigTapscript,
+    SingleKey,
+    asset,
+    type IWallet,
+} from "@arkade-os/sdk";
 
 // cancel.test.ts's pattern: spread the real module, override only the
 // network seam these functions must never touch (RestEmulatorProvider).
@@ -60,7 +66,7 @@ const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PREIMAGE = new Uint8Array(32).fill(7);
 const PAYMENT_HASH = paymentHashOf(PREIMAGE);
-const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 /** What this wallet answers for the server it is connected to. `createOffer`
  * registers the covenant with the contract manager, and `Arkade.connect`
@@ -129,7 +135,7 @@ const lightningTransport = (forEmulatorPubkey: Uint8Array): RfqTransport => ({
             emulatorPubkey: forEmulatorPubkey,
             senderPubkey,
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
         });
         return {
             v: 1,
@@ -203,7 +209,7 @@ describe("requestOnchainSend never touches the emulator", () => {
                 emulatorPubkey: forEmulatorPubkey,
                 senderPubkey,
                 receiverPkScript: RECEIVER_PK_SCRIPT,
-                refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+                refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
             });
             const htlc = onchainHtlcScript(
                 {

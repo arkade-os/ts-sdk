@@ -3,10 +3,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { DatabaseSync } from "node:sqlite";
-import { ArkAddress } from "../../src";
+import { ArkadeAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
 import type { ExtendedVirtualCoin } from "../../src/wallet";
-import { runArkRealmMigrations } from "../../src/repositories/realm/schemas";
+import { runArkadeRealmMigrations } from "../../src/repositories/realm/schemas";
 import { openDatabase, closeDatabase } from "../../src/repositories/indexedDB/manager";
 import {
     initDatabase,
@@ -26,16 +26,16 @@ import { createMockVtxo } from "./helpers";
 // the script from the address so they need a real one.
 const TEST_SERVER_PUBKEY = new Uint8Array(32).fill(7);
 const TEST_VTXO_TAPROOT_KEY = new Uint8Array(32).fill(9);
-const TEST_ARKADE_ADDRESS = new ArkAddress(
+const TEST_ARKADE_ADDRESS = new ArkadeAddress(
     TEST_SERVER_PUBKEY,
     TEST_VTXO_TAPROOT_KEY,
     "ark",
 ).encode();
 const EXPECTED_PK_SCRIPT_HEX = hex.encode(
-    new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").pkScript,
+    new ArkadeAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").pkScript,
 );
 
-describe("Realm migration: runArkRealmMigrations", () => {
+describe("Realm migration: runArkadeRealmMigrations", () => {
     // A minimal stand-in for the Realm handles passed to `onMigration`. The
     // real Realm exposes `.objects(name)` returning an indexable array-like;
     // we only need the subset the migration touches.
@@ -63,7 +63,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
             { address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
 
-        runArkRealmMigrations(makeRealm(1, oldVtxos), makeRealm(2, newVtxos));
+        runArkadeRealmMigrations(makeRealm(1, oldVtxos), makeRealm(2, newVtxos));
 
         expect(newVtxos[0].script).toBe(EXPECTED_PK_SCRIPT_HEX);
         // Row that already had a script must be left alone — we don't want
@@ -74,7 +74,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
     it("is a no-op when every row already has a script", () => {
         const newVtxos = [{ address: TEST_ARKADE_ADDRESS, script: "5120abcd" }];
 
-        runArkRealmMigrations(makeRealm(2, newVtxos), makeRealm(2, newVtxos));
+        runArkadeRealmMigrations(makeRealm(2, newVtxos), makeRealm(2, newVtxos));
 
         // Per-row guard: rows that already have a script are left alone.
         expect(newVtxos[0].script).toBe("5120abcd");
@@ -87,7 +87,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
         // migration gates on per-row `script` presence, not on our constant.
         const newVtxos = [{ address: TEST_ARKADE_ADDRESS, script: null }];
 
-        runArkRealmMigrations(makeRealm(10, newVtxos), makeRealm(11, newVtxos));
+        runArkadeRealmMigrations(makeRealm(10, newVtxos), makeRealm(11, newVtxos));
 
         expect(newVtxos[0].script).toBe(EXPECTED_PK_SCRIPT_HEX);
     });
@@ -119,7 +119,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
             { pk: "height:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
 
-        runArkRealmMigrations(makeRealm(4, oldVtxos), makeRealm(5, newVtxos));
+        runArkadeRealmMigrations(makeRealm(4, oldVtxos), makeRealm(5, newVtxos));
 
         expect(newVtxos[0]).toMatchObject({
             isSwept: true,
@@ -154,7 +154,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
             { pk: "b:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd", isSwept: false },
         ];
 
-        runArkRealmMigrations(makeRealm(4, oldVtxos), makeRealm(5, newVtxos));
+        runArkadeRealmMigrations(makeRealm(4, oldVtxos), makeRealm(5, newVtxos));
 
         expect(newVtxos[0].isSwept).toBe(false);
         // Already populated by the new code: the lossier projection must not overwrite it.
@@ -166,7 +166,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
             { pk: "a:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
 
-        runArkRealmMigrations(makeRealm(5, [{ pk: "a:0" }]), makeRealm(5, newVtxos));
+        runArkadeRealmMigrations(makeRealm(5, [{ pk: "a:0" }]), makeRealm(5, newVtxos));
 
         expect(newVtxos[0].isSwept).toBeUndefined();
     });
@@ -190,7 +190,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
         const oldTxs = [{ hex: "70736274ff00" }, { hex: "deadbeef" }];
         const newTxs: Record<string, unknown>[] = [{ psbt: undefined }, { psbt: "already-set" }];
 
-        runArkRealmMigrations(
+        runArkadeRealmMigrations(
             makeRealmWithVirtualTxs(["ArkVtxo", "ArkVirtualTx"], {
                 ArkVtxo: [],
                 ArkVirtualTx: oldTxs,
@@ -211,7 +211,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
         const newTxs: Record<string, unknown>[] = [{ psbt: undefined }];
 
         expect(() =>
-            runArkRealmMigrations(
+            runArkadeRealmMigrations(
                 makeRealmWithVirtualTxs(["ArkVtxo"], { ArkVtxo: [] }),
                 makeRealmWithVirtualTxs(["ArkVtxo", "ArkVirtualTx"], {
                     ArkVtxo: [],

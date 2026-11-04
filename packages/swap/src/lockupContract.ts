@@ -6,7 +6,7 @@
 import { registerContractCoverage, type CoverageRegistrationOptions } from "./coverage";
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     VHTLCV2ContractHandler,
     type IContractManager,
     type VHTLC,
@@ -134,7 +134,7 @@ export async function lockupContractParams(
     contracts: LockupContractReader,
     lockupAddress: string,
 ): Promise<Record<string, string>> {
-    const script = hex.encode(ArkAddress.decode(lockupAddress).pkScript);
+    const script = hex.encode(ArkadeAddress.decode(lockupAddress).pkScript);
     const [row] = await contracts.getContracts({ script });
     if (!row) throw new LockupContractMissing(lockupAddress, script);
     return row.params;

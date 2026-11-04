@@ -14,7 +14,7 @@ import { SigHash, OutScript, Address } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 
 import type { Identity } from "../identity";
-import type { ArkProvider } from "../providers/arkade";
+import type { ArkadeProvider } from "../providers/arkade";
 import type { EmulatorProvider, ConnectorTreeNode } from "../providers/emulator";
 import type { Network } from "../networks";
 import type { ExtendedCoin, Recipient } from "../wallet";
@@ -79,7 +79,7 @@ export function createArkadeBatchHandler(
     signedProof: string,
     message: Intent.RegisterMessage,
     session: SignerSession,
-    arkProvider: ArkProvider,
+    arkProvider: ArkadeProvider,
     emulator: EmulatorProvider,
     network: Network,
     /**

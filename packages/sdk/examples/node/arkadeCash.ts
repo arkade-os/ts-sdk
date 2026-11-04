@@ -24,7 +24,7 @@ const {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     Ramps,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     Wallet,
 } = await import("../../src");
@@ -59,7 +59,7 @@ async function waitFor(
 async function createWallet(name: string): Promise<WalletInstance> {
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARKADE_OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(ARKADE_OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),

@@ -2,24 +2,24 @@ import { collectVtxos } from "../src/repositories/walletRepository";
 import { collectContracts } from "../src/repositories/contractRepository";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import { collectIntents } from "../src/repositories/intentRepository";
-import type { ArkIntent, IntentRepository } from "../src/repositories/intentRepository";
+import type { BatchRegistration, IntentRepository } from "../src/repositories/intentRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     Wallet,
     SingleKey,
     OnchainWallet,
-    RestArkProvider,
+    RestArkadeProvider,
     ReadonlyWallet,
     Batch,
     DefaultVtxo,
     DelegateVtxo,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkError,
+    ArkadeError,
     type IndexerProvider,
-    type ArkProvider,
+    type ArkadeProvider,
     type OnchainProvider,
     DelegateProvider,
 } from "../src";
@@ -86,7 +86,7 @@ describe("Wallet", () => {
                     identity: mockIdentity,
                     arkProvider: {
                         getInfo: vi.fn(),
-                    } as Partial<ArkProvider> as ArkProvider,
+                    } as Partial<ArkadeProvider> as ArkadeProvider,
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -105,7 +105,7 @@ describe("Wallet", () => {
 
             const creating = ReadonlyWallet.create({
                 identity: ReadonlySingleKey.fromPublicKey(await mockIdentity.compressedPublicKey()),
-                arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
+                arkProvider: { getInfo } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: {} as IndexerProvider,
                 onchainProvider: {} as OnchainProvider,
                 storage: {
@@ -249,7 +249,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
             });
             await (await wallet.getContractManager()).whenBooted?.();
 
@@ -733,7 +733,7 @@ describe("Wallet", () => {
         it("should return intentFee config as strings", async () => {
             mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
 
-            const provider = new RestArkProvider("http://localhost:7070");
+            const provider = new RestArkadeProvider("http://localhost:7070");
             const info = await provider.getInfo();
             expect(info.fees.intentFee.onchainInput).toBe("200.0");
             expect(info.fees.intentFee.onchainOutput).toBe("1000");
@@ -767,7 +767,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -794,7 +794,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -845,7 +845,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -882,7 +882,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: {
                     getVtxos,
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1132,7 +1132,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: {
                     getVtxos,
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1161,7 +1161,7 @@ describe("Wallet", () => {
             expect(await collectContracts(contractRepository)).toEqual([]);
         });
 
-        const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
+        const storedIntent = (over: Partial<BatchRegistration> = {}): BatchRegistration => ({
             intentTxId: "i1",
             state: "waiting_for_batch",
             createdAt: 1,
@@ -1268,7 +1268,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: {
                     getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-shared"),
@@ -1366,7 +1366,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: {
                     getVtxos,
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1550,7 +1550,7 @@ describe("Wallet", () => {
                                     (network === "bitcoin" ? ARKD_DELAY : MUTINYNET_DELAY),
                             ),
                         ),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: createIndexerProvider(),
                 onchainProvider: createOnchainProvider(),
                 storage: {
@@ -1577,7 +1577,7 @@ describe("Wallet", () => {
                 identity: mockIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkadeInfo("bitcoin", ARKD_DELAY)),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<ArkadeProvider> as ArkadeProvider,
                 indexerProvider: createIndexerProvider(),
                 onchainProvider: createOnchainProvider(),
                 storage: {
@@ -1882,7 +1882,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
         const balance = await readonlyWallet.getBalance();
@@ -1901,7 +1901,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
         // Should not have transaction methods
@@ -1929,7 +1929,7 @@ describe("Wallet.safeRegisterIntent", () => {
 
         const registerIntent = vi
             .fn()
-            .mockRejectedValueOnce(new ArkError(0, "duplicated input", "FailedPrecondition"))
+            .mockRejectedValueOnce(new ArkadeError(0, "duplicated input", "FailedPrecondition"))
             .mockResolvedValueOnce("intent-id-after-retry");
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
@@ -1967,10 +1967,10 @@ describe("Wallet.safeRegisterIntent", () => {
         expect(registerIntent).toHaveBeenCalledTimes(2);
     });
 
-    it("does not attempt delete/retry for unrelated ArkError codes", async () => {
+    it("does not attempt delete/retry for unrelated ArkadeError codes", async () => {
         const registerIntent = vi
             .fn()
-            .mockRejectedValueOnce(new ArkError(3, "some other failure", "InvalidArgument"));
+            .mockRejectedValueOnce(new ArkadeError(3, "some other failure", "InvalidArgument"));
         const deleteIntent = vi.fn();
         const makeDeleteIntentSignature = vi.fn();
 
@@ -2215,7 +2215,7 @@ describe("Wallet._settleImpl", () => {
     it.each([
         {
             label: "stays quiet when the server holds no intent",
-            deleteError: new ArkError(
+            deleteError: new ArkadeError(
                 23,
                 "no matching intents found for intent proof",
                 "INVALID_INTENT_PROOF",
@@ -2243,7 +2243,7 @@ describe("Wallet._settleImpl", () => {
                 registerIntent: vi
                     .fn()
                     .mockRejectedValue(
-                        new ArkError(31, "got 0 min expected 200", "INTENT_INSUFFICIENT_FEE"),
+                        new ArkadeError(31, "got 0 min expected 200", "INTENT_INSUFFICIENT_FEE"),
                     ),
             },
             _addPendingSpends: vi.fn(),
@@ -2438,7 +2438,7 @@ describe("Wallet._settleImpl", () => {
                 recipientAddressContext: () => ({
                     hrp: "tark",
                     signerSet: {
-                        active: hex.encode(ArkAddress.decode(walletAddress).serverPubKey),
+                        active: hex.encode(ArkadeAddress.decode(walletAddress).serverPubKey),
                         deprecated: new Map(),
                     },
                 }),

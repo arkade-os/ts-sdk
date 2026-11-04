@@ -11,7 +11,7 @@ import {
     resolveBatchExpiryPolicy,
     Intent,
     networks,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
     SingleKey,
@@ -75,7 +75,7 @@ const delegateProgram = {
 
 describe("arkade delegate (covenant batch refresh) — intent submission", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const arkProvider = new RestArkadeProvider(ARKADE_OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
@@ -249,7 +249,7 @@ function buildDelegateHandler(opts: {
     session: any;
 }): Batch.Handler {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const arkProvider = new RestArkadeProvider(ARKADE_OPERATOR_URL);
 
     let batchId: string;
     let sweepTapLeaf: Uint8Array;

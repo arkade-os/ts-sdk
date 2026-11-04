@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EsploraProvider, RestArkProvider, RestIndexerProvider } from "../src";
+import { EsploraProvider, RestArkadeProvider, RestIndexerProvider } from "../src";
 import { version as sdkVersion } from "../package.json";
 import { jsonResponse } from "./helpers/response";
 
@@ -42,10 +42,10 @@ describe("non-ark providers omit arkd-only headers (CORS)", () => {
 });
 
 // the operator is the one origin that accepts (and reads) these headers.
-describe("RestArkProvider sends arkd compatibility headers", () => {
+describe("RestArkadeProvider sends arkd compatibility headers", () => {
     it("sends X-SDK-VERSION carrying the package version", async () => {
         const seen = captureHeaders(async () => ({}));
-        await new RestArkProvider("https://ark.test").getInfo().catch(() => undefined);
+        await new RestArkadeProvider("https://ark.test").getInfo().catch(() => undefined);
         expect(seen.length).toBeGreaterThan(0);
         expect(seen[0].get("X-Build-Version")).toBe("0.9.9");
         expect(seen[0].get("X-SDK-VERSION")).toBe(`ts-sdk/${sdkVersion}`);

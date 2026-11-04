@@ -1,6 +1,11 @@
 import { base64, hex } from "@scure/base";
 import { Transaction } from "./transaction";
-import { PrevArkTxField, PrevoutTxField, getArkPsbtFields, setArkPsbtField } from "./unknownFields";
+import {
+    PrevArkadeTxField,
+    PrevoutTxField,
+    getArkadePsbtFields,
+    setArkadePsbtField,
+} from "./unknownFields";
 
 /**
  * Off-chain source of previous transactions: ark, tree and checkpoint txs, as
@@ -37,7 +42,7 @@ export class PrevTxUnavailableError extends Error {
  * Resolve raw wire-format bytes for each txid, batched and de-duplicated.
  *
  * Emulator v0.0.7+ requires the raw tx behind every input of a submitted Arkade transaction
- * or intent proof (`PrevArkTxField`) and of an onchain tx (`PrevoutTxField`).
+ * or intent proof (`PrevArkadeTxField`) and of an onchain tx (`PrevoutTxField`).
  * The value is a serialized `wire.MsgTx`, *not* a PSBT — `Transaction.toBytes()`
  * with the default `(withScriptSig=false, withWitness=false)` is exactly the
  * preimage the emulator hashes to check the tx against the outpoint.
@@ -96,7 +101,7 @@ export async function resolvePrevTxs(
 }
 
 /**
- * Attach `PrevArkTxField` to every input of `tx` that does not already carry
+ * Attach `PrevArkadeTxField` to every input of `tx` that does not already carry
  * one, resolving the bytes for `txids[i]` — the coin input `i` ultimately
  * spends.
  *
@@ -105,7 +110,7 @@ export async function resolvePrevTxs(
  * caller-supplied value (`Utxo.sourceTx`) must win outright. Nothing is fetched
  * when every input is already covered.
  */
-export async function attachPrevArkTxs(
+export async function attachPrevArkadeTxs(
     tx: Transaction,
     txids: string[],
     source: PrevTxSource,
@@ -113,7 +118,7 @@ export async function attachPrevArkTxs(
 ): Promise<void> {
     const pending: number[] = [];
     for (let i = 0; i < tx.inputsLength; i++) {
-        if (getArkPsbtFields(tx, i, PrevArkTxField).length === 0) pending.push(i);
+        if (getArkadePsbtFields(tx, i, PrevArkadeTxField).length === 0) pending.push(i);
     }
     if (pending.length === 0) return;
 
@@ -123,7 +128,7 @@ export async function attachPrevArkTxs(
         onchain,
     );
     for (const i of pending) {
-        setArkPsbtField(tx, i, PrevArkTxField, resolved.get(txidAt(txids, i))!);
+        setArkadePsbtField(tx, i, PrevArkadeTxField, resolved.get(txidAt(txids, i))!);
     }
 }
 
@@ -135,7 +140,7 @@ export async function attachPrevArkTxs(
 export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Promise<void> {
     const pending: { index: number; txid: string }[] = [];
     for (let i = 0; i < tx.inputsLength; i++) {
-        if (getArkPsbtFields(tx, i, PrevoutTxField).length > 0) continue;
+        if (getArkadePsbtFields(tx, i, PrevoutTxField).length > 0) continue;
         const input = tx.getInput(i);
         if (!input?.txid) throw new PrevTxUnavailableError(`input ${i} has no outpoint`);
         pending.push({ index: i, txid: hex.encode(input.txid) });
@@ -152,7 +157,7 @@ export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Pr
         resolved.set(txids[i], result.value);
     }
     for (const { index, txid } of pending) {
-        setArkPsbtField(tx, index, PrevoutTxField, resolved.get(txid)!);
+        setArkadePsbtField(tx, index, PrevoutTxField, resolved.get(txid)!);
     }
 }
 

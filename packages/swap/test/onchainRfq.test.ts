@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkAddress, VHTLCV2ContractHandler } from "@arkade-os/sdk";
+import { ArkadeAddress, VHTLCV2ContractHandler } from "@arkade-os/sdk";
 
 import {
     ARKADE_BTC,
@@ -227,7 +227,7 @@ describe("deriveOnchainSend", () => {
             claimDelay: 4096,
             refundWithoutReceiverDelay,
             emulatorPubkey: key(9),
-            refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
             senderPubkey: SENDER_PUBKEY,
             receiverPkScript: RECEIVER_PK_SCRIPT,
         });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
-import { VirtualCoin, TxType, ArkTransaction } from "../src/wallet";
+import { VirtualCoin, TxType, ArkadeTransaction } from "../src/wallet";
 import { buildTransactionHistory as buildTransactionHistoryImpl } from "../src/utils/transactionHistory";
 import type { GatedContracts } from "../src/contracts/spendability";
 import { gatedContracts, type Contract } from "../src";
@@ -39,7 +39,7 @@ function canonicalizeVtxoForTest(vtxo: LegacyVirtualCoin): VirtualCoin {
 
 function buildTransactionHistory(
     vtxos: LegacyVirtualCoin[],
-    allBoardingTxs: ArkTransaction[],
+    allBoardingTxs: ArkadeTransaction[],
     commitmentsToIgnore: Set<string>,
     resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
     gatedScripts?: GatedContracts,
@@ -247,7 +247,7 @@ describe("buildTransactionHistory", () => {
             const baseDate = new Date("2026-05-28T10:00:00Z");
 
             // 1. Boarding transaction as returned by the improved getBoardingTxs()
-            const boardingTx: ArkTransaction = {
+            const boardingTx: ArkadeTransaction = {
                 key: {
                     boardingTxid: boardingTxid,
                     commitmentTxid: sweepTxid,
@@ -301,7 +301,7 @@ describe("buildTransactionHistory", () => {
             const amount = 84960;
             const baseDate = new Date("2026-05-27T20:00:00Z");
 
-            const boardingTx: ArkTransaction = {
+            const boardingTx: ArkadeTransaction = {
                 key: {
                     boardingTxid,
                     commitmentTxid: "",
@@ -358,7 +358,7 @@ describe("buildTransactionHistory", () => {
             const amount = 84960;
             const baseDate = new Date("2026-05-27T20:00:00Z");
 
-            const boardingTx: ArkTransaction = {
+            const boardingTx: ArkadeTransaction = {
                 key: {
                     boardingTxid,
                     commitmentTxid: sweepTxid,
@@ -410,7 +410,7 @@ describe("buildTransactionHistory", () => {
         it("should only suppress one same-amount batch receive per settled boarding entry", async () => {
             const amount = 84960;
             const baseDate = new Date("2026-05-27T20:00:00Z");
-            const boardingTx: ArkTransaction = {
+            const boardingTx: ArkadeTransaction = {
                 key: {
                     boardingTxid: "boarding-txid",
                     commitmentTxid: "onchain-sweep-txid",
@@ -476,14 +476,14 @@ describe("buildTransactionHistory", () => {
             // getBoardingTxs() now populates reliably.
             const sweepTxid = "58b3d35a7f0fb5f0a67294d28c409a8acaf56fd95b3aedcfbfa74b96e918ff11";
 
-            const boarding1: ArkTransaction = {
+            const boarding1: ArkadeTransaction = {
                 key: { boardingTxid: "1aece24a", commitmentTxid: sweepTxid, arkTxid: "" },
                 amount: 76186,
                 type: TxType.TxReceived,
                 settled: true,
                 createdAt: new Date("2026-02-23T17:06:18Z").getTime(),
             };
-            const boarding2: ArkTransaction = {
+            const boarding2: ArkadeTransaction = {
                 key: { boardingTxid: "a4f9f575", commitmentTxid: sweepTxid, arkTxid: "" },
                 amount: 152346,
                 type: TxType.TxReceived,
@@ -526,7 +526,7 @@ describe("buildTransactionHistory", () => {
             // so the swept VTXO is suppressed and only the boarding deposit shows.
             const sweepTxid = "d5e1c7cf6387ed6725a9a7af3eb9e46f2991275c4685c4701389ce0e8455d7d3";
 
-            const boarding: ArkTransaction = {
+            const boarding: ArkadeTransaction = {
                 key: { boardingTxid: "f53e56e8", commitmentTxid: sweepTxid, arkTxid: "" },
                 amount: 28469,
                 type: TxType.TxReceived,
@@ -1218,11 +1218,12 @@ describe("buildTransactionHistory", () => {
             ...over,
         });
 
-        const sentOf = (txs: ArkTransaction[]) => txs.filter((t) => t.type === TxType.TxSent);
-        const rowsFor = (txs: ArkTransaction[], arkTxid: string) =>
+        const sentOf = (txs: ArkadeTransaction[]) => txs.filter((t) => t.type === TxType.TxSent);
+        const rowsFor = (txs: ArkadeTransaction[], arkTxid: string) =>
             txs.filter((t) => t.key.arkTxid === arkTxid);
-        const sentFor = (txs: ArkTransaction[], arkTxid: string) => sentOf(rowsFor(txs, arkTxid));
-        const receivedFor = (txs: ArkTransaction[], arkTxid: string) =>
+        const sentFor = (txs: ArkadeTransaction[], arkTxid: string) =>
+            sentOf(rowsFor(txs, arkTxid));
+        const receivedFor = (txs: ArkadeTransaction[], arkTxid: string) =>
             rowsFor(txs, arkTxid).filter((t) => t.type === TxType.TxReceived);
 
         describe("BTC give, asset want", () => {
@@ -1621,7 +1622,7 @@ describe("buildTransactionHistory", () => {
                             ..._,
                             createdAt: new Date(_.createdAt),
                         })) as unknown as LegacyVirtualCoin[],
-                        allBoardingTxs as ArkTransaction[],
+                        allBoardingTxs as ArkadeTransaction[],
                         new Set(commitmentsToIgnore),
                         resolveTxCreatedAt,
                     );

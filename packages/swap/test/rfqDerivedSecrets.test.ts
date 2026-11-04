@@ -11,7 +11,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
-    ArkAddress,
+    ArkadeAddress,
     DescriptorIdentity,
     HDDescriptorProvider,
     HDWalletCapable,
@@ -50,7 +50,7 @@ const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 /** What both wallets below answer for the server they are connected to —
  * one object, so the covenant derived in-flow and the one the transport stubs
@@ -120,7 +120,7 @@ const lightningTransport = (profileOverrides: Record<string, unknown> = {}): Rfq
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
         });
         return {
             v: 1,
@@ -169,7 +169,7 @@ const onchainTransport = (seen: { paymentHash?: string; senderPubkey?: string })
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(seen.senderPubkey),
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
         });
         const htlc = onchainHtlcScript(
             {
@@ -221,7 +221,7 @@ describe("requestLightningSend and the corridor spread", () => {
                 emulatorPubkey: EMULATOR_PUBKEY,
                 senderPubkey: hex.decode(profile.client_refund_pubkey as string),
                 receiverPkScript: RECEIVER_PK_SCRIPT,
-                refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+                refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
             });
             return {
                 v: 1,
@@ -391,7 +391,7 @@ describe("requestLightningSend on an HD wallet", () => {
         // script A with address B on a wallet that rotates its receive
         // address. Both come from the single read inside provisionRefundKey.
         const wallet = await hdWallet();
-        const rotated = new ArkAddress(OPERATOR_PUBKEY, key(22), "tark").encode();
+        const rotated = new ArkadeAddress(OPERATOR_PUBKEY, key(22), "tark").encode();
         let addressReads = 0;
         const rotating = {
             ...wallet,
@@ -420,7 +420,7 @@ describe("requestLightningSend on an HD wallet", () => {
         expect(result.refundAddress).toBe(result.secrets.address);
         expect(seen.refundAddress).toBe(REFUND_ADDRESS);
         // What the solver was told and what the covenant binds are one script.
-        expect(hex.encode(ArkAddress.decode(result.refundAddress).pkScript)).toBe(
+        expect(hex.encode(ArkadeAddress.decode(result.refundAddress).pkScript)).toBe(
             hex.encode(result.contractParams.refundPkScript),
         );
     });

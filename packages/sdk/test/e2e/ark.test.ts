@@ -3,16 +3,16 @@ import { expect, describe, it, beforeEach } from "vitest";
 import {
     TxType,
     RestIndexerProvider,
-    ArkNote,
+    ArkadeNote,
     waitForIncomingFunds,
     OnchainWallet,
     Unroll,
     Ramps,
     Coin,
     VirtualCoin,
-    RestArkProvider,
-    ArkError,
-    ArkAddress,
+    RestArkadeProvider,
+    ArkadeError,
+    ArkadeAddress,
     buildOffchainTx,
     CSVMultisigTapscript,
     VtxoScript,
@@ -382,7 +382,7 @@ describe("Common", () => {
                 const arknote = execCommand(`${arkdExec} arkd note --amount ${fundAmount}`);
 
                 const settleTxid = await alice.wallet.settle({
-                    inputs: [ArkNote.fromString(arknote)],
+                    inputs: [ArkadeNote.fromString(arknote)],
                     outputs: [
                         {
                             address: aliceOffchainAddress!,
@@ -969,12 +969,12 @@ describe("Common", () => {
             });
 
             it("should parse ark errors", { timeout: 60000 }, async () => {
-                const provider = new RestArkProvider("http://localhost:7070");
+                const provider = new RestArkadeProvider("http://localhost:7070");
                 try {
                     await provider.submitTx("invalid", ["invalid"]);
                 } catch (error: any) {
                     expect(error).toBeDefined();
-                    expect(error).toBeInstanceOf(ArkError);
+                    expect(error).toBeInstanceOf(ArkadeError);
                     expect(error.message).toContain("INVALID_ARKADE_PSBT (1)");
                     expect(error.code).toBe(1);
                     expect(error.name).toBe("INVALID_ARKADE_PSBT");
@@ -983,7 +983,7 @@ describe("Common", () => {
             });
 
             it("should register and delete intents", { timeout: 60000 }, async () => {
-                const provider = new RestArkProvider("http://localhost:7070");
+                const provider = new RestArkadeProvider("http://localhost:7070");
 
                 // Create fresh wallet instances for this test
                 const alice = await factory();
@@ -1015,7 +1015,7 @@ describe("Common", () => {
                 const onchainOutputsIndexes: number[] = [];
                 const outputs = [
                     {
-                        script: ArkAddress.decode(bobAddress).pkScript,
+                        script: ArkadeAddress.decode(bobAddress).pkScript,
                         amount: BigInt(5000),
                     },
                 ];
@@ -1038,7 +1038,7 @@ describe("Common", () => {
                     await provider.registerIntent(intent);
                 } catch (error: any) {
                     expect(error).toBeDefined();
-                    expect(error).toBeInstanceOf(ArkError);
+                    expect(error).toBeInstanceOf(ArkadeError);
                     expect(error.message).toContain("INTERNAL_ERROR (0)");
                     expect(error.message).toContain("already registered by another intent");
                     expect(error.code).toBe(0);
@@ -1067,7 +1067,7 @@ describe("Common", () => {
                 expect(finalized).toHaveLength(0);
                 expect(pending).toHaveLength(0);
 
-                const arkProvider = new RestArkProvider("http://localhost:7070");
+                const arkProvider = new RestArkadeProvider("http://localhost:7070");
                 const serverInfo = await arkProvider.getInfo();
                 const checkpointTapscript = CSVMultisigTapscript.decode(
                     hex.decode(serverInfo.checkpointTapscript),
@@ -1227,7 +1227,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 1 — No delegate
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1245,7 +1245,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 2 — Add delegate
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1315,7 +1315,7 @@ describe("Delegate Lifecycle", () => {
         // Phase 3 — Remove delegate
         const wallet3 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1396,7 +1396,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1414,7 +1414,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),
@@ -1520,7 +1520,7 @@ describe("Cross-contract spending", () => {
         // Step 1 — No delegate: receive 1000 to default address
         const wallet1 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             settlementConfig: false,
@@ -1532,7 +1532,7 @@ describe("Cross-contract spending", () => {
         // Step 2 — Enable delegate: receive 1000 to delegate address
         const wallet2 = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
             onchainProvider,
             storage: { walletRepository, contractRepository },
             delegateProvider: new RestDelegateProvider("http://localhost:7012"),

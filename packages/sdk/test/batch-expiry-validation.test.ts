@@ -13,7 +13,7 @@ import { createArkadeBatchHandler } from "../src/arkade/batch";
 import { ServerResponseMismatchError } from "../src/providers/errors";
 import { networks } from "../src/networks";
 import type { SignerSession } from "../src/tree/signingSession";
-import type { ArkProvider, BatchStartedEvent } from "../src/providers/arkade";
+import type { ArkadeProvider, BatchStartedEvent } from "../src/providers/arkade";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
 import type { Intent } from "../src/intent";
@@ -139,7 +139,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
             getInfo: vi.fn(async () => ({
                 forfeitPubkey: "02" + "22".repeat(32),
             })),
-        } as unknown as ArkProvider;
+        } as unknown as ArkadeProvider;
     }
 
     function makeSession() {
@@ -150,7 +150,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
     }
 
     function makeHandler(
-        arkProvider: ArkProvider,
+        arkProvider: ArkadeProvider,
         session: SignerSession,
         network = networks.bitcoin,
     ) {

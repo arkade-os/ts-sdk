@@ -6,7 +6,7 @@
  * the live info read produced. Building them directly keeps the parsing matrix
  * about parsing.
  */
-import { ArkAddress, getNetwork, type IWallet, type NetworkName } from "@arkade-os/sdk";
+import { ArkadeAddress, getNetwork, type IWallet, type NetworkName } from "@arkade-os/sdk";
 import type { CorridorBase } from "../../../src/client/corridors/deps";
 import type { SwapOperator } from "../../../src/refund";
 
@@ -22,7 +22,7 @@ const bytes = (hexString: string): Uint8Array =>
 
 /** An Arkade address under `signer`, on `network`'s hrp. */
 export const arkadeAddressFor = (network: NetworkName, signer = OPERATOR_SIGNER): string =>
-    new ArkAddress(bytes(signer), bytes(VTXO_KEY), getNetwork(network).hrp).encode();
+    new ArkadeAddress(bytes(signer), bytes(VTXO_KEY), getNetwork(network).hrp).encode();
 
 export const corridorBaseFor = (
     networkName: NetworkName,

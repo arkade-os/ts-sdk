@@ -51,11 +51,11 @@ The wallet surface matches the browser version. `ExpoWallet.setup()` persists co
 ```ts
 import { ExpoWallet } from "@arkade-os/sdk/wallet/expo";
 import { registerExpoBackgroundTask } from "@arkade-os/sdk/wallet/expo/background";
-import { MnemonicIdentity, EsploraProvider, RestArkProvider } from "@arkade-os/sdk";
+import { MnemonicIdentity, EsploraProvider, RestArkadeProvider } from "@arkade-os/sdk";
 
 const wallet = await ExpoWallet.setup({
     identity: MnemonicIdentity.fromMnemonic("abandon abandon..."),
-    arkProvider: new RestArkProvider(),
+    arkProvider: new RestArkadeProvider(),
     onchainProvider: new EsploraProvider(),
     storage: { walletRepository, contractRepository },
     background: {
@@ -132,7 +132,7 @@ Foreground resume:
 
 The background handler runs in a fresh JS context with no shared memory. `ExpoWallet.setup()` persists a lightweight config blob (`PersistedBackgroundConfig`) containing:
 
-- `arkServerUrl` — to create `ExpoIndexerProvider` / `ExpoArkProvider`
+- `arkServerUrl` — to create `ExpoIndexerProvider` / `ExpoArkadeProvider`
 - `pubkeyHex`, `serverPubKeyHex`, `exitTimelock` — to reconstruct `DefaultVtxo.Script` and `extendVtxo`
 
 This avoids an `arkProvider.getInfo()` network call during the short background window.

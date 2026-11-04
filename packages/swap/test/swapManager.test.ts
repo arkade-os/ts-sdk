@@ -14,13 +14,13 @@ import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-    ArkError,
-    ArkErrorName,
+    ArkadeError,
+    ArkadeErrorName,
     CSVMultisigTapscript,
     ConditionWitness,
     VHTLCV2ContractHandler,
     buildOffchainTx,
-    setArkPsbtField,
+    setArkadePsbtField,
     pageResult,
     type Contract,
     type ContractEvent,
@@ -191,7 +191,7 @@ const spendOfLockup = (
     );
     const checkpoint = checkpoints[0];
     if (over.conditionWitness) {
-        setArkPsbtField(checkpoint, 0, ConditionWitness, over.conditionWitness);
+        setArkadePsbtField(checkpoint, 0, ConditionWitness, over.conditionWitness);
     }
     if (over.finalWitness) checkpoint.updateInput(0, { finalScriptWitness: over.finalWitness });
     return { txid: checkpoint.id, psbt: base64.encode(checkpoint.toPSBT()) };
@@ -2103,7 +2103,11 @@ describe("RfqSwapManager — the lightning-send leg", () => {
         const s = spies({
             refund: async () => {
                 if (attempts++ === 0) {
-                    throw new ArkError(6, "vtxo already spent", ArkErrorName.VTXO_ALREADY_SPENT);
+                    throw new ArkadeError(
+                        6,
+                        "vtxo already spent",
+                        ArkadeErrorName.VTXO_ALREADY_SPENT,
+                    );
                 }
                 return { txid: "ee".repeat(32), amount: 100_000 };
             },
@@ -2764,7 +2768,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         const failures: string[] = [];
         const s = spies({
             claimLockup: async () => {
-                throw new ArkError(6, "vtxo already spent", ArkErrorName.VTXO_ALREADY_SPENT);
+                throw new ArkadeError(6, "vtxo already spent", ArkadeErrorName.VTXO_ALREADY_SPENT);
             },
         });
         const swap = receiveSwap();
@@ -2797,7 +2801,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
                                 "@type": "type.googleapis.com/ark.v1.ErrorDetails",
                                 code: 6,
                                 message: "vtxo already spent",
-                                name: ArkErrorName.VTXO_ALREADY_SPENT,
+                                name: ArkadeErrorName.VTXO_ALREADY_SPENT,
                             },
                         ],
                     }),

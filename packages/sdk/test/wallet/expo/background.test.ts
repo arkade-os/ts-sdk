@@ -43,7 +43,7 @@ vi.mock("../../../src/providers/expoIndexer", () => ({
 }));
 
 vi.mock("../../../src/providers/expoArkade", () => ({
-    ExpoArkProvider: function (this: any, serverUrl: string) {
+    ExpoArkadeProvider: function (this: any, serverUrl: string) {
         expoArkadeProviderCtorMock(serverUrl);
         this.serverUrl = serverUrl;
     },

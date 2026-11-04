@@ -1,7 +1,7 @@
 import { Outpoint } from "../wallet";
 import { collectPages, type PageRequest, type PageResult } from "./page";
 
-export type ArkIntentState =
+export type BatchRegistrationState =
     | "waiting_to_submit"
     | "waiting_for_batch"
     | "batch_in_progress"
@@ -11,7 +11,7 @@ export type ArkIntentState =
 
 /** Every intent state, in lifecycle order. Single source of truth so a new
  *  state is handled by every state-derived helper (terminal/non-terminal). */
-export const ALL_INTENT_STATES: readonly ArkIntentState[] = [
+export const ALL_INTENT_STATES: readonly BatchRegistrationState[] = [
     "waiting_to_submit",
     "waiting_for_batch",
     "batch_in_progress",
@@ -20,17 +20,17 @@ export const ALL_INTENT_STATES: readonly ArkIntentState[] = [
     "cancelled",
 ];
 
-export const INTENT_TERMINAL_STATES: ReadonlySet<ArkIntentState> = new Set([
+export const INTENT_TERMINAL_STATES: ReadonlySet<BatchRegistrationState> = new Set([
     "batch_failed",
     "batch_succeeded",
     "cancelled",
 ]);
 
-export function isTerminalIntentState(s: ArkIntentState): boolean {
+export function isTerminalIntentState(s: BatchRegistrationState): boolean {
     return INTENT_TERMINAL_STATES.has(s);
 }
 
-export interface ArkIntent {
+export interface BatchRegistration {
     /** Intent proof tx id. Primary key. */
     intentTxId: string;
     /**
@@ -39,7 +39,7 @@ export interface ArkIntent {
      * until the intent is registered with arkd.
      */
     intentId?: string;
-    state: ArkIntentState;
+    state: BatchRegistrationState;
     validFrom?: number;
     validUntil?: number;
     createdAt: number;
@@ -65,7 +65,7 @@ export interface IntentFilter {
     intentIds?: string[];
     /** Intents whose `intentVtxos` intersect any of these outpoints. */
     containingInputs?: Outpoint[];
-    states?: ArkIntentState[];
+    states?: BatchRegistrationState[];
     /** Intents valid at this ms-epoch instant (null bounds = open). */
     validAt?: number;
     /** Substring match over intentId, batchId, commitmentTransactionId. */
@@ -78,12 +78,12 @@ export interface IntentRepository extends AsyncDisposable {
     readonly version: 1;
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
-    saveIntent(intent: ArkIntent): Promise<void>;
+    saveIntent(intent: BatchRegistration): Promise<void>;
     /** Bounded intents in `intentTxId` order, not chronological order; `after` is exclusive. */
     getIntentsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>>;
+    ): Promise<PageResult<BatchRegistration>>;
     /**
      * Outpoints held by NON-terminal intents — `waiting_to_submit`,
      * `waiting_for_batch`, and `batch_in_progress` — to exclude from spendable
@@ -111,7 +111,10 @@ export const collectIntents = (
  * intentId already held by a *different* intentTxId. SQLite/IndexedDB enforce
  * the same invariant at the storage layer.
  */
-export function assertIntentIdUnique(intent: ArkIntent, existing: Iterable<ArkIntent>): void {
+export function assertIntentIdUnique(
+    intent: BatchRegistration,
+    existing: Iterable<BatchRegistration>,
+): void {
     if (intent.intentId === undefined) return;
     for (const e of existing) {
         if (e.intentTxId !== intent.intentTxId && e.intentId === intent.intentId) {
@@ -126,7 +129,7 @@ export function assertIntentIdUnique(intent: ArkIntent, existing: Iterable<ArkIn
  * Backend-agnostic {@link IntentFilter} predicate shared by every repository.
  * Lives here so backends depend on this interface module, not on each other.
  */
-export function intentMatchesFilter(i: ArkIntent, f: IntentFilter): boolean {
+export function intentMatchesFilter(i: BatchRegistration, f: IntentFilter): boolean {
     if (f.intentTxIds && !f.intentTxIds.includes(i.intentTxId)) return false;
     if (f.intentIds && (!i.intentId || !f.intentIds.includes(i.intentId))) return false;
     if (f.states && !f.states.includes(i.state)) return false;

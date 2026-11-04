@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -38,7 +38,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     );
     return {
         ...mod,
-        RestArkProvider: class {
+        RestArkadeProvider: class {
             async getInfo() {
                 return {
                     signerPubkey: "02" + server,
@@ -73,12 +73,12 @@ const managed = async (rows: Contract[] = []) => {
         contractRepository: repository,
         walletRepository: new InMemoryWalletRepository(),
     });
-    const { RestArkProvider } = await import("@arkade-os/sdk");
+    const { RestArkadeProvider } = await import("@arkade-os/sdk");
     const wallet = {
         identity: { xOnlyPublicKey: async () => makerKey },
         getAddress: async () => makerAddress,
         getContractManager: async () => manager,
-        getArkadeInfo: async () => new RestArkProvider("http://ark").getInfo(),
+        getArkadeInfo: async () => new RestArkadeProvider("http://ark").getInfo(),
     } as unknown as IWallet;
     return { manager, wallet };
 };
@@ -89,7 +89,7 @@ const makeOffer = (wantAsset: boolean, exitDelay?: RelativeTimelock): Offer => {
         ...(wantAsset
             ? { wantAsset: asset.AssetId.fromString("aa".repeat(32) + "0000") }
             : { offerAsset: asset.AssetId.fromString("bb".repeat(32) + "0000") }),
-        makerPkScript: ArkAddress.decode(makerAddress).pkScript,
+        makerPkScript: ArkadeAddress.decode(makerAddress).pkScript,
         makerPublicKey: makerKey,
         emulatorPubkey: EMULATOR_KEY,
         ...(exitDelay && { exitDelay }),

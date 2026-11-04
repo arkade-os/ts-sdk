@@ -6,13 +6,13 @@ import { hash160 } from "@scure/btc-signer/utils.js";
 import {
     arkade,
     asset,
-    attachPrevArkTxs,
+    attachPrevArkadeTxs,
     attachPrevoutTxs,
     buildOffchainTx,
-    ArkAddress,
+    ArkadeAddress,
     EsploraProvider,
     networks,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     SingleKey,
     Transaction,
@@ -321,7 +321,7 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const arkProvider = new RestArkadeProvider(ARKADE_OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
@@ -344,7 +344,7 @@ describe("arkade", () => {
 
     /** Get witness program (32-byte x-only pubkey) from an ark address */
     function getWitnessProgram(address: string): Uint8Array {
-        return ArkAddress.decode(address).pkScript.subarray(2);
+        return ArkadeAddress.decode(address).pkScript.subarray(2);
     }
 
     /** Wait for a VTXO to appear at the given pkScript */
@@ -385,7 +385,7 @@ describe("arkade", () => {
         // Spend through the high-level builder: Bob (user) signs the Arkade transaction and
         // checkpoint inputs, and the emulator — last non-arkd signer — signs with
         // its tweaked key and finalizes with arkd internally.
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
         const { signedArkTx } = await contract.functions
             .send()
             .to(alicePkScript, BigInt(fundAmount))
@@ -409,7 +409,7 @@ describe("arkade", () => {
         const alice = await createTestArkadeWallet();
         const ark = await connect(createTestIdentity());
         const aliceAddress = await alice.wallet.getAddress();
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
         const contract = ark.contract(pairedProgram, {
             receiver: getWitnessProgram(aliceAddress),
         });
@@ -445,7 +445,7 @@ describe("arkade", () => {
         const alice = await createTestArkadeWallet();
         const ark = await connect(createTestIdentity());
         const aliceAddress = await alice.wallet.getAddress();
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
         const preimage = crypto.getRandomValues(new Uint8Array(32));
         const send = ark.contract(offchainProgram, { receiver: getWitnessProgram(aliceAddress) });
         const claim = ark.contract(hashlockProgram, {
@@ -488,7 +488,7 @@ describe("arkade", () => {
             .cooperative()
             .from(first)
             .from(second, contract.unlock.reveal(preimage))
-            .to(ArkAddress.decode(await alice.wallet.getAddress()).pkScript, 15000n)
+            .to(ArkadeAddress.decode(await alice.wallet.getAddress()).pkScript, 15000n)
             .send();
         expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
         await waitForSpent(contract.pkScript);
@@ -502,7 +502,7 @@ describe("arkade", () => {
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
 
         // Derive the contract (arkade covenant + CSV exit) from the program.
         const contract = ark.contract(settlementProgram, {
@@ -628,7 +628,7 @@ describe("arkade", () => {
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
 
         const arkInfo = await arkProvider.getInfo();
         const boardingExitDelay = Number(arkInfo.boardingExitDelay);
@@ -796,7 +796,7 @@ describe("arkade", () => {
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
 
         const assetAmount = 1000;
 
@@ -849,7 +849,7 @@ describe("arkade", () => {
             ark.checkpoint,
         );
 
-        await attachPrevArkTxs(arkTx, [vtxo.txid], indexerProvider);
+        await attachPrevArkadeTxs(arkTx, [vtxo.txid], indexerProvider);
 
         // Bob signs the arkTx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.
@@ -871,7 +871,7 @@ describe("arkade", () => {
 
         const aliceAddress = await alice.wallet.getAddress();
         const aliceWP = getWitnessProgram(aliceAddress);
-        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const alicePkScript = ArkadeAddress.decode(aliceAddress).pkScript;
 
         const assetAmount = 1000;
         const fundAmount = 10000;
@@ -940,7 +940,7 @@ describe("arkade", () => {
             ark.checkpoint,
         );
 
-        await attachPrevArkTxs(mintTx, [mintVtxo.txid], indexerProvider);
+        await attachPrevArkadeTxs(mintTx, [mintVtxo.txid], indexerProvider);
 
         // Bob signs the mint tx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.

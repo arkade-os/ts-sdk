@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ArkTransaction } from "@arkade-os/sdk";
+import type { ArkadeTransaction } from "@arkade-os/sdk";
 import {
     rfqSwapActivityInputs,
     swapActivityResolver,
@@ -13,14 +13,14 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 
-const tx = (txid: string): ArkTransaction =>
+const tx = (txid: string): ArkadeTransaction =>
     ({
         key: { arkTxid: txid, boardingTxid: "", commitmentTxid: "" },
         type: "SENT",
         amount: 1000,
         settled: true,
         createdAt: 1,
-    }) as unknown as ArkTransaction;
+    }) as unknown as ArkadeTransaction;
 
 /** Builds a resolver and runs prepare() — resolve() only sees data after this. */
 const preparedResolver = async (swaps: SwapActivityInput[]) => {

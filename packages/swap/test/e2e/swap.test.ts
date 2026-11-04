@@ -19,12 +19,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     asset,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     SingleKey,
     type StorageConfig,
@@ -86,7 +86,7 @@ beforeAll(async () => {
 
     await faucet(FAUCET_SATS);
 
-    operatorPubkey = ArkAddress.decode(await wallet.getAddress()).serverPubKey;
+    operatorPubkey = ArkadeAddress.decode(await wallet.getAddress()).serverPubKey;
 }, 120_000);
 
 describe("maker-side swap loop (regtest)", () => {
@@ -879,7 +879,7 @@ const openWallet = (
 ): Promise<Wallet> =>
     Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

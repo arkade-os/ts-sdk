@@ -4,7 +4,7 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ProviderUnavailableError,
-    type ArkProvider,
+    type ArkadeProvider,
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
@@ -76,7 +76,7 @@ const healthyIndexer = () =>
 async function createWallet(
     indexerProvider: IndexerProvider,
     opts?: {
-        getInfo?: ArkProvider["getInfo"];
+        getInfo?: ArkadeProvider["getInfo"];
         storage?: Storage;
         lazyInitialization?: boolean;
         getCoins?: OnchainProvider["getCoins"];
@@ -90,7 +90,7 @@ async function createWallet(
         lazyInitialization: opts?.lazyInitialization,
         arkProvider: {
             getInfo: opts?.getInfo ?? (async () => arkInfo()),
-        } as Partial<ArkProvider> as ArkProvider,
+        } as Partial<ArkadeProvider> as ArkadeProvider,
         indexerProvider,
         onchainProvider: {
             getCoins: opts?.getCoins ?? (async () => []),

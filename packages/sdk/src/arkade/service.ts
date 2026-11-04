@@ -10,7 +10,7 @@ import {
     DEFAULT_ARKADE_SERVER_URL,
     type NetworkName,
 } from "../networks";
-import { type ArkadeInfo, type ArkProvider, RestArkProvider } from "../providers/arkade";
+import { type ArkadeInfo, type ArkadeProvider, RestArkadeProvider } from "../providers/arkade";
 import { type EmulatorProvider, RestEmulatorProvider } from "../providers/emulator";
 import { type IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers/onchain";
@@ -27,7 +27,7 @@ export type ArkadeService = { network: "bitcoin" } | { operatorUrl: string; emul
 
 /** The providers and operator info an {@link ArkadeService} resolves to. */
 export interface ResolvedArkadeService {
-    arkProvider: ArkProvider;
+    arkProvider: ArkadeProvider;
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
     /** The covenant co-signer; absent for an `operatorUrl` service without `emulatorUrl`. */
@@ -49,10 +49,10 @@ export function arkadeServiceUrl(service: ArkadeService): string {
  */
 export async function resolveArkadeService(
     service: ArkadeService,
-    opts: { arkProvider?: ArkProvider; info?: ArkadeInfo } = {},
+    opts: { arkProvider?: ArkadeProvider; info?: ArkadeInfo } = {},
 ): Promise<ResolvedArkadeService> {
     const operatorUrl = arkadeServiceUrl(service);
-    const arkProvider = opts.arkProvider ?? new RestArkProvider(operatorUrl);
+    const arkProvider = opts.arkProvider ?? new RestArkadeProvider(operatorUrl);
     const info = opts.info ?? (await arkProvider.getInfo());
 
     if ("network" in service && service.network !== info.network) {

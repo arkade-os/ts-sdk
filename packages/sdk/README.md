@@ -222,14 +222,14 @@ Identities without `signMultiple` continue to work unchanged — each checkpoint
 
 ### Arkade provider Caching
 
-`RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
-with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
+`RestArkadeProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
+with `CachingArkadeProvider` when you reuse that response for fee, signer, or limit lookups:
 
 ```typescript
-import { CachingArkProvider, RestArkProvider, Wallet } from '@arkade-os/sdk'
+import { CachingArkadeProvider, RestArkadeProvider, Wallet } from '@arkade-os/sdk'
 
-const arkProvider = new CachingArkProvider(
-  new RestArkProvider('https://arkade.computer'),
+const arkProvider = new CachingArkadeProvider(
+  new RestArkadeProvider('https://arkade.computer'),
   60_000, // optional TTL in milliseconds; defaults to 60 seconds
 )
 
@@ -238,7 +238,7 @@ const wallet = await Wallet.create({ identity, arkProvider })
 
 Only `getInfo()` is cached; all other Arkade provider methods pass through. The cache expires
 after the TTL and updates when the inner provider reports server-info changes, including
-signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
+signer rotation. Wrapping `RestArkadeProvider` preserves its `serverUrl`, so `Wallet.create`
 can still derive the default indexer URL. Expired refresh failures propagate;
 wallet boot fallback lives in the persisted ArkInfo snapshot. Call `dispose()` if the
 inner provider outlives the wrapper, to drop its server-info subscription.
@@ -1312,16 +1312,16 @@ For React Native apps using Realm, pass your Realm instance directly:
 import {
   RealmWalletRepository,
   RealmContractRepository,
-  ArkRealmSchemas,
-  ARK_REALM_SCHEMA_VERSION,
-  runArkRealmMigrations,
+  ArkadeRealmSchemas,
+  ARKADE_REALM_SCHEMA_VERSION,
+  runArkadeRealmMigrations,
 } from '@arkade-os/sdk/repositories/realm'
 
 const realm = await Realm.open({
-  schema: [...ArkRealmSchemas, ...yourSchemas],
-  schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+  schema: [...ArkadeRealmSchemas, ...yourSchemas],
+  schemaVersion: Math.max(ARKADE_REALM_SCHEMA_VERSION, yourSchemaVersion),
   onMigration: (oldRealm, newRealm) => {
-    runArkRealmMigrations(oldRealm, newRealm)
+    runArkadeRealmMigrations(oldRealm, newRealm)
     // your own migrations
   },
 })
@@ -1415,13 +1415,13 @@ For React Native and Expo applications where standard EventSource and fetch stre
 
 ```typescript
 import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
-import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
+import { ExpoArkadeProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
 
 const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 const wallet = await Wallet.create({
   identity: identity,
-  arkProvider: new ExpoArkProvider('https://arkade.computer'), // For settlement events and transactions streaming
+  arkProvider: new ExpoArkadeProvider('https://arkade.computer'), // For settlement events and transactions streaming
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and virtual output state updates
 })
 
@@ -1431,9 +1431,9 @@ const balance = await wallet.getBalance()
 const address = await wallet.getAddress()
 ```
 
-Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
+Both ExpoArkadeProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
 
-- **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
+- **ExpoArkadeProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and virtual output state updates using expo/fetch for JSON streaming
 
 For persistence in Expo/React Native, use the SQLite repository with `expo-sqlite`:
@@ -1451,7 +1451,7 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkProvider: new ExpoArkProvider('https://arkade.computer'),
+  arkProvider: new ExpoArkadeProvider('https://arkade.computer'),
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
@@ -1476,7 +1476,7 @@ global.crypto.getRandomValues = Crypto.getRandomValues;
 
 // Now import the SDK
 import { Wallet, MnemonicIdentity } from '@arkade-os/sdk';
-import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
+import { ExpoArkadeProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
 ```
 
 This is required for MuSig2 settlements and cryptographic operations.
@@ -1502,7 +1502,7 @@ The normalized Program remains an SDK representation: compiler `constructorInput
 Before upgrading a wallet with persisted v0 contracts, back up its contract rows and retain a compatible SDK. After the upgrade, `manager.getUnsupportedContracts()` lists the v0 rows the wallet still holds: they stay stored, but their VTXOs are not synced and they cannot be spent or exited. To recover a contract in v1, reconstruct its program with typed declarations while preserving the stored constructor values, signer keys, leaf order and emulator position. Compile with the stored keys and compare the resulting `pkScript` with the original; reconnecting to a server with new keys or defaults can change the address. Only after the scripts match, register the reconstructed contract: over a v0 row with the same script, `register()` (like `manager.createContract`) replaces the row's params in place, then syncs its VTXOs. The row keeps its history, and its label and metadata unless you pass new ones. It leaves any other existing row unchanged. If the scripts differ, continue managing the contract with the compatible SDK. Changing the version number alone is not a migration.
 
 ```typescript
-import { arkade, Arkade, ArkAddress } from '@arkade-os/sdk'
+import { arkade, Arkade, ArkadeAddress } from '@arkade-os/sdk'
 
 const program = arkade.programFromArtifact(artifactJson)
 const client = await Arkade.connect({
@@ -1516,7 +1516,7 @@ await contract.register({ label: 'Hashlock' })
 const funded = await contract.on('vtxo_received', async () => {
   funded.off()
   const { txid } = await contract.functions.claim(preimage)
-    .to(ArkAddress.decode(recipientAddress).pkScript, 10_000n)
+    .to(ArkadeAddress.decode(recipientAddress).pkScript, 10_000n)
     .send()
 })
 await wallet.send({ address: contract.address, amount: 10_000 })

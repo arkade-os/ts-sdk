@@ -16,7 +16,7 @@
  * Nothing here trusts the solver's word: there is no `RfqTransport`.
  */
 import {
-    ArkAddress,
+    ArkadeAddress,
     contractSigner,
     getNetwork,
     identityDescriptor,
@@ -673,7 +673,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
                 receiver: await contractSigner(wallet, secret.signingDescriptor),
                 preimage: await preimageForSwapRecord(wallet, secret),
                 vtxos,
-                destinationPkScript: ArkAddress.decode(payoutAddress).pkScript,
+                destinationPkScript: ArkadeAddress.decode(payoutAddress).pkScript,
                 // Passed through: `pushClaim`'s own value check decides whether `P` is published.
                 expectedAmount: swap.expectedAmount,
                 partiallyClaimed,
@@ -773,7 +773,7 @@ export const createSwapDrive = (config: SwapDriveConfig): SwapDrive => {
         ]);
         const txs = history.map(toRestoreTx);
 
-        const { hrp, serverPubKey: operatorPubkey } = ArkAddress.decode(address);
+        const { hrp, serverPubKey: operatorPubkey } = ArkadeAddress.decode(address);
         // LEGACY(v1): drop `reopened` once the read-through goes.
         const reopened = await legacyOfferDepositsToAdopt(store);
         for (const txid of reopen) reopened.add(txid);

@@ -13,9 +13,9 @@
 import {
     SingleKey,
     VHTLC,
-    setArkPsbtField,
+    setArkadePsbtField,
     ConditionWitness,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     buildOffchainTx,
     networks,
@@ -114,7 +114,7 @@ async function main() {
     await fundAddress(address, fundAmount);
 
     // Get the virtual coins for the VHTLC address
-    const arkProvider = new RestArkProvider("http://localhost:7070");
+    const arkProvider = new RestArkadeProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
         scripts: [hex.encode(vhtlcScript.pkScript)],
@@ -139,7 +139,7 @@ async function main() {
                 sign: async (tx, inputIndexes) => {
                     const cpy = tx.clone();
                     // reveal the secret in the PSBT, thus the server can verify the claim script
-                    setArkPsbtField(cpy, 0, ConditionWitness, [secret]);
+                    setArkadePsbtField(cpy, 0, ConditionWitness, [secret]);
                     return bob.sign(cpy, inputIndexes);
                 },
                 xOnlyPublicKey: bob.xOnlyPublicKey,

@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider, RestArkProvider } from "../src";
+import { RestIndexerProvider, RestArkadeProvider } from "../src";
 import {
     OriginRateGate,
     parseRetryAfterMs,
@@ -291,7 +291,7 @@ describe("shared cooldown across requests (herd regression)", () => {
     it("an indexer 429 also gates an ark-provider read on the same origin", async () => {
         vi.useFakeTimers();
         const indexer = new RestIndexerProvider("http://localhost:7070");
-        const ark = new RestArkProvider("http://localhost:7070");
+        const ark = new RestArkadeProvider("http://localhost:7070");
 
         mockFetch.mockResolvedValueOnce(rateLimited("10"));
         const first = indexer.getVtxos({ scripts: ["a"] }).catch((e) => e);
@@ -313,7 +313,7 @@ describe("shared cooldown across requests (herd regression)", () => {
     it("a settlement POST is sent during a cooldown, and reports its own 429 without retrying", async () => {
         vi.useFakeTimers();
         const indexer = new RestIndexerProvider("http://localhost:7070");
-        const ark = new RestArkProvider("http://localhost:7070");
+        const ark = new RestArkadeProvider("http://localhost:7070");
 
         mockFetch.mockResolvedValueOnce(rateLimited("10"));
         const first = indexer.getVtxos({ scripts: ["a"] }).catch((e) => e);

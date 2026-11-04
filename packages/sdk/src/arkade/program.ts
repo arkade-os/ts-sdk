@@ -33,7 +33,7 @@ import {
     CLTVMultisigTapscript,
     ConditionMultisigTapscript,
     ConditionCSVMultisigTapscript,
-    type ArkTapscript,
+    type ArkadeTapscript,
     type RelativeTimelock,
     type TapscriptType,
 } from "../script/tapscript";
@@ -469,7 +469,7 @@ function encodeTapscriptSegment(
     seg: TapscriptSegment,
     pubkeys: Uint8Array[],
     args: Record<string, ArkadeParamValue>,
-): ArkTapscript<TapscriptType, any> {
+): ArkadeTapscript<TapscriptType, any> {
     if (seg.csv) {
         const timelock = resolveCsvTimelock(seg.csv, args);
         if (seg.asm) {

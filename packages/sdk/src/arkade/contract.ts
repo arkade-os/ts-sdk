@@ -57,7 +57,7 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network, NetworkName } from "../networks";
 import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
-import type { ArkadeInfo, ArkProvider } from "../providers/arkade";
+import type { ArkadeInfo, ArkadeProvider } from "../providers/arkade";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
@@ -72,11 +72,11 @@ import {
     buildOffchainTx,
     submitOffchainTx,
     submitViaEmulator,
-    type ArkTxInput,
+    type ArkadeTxInput,
     type OffchainTxSubmitProvider,
 } from "../utils/arkadeTransaction";
-import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
-import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
+import { ConditionWitness, PrevArkadeTxField, setArkadePsbtField } from "../utils/unknownFields";
+import { attachPrevArkadeTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { ANCHOR_PKSCRIPT } from "../utils/anchor";
 import { Extension } from "../extension";
@@ -254,7 +254,7 @@ export type CallableFunctions = Record<
 // --- Arkade client ---------------------------------------------------------
 
 /** What {@link Arkade} needs from the Arkade server; see {@link ArkadeConnectOptions.arkade}. */
-export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
+export type ArkadeServerProvider = Pick<ArkadeProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
 
 /** Fields shared by both forms of {@link ArkadeConnectOptions}. */
 interface ArkadeConnectCommonOptions {
@@ -320,7 +320,7 @@ export interface ArkadeConnectProviderOptions extends ArkadeConnectCommonOptions
     /**
      * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
      * resolves the previous Arkade transactions a covenant spend must carry (see
-     * {@link attachPrevArkTxs}). Required for covenant spends.
+     * {@link attachPrevArkadeTxs}). Required for covenant spends.
      */
     indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
     service?: never;
@@ -862,7 +862,7 @@ export class ArkadeContract<P extends Program = Program> {
  */
 export class ArkadeTransactionBuilder {
     private readonly outputs: TransactionOutput[] = [];
-    private readonly fundingCoins: ArkTxInput[] = [];
+    private readonly fundingCoins: ArkadeTxInput[] = [];
     private readonly assetSpecs: AssetSpec[] = [];
     private readonly extraPackets: ExtensionPacket[] = [];
     private readonly inputs: ContractInput[] = [];
@@ -920,7 +920,7 @@ export class ArkadeTransactionBuilder {
      * Add extra inputs the caller funds (e.g. a taker's own coins in a swap).
      * These come after the contract coins and are signed with the client identity.
      */
-    fund(coins: ArkTxInput[]): this {
+    fund(coins: ArkadeTxInput[]): this {
         this.fundingCoins.push(...coins);
         return this;
     }
@@ -1033,7 +1033,7 @@ export class ArkadeTransactionBuilder {
         // Set first: the resolver below skips inputs already carrying the field (the emulator
         // refuses an input bearing two).
         inputs.forEach(({ coin }, i) => {
-            if (coin.sourceTx) setArkPsbtField(arkTx, i, PrevArkTxField, coin.sourceTx);
+            if (coin.sourceTx) setArkadePsbtField(arkTx, i, PrevArkadeTxField, coin.sourceTx);
         });
 
         // Emulator v0.0.7+ requires PrevArkTx on every input. Arkade input i spends checkpoint i,
@@ -1046,7 +1046,7 @@ export class ArkadeTransactionBuilder {
                     "covenant spends require an `indexer` on the Arkade client to resolve the previous Arkade transaction of each input",
                 );
             }
-            await attachPrevArkTxs(
+            await attachPrevArkadeTxs(
                 arkTx,
                 [...inputs.map(({ coin }) => coin), ...this.fundingCoins].map((c) => c.txid),
                 indexer,
@@ -1058,8 +1058,8 @@ export class ArkadeTransactionBuilder {
                 witnessBytes(unlocker, w),
             );
             if (condition.length === 0) return;
-            setArkPsbtField(arkTx, i, ConditionWitness, condition);
-            setArkPsbtField(checkpoints[i], 0, ConditionWitness, condition);
+            setArkadePsbtField(arkTx, i, ConditionWitness, condition);
+            setArkadePsbtField(checkpoints[i], 0, ConditionWitness, condition);
         });
 
         // Asset (type 0), emulator (type 1), then caller packets, in one OP_RETURN extension.
@@ -1166,7 +1166,7 @@ export class ArkadeTransactionBuilder {
         );
         return {
             txid: res.arkTxid,
-            // Required by ArkadeBroadcaster; RestArkProvider.submitTx rejects a response without it.
+            // Required by ArkadeBroadcaster; RestArkadeProvider.submitTx rejects a response without it.
             signedArkTx: res.finalArkTx!,
             signedCheckpointTxs: res.signedCheckpointTxs,
         };

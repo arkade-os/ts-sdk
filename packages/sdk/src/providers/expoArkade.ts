@@ -1,6 +1,6 @@
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import {
-    RestArkProvider,
+    RestArkadeProvider,
     SettlementEvent,
     TxNotificationEvent,
     isFetchTimeoutError,
@@ -15,13 +15,13 @@ import { ARKADE_VERSION_HEADERS } from "../utils/fetch";
  *
  * @example
  * ```typescript
- * import { ExpoArkProvider } from '@arkade-os/sdk/providers/expo';
+ * import { ExpoArkadeProvider } from '@arkade-os/sdk/providers/expo';
  *
- * const provider = new ExpoArkProvider('https://arkade.computer');
+ * const provider = new ExpoArkadeProvider('https://arkade.computer');
  * const info = await provider.getInfo();
  * ```
  */
-export class ExpoArkProvider extends RestArkProvider {
+export class ExpoArkadeProvider extends RestArkadeProvider {
     constructor(serverUrl: string = DEFAULT_ARKADE_SERVER_URL) {
         super(serverUrl);
     }

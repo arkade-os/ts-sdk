@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { collectUtxos } from "../../repositories/walletRepository";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/arkade";
+import { ArkadeInfo, ArkadeProvider, SettlementEvent } from "../../providers/arkade";
 import {
     GetVtxosOptions,
     IndexerProvider,
@@ -27,7 +27,7 @@ import {
     ArkadeBroadcaster,
     ArkadeReader,
     GetArkadeInfoOptions,
-    ArkTransaction,
+    ArkadeTransaction,
     AssetDetails,
     BurnParams,
     ExtendedCoin,
@@ -281,7 +281,7 @@ export type RequestGetTransactionHistory = RequestEnvelope & {
 };
 export type ResponseGetTransactionHistory = ResponseEnvelope & {
     type: "TRANSACTION_HISTORY";
-    payload: { transactions: ArkTransaction[] };
+    payload: { transactions: ArkadeTransaction[] };
 };
 
 export type RequestGetStatus = RequestEnvelope & { type: "GET_STATUS" };
@@ -1058,7 +1058,7 @@ export class WalletMessageHandler
     private wallet: Wallet | undefined;
     private readonlyWallet: ReadonlyWallet | undefined;
 
-    private arkProvider: ArkProvider | undefined;
+    private arkProvider: ArkadeProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private walletRepository: WalletRepository | undefined;
 
@@ -2228,7 +2228,7 @@ export class WalletMessageHandler
 
     /** History rows plus the address they are stored under. Does not write. */
     private async loadHistoryCache(): Promise<
-        { address: string; txs: ArkTransaction[] } | undefined
+        { address: string; txs: ArkadeTransaction[] } | undefined
     > {
         const wallet = this.readonlyWallet;
         if (!wallet || !this.walletRepository) return undefined;
@@ -2239,7 +2239,7 @@ export class WalletMessageHandler
     }
 
     private async storeHistoryCache(
-        history: { address: string; txs: ArkTransaction[] } | undefined,
+        history: { address: string; txs: ArkadeTransaction[] } | undefined,
         gen?: Generation,
     ): Promise<void> {
         if (!history || gen?.stale || !this.walletRepository) return;
@@ -2547,7 +2547,7 @@ export class WalletMessageHandler
      * The snapshot and the boarding read are independent, so they run together
      * — the same pairing `handleGetBalance` makes.
      */
-    private async buildTransactionHistoryFromCache(): Promise<ArkTransaction[] | null> {
+    private async buildTransactionHistoryFromCache(): Promise<ArkadeTransaction[] | null> {
         if (!this.readonlyWallet) return null;
 
         const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([

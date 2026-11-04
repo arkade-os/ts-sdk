@@ -14,6 +14,17 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
+- **Exported `Ark` names are renamed to `Arkade` names.** For example, `ArkAddress`
+  is `ArkadeAddress`, `RestArkProvider` is `RestArkadeProvider`, and `ArkError` is
+  `ArkadeError`. `ArkIntent` and `ArkIntentState` are `BatchRegistration` and
+  `BatchRegistrationState`, because they are stored batch registration records, not
+  Arkade Intents.
+
+  Old names stay as `@deprecated` aliases and go away in the release after 0.6.0.
+  Options, fields, stored values and wire values keep their names. One use has no
+  alias: `ArkPsbtFieldKey.Member` no longer works as a type, so use
+  `ArkadePsbtFieldKey.Member` there.
+
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already

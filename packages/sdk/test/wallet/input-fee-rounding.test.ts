@@ -4,7 +4,7 @@ import { DelegateManagerImpl } from "../../src/wallet/delegate";
 import { VtxoManager } from "../../src/wallet/vtxo-manager";
 import { Transaction } from "../../src/utils/transaction";
 import {
-    ArkAddress,
+    ArkadeAddress,
     DefaultVtxo,
     type ArkadeInfo,
     type ContractVtxo,
@@ -89,7 +89,7 @@ function run(offchainInput: string, vtxos: ContractVtxo[]) {
 /** Amount of the output paying `destination` in the registered intent proof. */
 function delegatedAmount(proof: string, destination: string): bigint {
     const tx = Transaction.fromPSBT(base64.decode(proof));
-    const script = hex.encode(ArkAddress.decode(destination).pkScript);
+    const script = hex.encode(ArkadeAddress.decode(destination).pkScript);
     for (let i = 0; i < tx.outputsLength; i++) {
         const out = tx.getOutput(i);
         if (out.script && hex.encode(out.script) === script) return out.amount!;

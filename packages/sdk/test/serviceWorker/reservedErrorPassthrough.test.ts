@@ -24,7 +24,7 @@ describe("ServiceWorkerWallet settle and send errors", () => {
     });
 
     it("still wrap every other error as before", async () => {
-        const wallet = walletWhoseWorkerThrows(fromWorker("ArkError"));
+        const wallet = walletWhoseWorkerThrows(fromWorker("ArkadeError"));
         await expect(wallet.settle({ inputs: [], outputs: [] })).rejects.toThrow(
             /^Settlement failed: /,
         );

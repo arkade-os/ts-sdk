@@ -3,7 +3,7 @@ import {
     IWallet,
     WalletBalance,
     SettleParams,
-    ArkTransaction,
+    ArkadeTransaction,
     ExtendedCoin,
     GetVtxosFilter,
     GetSpendableVtxosFilter,
@@ -1220,7 +1220,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return buildActivities(await this.getTransactionHistory(), this.activity.all());
     }
 
-    async getTransactionHistory(): Promise<ArkTransaction[]> {
+    async getTransactionHistory(): Promise<ArkadeTransaction[]> {
         const message: RequestGetTransactionHistory = {
             id: getRandomId(),
             tag: this.messageTag,

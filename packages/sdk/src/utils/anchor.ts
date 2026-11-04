@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { Network } from "../networks";
-import { Transaction as ArkTransaction } from "./transaction";
+import { Transaction as ArkadeTransaction } from "./transaction";
 import { TxWeightEstimator } from "./txSizeEstimator";
 
 export const ANCHOR_VALUE = 0n;
@@ -68,12 +68,12 @@ export type AnchorChildParams = {
  * Pure construction: no coin selection, no signing, no broadcast.
  */
 export function buildAnchorChild(params: AnchorChildParams): {
-    child: ArkTransaction;
+    child: ArkadeTransaction;
     fee: number;
 } {
     const { parent, feeRate, fundingCoins, changeAddress, tapInternalKey, network } = params;
 
-    const child = new ArkTransaction({ version: 3, allowLegacyWitnessUtxo: true });
+    const child = new ArkadeTransaction({ version: 3, allowLegacyWitnessUtxo: true });
     const anchor = findP2AOutput(parent); // throws if no anchor
     child.addInput(anchor);
 

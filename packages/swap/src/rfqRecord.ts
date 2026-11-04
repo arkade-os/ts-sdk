@@ -12,7 +12,7 @@
  * **No record written here carries a private key.** The descriptor and the per-swap salt P derives
  * from are public; `preimageHex` appears only when the SDK says P cannot be re-derived at all.
  */
-import { ArkAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
+import { ArkadeAddress, VHTLCV2ContractHandler, type VHTLC } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import type {
     LightningReceiveSwap,
@@ -191,7 +191,7 @@ export function assertSameSwap(origin: RfqSwapOrigin, swap: PersistableRfqSwap):
             `rfq swap record is a ${origin.kind} origin paired with a ${swap.kind} swap`,
         );
     }
-    const funded = hex.encode(ArkAddress.decode(origin.lockupAddress).pkScript);
+    const funded = hex.encode(ArkadeAddress.decode(origin.lockupAddress).pkScript);
     const watched = hex.encode(swap.lockupPkScript);
     if (funded !== watched) {
         throw new Error(
@@ -280,7 +280,7 @@ function lockupScript(
     lockupAddress: string,
 ): InstanceType<typeof VHTLC.ScriptV2> {
     const script = VHTLCV2ContractHandler.createScript(params);
-    const funded = ArkAddress.decode(lockupAddress).pkScript;
+    const funded = ArkadeAddress.decode(lockupAddress).pkScript;
     if (hex.encode(funded) !== hex.encode(script.pkScript)) {
         throw new Error(
             `rfq swap covenant params derive ${hex.encode(script.pkScript)}, but the record's ` +

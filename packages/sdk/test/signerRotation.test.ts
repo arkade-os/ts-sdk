@@ -7,7 +7,7 @@ import {
     toXOnlySignerHex,
 } from "../src/wallet/signerRotation";
 import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/arkade";
-import { RestArkProvider } from "../src/providers/arkade";
+import { RestArkadeProvider } from "../src/providers/arkade";
 import { jsonResponse } from "./helpers/response";
 
 const ACTIVE = "aa".repeat(32);
@@ -118,7 +118,7 @@ describe("signerRotation - classification", () => {
     });
 });
 
-describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
+describe("RestArkadeProvider.getInfo - deprecated signer parsing", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
     });
@@ -137,7 +137,7 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
             signerPubkey: ACTIVE,
             deprecatedSigners: [{ pubkey: DEPRECATED_A }],
         });
-        const info = await new RestArkProvider("http://localhost:7070").getInfo();
+        const info = await new RestArkadeProvider("http://localhost:7070").getInfo();
         expect(info.deprecatedSigners).toHaveLength(1);
         expect(info.deprecatedSigners[0].pubkey).toBe(DEPRECATED_A);
         expect(info.deprecatedSigners[0].cutoffDate).toBe(0n);
@@ -148,7 +148,7 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
             signerPubkey: ACTIVE,
             deprecatedSigners: [{ pubkey: DEPRECATED_A, cutoffDate: 1_700_000_000 }],
         });
-        const info = await new RestArkProvider("http://localhost:7070").getInfo();
+        const info = await new RestArkadeProvider("http://localhost:7070").getInfo();
         expect(info.deprecatedSigners[0].cutoffDate).toBe(1_700_000_000n);
     });
 
@@ -161,7 +161,7 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
             signerPubkey: ACTIVE,
             deprecatedSigners: [{ pubkey: DEPRECATED_A, cutoffDate: "0" }],
         });
-        const info = await new RestArkProvider("http://localhost:7070").getInfo();
+        const info = await new RestArkadeProvider("http://localhost:7070").getInfo();
         expect(info.deprecatedSigners[0].cutoffDate).toBe(0n);
 
         const cls = classifyContractSigner(DEPRECATED_A, info, NOW);
@@ -171,7 +171,7 @@ describe("RestArkProvider.getInfo - deprecated signer parsing", () => {
 
     it("defaults deprecatedSigners to an empty array when absent", async () => {
         stubInfo({ signerPubkey: ACTIVE });
-        const info = await new RestArkProvider("http://localhost:7070").getInfo();
+        const info = await new RestArkadeProvider("http://localhost:7070").getInfo();
         expect(info.deprecatedSigners).toEqual([]);
     });
 });

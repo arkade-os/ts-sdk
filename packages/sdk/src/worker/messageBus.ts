@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
-import { ArkProvider, RestArkProvider } from "../providers/arkade";
+import { ArkadeProvider, RestArkadeProvider } from "../providers/arkade";
 import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
@@ -50,7 +50,7 @@ export type ResponseEnvelope = {
     broadcast?: boolean;
 };
 type MessageBusServices = {
-    arkProvider: ArkProvider;
+    arkProvider: ArkadeProvider;
     wallet?: Wallet;
     readonlyWallet: ReadonlyWallet;
 };
@@ -533,7 +533,7 @@ export class MessageBus {
     }
 
     private async buildServices(config: Initialize["config"]): Promise<MessageBusServices> {
-        const arkProvider = new RestArkProvider(config.arkServer.url);
+        const arkProvider = new RestArkadeProvider(config.arkServer.url);
         const storage = {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,

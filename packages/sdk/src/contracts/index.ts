@@ -28,13 +28,13 @@ export type { ExcludableVtxo, VtxoExclusion } from "./spendability";
 
 // arkcontract string codec
 export {
-    encodeArkContract,
-    decodeArkContract,
-    contractFromArkContract,
-    contractFromArkContractWithAddress,
-    isArkContract,
+    encodeArkadeContract,
+    decodeArkadeContract,
+    contractFromArkadeContract,
+    contractFromArkadeContractWithAddress,
+    isArkadeContract,
 } from "./arkadeContract";
-export type { ParsedArkContract } from "./arkadeContract";
+export type { ParsedArkadeContract } from "./arkadeContract";
 
 // Contract watcher
 export { ContractWatcher } from "./contractWatcher";

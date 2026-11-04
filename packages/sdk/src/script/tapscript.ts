@@ -28,10 +28,10 @@ export enum TapscriptType {
 }
 
 /**
- * ArkTapscript is the base element of vtxo scripts.
+ * ArkadeTapscript is the base element of vtxo scripts.
  * It is used to encode and decode the different types of vtxo scripts.
  */
-export interface ArkTapscript<T extends TapscriptType, Params> {
+export interface ArkadeTapscript<T extends TapscriptType, Params> {
     type: T;
     params: Params;
     script: Uint8Array;
@@ -47,7 +47,7 @@ export interface ArkTapscript<T extends TapscriptType, Params> {
  * console.log("type:", arkTapscript.type);
  * ```
  */
-export function decodeTapscript(script: Uint8Array): ArkTapscript<TapscriptType, any> {
+export function decodeTapscript(script: Uint8Array): ArkadeTapscript<TapscriptType, any> {
     const types = [
         MultisigTapscript,
         CSVMultisigTapscript,
@@ -78,7 +78,7 @@ export function decodeTapscript(script: Uint8Array): ArkTapscript<TapscriptType,
  * ```
  */
 export namespace MultisigTapscript {
-    export type Type = ArkTapscript<TapscriptType.Multisig, Params>;
+    export type Type = ArkadeTapscript<TapscriptType.Multisig, Params>;
 
     export enum MultisigType {
         CHECKSIG,
@@ -269,7 +269,7 @@ export namespace MultisigTapscript {
     }
 
     /** Return true when the tapscript is a plain multisig tapscript. */
-    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+    export function is(tapscript: ArkadeTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.Multisig;
     }
 }
@@ -288,7 +288,7 @@ export namespace MultisigTapscript {
  * ```
  */
 export namespace CSVMultisigTapscript {
-    export type Type = ArkTapscript<TapscriptType.CSVMultisig, Params>;
+    export type Type = ArkadeTapscript<TapscriptType.CSVMultisig, Params>;
 
     export type Params = {
         timelock: RelativeTimelock;
@@ -372,7 +372,7 @@ export namespace CSVMultisigTapscript {
     }
 
     /** Return true when the tapscript is a CSV multisig tapscript. */
-    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+    export function is(tapscript: ArkadeTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.CSVMultisig;
     }
 
@@ -423,7 +423,7 @@ function isConditionScriptValid(script: Uint8Array): true | Error {
  * ```
  */
 export namespace ConditionCSVMultisigTapscript {
-    export type Type = ArkTapscript<TapscriptType.ConditionCSVMultisig, Params>;
+    export type Type = ArkadeTapscript<TapscriptType.ConditionCSVMultisig, Params>;
 
     export type Params = {
         conditionScript: Bytes;
@@ -495,7 +495,7 @@ export namespace ConditionCSVMultisigTapscript {
     }
 
     /** Return true when the tapscript is a condition + CSV multisig tapscript. */
-    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+    export function is(tapscript: ArkadeTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.ConditionCSVMultisig;
     }
 
@@ -517,7 +517,7 @@ export namespace ConditionCSVMultisigTapscript {
  * ```
  */
 export namespace ConditionMultisigTapscript {
-    export type Type = ArkTapscript<TapscriptType.ConditionMultisig, Params>;
+    export type Type = ArkadeTapscript<TapscriptType.ConditionMultisig, Params>;
 
     export type Params = {
         conditionScript: Bytes;
@@ -589,7 +589,7 @@ export namespace ConditionMultisigTapscript {
     }
 
     /** Return true when the tapscript is a condition + multisig tapscript. */
-    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+    export function is(tapscript: ArkadeTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.ConditionMultisig;
     }
 
@@ -611,7 +611,7 @@ export namespace ConditionMultisigTapscript {
  * ```
  */
 export namespace CLTVMultisigTapscript {
-    export type Type = ArkTapscript<TapscriptType.CLTVMultisig, Params>;
+    export type Type = ArkadeTapscript<TapscriptType.CLTVMultisig, Params>;
 
     export type Params = {
         absoluteTimelock: bigint;
@@ -699,7 +699,7 @@ export namespace CLTVMultisigTapscript {
     }
 
     /** Return true when the tapscript is a CLTV multisig tapscript. */
-    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+    export function is(tapscript: ArkadeTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.CLTVMultisig;
     }
 

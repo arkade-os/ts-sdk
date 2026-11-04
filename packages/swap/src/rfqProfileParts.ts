@@ -78,7 +78,7 @@ const parseSigner = (value: unknown): RfqSignerProjection => {
 };
 
 /** Validate a stored claim destination. THROWS on a present-but-unusable value, so a row carrying a
- * non-string never reaches `ArkAddress.decode` and fails naming neither record nor field. */
+ * non-string never reaches `ArkadeAddress.decode` and fails naming neither record nor field. */
 const parsePayoutAddress = (value: unknown, kind: string): string => {
     if (typeof value !== "string" || value.length === 0) {
         throw new Error(

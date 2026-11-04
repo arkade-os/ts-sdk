@@ -13,7 +13,7 @@
  */
 import { base64, hex } from "@scure/base";
 import {
-    ArkAddress,
+    ArkadeAddress,
     isContractVtxoEvent,
     Transaction,
     type ContractVtxo,
@@ -155,7 +155,7 @@ export async function watchOfferSwaps<S extends OfferSwapFacts>({
     // Current server key at watcher start. TODO: persist the funding-time key
     // with swap records; a signer rotation during a long session makes leaf
     // classification return indeterminate rather than guessing.
-    const operatorPubkey = ArkAddress.decode(address).serverPubKey;
+    const operatorPubkey = ArkadeAddress.decode(address).serverPubKey;
 
     // Serialized: the update is read-modify-write over the whole list, so concurrent
     // handlers would lose a write.

@@ -2,7 +2,7 @@ import { bech32m } from "@scure/base";
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { SingleKey } from "../identity/singleKey";
 import { DefaultVtxo } from "../script/default";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import { RelativeTimelock } from "../script/tapscript";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 
@@ -126,7 +126,7 @@ export class ArkadeCash {
         });
     }
 
-    address(addressHrp: string): ArkAddress {
+    address(addressHrp: string): ArkadeAddress {
         return this.vtxoScript.address(addressHrp, this._serverPubKey);
     }
 }

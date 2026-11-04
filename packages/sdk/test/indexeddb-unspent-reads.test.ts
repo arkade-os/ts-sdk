@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress } from "../src";
+import { ArkadeAddress } from "../src";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
 import { openDatabase, closeDatabase } from "../src/repositories/indexedDB/manager";
 import {
@@ -23,7 +23,7 @@ import type { ExtendedVirtualCoin, VirtualCoin } from "../src/wallet";
 // predicate — if skipping a row ever changes the answer, these fail.
 
 const arkAddress = (fill: number) =>
-    new ArkAddress(new Uint8Array(32).fill(7), new Uint8Array(32).fill(fill), "ark");
+    new ArkadeAddress(new Uint8Array(32).fill(7), new Uint8Array(32).fill(fill), "ark");
 const ADDR_A = arkAddress(9);
 const ADDR_B = arkAddress(11);
 const A = ADDR_A.encode();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
-import { ArkAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
+import { ArkadeAddress, arkade, asset, type RelativeTimelock } from "@arkade-os/sdk";
 import {
     decodeOffer,
     encodeOffer,
@@ -105,7 +105,7 @@ describe("swap offer", () => {
     it("derives the golden swap addresses for both directions", () => {
         for (const [offer, golden] of goldens) {
             const contract = offerContract(offer, operatorPubkey);
-            const address = new ArkAddress(
+            const address = new ArkadeAddress(
                 operatorPubkey,
                 contract.tweakedPublicKey,
                 "tark",
@@ -188,7 +188,11 @@ describe("swap offer", () => {
             { wantAmount: BigInt(50_000), wantAsset: indexed, ...keys },
             operatorPubkey,
         );
-        const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
+        const address = new ArkadeAddress(
+            operatorPubkey,
+            contract.tweakedPublicKey,
+            "tark",
+        ).encode();
         expect(address).not.toBe(goldens[0][1]);
     });
 
@@ -349,7 +353,7 @@ describe("swap offer", () => {
                 const script = offerContract(offer, operatorPubkey);
                 expect(hex.encode(script.pkScript)).toBe(hex.encode(offer.swapPkScript));
                 expect(
-                    new ArkAddress(operatorPubkey, script.tweakedPublicKey, "tark").encode(),
+                    new ArkadeAddress(operatorPubkey, script.tweakedPublicKey, "tark").encode(),
                 ).toBe(v.address);
                 expect(script.scripts).toHaveLength(v.exit ? 3 : 2);
 

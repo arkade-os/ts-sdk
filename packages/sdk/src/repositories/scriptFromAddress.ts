@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { ArkAddress } from "../index";
+import { ArkadeAddress } from "../index";
 
 /**
  * Compute the hex-encoded `scriptPubKey` locking a VTXO from its owning Ark
@@ -10,5 +10,5 @@ import { ArkAddress } from "../index";
  * have returned — which is the hex of the address's `pkScript`.
  */
 export function scriptFromArkadeAddress(address: string): string {
-    return hex.encode(ArkAddress.decode(address).pkScript);
+    return hex.encode(ArkadeAddress.decode(address).pkScript);
 }

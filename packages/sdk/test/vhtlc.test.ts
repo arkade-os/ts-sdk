@@ -317,7 +317,7 @@ describe("VHTLC address", () => {
         it("rejects a non-P2TR receiverPkScript or senderPkScript — right length, wrong witness version", () => {
             // Same length as a real P2TR script (34 bytes) but a different
             // witness-version prefix — e.g. OP_RETURN <32 bytes>, exactly what
-            // ArkAddress.subdustPkScript produces. Length alone can't catch
+            // ArkadeAddress.subdustPkScript produces. Length alone can't catch
             // this; enforcePayTo blindly trusts bytes[2:34] as the taproot
             // program regardless of what the prefix actually says.
             const opReturnShaped = Uint8Array.from([0x6a, 0x20, ...key(4)]);

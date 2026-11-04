@@ -18,7 +18,7 @@ import { hash160 } from "@scure/btc-signer/utils.js";
 import { EventSource } from "eventsource";
 import {
     Arkade,
-    ArkAddress,
+    ArkadeAddress,
     configureEventSource,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -84,7 +84,7 @@ async function main() {
             contractRepository: new InMemoryContractRepository(),
         },
     });
-    const bobPkScript = ArkAddress.decode(await bob.getAddress()).pkScript;
+    const bobPkScript = ArkadeAddress.decode(await bob.getAddress()).pkScript;
 
     const preimage = randomBytes(32);
 

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
     ContractManager,
-    encodeArkContract,
-    decodeArkContract,
-    contractFromArkContract,
-    contractFromArkContractWithAddress,
-    isArkContract,
+    encodeArkadeContract,
+    decodeArkadeContract,
+    contractFromArkadeContract,
+    contractFromArkadeContractWithAddress,
+    isArkadeContract,
 } from "../src/contracts";
 import type { Contract } from "../src/contracts";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
@@ -34,7 +34,7 @@ describe("Contracts", () => {
                 createdAt: Date.now(),
             };
 
-            const encoded = encodeArkContract(contract);
+            const encoded = encodeArkadeContract(contract);
             expect(encoded).toContain("arkcontract=default");
             expect(encoded).toContain("pubKey=abc123");
             expect(encoded).toContain("serverPubKey=def456");
@@ -42,7 +42,7 @@ describe("Contracts", () => {
 
         it("should decode an arkcontract string", () => {
             const encoded = "arkcontract=default&pubKey=abc123&serverPubKey=def456";
-            const parsed = decodeArkContract(encoded);
+            const parsed = decodeArkadeContract(encoded);
 
             expect(parsed.type).toBe("default");
             expect(parsed.data.pubKey).toBe("abc123");
@@ -50,18 +50,20 @@ describe("Contracts", () => {
         });
 
         it("should throw for invalid arkcontract string", () => {
-            expect(() => decodeArkContract("invalid=string")).toThrow("Invalid arkcontract string");
+            expect(() => decodeArkadeContract("invalid=string")).toThrow(
+                "Invalid arkcontract string",
+            );
         });
 
         it("should check if string is arkcontract", () => {
-            expect(isArkContract("arkcontract=default&foo=bar")).toBe(true);
-            expect(isArkContract("not-arkcontract")).toBe(false);
-            expect(isArkContract("arkcontractwrong=test")).toBe(false);
+            expect(isArkadeContract("arkcontract=default&foo=bar")).toBe(true);
+            expect(isArkadeContract("not-arkcontract")).toBe(false);
+            expect(isArkadeContract("arkcontractwrong=test")).toBe(false);
         });
 
         it("should create contract from arkcontract string", () => {
             const encoded = "arkcontract=default&pubKey=abc&serverPubKey=def";
-            const contract = contractFromArkContract(encoded, {
+            const contract = contractFromArkadeContract(encoded, {
                 label: "Test Contract",
             });
 
@@ -72,7 +74,7 @@ describe("Contracts", () => {
         });
 
         it("should default derived contract addresses to the mainnet Arkade HRP", () => {
-            const encoded = encodeArkContract({
+            const encoded = encodeArkadeContract({
                 type: "default",
                 params: createDefaultContractParams(),
                 script: "",
@@ -81,14 +83,14 @@ describe("Contracts", () => {
                 createdAt: 0,
             });
 
-            const contract = contractFromArkContractWithAddress(encoded, TEST_SERVER_PUB_KEY);
+            const contract = contractFromArkadeContractWithAddress(encoded, TEST_SERVER_PUB_KEY);
 
             expect(contract.address.startsWith(`${DEFAULT_NETWORK.hrp}1`)).toBe(true);
         });
 
         it("should throw for unknown contract type", () => {
             const encoded = "arkcontract=unknown-type&foo=bar";
-            expect(() => contractFromArkContract(encoded)).toThrow(
+            expect(() => contractFromArkadeContract(encoded)).toThrow(
                 "No handler registered for contract type",
             );
         });

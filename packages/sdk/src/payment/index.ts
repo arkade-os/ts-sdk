@@ -4,13 +4,13 @@ export * from "./targets";
 export * from "./amount";
 export * from "./handle";
 export { PaymentRouter, AmbiguousRouteError } from "./router";
-export { arkRail } from "./rails/arkade";
-export { arkAssetRail, ASSET_CARRIER_SATS } from "./rails/arkadeAsset";
+export { arkadeRail } from "./rails/arkade";
+export { arkadeAssetRail, ASSET_CARRIER_SATS } from "./rails/arkadeAsset";
 export { onchainRail, walletFeeSource } from "./rails/onchain";
 
 import { PaymentRouter } from "./router";
-import { arkRail } from "./rails/arkade";
-import { arkAssetRail } from "./rails/arkadeAsset";
+import { arkadeRail } from "./rails/arkade";
+import { arkadeAssetRail } from "./rails/arkadeAsset";
 import { onchainRail, walletFeeSource } from "./rails/onchain";
 import type { Wallet } from "../index";
 
@@ -28,7 +28,16 @@ export function createDefaultPaymentRouter(wallet: Wallet): PaymentRouter {
         wallet,
         prefs: { priority: ["ark", "ark-asset", "onchain"] },
     })
-        .use(arkRail())
-        .use(arkAssetRail())
+        .use(arkadeRail())
+        .use(arkadeAssetRail())
         .use(onchainRail({ feeInfo: walletFeeSource(wallet) }));
 }
+
+import { arkadeTarget } from "./targets";
+
+/** @deprecated Use {@link arkadeTarget}. */
+export const arkTarget = arkadeTarget;
+/** @deprecated Use {@link arkadeRail}. */
+export const arkRail = arkadeRail;
+/** @deprecated Use {@link arkadeAssetRail}. */
+export const arkAssetRail = arkadeAssetRail;

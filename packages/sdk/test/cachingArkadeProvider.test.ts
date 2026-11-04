@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { CachingArkProvider } from "../src/providers/cachingArkade";
-import { ArkadeInfo, ArkProvider, RestArkProvider } from "../src/providers/arkade";
+import { CachingArkadeProvider } from "../src/providers/cachingArkade";
+import { ArkadeInfo, ArkadeProvider, RestArkadeProvider } from "../src/providers/arkade";
 import { extractArkadeProviderUrl } from "../src/wallet/wallet";
 import { jsonResponse } from "./helpers/response";
 
@@ -47,13 +47,13 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe("CachingArkProvider", () => {
+describe("CachingArkadeProvider", () => {
     it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
         "rejects invalid TTL %s before subscribing",
         (ttl) => {
-            const inner = new RestArkProvider("https://example.com");
+            const inner = new RestArkadeProvider("https://example.com");
             const subscribe = vi.spyOn(inner, "onServerInfoChanged");
-            expect(() => new CachingArkProvider(inner, ttl)).toThrow(
+            expect(() => new CachingArkadeProvider(inner, ttl)).toThrow(
                 "ttlMs must be a non-negative safe integer",
             );
             expect(subscribe).not.toHaveBeenCalled();
@@ -62,7 +62,10 @@ describe("CachingArkProvider", () => {
 
     it("does not reuse cached responses with a zero TTL", async () => {
         const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
-        const provider = new CachingArkProvider(fakeInner(getInfo) as unknown as ArkProvider, 0);
+        const provider = new CachingArkadeProvider(
+            fakeInner(getInfo) as unknown as ArkadeProvider,
+            0,
+        );
         await provider.getInfo();
         await provider.getInfo();
         expect(getInfo).toHaveBeenCalledTimes(2);
@@ -71,8 +74,8 @@ describe("CachingArkProvider", () => {
 
     it("serves getInfo from cache within the TTL", async () => {
         const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
-        const provider = new CachingArkProvider(
-            fakeInner(getInfo) as unknown as ArkProvider,
+        const provider = new CachingArkadeProvider(
+            fakeInner(getInfo) as unknown as ArkadeProvider,
             60_000,
         );
 
@@ -85,8 +88,8 @@ describe("CachingArkProvider", () => {
     it("refetches once the TTL expires", async () => {
         vi.useFakeTimers();
         const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
-        const provider = new CachingArkProvider(
-            fakeInner(getInfo) as unknown as ArkProvider,
+        const provider = new CachingArkadeProvider(
+            fakeInner(getInfo) as unknown as ArkadeProvider,
             60_000,
         );
 
@@ -104,8 +107,8 @@ describe("CachingArkProvider", () => {
                 resolveInner = resolve;
             }),
         );
-        const provider = new CachingArkProvider(
-            fakeInner(getInfo) as unknown as ArkProvider,
+        const provider = new CachingArkadeProvider(
+            fakeInner(getInfo) as unknown as ArkadeProvider,
             60_000,
         );
 
@@ -120,7 +123,7 @@ describe("CachingArkProvider", () => {
     it("refreshes the cache instantly when the inner provider reports a signer rotation", async () => {
         const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
         const inner = fakeInner(getInfo);
-        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+        const provider = new CachingArkadeProvider(inner as unknown as ArkadeProvider, 60_000);
 
         await provider.getInfo();
         inner.emit(fakeInfo("d2"));
@@ -138,7 +141,7 @@ describe("CachingArkProvider", () => {
             }),
         );
         const inner = fakeInner(getInfo);
-        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+        const provider = new CachingArkadeProvider(inner as unknown as ArkadeProvider, 60_000);
 
         const pending = provider.getInfo();
         inner.emit(fakeInfo("d2"));
@@ -158,7 +161,7 @@ describe("CachingArkProvider", () => {
             }),
         );
         const inner = fakeInner(getInfo);
-        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+        const provider = new CachingArkadeProvider(inner as unknown as ArkadeProvider, 60_000);
 
         const pending = provider.getInfo();
         inner.emit(fakeInfo("d2"));
@@ -175,7 +178,7 @@ describe("CachingArkProvider", () => {
     it("stops caching rotation events once disposed", async () => {
         const getInfo = vi.fn().mockResolvedValue(fakeInfo("d1"));
         const inner = fakeInner(getInfo);
-        const provider = new CachingArkProvider(inner as unknown as ArkProvider, 60_000);
+        const provider = new CachingArkadeProvider(inner as unknown as ArkadeProvider, 60_000);
 
         await provider.getInfo();
         provider.dispose();
@@ -185,9 +188,9 @@ describe("CachingArkProvider", () => {
     });
 
     it("disposes cleanly when the inner provider emits no server-info events", () => {
-        const provider = new CachingArkProvider({
+        const provider = new CachingArkadeProvider({
             getInfo: async () => fakeInfo("d1"),
-        } as unknown as ArkProvider);
+        } as unknown as ArkadeProvider);
 
         expect(() => provider.dispose()).not.toThrow();
     });
@@ -200,7 +203,10 @@ describe("CachingArkProvider", () => {
             "fetch",
             vi.fn(async () => jsonResponse({ signerPubkey, digest })),
         );
-        const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"), 60_000);
+        const provider = new CachingArkadeProvider(
+            new RestArkadeProvider("http://ark.test"),
+            60_000,
+        );
         await provider.getInfo();
 
         const seen: ArkadeInfo[] = [];
@@ -218,15 +224,15 @@ describe("CachingArkProvider", () => {
     });
 
     it("forwards the inner provider's serverUrl to wallet setup's structural read", () => {
-        const provider = new CachingArkProvider(new RestArkProvider("http://ark.test"));
+        const provider = new CachingArkadeProvider(new RestArkadeProvider("http://ark.test"));
 
         expect(provider.serverUrl).toBe("http://ark.test");
         expect(extractArkadeProviderUrl(provider)).toBe("http://ark.test");
     });
 
     it("reports no serverUrl when the inner provider has none", () => {
-        const provider = new CachingArkProvider(
-            fakeInner(async () => fakeInfo("d1")) as unknown as ArkProvider,
+        const provider = new CachingArkadeProvider(
+            fakeInner(async () => fakeInfo("d1")) as unknown as ArkadeProvider,
         );
 
         expect(provider.serverUrl).toBeUndefined();

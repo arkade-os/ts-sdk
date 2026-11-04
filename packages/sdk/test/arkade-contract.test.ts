@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
-import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { ConditionWitness, getArkadePsbtFields } from "../src/utils/unknownFields";
 import {
     arkade,
     ConditionMultisigTapscript,
@@ -519,7 +519,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
             .build();
         for (const tx of [arkTx, checkpoints[0]]) {
-            expect(getArkPsbtFields(tx, 0, ConditionWitness)[0]).toEqual([condition]);
+            expect(getArkadePsbtFields(tx, 0, ConditionWitness)[0]).toEqual([condition]);
         }
         const packet = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
             .filter((out) => out.script && Extension.isExtension(out.script))

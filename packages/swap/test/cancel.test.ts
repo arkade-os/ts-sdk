@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, asset, type IWallet } from "@arkade-os/sdk";
 import {
     cancelOffer,
     prepareOfferCancel,
@@ -80,7 +80,11 @@ const binding: Omit<Offer, "swapPkScript"> = {
 };
 const contract = offerContract(binding, fundedOperatorKey);
 const offerHex = hex.encode(encodeOffer({ ...binding, swapPkScript: contract.pkScript }));
-const fundedAddress = new ArkAddress(fundedOperatorKey, contract.tweakedPublicKey, "tark").encode();
+const fundedAddress = new ArkadeAddress(
+    fundedOperatorKey,
+    contract.tweakedPublicKey,
+    "tark",
+).encode();
 
 const setContractWatchState = vi.fn(async (_script: string, _watch: string) => {});
 const contractManager = { marker: "the wallet's manager", setContractWatchState };

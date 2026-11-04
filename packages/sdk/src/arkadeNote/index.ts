@@ -14,21 +14,21 @@ import { ExtendedCoin, Status } from "../wallet";
  *
  * @example
  * ```typescript
- * // Create an ArkNote
- * const note = new ArkNote(preimage, 50000);
+ * // Create an ArkadeNote
+ * const note = new ArkadeNote(preimage, 50000);
  *
  * // Encode to string
  * const noteString = note.toString();
  *
  * // Decode from string
- * const decodedNote = ArkNote.fromString(noteString);
+ * const decodedNote = ArkadeNote.fromString(noteString);
  * ```
  */
-export class ArkNote implements ExtendedCoin {
+export class ArkadeNote implements ExtendedCoin {
     static readonly DefaultHRP = "arknote";
     static readonly PreimageLength = 32; // 32 bytes for the preimage
     static readonly ValueLength = 4; // 4 bytes for the value
-    static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
+    static readonly Length = ArkadeNote.PreimageLength + ArkadeNote.ValueLength;
     static readonly FakeOutpointIndex = 0;
 
     readonly vtxoScript: VtxoScript;
@@ -43,7 +43,7 @@ export class ArkNote implements ExtendedCoin {
     readonly extraWitness?: Bytes[] | undefined;
 
     /**
-     * Create an ArkNote from a preimage and value.
+     * Create an ArkadeNote from a preimage and value.
      *
      * @param preimage - 32-byte preimage revealed to spend the note
      * @param value - Note value in satoshis
@@ -52,7 +52,7 @@ export class ArkNote implements ExtendedCoin {
     constructor(
         public preimage: Uint8Array,
         public value: number,
-        public HRP = ArkNote.DefaultHRP,
+        public HRP = ArkadeNote.DefaultHRP,
     ) {
         const preimageHash = sha256(this.preimage);
         this.vtxoScript = new VtxoScript([noteTapscript(preimageHash)]);
@@ -74,7 +74,7 @@ export class ArkNote implements ExtendedCoin {
      * @see decode
      */
     encode(): Uint8Array {
-        const result = new Uint8Array(ArkNote.Length);
+        const result = new Uint8Array(ArkadeNote.Length);
         result.set(this.preimage, 0);
         writeUInt32BE(result, this.value, this.preimage.length);
         return result;
@@ -85,21 +85,21 @@ export class ArkNote implements ExtendedCoin {
      *
      * @param data - Serialized note bytes
      * @param hrp - Human-readable prefix expected for future string encoding
-     * @returns Decoded ArkNote
+     * @returns Decoded ArkadeNote
      * @throws Error if the payload length is invalid
      * @see encode
      */
-    static decode(data: Uint8Array, hrp = ArkNote.DefaultHRP): ArkNote {
-        if (data.length !== ArkNote.Length) {
+    static decode(data: Uint8Array, hrp = ArkadeNote.DefaultHRP): ArkadeNote {
+        if (data.length !== ArkadeNote.Length) {
             throw new Error(
-                `invalid data length: expected ${ArkNote.Length} bytes, got ${data.length}`,
+                `invalid data length: expected ${ArkadeNote.Length} bytes, got ${data.length}`,
             );
         }
 
-        const preimage = data.subarray(0, ArkNote.PreimageLength);
-        const value = readUInt32BE(data, ArkNote.PreimageLength);
+        const preimage = data.subarray(0, ArkadeNote.PreimageLength);
+        const value = readUInt32BE(data, ArkadeNote.PreimageLength);
 
-        return new ArkNote(preimage, value, hrp);
+        return new ArkadeNote(preimage, value, hrp);
     }
 
     /**
@@ -107,11 +107,11 @@ export class ArkNote implements ExtendedCoin {
      *
      * @param noteStr - Base58-encoded note string
      * @param hrp - Human-readable prefix expected on the note string
-     * @returns Decoded ArkNote
+     * @returns Decoded ArkadeNote
      * @throws Error if the prefix or base58 payload is invalid
      * @see toString
      */
-    static fromString(noteStr: string, hrp = ArkNote.DefaultHRP): ArkNote {
+    static fromString(noteStr: string, hrp = ArkadeNote.DefaultHRP): ArkadeNote {
         noteStr = noteStr.trim();
         if (!noteStr.startsWith(hrp)) {
             throw new Error(
@@ -126,7 +126,7 @@ export class ArkNote implements ExtendedCoin {
             throw new Error("failed to decode base58 string");
         }
 
-        return ArkNote.decode(decoded, hrp);
+        return ArkadeNote.decode(decoded, hrp);
     }
 
     /**

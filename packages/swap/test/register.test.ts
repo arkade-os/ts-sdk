@@ -10,7 +10,7 @@ import {
     ProviderUnavailableError,
     ReadonlySingleKey,
     ReadonlyWallet,
-    type ArkProvider,
+    type ArkadeProvider,
     type IndexerProvider,
     type IWallet,
     type RelativeTimelock,
@@ -416,7 +416,7 @@ describe("a new offer's unilateral exit", () => {
     });
 
     it("refuses to publish an exit in name only when the server reports none", async () => {
-        // RestArkProvider defaults a missing field to 0, which would compile to
+        // RestArkadeProvider defaults a missing field to 0, which would compile to
         // a CSV of zero — an offer that claims an exit it does not have
         state.unilateralExitDelay = BigInt(0);
         await expect(create()).rejects.toThrow("no usable unilateralExitDelay");
@@ -441,7 +441,9 @@ const offlineIndexer = () =>
 
 const realWallet = async (contractRepository = new InMemoryContractRepository()) => {
     const wallet = await ReadonlyWallet.create({
-        arkProvider: { getInfo: async () => arkInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: {
+            getInfo: async () => arkInfo(),
+        } as Partial<ArkadeProvider> as ArkadeProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],

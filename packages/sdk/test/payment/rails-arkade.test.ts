@@ -1,30 +1,33 @@
 import { describe, it, expect, vi } from "vitest";
-import { ArkAddress } from "../../src";
-import { arkRail } from "../../src/payment/rails/arkade";
+import { ArkadeAddress } from "../../src";
+import { arkadeRail } from "../../src/payment/rails/arkade";
 import type { RouterContext } from "../../src/payment/types";
 
-const arkadeAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
+const arkadeAddr = new ArkadeAddress(
+    new Uint8Array(32).fill(1),
+    new Uint8Array(32).fill(2),
+).encode();
 const ctx = (send: any = vi.fn()): RouterContext => ({
     wallet: { send } as any,
     prefs: {},
 });
 
-describe("arkRail", () => {
+describe("arkadeRail", () => {
     it("matches a bare ark address and the ark= param of a BIP21 URI", () => {
-        const r = arkRail();
+        const r = arkadeRail();
         expect(r.match({ raw: arkadeAddr }, ctx())).toBe(true);
         expect(r.match({ raw: `bitcoin:bcrt1qexample?ark=${arkadeAddr}` }, ctx())).toBe(true);
     });
 
     it("does not match an on-chain address or a bolt11 invoice", () => {
-        const r = arkRail();
+        const r = arkadeRail();
         expect(r.match({ raw: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080" }, ctx())).toBe(false);
         expect(r.match({ raw: "lnbc10n1pjexample" }, ctx())).toBe(false);
     });
 
     it("quote.send() calls wallet.send and settles with a txid result", async () => {
         const send = vi.fn().mockResolvedValue("txABC");
-        const q = await arkRail().quote({ raw: arkadeAddr, amount: 1000 }, ctx(send));
+        const q = await arkadeRail().quote({ raw: arkadeAddr, amount: 1000 }, ctx(send));
         expect(q.amount).toBe(1000);
         const h = await q.send();
         expect(await h.settled()).toMatchObject({ railId: "ark", txid: "txABC" });
@@ -33,7 +36,7 @@ describe("arkRail", () => {
 
     it("falls back to the BIP21-encoded amount (BTC) converted to sats", async () => {
         const send = vi.fn().mockResolvedValue("tx");
-        const q = await arkRail().quote(
+        const q = await arkadeRail().quote(
             { raw: `bitcoin:?ark=${arkadeAddr}&amount=0.0001` },
             ctx(send),
         );
@@ -45,7 +48,7 @@ describe("arkRail", () => {
     it("spends exactly the inputs the request names", async () => {
         const send = vi.fn().mockResolvedValue("tx");
         const selectedVtxos = [{ txid: "aa".repeat(32), vout: 0, value: 5000 }] as any;
-        const q = await arkRail().quote(
+        const q = await arkadeRail().quote(
             { raw: arkadeAddr, amount: 1000, selectedVtxos },
             ctx(send),
         );
@@ -58,13 +61,13 @@ describe("arkRail", () => {
     });
 
     it("rejects a missing, zero, or fractional amount at quote time", async () => {
-        await expect(arkRail().quote({ raw: arkadeAddr }, ctx())).rejects.toThrow(
+        await expect(arkadeRail().quote({ raw: arkadeAddr }, ctx())).rejects.toThrow(
             /amount is required/i,
         );
-        await expect(arkRail().quote({ raw: arkadeAddr, amount: 0 }, ctx())).rejects.toThrow(
+        await expect(arkadeRail().quote({ raw: arkadeAddr, amount: 0 }, ctx())).rejects.toThrow(
             /invalid amount/i,
         );
-        await expect(arkRail().quote({ raw: arkadeAddr, amount: 1.5 }, ctx())).rejects.toThrow(
+        await expect(arkadeRail().quote({ raw: arkadeAddr, amount: 1.5 }, ctx())).rejects.toThrow(
             /invalid amount/i,
         );
     });

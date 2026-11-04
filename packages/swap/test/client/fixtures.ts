@@ -11,7 +11,7 @@ import { hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     CSVMultisigTapscript,
     DescriptorIdentity,
     HDDescriptorProvider,
@@ -89,7 +89,7 @@ export const ARKADE_INFO = {
     checkpointTapscript: CHECKPOINT_TAPSCRIPT,
 };
 
-export const WALLET_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
+export const WALLET_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
 
 /** A wallet backed by the real allocator and the real deterministic signer. */
 export const hdWallet = async (
@@ -366,7 +366,7 @@ export const lightningSendAnswer = (
         emulatorPubkey: EMULATOR_PUBKEY,
         senderPubkey: hex.decode(profile.client_refund_pubkey as string),
         receiverPkScript: RECEIVER_PK_SCRIPT,
-        refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+        refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
     });
     const take = over.invoiceAmount ?? 5_000;
     return {
@@ -400,7 +400,7 @@ export const lightningReceiveAnswer = (
         emulatorPubkey: EMULATOR_PUBKEY,
         solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
         payoutPubkey: hex.decode(profile.payout_pubkey as string),
-        payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
+        payoutPkScript: ArkadeAddress.decode(profile.payout_address as string).pkScript,
     });
     return {
         ...baseQuote(payload, clock),
@@ -439,7 +439,7 @@ export const onchainSendAnswer = (
         emulatorPubkey: EMULATOR_PUBKEY,
         senderPubkey: hex.decode(profile.client_refund_pubkey as string),
         receiverPkScript: RECEIVER_PK_SCRIPT,
-        refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+        refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
     });
     const htlc = onchainHtlcScript(
         {
@@ -501,7 +501,7 @@ export const onchainReceiveAnswer = (
         emulatorPubkey: EMULATOR_PUBKEY,
         solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
         payoutPubkey: hex.decode(profile.payout_pubkey as string),
-        payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
+        payoutPkScript: ArkadeAddress.decode(profile.payout_address as string).pkScript,
     });
     const htlc = onchainHtlcScript(
         {

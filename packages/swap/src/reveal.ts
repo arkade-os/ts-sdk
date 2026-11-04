@@ -7,7 +7,7 @@
  * Sealing to the key THIS base URL serves removes the mismatch by construction.
  */
 import { base64, hex } from "@scure/base";
-import { ArkAddress, assertTimerMs, type VHTLC } from "@arkade-os/sdk";
+import { ArkadeAddress, assertTimerMs, type VHTLC } from "@arkade-os/sdk";
 
 import { bindsClaimAmount } from "./claimAmountGate";
 import { sealClaimPacket } from "./claimPacket";
@@ -227,7 +227,8 @@ export async function revealClaimPacket(
     const fields = revealFieldsFromScript(input.script);
 
     if (
-        hex.encode(ArkAddress.decode(input.address).pkScript) !== hex.encode(input.script.pkScript)
+        hex.encode(ArkadeAddress.decode(input.address).pkScript) !==
+        hex.encode(input.script.pkScript)
     ) {
         throw new Error("address does not belong to this covenant");
     }

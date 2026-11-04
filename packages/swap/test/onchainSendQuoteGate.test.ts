@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkAddress, SingleKey, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, SingleKey, type IWallet } from "@arkade-os/sdk";
 import {
     ONCHAIN_SEND_PAIR,
     lightningSendContract,
@@ -25,7 +25,7 @@ const RECEIVER_PK_SCRIPT = p2tr(key(1));
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(key(9));
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(SERVER, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkadeAddress(SERVER, key(21), "tark").encode();
 const WALLET_KEY = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
 /** The server info the entrypoint reads off the wallet's own connection —
@@ -68,7 +68,7 @@ const quoting = (fromAmount: number, toAmount: number): RfqTransport => ({
             emulatorPubkey: key(9),
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
+            refundPkScript: ArkadeAddress.decode(REFUND_ADDRESS).pkScript,
         });
         const htlc = onchainHtlcScript(
             {

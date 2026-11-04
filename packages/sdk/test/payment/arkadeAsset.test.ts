@@ -8,8 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
     ASSET_CARRIER_SATS,
     PaymentRouter,
-    arkAssetRail,
-    arkRail,
+    arkadeAssetRail,
+    arkadeRail,
     assertNoAssets,
     assetsOf,
     createDefaultPaymentRouter,
@@ -97,38 +97,38 @@ describe("resolveAssetAmount", () => {
     });
 });
 
-describe("arkAssetRail", () => {
+describe("arkadeAssetRail", () => {
     it("matches an Arkade address — the same string `ark` matches", () => {
-        expect(arkAssetRail().match({ raw: ARKADE_ADDR, assets: [USDX] }, ctx())).toBe(true);
-        expect(arkAssetRail().match({ raw: ARKADE_ADDR }, ctx())).toBe(true);
+        expect(arkadeAssetRail().match({ raw: ARKADE_ADDR, assets: [USDX] }, ctx())).toBe(true);
+        expect(arkadeAssetRail().match({ raw: ARKADE_ADDR }, ctx())).toBe(true);
         expect(
-            arkAssetRail().match({ raw: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080" }, ctx()),
+            arkadeAssetRail().match({ raw: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080" }, ctx()),
         ).toBe(false);
     });
 
     it("is available only for a request that names an asset", async () => {
-        expect(await arkAssetRail().available?.({ raw: ARKADE_ADDR, assets: [USDX] }, ctx())).toBe(
-            true,
-        );
-        expect(await arkAssetRail().available?.({ raw: ARKADE_ADDR, amount: 1000 }, ctx())).toBe(
+        expect(
+            await arkadeAssetRail().available?.({ raw: ARKADE_ADDR, assets: [USDX] }, ctx()),
+        ).toBe(true);
+        expect(await arkadeAssetRail().available?.({ raw: ARKADE_ADDR, amount: 1000 }, ctx())).toBe(
             false,
         );
     });
 
     it("quotes the asset on both sides — an off-chain transfer costs no asset", async () => {
-        const quote = await arkAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX] }, ctx());
+        const quote = await arkadeAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX] }, ctx());
         expect(quote.assets).toEqual({ delivered: USDX, spent: USDX });
         expect(quote.fee).toBe(0);
     });
 
     it("quotes the CARRIER sats, not zero", async () => {
-        const quote = await arkAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX] }, ctx());
+        const quote = await arkadeAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX] }, ctx());
         expect(quote.amount).toBe(ASSET_CARRIER_SATS);
         expect(quote.total).toBe(ASSET_CARRIER_SATS);
     });
 
     it("honours an explicit carrier amount", async () => {
-        const quote = await arkAssetRail().quote(
+        const quote = await arkadeAssetRail().quote(
             { raw: ARKADE_ADDR, amount: 5_000, assets: [USDX] },
             ctx(),
         );
@@ -138,14 +138,17 @@ describe("arkAssetRail", () => {
     it("refuses an explicit carrier amount that is not sendable", async () => {
         for (const amount of [0, -1, 1.5]) {
             await expect(
-                arkAssetRail().quote({ raw: ARKADE_ADDR, amount, assets: [USDX] }, ctx()),
+                arkadeAssetRail().quote({ raw: ARKADE_ADDR, amount, assets: [USDX] }, ctx()),
             ).rejects.toThrow(/invalid amount/);
         }
     });
 
     it("sends the asset alongside the carrier, in one Recipient", async () => {
         const send = vi.fn(async () => "the-txid");
-        const quote = await arkAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX] }, ctx(send));
+        const quote = await arkadeAssetRail().quote(
+            { raw: ARKADE_ADDR, assets: [USDX] },
+            ctx(send),
+        );
         const result = await (await quote.send()).settled();
 
         expect(send).toHaveBeenCalledWith({
@@ -159,7 +162,7 @@ describe("arkAssetRail", () => {
     it("spends exactly the inputs the request names", async () => {
         const send = vi.fn(async () => "the-txid");
         const selectedVtxos = [{ txid: "bb".repeat(32), vout: 1, value: 5000 }] as never;
-        const quote = await arkAssetRail().quote(
+        const quote = await arkadeAssetRail().quote(
             { raw: ARKADE_ADDR, assets: [USDX], selectedVtxos },
             ctx(send),
         );
@@ -173,7 +176,7 @@ describe("arkAssetRail", () => {
 
     it("refuses a malformed asset at quote time with a named error", async () => {
         await expect(
-            arkAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX, USDX] }, ctx()),
+            arkadeAssetRail().quote({ raw: ARKADE_ADDR, assets: [USDX, USDX] }, ctx()),
         ).rejects.toThrow(/exactly one asset/);
     });
 });
@@ -181,8 +184,8 @@ describe("arkAssetRail", () => {
 describe("the BTC-only rails refuse an asset rather than dropping it", () => {
     it("ark drops itself, and refuses if reached directly", async () => {
         const req = { raw: ARKADE_ADDR, amount: 1000, assets: [USDX] };
-        expect(await arkRail().available?.(req, ctx())).toBe(false);
-        await expect(arkRail().quote(req, ctx())).rejects.toThrow(/cannot deliver/);
+        expect(await arkadeRail().available?.(req, ctx())).toBe(false);
+        await expect(arkadeRail().quote(req, ctx())).rejects.toThrow(/cannot deliver/);
     });
 
     it("onchain drops itself — an Arkade asset has no L1 form to offboard to", async () => {
@@ -223,8 +226,8 @@ describe("the default router routes on the amount, not the target", () => {
             wallet: { send: vi.fn(async () => "txid") } as never,
             prefs: {},
         })
-            .use(arkRail())
-            .use(arkAssetRail())
+            .use(arkadeRail())
+            .use(arkadeAssetRail())
             .route({ raw: ARKADE_ADDR, assets: [USDX] });
 
         expect(quote.railId).toBe("ark-asset");

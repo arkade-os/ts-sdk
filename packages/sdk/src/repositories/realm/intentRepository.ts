@@ -1,7 +1,7 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
     assertIntentIdUnique,
     IntentPageFilter,
     IntentRepository,
@@ -12,11 +12,11 @@ import { assertPageRequest, pageResult, type PageRequest, type PageResult } from
 import { RealmLike } from "./types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toIntent(o: any): ArkIntent {
+function toIntent(o: any): BatchRegistration {
     return {
         intentTxId: o.intentTxId,
         intentId: o.intentId ?? undefined,
-        state: o.state as ArkIntentState,
+        state: o.state as BatchRegistrationState,
         validFrom: o.validFrom ?? undefined,
         validUntil: o.validUntil ?? undefined,
         createdAt: o.createdAt,
@@ -44,7 +44,7 @@ export class RealmIntentRepository implements IntentRepository {
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveIntent(intent: BatchRegistration): Promise<void> {
         this.realm.write(() => {
             if (intent.intentId != null) {
                 const clashes = [
@@ -81,11 +81,11 @@ export class RealmIntentRepository implements IntentRepository {
     async getIntentsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         let results = this.realm.objects("ArkIntent");
         if (page.after !== undefined) results = results.filtered("intentTxId > $0", page.after);
-        const rows: ArkIntent[] = [];
+        const rows: BatchRegistration[] = [];
         for (const row of results.sorted("intentTxId")) {
             const intent = toIntent(row);
             if (filter && !intentMatchesFilter(intent, filter)) continue;

@@ -36,15 +36,15 @@ import {
     solverTransport,
     spotCard,
 } from "./fixtures";
-import { ArkAddress } from "@arkade-os/sdk";
+import { ArkadeAddress } from "@arkade-os/sdk";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const OPERATOR = schnorr.getPublicKey(new Uint8Array(32).fill(3));
-const OURS = new ArkAddress(OPERATOR, schnorr.getPublicKey(new Uint8Array(32).fill(21)), "tark");
-const FOREIGN = new ArkAddress(
+const OURS = new ArkadeAddress(OPERATOR, schnorr.getPublicKey(new Uint8Array(32).fill(21)), "tark");
+const FOREIGN = new ArkadeAddress(
     schnorr.getPublicKey(new Uint8Array(32).fill(30)),
     schnorr.getPublicKey(new Uint8Array(32).fill(21)),
     "tark",

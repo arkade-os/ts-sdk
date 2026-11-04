@@ -1,8 +1,8 @@
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     ArkadeInfo,
-    ArkProvider,
+    ArkadeProvider,
     Asset,
     decodeTapscript,
     DelegateInfo,
@@ -70,7 +70,7 @@ export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
         readonly delegateProvider: DelegateProvider,
-        readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
+        readonly arkInfoProvider: Pick<ArkadeProvider, "getInfo">,
         readonly identity: Identity,
     ) {}
 
@@ -90,7 +90,7 @@ export class DelegateManagerImpl implements IDelegateManager {
             return { delegated: [], failed: [] };
         }
 
-        const destinationScript = ArkAddress.decode(destination).pkScript;
+        const destinationScript = ArkadeAddress.decode(destination).pkScript;
 
         // Server info and delegate info come from different providers and share nothing.
         const [arkInfo, delegateInfo] = await Promise.all([
@@ -271,7 +271,7 @@ async function delegate(
 
     if (delegateFee > 0n) {
         outputs.push({
-            script: ArkAddress.decode(delegateAddress).pkScript,
+            script: ArkadeAddress.decode(delegateAddress).pkScript,
             amount: delegateFee,
         });
     }

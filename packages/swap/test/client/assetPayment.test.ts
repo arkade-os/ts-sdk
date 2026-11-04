@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ArkAddress, SendDeadlineExceededError, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, SendDeadlineExceededError, type IWallet } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { assembleRoute } from "../../src/client/resolve";
 import { createSwapClient } from "../../src/client/client";
@@ -23,7 +23,7 @@ import {
 
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
-const external = new ArkAddress(OPERATOR_PUBKEY, key(29), NETWORK.hrp).encode();
+const external = new ArkadeAddress(OPERATOR_PUBKEY, key(29), NETWORK.hrp).encode();
 const buy = (): QuoteInput => ({ give: "BTC", take: "USD", amount: 1000n, amountOn: "take" });
 const setup = async (answer?: SolverAnswer) => {
     const fixture = await acceptWallet();
@@ -115,13 +115,13 @@ describe("native asset payment quote", () => {
         const quote = await client.quote({ ...buy(), assetPayment: { receiveAddress: external } });
         expect(quote.route.take.instrument).toEqual({ kind: "address", address: external });
         expect((transport.sent[0].profile as Record<string, unknown>).maker_pk_script).toBe(
-            hex.encode(ArkAddress.decode(external).pkScript),
+            hex.encode(ArkadeAddress.decode(external).pkScript),
         );
         expect((transport.sent[0].profile as Record<string, unknown>).maker_public_key).toBe(own);
     });
     it("refuses a foreign server before disclosing a request", async () => {
         const { client, transport } = await setup();
-        const receiveAddress = new ArkAddress(key(30), key(29), NETWORK.hrp).encode();
+        const receiveAddress = new ArkadeAddress(key(30), key(29), NETWORK.hrp).encode();
         await expect(client.quote({ ...buy(), assetPayment: { receiveAddress } })).rejects.toThrow(
             /server/,
         );

@@ -1,8 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { ArkAddress } from "../../src";
+import { ArkadeAddress } from "../../src";
 import { createDefaultPaymentRouter } from "../../src/payment";
 
-const arkadeAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
+const arkadeAddr = new ArkadeAddress(
+    new Uint8Array(32).fill(1),
+    new Uint8Array(32).fill(2),
+).encode();
 const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
 // The onchain rail prices the offboard at quote time, so it needs fee info.

@@ -1,13 +1,13 @@
 /**
  * The arkade corridor: an Arkade address, checked against this operator.
  *
- * `isValidArkAddress` (and so `arkTarget`) proves bech32m and a 65-byte payload, not whose server
+ * `isValidArkadeAddress` (and so `arkadeTarget`) proves bech32m and a 65-byte payload, not whose server
  * key is embedded, so another operator's address would classify as ours.
  * {@link assertRecipientArkadeAddress} checks hrp and signer set rotation-aware; a hand-rolled
  * `serverPubKey ===` would reject valid addresses mid-rotation. It throws, so `matches` maps the
  * message into `refused` (*mine, and wrong*) as distinct from `undefined` (*not mine*).
  */
-import { ArkAddress, arkTarget, assertRecipientArkadeAddress } from "@arkade-os/sdk";
+import { ArkadeAddress, arkadeTarget, assertRecipientArkadeAddress } from "@arkade-os/sdk";
 import type { CorridorDrive, CorridorFactory, CorridorModule } from "./contract";
 import type { ArkadeCorridorDeps } from "./deps";
 
@@ -27,11 +27,11 @@ export const arkadeCorridor: CorridorFactory<ArkadeCorridorDeps> = Object.assign
         deps,
         drive: ARKADE_DRIVE,
         matches(raw: string) {
-            const target = arkTarget(raw);
+            const target = arkadeTarget(raw);
             if (target === undefined) return undefined;
             try {
-                // Cannot fail after `arkTarget`; the re-decode is what yields the signer key.
-                const address = ArkAddress.decode(target);
+                // Cannot fail after `arkadeTarget`; the re-decode is what yields the signer key.
+                const address = ArkadeAddress.decode(target);
                 assertRecipientArkadeAddress(target, address, {
                     hrp: deps.network.hrp,
                     signerSet: deps.signerSet,
@@ -42,5 +42,5 @@ export const arkadeCorridor: CorridorFactory<ArkadeCorridorDeps> = Object.assign
             return { claimed: { kind: "address", address: target } };
         },
     }),
-    { target: arkTarget },
+    { target: arkadeTarget },
 );

@@ -16,7 +16,7 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 import {
-    ArkAddress,
+    ArkadeAddress,
     collectContracts,
     InMemoryContractRepository,
     InMemoryWalletRepository,
@@ -24,7 +24,7 @@ import {
     ReadonlyWallet,
     SingleKey,
     VHTLCV2ContractHandler,
-    type ArkProvider,
+    type ArkadeProvider,
     type ExtendedVirtualCoin,
     type IWallet,
     type IndexerProvider,
@@ -59,7 +59,7 @@ const EMULATOR_PUBKEY = key(9);
 const EMULATOR_PUBKEY_HEX = "02" + hex.encode(EMULATOR_PUBKEY);
 const PAYOUT_PUBKEY = key(15);
 const HTLC_PUBKEY = key(11);
-const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
+const REFUND_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), "tark").encode();
 
 const NOW = Math.floor(Date.now() / 1000);
 const VALID_UNTIL = NOW + 3600;
@@ -89,7 +89,7 @@ const lightningTransport = (): RfqTransport => ({
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+            refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
         });
         return {
             v: 1,
@@ -127,7 +127,7 @@ const onchainTransport = (): RfqTransport => ({
             emulatorPubkey: EMULATOR_PUBKEY,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+            refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
         });
         const htlc = onchainHtlcScript(
             {
@@ -331,7 +331,9 @@ const realWallet = async () => {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
     const wallet = await ReadonlyWallet.create({
-        arkProvider: { getInfo: async () => operatorInfo() } as Partial<ArkProvider> as ArkProvider,
+        arkProvider: {
+            getInfo: async () => operatorInfo(),
+        } as Partial<ArkadeProvider> as ArkadeProvider,
         indexerProvider: offlineIndexer(),
         onchainProvider: {
             getCoins: async () => [],

@@ -20,7 +20,7 @@ import {
     Packet,
 } from "../extension/asset";
 import { IndexerProvider } from "../providers/indexer";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import { selectedCoinsToAssetInputs, selectCoinsWithAsset } from "./asset";
 import { Extension } from "../extension";
 import { selectVirtualCoins, Wallet, type OffchainSubmit } from "./wallet";
@@ -376,7 +376,7 @@ async function submitToSelf(
     amount: number | bigint,
     groups: AssetGroup[],
 ): Promise<string> {
-    const outputAddress = ArkAddress.decode(await wallet.getAddress());
+    const outputAddress = ArkadeAddress.decode(await wallet.getAddress());
     const outputs = [
         { script: outputAddress.pkScript, amount: BigInt(amount) },
         Extension.create([Packet.create(groups)]).txOut(),

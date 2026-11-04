@@ -1,20 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { ArkNote } from "../src";
+import { ArkadeNote } from "../src";
 import fixtures from "./fixtures/encoding.json";
 import { hex } from "@scure/base";
 
-describe("ArkNote", () => {
+describe("ArkadeNote", () => {
     describe("valid notes", () => {
         fixtures.note.valid.forEach((fixture) => {
             it(`should correctly decode and encode note ${fixture.str}`, () => {
                 // Test decoding
-                const note = ArkNote.fromString(fixture.str, fixture.hrp);
+                const note = ArkadeNote.fromString(fixture.str, fixture.hrp);
                 const preimage = hex.encode(note.preimage);
                 expect(preimage).toBe(fixture.expectedPreimage);
                 expect(note.value).toBe(fixture.expectedValue);
 
                 // Test encoding
-                const newNote = new ArkNote(
+                const newNote = new ArkadeNote(
                     hex.decode(fixture.expectedPreimage),
                     fixture.expectedValue,
                     fixture.hrp,
@@ -30,7 +30,7 @@ describe("ArkNote", () => {
     describe("invalid addresses", () => {
         fixtures.note.invalid.forEach((fixture) => {
             it(`should fail to decode invalid note ${fixture.str}`, () => {
-                expect(() => ArkNote.fromString(fixture.str)).toThrow();
+                expect(() => ArkadeNote.fromString(fixture.str)).toThrow();
             });
         });
     });

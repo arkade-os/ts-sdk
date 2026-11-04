@@ -15,7 +15,7 @@ import type {
     GetSpendableVtxosFilter,
     GetNewAddressesOptions,
     NewAddress,
-    ArkTransaction,
+    ArkadeTransaction,
     ExtendedCoin,
     Recipient,
     SendParams,
@@ -109,7 +109,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *     arkProvider: new RestArkProvider(),
+ *     arkProvider: new RestArkadeProvider(),
  *     onchainProvider: new EsploraProvider(),
  *     storage: { ... },
  *     background: {
@@ -342,7 +342,7 @@ export class ExpoWallet
         return this.wallet.getBoardingUtxos();
     }
 
-    getTransactionHistory(): Promise<ArkTransaction[]> {
+    getTransactionHistory(): Promise<ArkadeTransaction[]> {
         return this.wallet.getTransactionHistory();
     }
 

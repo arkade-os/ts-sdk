@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, RestArkProvider, type Recipient } from "../src";
+import { Wallet, SingleKey, RestArkadeProvider, type Recipient } from "../src";
 import { VtxoScript } from "../src/script/base";
-import { ArkAddress } from "../src/script/address";
+import { ArkadeAddress } from "../src/script/address";
 import {
     assertRecipientArkadeAddress,
     validateRecipients,
@@ -28,7 +28,7 @@ const FOREIGN_XONLY = new Uint8Array(32).fill(0x77);
 const VTXO_KEY = new Uint8Array(32).fill(0xaa);
 
 const encodeAddr = (serverPubKey: Uint8Array, hrp: string) =>
-    new ArkAddress(serverPubKey, VTXO_KEY, hrp).encode();
+    new ArkadeAddress(serverPubKey, VTXO_KEY, hrp).encode();
 
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 
@@ -46,21 +46,21 @@ describe("assertRecipientArkadeAddress", () => {
     it("rejects an address with another network's prefix", () => {
         const encoded = encodeAddr(SERVER_XONLY, "ark");
         expect(() =>
-            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkadeAddress.decode(encoded), makeContext()),
         ).toThrow(/expected prefix "tark", got "ark"/);
     });
 
     it("rejects an address embedding an unknown operator signer key", () => {
         const encoded = encodeAddr(FOREIGN_XONLY, "tark");
         expect(() =>
-            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkadeAddress.decode(encoded), makeContext()),
         ).toThrow(/unknown operator signer key/);
     });
 
     it("accepts an address embedding the current signer key", () => {
         const encoded = encodeAddr(SERVER_XONLY, "tark");
         expect(() =>
-            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), makeContext()),
+            assertRecipientArkadeAddress(encoded, ArkadeAddress.decode(encoded), makeContext()),
         ).not.toThrow();
     });
 
@@ -70,7 +70,7 @@ describe("assertRecipientArkadeAddress", () => {
         expect(() =>
             assertRecipientArkadeAddress(
                 encoded,
-                ArkAddress.decode(encoded),
+                ArkadeAddress.decode(encoded),
                 makeContext(deprecated),
             ),
         ).not.toThrow();
@@ -82,7 +82,7 @@ describe("assertRecipientArkadeAddress", () => {
         expect(() =>
             assertRecipientArkadeAddress(
                 encoded,
-                ArkAddress.decode(encoded),
+                ArkadeAddress.decode(encoded),
                 makeContext(deprecated),
             ),
         ).not.toThrow();
@@ -94,7 +94,7 @@ describe("assertRecipientArkadeAddress", () => {
         expect(() =>
             assertRecipientArkadeAddress(
                 encoded,
-                ArkAddress.decode(encoded),
+                ArkadeAddress.decode(encoded),
                 makeContext(deprecated),
             ),
         ).toThrow(/past its rotation cutoff/);
@@ -143,7 +143,7 @@ describe("validateRecipients published taptree", () => {
     const script = new VtxoScript([leafA, leafB]);
     const otherContract = new VtxoScript([leafA, leafC]);
     const addressFor = (vs: VtxoScript) =>
-        new ArkAddress(SERVER_XONLY, vs.tweakedPublicKey, "tark").encode();
+        new ArkadeAddress(SERVER_XONLY, vs.tweakedPublicKey, "tark").encode();
 
     it("passes a taptree that derives the recipient address through to the output", () => {
         const validated = validateRecipients(
@@ -203,7 +203,7 @@ describe("validateRecipients published taptree", () => {
             makeContext(),
         );
         expect(validated[0].tapTree).toEqual(script.encode());
-        expect(validated[0].script).toEqual(ArkAddress.decode(encoded).subdustPkScript);
+        expect(validated[0].script).toEqual(ArkadeAddress.decode(encoded).subdustPkScript);
     });
 
     it("leaves the taptree undefined when the caller published none", () => {
@@ -243,7 +243,7 @@ describe("Wallet recipient address binding", () => {
     it("send rejects an address from another network before spending", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
         const fetchCallsAfterCreate = mockFetch.mock.calls.length;
 
@@ -256,7 +256,7 @@ describe("Wallet recipient address binding", () => {
     it("send with selected vtxos rejects a foreign-operator address", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
         await expect(
@@ -281,7 +281,7 @@ describe("Wallet recipient address binding", () => {
 
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
         const context = (
@@ -291,14 +291,14 @@ describe("Wallet recipient address binding", () => {
 
         const encoded = encodeAddr(DEPRECATED_XONLY, "tark");
         expect(() =>
-            assertRecipientArkadeAddress(encoded, ArkAddress.decode(encoded), context),
+            assertRecipientArkadeAddress(encoded, ArkadeAddress.decode(encoded), context),
         ).not.toThrow();
     });
 
     it("settle rejects a foreign offchain output with the binding error", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
         await expect(
@@ -346,7 +346,7 @@ describe("send with caller-selected vtxos", () => {
     const makeWallet = () =>
         Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
     beforeEach(() => {
@@ -481,7 +481,7 @@ describe("send automatic asset selection", () => {
         );
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
         vi.spyOn(wallet.arkProvider, "getInfo").mockResolvedValue({ vtxoMinAmount: 330n } as never);
         const assetA = "aa".repeat(34);
@@ -540,7 +540,7 @@ describe("send argument dispatch", () => {
     const makeWallet = () =>
         Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestArkadeProvider("http://localhost:7070"),
         });
 
     beforeEach(() => {

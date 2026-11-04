@@ -21,12 +21,12 @@ import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -132,7 +132,7 @@ const stubTransport = (): RfqTransport => ({
             emulatorPubkey,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: RECEIVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+            refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
         });
         return {
             v: 1,
@@ -160,7 +160,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -184,7 +184,7 @@ beforeAll(async () => {
     const info = await wallet.getArkadeInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
-    hrp = ArkAddress.decode(address).hrp;
+    hrp = ArkadeAddress.decode(address).hrp;
 
     // the pinned regtest key: the stub solver derives with the same default
     // `requestLightningSend` resolves internally

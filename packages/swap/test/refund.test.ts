@@ -17,9 +17,9 @@ import {
     SingleKey,
     Transaction,
     getNetwork,
-    setArkPsbtField,
+    setArkadePsbtField,
     scriptFromTapLeafScript,
-    type ArkProvider,
+    type ArkadeProvider,
 } from "@arkade-os/sdk";
 
 import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
@@ -87,9 +87,9 @@ const dustOutputs = (count: number): LockupVtxo[] =>
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the Arkade txid it was submitted.
- * Typed against the production contract so a change to ArkProvider
+ * Typed against the production contract so a change to ArkadeProvider
  * breaks the fake at compile time. */
-type FakeOperator = ArkProvider & {
+type FakeOperator = ArkadeProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };
@@ -690,7 +690,7 @@ describe("readLockupFate", () => {
         expect(await read(indexer)).toEqual({ fate: "unknown" });
 
         const tx = Transaction.fromPSBT(base64.decode(pending.psbt));
-        setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+        setArkadePsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
         const finalized = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
         expect(finalized.txid).toBe(pending.txid);
         expect(

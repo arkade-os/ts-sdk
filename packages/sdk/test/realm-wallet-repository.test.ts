@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { RealmWalletRepository } from "../src/repositories/realm/walletRepository";
-import type { ExtendedVirtualCoin, ExtendedCoin, ArkTransaction, TxType } from "../src/wallet";
+import type { ExtendedVirtualCoin, ExtendedCoin, ArkadeTransaction, TxType } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
 import type { WalletState } from "../src/repositories/walletRepository";
 import { isVtxoSpent } from "../src/wallet/vtxo";
@@ -114,7 +114,7 @@ function createMockTransaction(
     type: TxType,
     amount: number,
     createdAt?: number,
-): ArkTransaction {
+): ArkadeTransaction {
     return {
         key: {
             boardingTxid: key.boardingTxid || "",
@@ -509,7 +509,7 @@ describe("RealmWalletRepository", () => {
         });
 
         it("should handle transactions with assets", async () => {
-            const tx: ArkTransaction = {
+            const tx: ArkadeTransaction = {
                 key: {
                     boardingTxid: "",
                     commitmentTxid: "",

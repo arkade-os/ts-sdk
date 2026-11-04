@@ -32,7 +32,7 @@ import {
     isHDWalletCapable,
 } from "./hdWalletCapable";
 import type { IWallet } from ".";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 
 /**
  * Domain separator for the preimage derivation. Protocol-scoped and versioned, mirroring NArk's
@@ -115,7 +115,7 @@ export interface ProvisionedKey {
     descriptor: string;
     /**
      * The pkScript of the wallet's current receive address, so callers building the lockup need
-     * no separate {@link IWallet.getAddress} or `ArkAddress.decode`.
+     * no separate {@link IWallet.getAddress} or `ArkadeAddress.decode`.
      */
     pkScript: Uint8Array;
     /**
@@ -195,7 +195,7 @@ export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKe
     }
     // One getAddress() answer for both `address` (refund destination) and `pkScript` (covenant).
     const address = await wallet.getAddress();
-    const { pkScript } = ArkAddress.decode(address);
+    const { pkScript } = ArkadeAddress.decode(address);
     return { descriptor, pubkey, pkScript, address };
 }
 

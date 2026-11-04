@@ -7,7 +7,7 @@ import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "..
 import { Estimator } from "../../arkadeFee";
 import type { FeeInfo } from "../../providers/arkade";
 import type { Wallet } from "../../index";
-import { ArkAddress } from "../../script/address";
+import { ArkadeAddress } from "../../script/address";
 import { hex } from "@scure/base";
 
 /** The canonical fee source for {@link onchainRail}: the operator's schedule, as
@@ -41,7 +41,7 @@ async function changeOutputFee(
             BigInt(estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo)).satoshis),
         0n,
     );
-    const script = hex.encode(ArkAddress.decode(await wallet.getAddress()).pkScript);
+    const script = hex.encode(ArkadeAddress.decode(await wallet.getAddress()).pkScript);
     return changeAfterOutputFee(net - needed, (amount) =>
         BigInt(estimator.evalOffchainOutput({ amount, script }).satoshis),
     ).fee;

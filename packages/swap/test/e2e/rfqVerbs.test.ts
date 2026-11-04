@@ -32,12 +32,12 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
@@ -174,7 +174,7 @@ const stubTransport = (
                 emulatorPubkey,
                 solverRefundPkScript: SOLVER_PK_SCRIPT,
                 payoutPubkey: hex.decode(profile.payout_pubkey as string),
-                payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
+                payoutPkScript: ArkadeAddress.decode(profile.payout_address as string).pkScript,
             });
             return {
                 ...base,
@@ -199,7 +199,7 @@ const stubTransport = (
             emulatorPubkey,
             senderPubkey: hex.decode(profile.client_refund_pubkey as string),
             receiverPkScript: SOLVER_PK_SCRIPT,
-            refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+            refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
         });
         return {
             ...base,
@@ -232,7 +232,7 @@ const clientOn = (amounts?: { from: number; to: number }): SwapClient =>
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -253,7 +253,7 @@ beforeAll(async () => {
     const info = await wallet.getArkadeInfo();
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
-    hrp = ArkAddress.decode(address).hrp;
+    hrp = ArkadeAddress.decode(address).hrp;
     emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
 }, 180_000);
 

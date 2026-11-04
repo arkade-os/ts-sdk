@@ -12,7 +12,7 @@ import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     Extension,
     Transaction,
     UnknownPacket,
@@ -80,7 +80,7 @@ export const RECEIVE_LOCKUP = lightningReceiveContract({
 export const addressOf = (script: InstanceType<typeof VHTLC.ScriptV2>): string =>
     script.address(HRP, OPERATOR).encode();
 
-export const WALLET_ADDRESS = new ArkAddress(OPERATOR, key(21), HRP).encode();
+export const WALLET_ADDRESS = new ArkadeAddress(OPERATOR, key(21), HRP).encode();
 
 const MARKET: CardMarketRef = {
     kind: "card",

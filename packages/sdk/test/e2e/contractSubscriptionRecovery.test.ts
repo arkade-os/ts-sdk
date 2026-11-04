@@ -5,7 +5,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -24,7 +24,7 @@ describe("contract subscription recovery", () => {
             const repository = new InMemoryWalletRepository();
             const wallet = await Wallet.create({
                 identity: SingleKey.fromRandomBytes(),
-                arkProvider: new RestArkProvider(ARKADE_URL),
+                arkProvider: new RestArkadeProvider(ARKADE_URL),
                 indexerProvider: indexer,
                 onchainProvider: new EsploraProvider(ESPLORA_API_URL),
                 storage: {

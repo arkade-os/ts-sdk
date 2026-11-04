@@ -14,7 +14,7 @@ import { Transaction } from "../src/utils/transaction";
 import { SingleKey } from "../src/identity/singleKey";
 import { VtxoScript } from "../src/script/base";
 import { CSVMultisigTapscript, MultisigTapscript } from "../src/script/tapscript";
-import { signAndSubmitOffchainTx, type ArkTxInput } from "../src/utils/arkadeTransaction";
+import { signAndSubmitOffchainTx, type ArkadeTxInput } from "../src/utils/arkadeTransaction";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -35,7 +35,7 @@ const SERVER_UNROLL = CSVMultisigTapscript.encode({
     pubkeys: [SERVER_PUBKEY],
 });
 
-const inputs = (): ArkTxInput[] => [
+const inputs = (): ArkadeTxInput[] => [
     {
         txid: "11".repeat(32),
         vout: 0,
@@ -76,7 +76,7 @@ const provider = (
 const submit = (
     p: ReturnType<typeof provider>,
     verifyServerSignatures?: { serverPubkey: Uint8Array; deprecatedServerPubkeys?: Uint8Array[] },
-    ins: ArkTxInput[] = inputs(),
+    ins: ArkadeTxInput[] = inputs(),
     oneShot = false,
 ) =>
     signAndSubmitOffchainTx({
@@ -98,7 +98,7 @@ const retiredLeaf = MultisigTapscript.encode({
 }).script;
 const retiredVtxoScript = new VtxoScript([retiredLeaf, otherLeaf]);
 
-const retiredInputs = (): ArkTxInput[] => [
+const retiredInputs = (): ArkadeTxInput[] => [
     {
         txid: "22".repeat(32),
         vout: 0,

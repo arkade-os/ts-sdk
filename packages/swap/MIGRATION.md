@@ -195,7 +195,7 @@ drive, or call `pushRefundWithoutReceiver` / `pushClaim` until each reports noth
 as names for a covenant became `contract`/`contractParams`; and `arkTxid` became `txid` on every
 field this package owns. Identifiers only. No covenant construction, signing path, refund
 locktime or forfeit logic changed, and every address a previous version derived is byte-identical
-under the new names — the golden `ArkAddress` test pins that.
+under the new names — the golden `ArkadeAddress` test pins that.
 
 ### Renamed exports
 
@@ -211,14 +211,14 @@ All five are now on `@arkade-os/swap/protocol` rather than the root; see the sec
 
 ### Removed exports — `ClaimArkadeProvider`, `RefundArkadeProvider`
 
-Gone rather than renamed. Both were `Pick<RestArkProvider, "getInfo" | "submitTx" |
+Gone rather than renamed. Both were `Pick<RestArkadeProvider, "getInfo" | "submitTx" |
 "finalizeTx">`; `pushClaim`, `claimReceiveLockup`, `pushRefundWithoutReceiver` and
-`ArkadeRefunderDeps.operator` now take the SDK's full `ArkProvider`. A `RestArkProvider` satisfies
+`ArkadeRefunderDeps.operator` now take the SDK's full `ArkadeProvider`. A `RestArkadeProvider` satisfies
 that unchanged — only a hand-built three-method fake has to grow, and widening the parameter is
 the point of the change.
 
 An earlier version of this note said no alias replaces them. One does now: `SwapOperator` is
-`Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">` — the same narrow shape, on the full
+`Pick<ArkadeProvider, "getInfo" | "submitTx" | "finalizeTx">` — the same narrow shape, on the full
 provider rather than the REST one. It is a root export and the type `SwapClientConfig.operator`
 takes, and `walletOperator(wallet)` builds one from a wallet without opening a second connection.
 
@@ -238,7 +238,7 @@ takes, and `walletOperator(wallet)` builds one from a wallet without opening a s
 | `offerContract` / `cancelOffer`                                      | `serverPubkey`               | `operatorPubkey`               |
 
 Deliberately unchanged, because the SDK owns them and this package only passes them through:
-`ArkAddress.serverPubKey`, `client.serverKey`, `verifyServerSignatures.serverPubkey`,
+`ArkadeAddress.serverPubKey`, `client.serverKey`, `verifyServerSignatures.serverPubkey`,
 `ReadonlyWallet.create({ arkServerUrl })`, `vtxo.arkTxId` / `tx.key.arkTxid`, and the `server`
 slot in the swap program JSON — that one sits inside the hashed program bytes and renaming it
 would change every derived address.

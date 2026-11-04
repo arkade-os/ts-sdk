@@ -1,4 +1,4 @@
-import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin, type Outpoint } from "../wallet";
+import { ArkadeTransaction, ExtendedCoin, ExtendedVirtualCoin, type Outpoint } from "../wallet";
 import type { TxKey } from "../wallet";
 import {
     assertCursorAdvanced,
@@ -172,9 +172,9 @@ export interface WalletRepository extends AsyncDisposable {
     getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,
         page: PageRequest<TransactionHistoryPageCursor>,
-    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>>;
+    ): Promise<PageResult<ArkadeTransaction, TransactionHistoryPageCursor>>;
     /** Save transaction history for an address. */
-    saveTransactions(address: string, txs: ArkTransaction[]): Promise<void>;
+    saveTransactions(address: string, txs: ArkadeTransaction[]): Promise<void>;
     /** Delete stored transaction history for an address. */
     deleteTransactions(address: string): Promise<void>;
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Address, OutScript } from "@scure/btc-signer";
 
-import { ArkNote, Wallet } from "../src";
+import { ArkadeNote, Wallet } from "../src";
 import {
     validateBatchRecipientsWithoutTree,
     ErrOnchainOutputNotFound,
@@ -269,7 +269,7 @@ describe("Wallet.createBatchHandler onchain-only finalization", () => {
     });
 
     it("settles an arknote, which spends no commitment input", async () => {
-        const note = new ArkNote(new Uint8Array(32).fill(9), 1_000);
+        const note = new ArkadeNote(new Uint8Array(32).fill(9), 1_000);
         const { handler, thisArg } = onchainOnlyHandler([], [note as unknown as ExtendedCoin]);
 
         await handler.onBatchFinalization(

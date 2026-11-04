@@ -7,7 +7,7 @@ import {
     MnemonicIdentity,
     RelativeTimelock,
     Ramps,
-    RestArkProvider,
+    RestArkadeProvider,
 } from "../../src";
 import {
     beforeEachFaucet,
@@ -38,7 +38,7 @@ function createHdWallet(opts: HdWalletOpts): Promise<Wallet> {
     return Wallet.create({
         identity: MnemonicIdentity.fromMnemonic(opts.mnemonic, { isMainnet: false }),
         walletMode: "hd",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api", {
             forcePolling: true,
             pollingInterval: 2000,

@@ -18,12 +18,12 @@ import { execSync } from "child_process";
 import { hex } from "@scure/base";
 import type { DiscoveredMarket } from "@arkade-os/solver-discovery";
 import {
-    ArkAddress,
-    ArkNote,
+    ArkadeAddress,
+    ArkadeNote,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -115,7 +115,7 @@ const clientOn = (over: { repository?: InMemoryAssetSwapRepository } = {}): Swap
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -130,7 +130,7 @@ beforeAll(async () => {
     const address = await wallet.getAddress();
     const note = execCommand(`${arkdExec} arkd note --amount ${FAUCET_SATS}`);
     await wallet.settle({
-        inputs: [ArkNote.fromString(note)],
+        inputs: [ArkadeNote.fromString(note)],
         outputs: [{ address, amount: BigInt(FAUCET_SATS) }],
     });
     await waitFor(async () => (await wallet.getVtxos()).length > 0);
@@ -215,10 +215,10 @@ describe("the v2 cancel (regtest)", () => {
             const { vtxos } = await reader.getVtxos({ scripts: [record.swapPkScript] });
             return vtxos.some((v) => v.txid === record.fundingTxid);
         });
-        const decoded = ArkAddress.decode(record.swapAddress);
+        const decoded = ArkadeAddress.decode(record.swapAddress);
         // Same wallet key, a different operator key: the rebuild derives a
         // script the offer's own `swapPkScript` does not match.
-        const rotated = new ArkAddress(
+        const rotated = new ArkadeAddress(
             hex.decode("11".repeat(32)),
             decoded.vtxoTaprootKey,
             decoded.hrp,
@@ -328,7 +328,7 @@ describe("the v2 cancel (regtest)", () => {
             new RestIndexerProvider(OPERATOR_URL),
             history,
             new Set(),
-            { operatorPubkey: ArkAddress.decode(await wallet.getAddress()).serverPubKey },
+            { operatorPubkey: ArkadeAddress.decode(await wallet.getAddress()).serverPubKey },
         );
         const found = restored.find((s) => s.fundingTxid === record.fundingTxid);
         expect(found?.offerHex).toBe(record.offerHex);

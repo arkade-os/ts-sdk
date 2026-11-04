@@ -4,7 +4,7 @@ import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import { hex } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
-import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
+import { CosignerPublicKey, getArkadePsbtFields } from "../utils/unknownFields";
 import { TxTree } from "./txTree";
 
 export const ErrMissingVtxoGraph = new Error("missing vtxo graph");
@@ -92,7 +92,7 @@ export class TreeSignerSession implements SignerSession {
         const tx = this.graph.find(txid);
         if (!tx) throw new Error(`missing tx for txid ${txid}`);
 
-        const cosigners = getArkPsbtFields(tx.root, 0, CosignerPublicKey).map(
+        const cosigners = getArkadePsbtFields(tx.root, 0, CosignerPublicKey).map(
             (c) => hex.encode(c.key.subarray(1)), // xonly pubkey
         );
 
@@ -160,7 +160,7 @@ export class TreeSignerSession implements SignerSession {
         const prevoutAmounts: bigint[] = [];
         const prevoutScripts: Uint8Array[] = [];
 
-        const cosigners = getArkPsbtFields(g.root, 0, CosignerPublicKey).map((c) => c.key);
+        const cosigners = getArkadePsbtFields(g.root, 0, CosignerPublicKey).map((c) => c.key);
 
         const { finalKey } = musig2.aggregateKeys(cosigners, true, {
             taprootTweak: this.scriptRoot,

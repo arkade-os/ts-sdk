@@ -9,13 +9,13 @@ import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
-    ArkAddress,
+    ArkadeAddress,
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     Ramps,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
+    RestArkadeProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
@@ -98,7 +98,7 @@ const stubTransport = async (wallet: Wallet): Promise<AttestingRfqTransport> => 
     const info = await wallet.getArkadeInfo();
     const operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
-    const hrp = ArkAddress.decode(await wallet.getAddress()).hrp;
+    const hrp = ArkadeAddress.decode(await wallet.getAddress()).hrp;
     const emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
     return {
         attestedResponder: DISCOVERY_KEY,
@@ -116,7 +116,7 @@ const stubTransport = async (wallet: Wallet): Promise<AttestingRfqTransport> => 
                 emulatorPubkey,
                 senderPubkey: hex.decode(profile.client_refund_pubkey as string),
                 receiverPkScript: RECEIVER_PK_SCRIPT,
-                refundPkScript: ArkAddress.decode(profile.refund_address as string).pkScript,
+                refundPkScript: ArkadeAddress.decode(profile.refund_address as string).pkScript,
             });
             return {
                 v: 1,
@@ -146,7 +146,7 @@ const stubTransport = async (wallet: Wallet): Promise<AttestingRfqTransport> => 
 const fourCoinWallet = async (concurrentSpending: boolean) => {
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestArkadeProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

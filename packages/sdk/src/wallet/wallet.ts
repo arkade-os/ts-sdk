@@ -6,7 +6,7 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import {
     DEFAULT_ARKADE_SERVER_URL,
@@ -17,11 +17,11 @@ import {
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
     ArkadeInfo,
-    ArkProvider,
+    ArkadeProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
     PendingTx,
-    RestArkProvider,
+    RestArkadeProvider,
     SettlementEvent,
     SignedIntent,
     TreeNoncesEvent,
@@ -54,7 +54,7 @@ import {
     type TimeHeight,
 } from "./vtxo";
 import {
-    ArkTransaction,
+    ArkadeTransaction,
     ArkadeBroadcaster,
     ArkadeReader,
     GetArkadeInfoOptions,
@@ -114,14 +114,18 @@ import {
     VtxoManager,
     selectPendingRecoveryOutpoints,
 } from "./vtxo-manager";
-import { ArkNote } from "../arkadeNote";
+import { ArkadeNote } from "../arkadeNote";
 import { ArkadeCash } from "../arkadeCash";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
+import type {
+    IntentRepository,
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../repositories/intentRepository";
 import { isTerminalIntentState } from "../repositories/intentRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
@@ -142,7 +146,7 @@ import {
     pruneExitBranches,
 } from "./exit/capture";
 import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
-import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
+import { ArkadeError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
 import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkadeInfo,
@@ -250,9 +254,9 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
     return { recipients: args as [Recipient, ...Recipient[]] };
 }
 
-// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
+// Built-in and decorated ArkadeProvider implementations may expose `serverUrl`.
 // The interface does not require it, so custom providers can return undefined.
-export function extractArkadeProviderUrl(provider: ArkProvider): string | undefined {
+export function extractArkadeProviderUrl(provider: ArkadeProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
@@ -833,7 +837,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
         /** Narrowed so a readonly wallet can't grow a `submitTx` use; `Wallet` re-widens it. */
-        protected readonly arkProvider: Pick<ArkProvider, "getInfo">,
+        protected readonly arkProvider: Pick<ArkadeProvider, "getInfo">,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -1025,7 +1029,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         const arkProvider =
             config.arkProvider ||
-            new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
+            new RestArkadeProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
         if (!indexerProvider && !config.service) {
             const derived = extractArkadeProviderUrl(arkProvider);
@@ -1227,7 +1231,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return wallet;
     }
 
-    get arkAddress(): ArkAddress {
+    get arkAddress(): ArkadeAddress {
         return this.offchainTapscript.address(this.network.hrp, this.arkServerPublicKey);
     }
 
@@ -1540,7 +1544,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
-    async getTransactionHistory(): Promise<ArkTransaction[]> {
+    async getTransactionHistory(): Promise<ArkadeTransaction[]> {
         const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
             this.contractSnapshot(),
             this.getBoardingTxs(),
@@ -1621,7 +1625,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Transaction history across the wallet's boarding addresses (current + historical). */
     async getBoardingTxs(): Promise<{
-        boardingTxs: ArkTransaction[];
+        boardingTxs: ArkadeTransaction[];
         commitmentsToIgnore: Set<string>;
     }> {
         const utxos: NormalizedVirtualCoin[] = [];
@@ -1747,11 +1751,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
         }
 
-        const unconfirmedTxs: ArkTransaction[] = [];
-        const confirmedTxs: ArkTransaction[] = [];
+        const unconfirmedTxs: ArkadeTransaction[] = [];
+        const confirmedTxs: ArkadeTransaction[] = [];
 
         for (const utxo of utxos) {
-            const tx: ArkTransaction = {
+            const tx: ArkadeTransaction = {
                 key: {
                     boardingTxid: utxo.txid,
                     commitmentTxid: utxo.commitmentTxIds[0] ?? "",
@@ -2370,14 +2374,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * // Create a wallet with providers
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
  *
  * // Use custom providers and/or URLs (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
+ *   arkProvider: new ExpoArkadeProvider('https://arkade.computer'),
  *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
  *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
@@ -3303,7 +3307,7 @@ export class Wallet
     }
 
     /** Public here; `ReadonlyWallet` keeps it protected so a readonly view can't submit. */
-    declare readonly arkProvider: ArkProvider;
+    declare readonly arkProvider: ArkadeProvider;
 
     /**
      * Broadcast access bound to this wallet's server, so a plugin needs only the wallet. Not on
@@ -3322,7 +3326,7 @@ export class Wallet
         identity: Identity,
         network: Network,
         onchainProvider: OnchainProvider,
-        arkProvider: ArkProvider,
+        arkProvider: ArkadeProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -3474,7 +3478,7 @@ export class Wallet
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   arkProvider: new RestArkadeProvider(),
      * });
      * ```
      */
@@ -3586,7 +3590,7 @@ export class Wallet
         }
         wallet.refreshDeprecatedSigners(setup.info);
         // Re-derive signer-dependent state when the provider refetches info on DIGEST_MISMATCH.
-        // Duck-typed: only RestArkProvider implements it.
+        // Duck-typed: only RestArkadeProvider implements it.
         {
             const ap = setup.arkProvider as Partial<{
                 onServerInfoChanged(
@@ -3723,7 +3727,7 @@ export class Wallet
                 // validate arknotes inputs
                 if (typeof input === "string") {
                     try {
-                        ArkNote.fromString(input);
+                        ArkadeNote.fromString(input);
                     } catch (e) {
                         throw new Error(`Invalid arknote "${input}"`);
                     }
@@ -3735,7 +3739,7 @@ export class Wallet
         // Read once: `WalletReceiveRotator.rotate` mutates `offchainTapscript` without `_txLock`,
         // and a second read could mismatch `findDestinationOutputIndex` ("no output matches").
         const offchainAddress = await this.getAddress();
-        const offchainPkScript = ArkAddress.decode(offchainAddress).pkScript;
+        const offchainPkScript = ArkadeAddress.decode(offchainAddress).pkScript;
         const offchainOutputScript = hex.encode(offchainPkScript);
 
         // if no params are provided, use all non-expired boarding inputs and offchain virtual outputs as inputs
@@ -3860,9 +3864,9 @@ export class Wallet
 
             // decode only: a binding failure must surface as its own error,
             // not fall through to the onchain branch
-            let arkAddress: ArkAddress | undefined;
+            let arkAddress: ArkadeAddress | undefined;
             try {
-                arkAddress = ArkAddress.decode(output.address);
+                arkAddress = ArkadeAddress.decode(output.address);
             } catch {
                 arkAddress = undefined;
             }
@@ -4208,7 +4212,7 @@ export class Wallet
 
                 // Else the forfeits settle and this input is left behind. Arknotes spend no
                 // commitment input, so they're exempt.
-                if (!matched && !(input instanceof ArkNote)) {
+                if (!matched && !(input instanceof ArkadeNote)) {
                     throw new Error(
                         `boarding input ${input.txid}:${input.vout} is not an input of the commitment tx`,
                     );
@@ -4486,11 +4490,11 @@ export class Wallet
      */
     private async persistIntentSnapshot(
         intentTxId: string,
-        state: ArkIntentState,
+        state: BatchRegistrationState,
         intent: SignedIntent<Intent.RegisterMessage>,
         deleteIntent: SignedIntent<Intent.DeleteMessage>,
         inputs: ExtendedCoin[],
-        patch?: Partial<ArkIntent>,
+        patch?: Partial<BatchRegistration>,
     ): Promise<void> {
         const repo = this.intentRepository;
         if (!repo) return;
@@ -4549,7 +4553,7 @@ export class Wallet
         } catch (error) {
             // catch the "already registered by another intent" error
             if (
-                error instanceof ArkError &&
+                error instanceof ArkadeError &&
                 error.code === 0 &&
                 error.message.includes("duplicated input")
             ) {
@@ -4910,7 +4914,7 @@ export class Wallet
             throw new Error("No VTXOs found for this arkadeCash");
         }
 
-        const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
+        const myPkScript = ArkadeAddress.decode(await this.getAddress()).pkScript;
         let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
 
@@ -5056,7 +5060,7 @@ export class Wallet
     private async importArkadeCashForRecovery(
         cash: ArkadeCash,
         cashScript: DefaultVtxo.Script,
-        cashAddress: ArkAddress,
+        cashAddress: ArkadeAddress,
     ): Promise<void> {
         if (!this._keyring) {
             throw new Error("Cannot import arkadeCash for recovery: wallet has no keyring");

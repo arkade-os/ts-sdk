@@ -95,7 +95,7 @@ describe("the parsing matrix", () => {
 
         it("claims an upper-case `ark=` param, exactly as it claims it bare", () => {
             // The filter was case-sensitive and dropped this with a
-            // `console.warn`, while `arkTarget` claimed the same string bare.
+            // `console.warn`, while `arkadeTarget` claimed the same string bare.
             const upper = ARKADE_REGTEST.toUpperCase();
             expect(claimOn("regtest", upper)?.corridor).toBe("arkade");
             expect(claimOn("regtest", `bitcoin:?ark=${upper}`)).toEqual({
@@ -147,7 +147,7 @@ describe("the parsing matrix", () => {
 
     describe("the network checks core does not make", () => {
         it("refuses another operator's Arkade address", () => {
-            // `isValidArkAddress` proves bech32m and a 65-byte payload and
+            // `isValidArkadeAddress` proves bech32m and a 65-byte payload and
             // nothing about whose server key is embedded.
             expect(() => claimOn("regtest", ARKADE_FOREIGN)).toThrow(AmbiguousDestination);
             expect(() => claimOn("regtest", ARKADE_FOREIGN)).toThrow(/unknown operator signer key/);

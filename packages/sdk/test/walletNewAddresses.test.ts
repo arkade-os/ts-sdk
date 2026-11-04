@@ -7,7 +7,7 @@ import {
     HDDescriptorProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestArkadeProvider,
     WalletCannotAllocateAddressError,
     signingDescriptorIndex,
     deriveDescriptorLeafPubKey,
@@ -91,7 +91,7 @@ function makeHdWallet(
     return Wallet.create({
         identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
         walletMode: "hd",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -103,7 +103,7 @@ function makeStaticWallet(walletRepo?: InMemoryWalletRepository) {
     return Wallet.create({
         identity: SingleKey.fromHex(SINGLEKEY_HEX),
         walletMode: "static",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -136,7 +136,7 @@ async function makeCustomProviderWallet(walletRepo: InMemoryWalletRepository) {
     return Wallet.create({
         identity,
         walletMode: custom,
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo,
             contractRepository: new InMemoryContractRepository(),
@@ -165,7 +165,7 @@ async function makeDecliningProviderWallet(walletRepo: InMemoryWalletRepository)
     const wallet = await Wallet.create({
         identity,
         walletMode: custom,
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo,
             contractRepository: new InMemoryContractRepository(),
@@ -532,7 +532,7 @@ describe("Wallet.getNewAddresses", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestArkadeProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: new InMemoryWalletRepository(),
                     contractRepository: contractRepo,

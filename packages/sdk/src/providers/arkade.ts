@@ -11,9 +11,9 @@ import {
     type EventSourceFactory,
 } from "./eventSource";
 import {
-    ArkErrorName,
-    isArkError,
-    maybeArkError,
+    ArkadeErrorName,
+    isArkadeError,
+    maybeArkadeError,
     throwIfHttpUnavailable,
     toProviderUnavailable,
 } from "./errors";
@@ -24,7 +24,7 @@ import { fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
 /**
- * Thrown by {@link RestArkProvider} when arkd rejects a request with
+ * Thrown by {@link RestArkadeProvider} when arkd rejects a request with
  * `DIGEST_MISMATCH` — the client's cached server info was stale (e.g. an
  * operator signer rotation). By the time this surfaces the provider has already
  * refreshed its info and fired `onServerInfoChanged`; the caller should rebuild
@@ -179,7 +179,7 @@ export type ServiceStatus = Record<string, string>;
  * object every consumer already holds and — in the service-worker model — the
  * only side that has a transport at all; the page has no provider to hang it
  * on. The `CachingClientTransport`-style memo lives at this layer instead, as
- * `CachingArkProvider`.
+ * `CachingArkadeProvider`.
  */
 export interface ArkadeInfo {
     boardingExitDelay: bigint;
@@ -280,7 +280,7 @@ export interface SweepTxNotification extends TxNotification {
 }
 
 /**
- * One frame of {@link ArkProvider.getTransactionsStream}. Exactly one arm is
+ * One frame of {@link ArkadeProvider.getTransactionsStream}. Exactly one arm is
  * set; an unrecognized frame is dropped rather than yielded.
  */
 export interface TxNotificationEvent {
@@ -289,7 +289,7 @@ export interface TxNotificationEvent {
     sweepTx?: SweepTxNotification;
 }
 
-export interface ArkProvider {
+export interface ArkadeProvider {
     /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkadeInfo>;
 
@@ -362,11 +362,11 @@ function advertisedLimit(fromServer: unknown): bigint | undefined {
  * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.ArkService
  * @example
  * ```typescript
- * const provider = new RestArkProvider('https://arkade.computer');
+ * const provider = new RestArkadeProvider('https://arkade.computer');
  * const info = await provider.getInfo();
  * ```
  */
-export class RestArkProvider implements ArkProvider {
+export class RestArkadeProvider implements ArkadeProvider {
     /** Overrides {@link configureEventSource} for this provider's streams. */
     protected readonly eventSource?: EventSourceFactory;
 
@@ -462,16 +462,16 @@ export class RestArkProvider implements ArkProvider {
         }
         // Only arkd's *structured* digest error counts: a grpc-gateway
         // ErrorDetails whose name is DIGEST_MISMATCH (arkd's X-Digest guard,
-        // v0.9.9-rc.1 #1104), parsed via the shared maybeArkError. A raw
+        // v0.9.9-rc.1 #1104), parsed via the shared maybeArkadeError. A raw
         // substring match would let an unrelated error body that merely mentions
         // the token trigger a spurious refresh + signer rotation.
-        const arkadeError = maybeArkError(new Error(body));
+        const arkadeError = maybeArkadeError(new Error(body));
         // A structured arkd error means the operator is up and deliberately
         // rejecting the request — terminal, even when grpc-gateway renders it as a
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
         if (!arkadeError) throwIfHttpUnavailable(response, "arkade");
-        if (!isArkError(arkadeError, ArkErrorName.DIGEST_MISMATCH)) return response;
+        if (!isArkadeError(arkadeError, ArkadeErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
@@ -1274,6 +1274,6 @@ function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
 
 function handleError(errorText: string, defaultMessage: string): never {
     const error = new Error(errorText);
-    const arkadeError = maybeArkError(error);
+    const arkadeError = maybeArkadeError(error);
     throw arkadeError ?? new Error(defaultMessage);
 }

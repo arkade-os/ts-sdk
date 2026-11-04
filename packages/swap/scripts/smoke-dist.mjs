@@ -16,7 +16,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hex } from "@scure/base";
-import { ArkAddress, asset } from "@arkade-os/sdk";
+import { ArkadeAddress, asset } from "@arkade-os/sdk";
 // The TLV round-trip below reaches below the client, so it imports the way a
 // consumer doing that now has to: off `/protocol`, not off the root.
 import { encodeOffer, decodeOffer, offerContract } from "@arkade-os/swap/protocol";
@@ -201,7 +201,7 @@ const offer = {
 
 const contract = offerContract(offer, operatorPubkey);
 offer.swapPkScript = contract.pkScript;
-const address = new ArkAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
+const address = new ArkadeAddress(operatorPubkey, contract.tweakedPublicKey, "tark").encode();
 
 const payload = encodeOffer(offer);
 const roundtripped = encodeOffer(decodeOffer(payload));

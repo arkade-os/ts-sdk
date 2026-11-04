@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, asset, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, asset, type IWallet } from "@arkade-os/sdk";
 import {
     ASSET_CARRIER_SATS,
     fillOffer,
@@ -91,7 +91,11 @@ const wantBtc: Omit<Offer, "swapPkScript"> = {
 };
 const btcScript = offerContract(wantBtc, fundedServerKey);
 const wantBtcHex = hex.encode(encodeOffer({ ...wantBtc, swapPkScript: btcScript.pkScript }));
-const fundedAddress = new ArkAddress(fundedServerKey, btcScript.tweakedPublicKey, "tark").encode();
+const fundedAddress = new ArkadeAddress(
+    fundedServerKey,
+    btcScript.tweakedPublicKey,
+    "tark",
+).encode();
 
 /** A want-ASSET offer: the fill must deliver the asset at output 0, through the
  * packet, with only a sat carrier on the output itself. */
@@ -117,7 +121,7 @@ const TAKER_PAYOUT = hex.decode("5120" + "11".repeat(32));
 const wallet = {
     identity: {},
     getAddress: async () =>
-        new ArkAddress(fundedServerKey, hex.decode("22".repeat(32)), "tark").encode(),
+        new ArkadeAddress(fundedServerKey, hex.decode("22".repeat(32)), "tark").encode(),
     getContractManager: async () => ({}),
 } as unknown as IWallet;
 
@@ -126,7 +130,7 @@ const satsDeposit = { txid: "dd".repeat(32), vout: 0, value: 60_000 };
 /** A want-BTC deposit carrying the asset the offer sells — the covenant does not
  * check that it does, so `fillOffer` has to. */
 const coin = { ...satsDeposit, assets: [{ assetId: DEPOSIT_ASSET, amount: 7 }] };
-/** One taker coin. `as never` because a real `ArkTxInput` also carries a
+/** One taker coin. `as never` because a real `ArkadeTxInput` also carries a
  * tapLeafScript and an encoded vtxo script, neither of which the mocked builder
  * looks at — the shape under test is what the fill ASKS for, not the coin. */
 const fundingCoin = (
@@ -395,7 +399,7 @@ describe("fillOffer builds the spend the covenant inspects", () => {
     it("defaults the payout to the wallet's own address when none is given", async () => {
         reset();
         await fillOffer(wallet, "http://ark", wantBtcHex, { fund, emulator: EMULATOR });
-        const expected = ArkAddress.decode(await wallet.getAddress()).pkScript;
+        const expected = ArkadeAddress.decode(await wallet.getAddress()).pkScript;
         expect(hex.encode(callsOf("change")[0].args[0] as Uint8Array)).toBe(hex.encode(expected));
     });
 

@@ -3,9 +3,9 @@ import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { sequenceToTimelock } from "./timelock";
 
 /**
- * ArkPsbtFieldKey are the available key names for the Arkade PSBT custom fields.
+ * ArkadePsbtFieldKey are the available key names for the Arkade PSBT custom fields.
  */
-export enum ArkPsbtFieldKey {
+export enum ArkadePsbtFieldKey {
     VtxoTaprootTree = "taptree",
     VtxoTreeExpiry = "expiry",
     Cosigner = "cosigner",
@@ -15,34 +15,34 @@ export enum ArkPsbtFieldKey {
 }
 
 /**
- * ArkPsbtFieldKeyType is the key type of the Arkade PSBT custom field.
+ * ArkadePsbtFieldKeyType is the key type of the Arkade PSBT custom field.
  * Every Arkade PSBT field has key type 222.
  */
-export const ArkPsbtFieldKeyType = 222;
+export const ArkadePsbtFieldKeyType = 222;
 
 /**
- * ArkPsbtFieldCoder is the coder for the Arkade PSBT custom fields.
+ * ArkadePsbtFieldCoder is the coder for the Arkade PSBT custom fields.
  * Each type has its own coder.
  */
-export interface ArkPsbtFieldCoder<T> {
-    key: ArkPsbtFieldKey;
+export interface ArkadePsbtFieldCoder<T> {
+    key: ArkadePsbtFieldKey;
     encode: (value: T) => NonNullable<TransactionInputUpdate["unknown"]>[number];
     decode: (value: NonNullable<TransactionInputUpdate["unknown"]>[number]) => T | null;
 }
 
 /**
- * setArkPsbtField appends a new unknown field to the input at inputIndex
+ * setArkadePsbtField appends a new unknown field to the input at inputIndex
  *
  * @example
  * ```typescript
- * setArkPsbtField(tx, 0, VtxoTaprootTree, myTaprootTree);
- * setArkPsbtField(tx, 0, VtxoTreeExpiry, myVtxoTreeExpiry);
+ * setArkadePsbtField(tx, 0, VtxoTaprootTree, myTaprootTree);
+ * setArkadePsbtField(tx, 0, VtxoTreeExpiry, myVtxoTreeExpiry);
  * ```
  */
-export function setArkPsbtField<T>(
+export function setArkadePsbtField<T>(
     tx: Transaction,
     inputIndex: number,
-    coder: ArkPsbtFieldCoder<T>,
+    coder: ArkadePsbtFieldCoder<T>,
     value: T,
 ): void {
     tx.updateInput(inputIndex, {
@@ -51,18 +51,18 @@ export function setArkPsbtField<T>(
 }
 
 /**
- * getArkPsbtFields returns all the values of the given coder for the input at inputIndex
+ * getArkadePsbtFields returns all the values of the given coder for the input at inputIndex
  * Multiple fields of the same type can exist in a single input.
  *
  * @example
  * ```typescript
- * const vtxoTaprootTreeFields = getArkPsbtFields(tx, 0, VtxoTaprootTree);
+ * const vtxoTaprootTreeFields = getArkadePsbtFields(tx, 0, VtxoTaprootTree);
  * console.log(`input has ${vtxoTaprootTreeFields.length} vtxoTaprootTree fields`);
  */
-export function getArkPsbtFields<T>(
+export function getArkadePsbtFields<T>(
     tx: Transaction,
     inputIndex: number,
-    coder: ArkPsbtFieldCoder<T>,
+    coder: ArkadePsbtFieldCoder<T>,
 ): T[] {
     const unknown = tx.getInput(inputIndex)?.unknown ?? [];
     return unknown.map((u) => coder.decode(u)).filter((v): v is T => v !== null);
@@ -75,18 +75,18 @@ export function getArkPsbtFields<T>(
  * ```typescript
  * const vtxoTaprootTree = VtxoTaprootTree.encode(myTaprootTree);
  */
-export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
-    key: ArkPsbtFieldKey.VtxoTaprootTree,
+export const VtxoTaprootTree: ArkadePsbtFieldCoder<Uint8Array> = {
+    key: ArkadePsbtFieldKey.VtxoTaprootTree,
     encode: (value) => [
         {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTaprootTree],
+            type: ArkadePsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkadePsbtFieldKey.VtxoTaprootTree],
         },
         value,
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.VtxoTaprootTree)) return null;
+            if (!checkKeyMatch(value[0], ArkadePsbtFieldKey.VtxoTaprootTree)) return null;
             return value[1];
         }),
 };
@@ -98,41 +98,41 @@ export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
  * ```typescript
  * const conditionWitness = ConditionWitness.encode(myConditionWitness);
  */
-export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
-    key: ArkPsbtFieldKey.ConditionWitness,
+export const ConditionWitness: ArkadePsbtFieldCoder<Uint8Array[]> = {
+    key: ArkadePsbtFieldKey.ConditionWitness,
     encode: (value) => [
         {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.ConditionWitness],
+            type: ArkadePsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkadePsbtFieldKey.ConditionWitness],
         },
         RawWitness.encode(value),
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.ConditionWitness)) return null;
+            if (!checkKeyMatch(value[0], ArkadePsbtFieldKey.ConditionWitness)) return null;
             return RawWitness.decode(value[1]);
         }),
 };
 
 /**
- * PrevArkTxField carries the serialized raw bitcoin tx of the previous Arkade transaction
+ * PrevArkadeTxField carries the serialized raw bitcoin tx of the previous Arkade transaction
  * spent by an input. Used by OP_INSPECTINPUTSCRIPTPUBKEY on intent proofs and
  * other contexts where the prevout pkScript must be looked up off-chain.
  *
  * Key: [0xde] || "prevarktx". Value: serialized wire.MsgTx (NOT a PSBT).
  */
-export const PrevArkTxField: ArkPsbtFieldCoder<Uint8Array> = {
-    key: ArkPsbtFieldKey.PrevArkTx,
+export const PrevArkadeTxField: ArkadePsbtFieldCoder<Uint8Array> = {
+    key: ArkadePsbtFieldKey.PrevArkTx,
     encode: (value) => [
         {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.PrevArkTx],
+            type: ArkadePsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkadePsbtFieldKey.PrevArkTx],
         },
         value,
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.PrevArkTx)) return null;
+            if (!checkKeyMatch(value[0], ArkadePsbtFieldKey.PrevArkTx)) return null;
             return value[1];
         }),
 };
@@ -145,18 +145,18 @@ export const PrevArkTxField: ArkPsbtFieldCoder<Uint8Array> = {
  *
  * Key: [0xde] || "prevouttx". Value: serialized wire.MsgTx (NOT a PSBT).
  */
-export const PrevoutTxField: ArkPsbtFieldCoder<Uint8Array> = {
-    key: ArkPsbtFieldKey.PrevoutTx,
+export const PrevoutTxField: ArkadePsbtFieldCoder<Uint8Array> = {
+    key: ArkadePsbtFieldKey.PrevoutTx,
     encode: (value) => [
         {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.PrevoutTx],
+            type: ArkadePsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkadePsbtFieldKey.PrevoutTx],
         },
         value,
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.PrevoutTx)) return null;
+            if (!checkKeyMatch(value[0], ArkadePsbtFieldKey.PrevoutTx)) return null;
             return value[1];
         }),
 };
@@ -168,21 +168,21 @@ export const PrevoutTxField: ArkPsbtFieldCoder<Uint8Array> = {
  * ```typescript
  * const cosignerPublicKey = CosignerPublicKey.encode(myCosignerPublicKey);
  */
-export const CosignerPublicKey: ArkPsbtFieldCoder<{
+export const CosignerPublicKey: ArkadePsbtFieldCoder<{
     index: number;
     key: Uint8Array;
 }> = {
-    key: ArkPsbtFieldKey.Cosigner,
+    key: ArkadePsbtFieldKey.Cosigner,
     encode: (value) => [
         {
-            type: ArkPsbtFieldKeyType,
-            key: new Uint8Array([...encodedPsbtFieldKey[ArkPsbtFieldKey.Cosigner], value.index]),
+            type: ArkadePsbtFieldKeyType,
+            key: new Uint8Array([...encodedPsbtFieldKey[ArkadePsbtFieldKey.Cosigner], value.index]),
         },
         value.key,
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
-            if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.Cosigner, true)) return null;
+            if (!checkKeyMatch(unknown[0], ArkadePsbtFieldKey.Cosigner, true)) return null;
             return {
                 index: unknown[0].key[unknown[0].key.length - 1],
                 key: unknown[1],
@@ -197,21 +197,21 @@ export const CosignerPublicKey: ArkPsbtFieldCoder<{
  * ```typescript
  * const vtxoTreeExpiry = VtxoTreeExpiry.encode(myVtxoTreeExpiry);
  */
-export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
+export const VtxoTreeExpiry: ArkadePsbtFieldCoder<{
     type: "blocks" | "seconds";
     value: bigint;
 }> = {
-    key: ArkPsbtFieldKey.VtxoTreeExpiry,
+    key: ArkadePsbtFieldKey.VtxoTreeExpiry,
     encode: (value) => [
         {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTreeExpiry],
+            type: ArkadePsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkadePsbtFieldKey.VtxoTreeExpiry],
         },
         ScriptNum(6, true).encode(value.value),
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
-            if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.VtxoTreeExpiry)) return null;
+            if (!checkKeyMatch(unknown[0], ArkadePsbtFieldKey.VtxoTreeExpiry)) return null;
             const v = ScriptNum(6, true).decode(unknown[1]);
             if (!v) return null;
             return sequenceToTimelock(Number(v));
@@ -219,7 +219,7 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
 };
 
 const encodedPsbtFieldKey: Record<string, Uint8Array> = Object.fromEntries(
-    Object.values(ArkPsbtFieldKey).map((key) => [key, new TextEncoder().encode(key)]),
+    Object.values(ArkadePsbtFieldKey).map((key) => [key, new TextEncoder().encode(key)]),
 );
 
 const nullIfCatch = <T>(fn: () => T): T | null => {
@@ -232,10 +232,10 @@ const nullIfCatch = <T>(fn: () => T): T | null => {
 
 function checkKeyMatch(
     key: { type: number; key: Uint8Array },
-    arkadePsbtFieldKey: ArkPsbtFieldKey,
+    arkadePsbtFieldKey: ArkadePsbtFieldKey,
     prefixOnly: boolean = false,
 ): boolean {
-    if (key.type !== ArkPsbtFieldKeyType) return false;
+    if (key.type !== ArkadePsbtFieldKeyType) return false;
     const expected = encodedPsbtFieldKey[arkadePsbtFieldKey];
     if (key.key.length < expected.length) return false;
     if (!prefixOnly && key.key.length !== expected.length) return false;

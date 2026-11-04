@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ArkError, ArkErrorName, isArkError, maybeArkError } from "../src/providers/errors";
+import {
+    ArkadeError,
+    ArkadeErrorName,
+    isArkadeError,
+    maybeArkadeError,
+} from "../src/providers/errors";
 
-describe("maybeArkError", () => {
+describe("maybeArkadeError", () => {
     it("parses a structured ark.v1.ErrorDetails in details[]", () => {
         const body = JSON.stringify({
             code: 9,
@@ -16,8 +21,8 @@ describe("maybeArkError", () => {
                 },
             ],
         });
-        const err = maybeArkError(new Error(body));
-        expect(err).toBeInstanceOf(ArkError);
+        const err = maybeArkadeError(new Error(body));
+        expect(err).toBeInstanceOf(ArkadeError);
         expect(err?.name).toBe("DIGEST_MISMATCH");
         expect(err?.metadata).toEqual({ expected: "abc" });
     });
@@ -31,8 +36,8 @@ describe("maybeArkError", () => {
             message: "BUILD_VERSION_TOO_OLD (48): server requires build version header >= 0.9.10",
             details: [],
         });
-        const err = maybeArkError(new Error(body));
-        expect(err).toBeInstanceOf(ArkError);
+        const err = maybeArkadeError(new Error(body));
+        expect(err).toBeInstanceOf(ArkadeError);
         expect(err?.name).toBe("BUILD_VERSION_TOO_OLD");
         expect(err?.code).toBe(48);
         expect(err?.message).toBe("server requires build version header >= 0.9.10");
@@ -44,27 +49,27 @@ describe("maybeArkError", () => {
             message: "DIGEST_MISMATCH (1101): server configuration changed",
             details: [],
         });
-        expect(maybeArkError(new Error(body))?.name).toBe("DIGEST_MISMATCH");
+        expect(maybeArkadeError(new Error(body))?.name).toBe("DIGEST_MISMATCH");
     });
 
     it("returns undefined for an ordinary message with no NAME (code) prefix", () => {
         const body = JSON.stringify({ code: 2, message: "something went wrong", details: [] });
-        expect(maybeArkError(new Error(body))).toBeUndefined();
+        expect(maybeArkadeError(new Error(body))).toBeUndefined();
     });
 
     it("returns undefined for non-JSON / non-Error input", () => {
-        expect(maybeArkError(new Error("not json"))).toBeUndefined();
-        expect(maybeArkError("nope" as unknown as Error)).toBeUndefined();
+        expect(maybeArkadeError(new Error("not json"))).toBeUndefined();
+        expect(maybeArkadeError("nope" as unknown as Error)).toBeUndefined();
     });
 });
 
-describe("isArkError", () => {
-    it("matches an ArkError, optionally narrowing by name", () => {
-        const err = new ArkError(6, "already spent", ArkErrorName.VTXO_ALREADY_SPENT);
-        expect(isArkError(err)).toBe(true);
-        expect(isArkError(err, ArkErrorName.VTXO_ALREADY_SPENT)).toBe(true);
-        expect(isArkError(err, ArkErrorName.DIGEST_MISMATCH)).toBe(false);
-        expect(isArkError(new Error("plain"))).toBe(false);
-        expect(isArkError(undefined)).toBe(false);
+describe("isArkadeError", () => {
+    it("matches an ArkadeError, optionally narrowing by name", () => {
+        const err = new ArkadeError(6, "already spent", ArkadeErrorName.VTXO_ALREADY_SPENT);
+        expect(isArkadeError(err)).toBe(true);
+        expect(isArkadeError(err, ArkadeErrorName.VTXO_ALREADY_SPENT)).toBe(true);
+        expect(isArkadeError(err, ArkadeErrorName.DIGEST_MISMATCH)).toBe(false);
+        expect(isArkadeError(new Error("plain"))).toBe(false);
+        expect(isArkadeError(undefined)).toBe(false);
     });
 });

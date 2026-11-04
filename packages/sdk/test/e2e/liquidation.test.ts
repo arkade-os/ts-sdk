@@ -5,12 +5,12 @@ import { numberToBytesBE } from "@noble/curves/utils.js";
 import {
     arkade,
     asset,
-    attachPrevArkTxs,
+    attachPrevArkadeTxs,
     buildOffchainTx,
     EmulatorPacket,
     Extension,
     networks,
-    RestArkProvider,
+    RestArkadeProvider,
     RestEmulatorProvider,
     RestIndexerProvider,
     Transaction,
@@ -82,7 +82,7 @@ const liquidationProgram = {
 
 describe("liquidation (oracle-signed asset burn)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const arkProvider = new RestArkadeProvider(ARKADE_OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
@@ -131,7 +131,7 @@ describe("liquidation (oracle-signed asset burn)", () => {
 
         // Emulator v0.0.7+ needs the previous Arkade transaction of every input; the builder
         // does this itself, a hand-rolled buildOffchainTx has to ask for it.
-        await attachPrevArkTxs(mintTx, [mintCoin.txid], indexerProvider);
+        await attachPrevArkadeTxs(mintTx, [mintCoin.txid], indexerProvider);
 
         const mintResult = await emulator.submitTx(
             base64.encode(mintTx.toPSBT()),

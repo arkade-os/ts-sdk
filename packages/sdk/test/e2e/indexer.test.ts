@@ -8,7 +8,7 @@ import {
     waitFor,
 } from "./utils";
 import {
-    ArkAddress,
+    ArkadeAddress,
     Outpoint,
     RestIndexerProvider,
     TxTree,
@@ -36,7 +36,7 @@ describe("Indexer provider", () => {
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
-            scripts: [hex.encode(ArkAddress.decode(aliceOffchainAddress!).pkScript)],
+            scripts: [hex.encode(ArkadeAddress.decode(aliceOffchainAddress!).pkScript)],
             spendableOnly: true,
         });
         expect(spendableVtxosResponse.vtxos).toHaveLength(1);
@@ -70,7 +70,7 @@ describe("Indexer provider", () => {
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
-        const scripts = [hex.encode(ArkAddress.decode(aliceOffchainAddress!).pkScript)];
+        const scripts = [hex.encode(ArkadeAddress.decode(aliceOffchainAddress!).pkScript)];
 
         // renewableOnly is the union of the spendable and recoverable sets. A freshly
         // funded wallet has one spendable and zero recoverable vtxos, so renewableOnly
@@ -187,12 +187,12 @@ describe("Indexer provider", () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
-        const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
+        const aliceScript = ArkadeAddress.decode(aliceAddress!).pkScript;
 
         // Create fresh wallet instance for this test
         const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
-        const bobScript = ArkAddress.decode(bobAddress!).pkScript;
+        const bobScript = ArkadeAddress.decode(bobAddress!).pkScript;
 
         if (!bobAddress || !aliceAddress) {
             throw new Error("Offchain address not defined.");

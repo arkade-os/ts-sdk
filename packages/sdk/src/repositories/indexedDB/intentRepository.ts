@@ -1,6 +1,6 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
+    BatchRegistration,
     IntentPageFilter,
     IntentRepository,
     intentMatchesFilter,
@@ -38,7 +38,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
         await awaitTransaction(transaction);
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveIntent(intent: BatchRegistration): Promise<void> {
         const db = await this.getDB();
         const transaction = db.transaction([STORE_INTENTS], "readwrite");
         transaction.objectStore(STORE_INTENTS).put({ ...intent, updatedAt: Date.now() });
@@ -48,7 +48,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
     async getIntentsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         const db = await this.getDB();
         const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
@@ -57,10 +57,12 @@ export class IndexedDBIntentRepository implements IntentRepository {
                 .filter((id) => page.after === undefined || id > page.after)
                 .sort();
             const intents = await Promise.all(
-                keys.map((id) => promisifyRequest<ArkIntent | undefined>(store.get(id))),
+                keys.map((id) => promisifyRequest<BatchRegistration | undefined>(store.get(id))),
             );
             return pageResult(
-                intents.filter((i): i is ArkIntent => !!i && intentMatchesFilter(i, filter)),
+                intents.filter(
+                    (i): i is BatchRegistration => !!i && intentMatchesFilter(i, filter),
+                ),
                 page.limit,
                 (intent) => intent.intentTxId,
             );
@@ -69,7 +71,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
             page.after === undefined ? undefined : IDBKeyRange.lowerBound(page.after, true);
         const request = store.openCursor(range);
         return new Promise((resolve, reject) => {
-            const rows: ArkIntent[] = [];
+            const rows: BatchRegistration[] = [];
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
                 const cursor = request.result;
@@ -77,7 +79,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
                     resolve(pageResult(rows, page.limit, (intent) => intent.intentTxId));
                     return;
                 }
-                const intent = cursor.value as ArkIntent;
+                const intent = cursor.value as BatchRegistration;
                 if (!filter || intentMatchesFilter(intent, filter)) rows.push(intent);
                 if (rows.length > page.limit) {
                     resolve(pageResult(rows, page.limit, (intent) => intent.intentTxId));
@@ -91,7 +93,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const db = await this.getDB();
         const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
-        const all = (await promisifyRequest(store.getAll())) as ArkIntent[];
+        const all = (await promisifyRequest(store.getAll())) as BatchRegistration[];
         const out: Outpoint[] = [];
         for (const i of all)
             if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push(o);

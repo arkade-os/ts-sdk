@@ -10,7 +10,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     ReadonlyWallet,
-    RestArkProvider,
+    RestArkadeProvider,
     RestEmulatorProvider,
     RestIndexerProvider,
     EsploraProvider,
@@ -109,11 +109,11 @@ afterEach(() => {
 
 describe("resolveArkadeService", () => {
     it("network arm: default server, mainnet esplora and the default emulator", async () => {
-        const getInfo = vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info());
+        const getInfo = vi.spyOn(RestArkadeProvider.prototype, "getInfo").mockResolvedValue(info());
         const r = await arkade.resolveArkadeService({ network: "bitcoin" });
 
         expect(getInfo).toHaveBeenCalledTimes(1);
-        expect((r.arkProvider as RestArkProvider).serverUrl).toBe("https://arkade.computer");
+        expect((r.arkProvider as RestArkadeProvider).serverUrl).toBe("https://arkade.computer");
         expect((r.indexerProvider as RestIndexerProvider).serverUrl).toBe(
             "https://arkade.computer",
         );
@@ -124,14 +124,14 @@ describe("resolveArkadeService", () => {
     });
 
     it("network arm throws when the server reports another network", async () => {
-        vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info("mutinynet"));
+        vi.spyOn(RestArkadeProvider.prototype, "getInfo").mockResolvedValue(info("mutinynet"));
         await expect(arkade.resolveArkadeService({ network: "bitcoin" })).rejects.toThrow(
             /network mismatch.*'bitcoin'.*'mutinynet'/,
         );
     });
 
     it("server arm yields an emulator only with emulatorUrl", async () => {
-        vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
+        vi.spyOn(RestArkadeProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
         const bare = await arkade.resolveArkadeService({ operatorUrl: "http://localhost:7070" });
         expect(bare.emulator).toBeUndefined();
         expect((bare.indexerProvider as RestIndexerProvider).serverUrl).toBe(
@@ -163,7 +163,7 @@ describe("Arkade.connect with service", () => {
     });
 
     it("network arm resolves the emulator and the pinned mainnet key", async () => {
-        vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info());
+        vi.spyOn(RestArkadeProvider.prototype, "getInfo").mockResolvedValue(info());
         const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
         expect((ark.emulator as RestEmulatorProvider).serverUrl).toBe(DEFAULT_ARKADE_EMULATOR_URL);
         expect(hex.encode(ark.emulatorKey!)).toBe(BITCOIN_EMULATOR_PUBKEY);
@@ -171,7 +171,7 @@ describe("Arkade.connect with service", () => {
     });
 
     it("storage builds and owns a manager, which dispose() stops", async () => {
-        vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
+        vi.spyOn(RestArkadeProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
         const { manager, raw } = fakeManager();
         const create = vi.spyOn(ContractManager, "create").mockResolvedValue(manager as any);
         const contractRepository = new InMemoryContractRepository();
@@ -411,7 +411,7 @@ describe("Wallet.create spellings", () => {
 
     it("service fetches getInfo once and wires its providers", async () => {
         const getInfo = vi
-            .spyOn(RestArkProvider.prototype, "getInfo")
+            .spyOn(RestArkadeProvider.prototype, "getInfo")
             .mockResolvedValue(walletInfo() as ArkadeInfo);
         const setup = await (ReadonlyWallet as any).setupWalletConfig(
             {
@@ -432,7 +432,7 @@ describe("Wallet.create spellings", () => {
     });
 
     it("service with { network } rejects a server on another network", async () => {
-        vi.spyOn(RestArkProvider.prototype, "getInfo").mockResolvedValue(
+        vi.spyOn(RestArkadeProvider.prototype, "getInfo").mockResolvedValue(
             walletInfo() as ArkadeInfo,
         );
         await expect(

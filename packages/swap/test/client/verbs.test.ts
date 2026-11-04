@@ -9,7 +9,7 @@ import { collectSwapRecords } from "../../src/repository";
  * before its artifact is durable.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ArkAddress } from "@arkade-os/sdk";
+import { ArkadeAddress } from "@arkade-os/sdk";
 import { createSwapClient, type SwapClient } from "../../src/client/client";
 import { MaxFeeExceeded } from "../../src/client/errors";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
@@ -37,7 +37,7 @@ import {
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const ARKADE_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
+const ARKADE_ADDRESS = new ArkadeAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
 const INVOICE = invoiceFor(PAYMENT_HASH, CLOCK);
 
 /** BTC on the leg every corridor quote denominates its fee on. */

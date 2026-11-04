@@ -11,7 +11,7 @@ import {
     RestIndexerProvider,
     Transaction,
     scriptFromTapLeafScript,
-    type ArkTransaction,
+    type ArkadeTransaction,
 } from "@arkade-os/sdk";
 import { decodeOffer, Offer, OFFER_PACKET_TYPE, offerContract } from "./offer";
 import { BTC_ASSET_ID, type AssetSwap, type AssetSwapStatus } from "./store";
@@ -33,7 +33,7 @@ export interface Tx {
     createdAt?: number;
 }
 
-export const toRestoreTx = (tx: ArkTransaction): Tx => ({
+export const toRestoreTx = (tx: ArkadeTransaction): Tx => ({
     type: tx.type.toLowerCase(),
     redeemTxid: tx.key.arkTxid,
     boardingTxid: tx.key.boardingTxid,

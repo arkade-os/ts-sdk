@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { Batch } from "../src/wallet/batch";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import type { BatchRegistration } from "../src/repositories/intentRepository";
 import { SettlementEventType, type SettlementEvent } from "../src/providers/arkade";
 
 // Batch.join drives persistence from the awaited handler hooks, so the outcome
@@ -39,7 +39,7 @@ const failed: SettlementEvent = {
 
 function seededRepo(): InMemoryIntentRepository {
     const repo = new InMemoryIntentRepository();
-    const intent: ArkIntent = {
+    const intent: BatchRegistration = {
         intentTxId,
         state: "waiting_for_batch",
         createdAt: 1,

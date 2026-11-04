@@ -3,7 +3,7 @@ import { hex } from "@scure/base";
 import {
     Wallet,
     SingleKey,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
@@ -42,7 +42,7 @@ async function makeWallet() {
         identity: SingleKey.fromHex(
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestArkadeProvider("http://localhost:7070"),
         indexerProvider: new RestIndexerProvider("http://localhost:7070"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),

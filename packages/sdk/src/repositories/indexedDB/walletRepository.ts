@@ -1,4 +1,4 @@
-import { ExtendedCoin, ExtendedVirtualCoin, ArkTransaction } from "../../wallet";
+import { ExtendedCoin, ExtendedVirtualCoin, ArkadeTransaction } from "../../wallet";
 import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
@@ -281,7 +281,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
     async getTransactionHistoryPage(
         filter: TransactionHistoryPageFilter,
         page: PageRequest<TransactionHistoryPageCursor>,
-    ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+    ): Promise<PageResult<ArkadeTransaction, TransactionHistoryPageCursor>> {
         assertPageRequest(page);
         assertHistoryPageFilter(filter);
         const db = await this.getDB();
@@ -298,7 +298,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 ),
             );
         return new Promise((resolve, reject) => {
-            const rows: ArkTransaction[] = [];
+            const rows: ArkadeTransaction[] = [];
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
                 try {
@@ -312,7 +312,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
                         );
                         return;
                     }
-                    const tx = cursor.value as ArkTransaction;
+                    const tx = cursor.value as ArkadeTransaction;
                     if (
                         page.after === undefined ||
                         compareHistoryCursors(
@@ -338,7 +338,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         });
     }
 
-    async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
+    async saveTransactions(address: string, txs: ArkadeTransaction[]): Promise<void> {
         try {
             const db = await this.getDB();
             const transaction = db.transaction([STORE_TRANSACTIONS], "readwrite");

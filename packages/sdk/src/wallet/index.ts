@@ -1,5 +1,5 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/arkade";
+import { ArkadeInfo, ArkadeProvider, Output, SettlementEvent } from "../providers/arkade";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -124,7 +124,7 @@ export interface BaseWalletConfig {
      */
     service?: ArkadeService;
     /** Optional Arkade provider instance. */
-    arkProvider?: ArkProvider;
+    arkProvider?: ArkadeProvider;
     /** Optional indexer provider instance. */
     indexerProvider?: IndexerProvider;
     /** Optional onchain provider, or a factory given the operator's network once it is known. */
@@ -145,7 +145,7 @@ export interface BaseWalletConfig {
  * // Provider-based configuration (e.g., for Expo/React Native)
  * const wallet = await ReadonlyWallet.create({
  *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkProvider: new ExpoArkProvider(),
+ *   arkProvider: new ExpoArkadeProvider(),
  *   indexerProvider: new ExpoIndexerProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
@@ -177,7 +177,7 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  * // Provider-based configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider(),
+ *   arkProvider: new ExpoArkadeProvider(),
  *   indexerProvider: new ExpoIndexerProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
@@ -185,7 +185,7 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  * // With settlement configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *     boardingUtxoSweep: true,
@@ -612,8 +612,8 @@ export interface SettleParams {
      * Offchain virtual outputs and/or onchain boarding inputs to settle.
      *
      * @remarks
-     * Arknotes are settled by passing the `ArkNote` itself (it is an `ExtendedCoin`), not its
-     * string form — `ArkNote.fromString(note)`.
+     * Arknotes are settled by passing the `ArkadeNote` itself (it is an `ExtendedCoin`), not its
+     * string form — `ArkadeNote.fromString(note)`.
      */
     inputs: ExtendedCoin[];
     /** Optional onchain outputs to create (i.e., exit to). */
@@ -726,7 +726,7 @@ export enum TxType {
 /**
  * Composite key used to correlate a wallet transaction across layers.
  *
- * @see ArkTransaction
+ * @see ArkadeTransaction
  */
 export interface TxKey {
     /** Boarding transaction id, when applicable. */
@@ -759,7 +759,7 @@ export type TxTag = BuiltinTxTag | (string & {});
  * @see TxKey
  * @see TxType
  */
-export interface ArkTransaction {
+export interface ArkadeTransaction {
     /** Composite key referencing the related transaction ids. */
     key: TxKey;
 
@@ -966,7 +966,7 @@ export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
  * Submit and finalize a signed Arkade transaction. Only on {@link IWallet}: broadcasting is the
  * one thing a readonly wallet must not do (hence `ReadonlyWallet.arkProvider` is protected).
  */
-export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
+export type ArkadeBroadcaster = Pick<ArkadeProvider, "submitTx" | "finalizeTx">;
 
 /**
  * Signing wallet interface: {@link IReadonlyWallet} plus sending, settling and asset operations.
@@ -1104,7 +1104,7 @@ export interface IReadonlyWallet {
     getStoredBoardingUtxos?(): Promise<ExtendedCoin[]>;
 
     /** @returns Wallet transaction history derived from boarding and Arkade activity. */
-    getTransactionHistory(): Promise<ArkTransaction[]>;
+    getTransactionHistory(): Promise<ArkadeTransaction[]>;
 
     /** Resolvers that group/label {@link getActivityHistory} rows. */
     readonly activity: ActivityRegistry;

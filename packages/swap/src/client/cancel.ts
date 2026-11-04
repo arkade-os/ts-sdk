@@ -19,7 +19,7 @@
  * <500ms, so the in-between is not a durable status.
  */
 import { base64, hex } from "@scure/base";
-import { ArkAddress, Transaction, type IWallet } from "@arkade-os/sdk";
+import { ArkadeAddress, Transaction, type IWallet } from "@arkade-os/sdk";
 import { retireOfferContract } from "../coverage";
 import {
     NoSpendableDepositError,
@@ -168,7 +168,7 @@ const reconcileDepositSpend = async (
         })
         .filter((tx): tx is Transaction => tx !== undefined);
     // Pinned off the record's funded address — never the client's current operator key.
-    const operatorPubkey = ArkAddress.decode(record.swapAddress).serverPubKey;
+    const operatorPubkey = ArkadeAddress.decode(record.swapAddress).serverPubKey;
     const kind = classifyDepositSpend(offer, operatorPubkey, parsed, {
         txid: deposit.txid,
         vout: deposit.vout,

@@ -18,14 +18,14 @@ const ARKCONTRACT_PREFIX = "arkcontract";
  *   // ...
  * };
  *
- * const encoded = encodeArkContract(contract);
+ * const encoded = encodeArkadeContract(contract);
  * // "arkcontract=vhtlc&sender=ab12...&receiver=cd34...&..."
  * ```
  */
-export function encodeArkContract(contract: Contract): string {
+export function encodeArkadeContract(contract: Contract): string {
     const params = new URLSearchParams();
 
-    // First, so the string starts with `arkcontract=` (what `isArkContract` tests).
+    // First, so the string starts with `arkcontract=` (what `isArkadeContract` tests).
     params.set(ARKCONTRACT_PREFIX, contract.type);
 
     for (const [key, value] of Object.entries(contract.params)) {
@@ -37,9 +37,9 @@ export function encodeArkContract(contract: Contract): string {
 
 /**
  * Raw (unvalidated) result of decoding an arkcontract string. For typed contracts use
- * `contractFromArkContract` / `contractFromArkContractWithAddress`, which validate via handlers.
+ * `contractFromArkadeContract` / `contractFromArkadeContractWithAddress`, which validate via handlers.
  */
-export interface ParsedArkContract {
+export interface ParsedArkadeContract {
     /** Contract type (e.g., "vhtlc", "default") */
     type: string;
 
@@ -48,17 +48,17 @@ export interface ParsedArkContract {
 }
 
 /**
- * Decode an arkcontract string into raw type and data (low-level; see {@link ParsedArkContract}).
+ * Decode an arkcontract string into raw type and data (low-level; see {@link ParsedArkadeContract}).
  *
  * @throws If the string is not a valid arkcontract
  *
  * @example
  * ```typescript
- * const parsed = decodeArkContract("arkcontract=vhtlc&sender=ab12...");
+ * const parsed = decodeArkadeContract("arkcontract=vhtlc&sender=ab12...");
  * // { type: "vhtlc", data: { sender: "ab12...", ... } }
  * ```
  */
-export function decodeArkContract(encoded: string): ParsedArkContract {
+export function decodeArkadeContract(encoded: string): ParsedArkadeContract {
     const params = new URLSearchParams(encoded);
 
     const type = params.get(ARKCONTRACT_PREFIX);
@@ -83,7 +83,7 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
  *
  * @example
  * ```typescript
- * const contract = contractFromArkContract(
+ * const contract = contractFromArkadeContract(
  *   "arkcontract=vhtlc&sender=ab12...",
  *   {
  *     label: "Lightning Receive",
@@ -91,7 +91,7 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
  * );
  * ```
  */
-export function contractFromArkContract(
+export function contractFromArkadeContract(
     encoded: string,
     options: {
         label?: string;
@@ -102,7 +102,7 @@ export function contractFromArkContract(
     script?: string;
     address?: string;
 } {
-    const parsed = decodeArkContract(encoded);
+    const parsed = decodeArkadeContract(encoded);
     const handler = contractHandlers.get(parsed.type);
 
     if (!handler) {
@@ -128,7 +128,7 @@ export function contractFromArkContract(
  * @param serverPubKey - Server public key (for address derivation)
  * @param addressPrefix - Address prefix (e.g., "tark" for testnet)
  */
-export function contractFromArkContractWithAddress(
+export function contractFromArkadeContractWithAddress(
     encoded: string,
     serverPubKey: Uint8Array,
     addressPrefix: string = DEFAULT_NETWORK.hrp,
@@ -138,7 +138,7 @@ export function contractFromArkContractWithAddress(
         metadata?: Record<string, unknown>;
     } = {},
 ): Contract {
-    const parsed = decodeArkContract(encoded);
+    const parsed = decodeArkadeContract(encoded);
     const handler = contractHandlers.getOrThrow(parsed.type);
 
     const params = parsed.data;
@@ -157,6 +157,6 @@ export function contractFromArkContractWithAddress(
 }
 
 /** Check if a string is an arkcontract. */
-export function isArkContract(str: string): boolean {
+export function isArkadeContract(str: string): boolean {
     return str.startsWith(ARKCONTRACT_PREFIX + "=");
 }

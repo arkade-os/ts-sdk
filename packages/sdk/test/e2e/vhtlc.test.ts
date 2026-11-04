@@ -4,22 +4,22 @@ import { base64, hex } from "@scure/base";
 import { hash160 } from "@scure/btc-signer/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
-    ArkError,
-    ArkErrorName,
+    ArkadeError,
+    ArkadeErrorName,
     buildOffchainTx,
     ConditionWitness,
     contractPreimage,
     CSVMultisigTapscript,
     EsploraProvider,
     Identity,
-    isArkError,
+    isArkadeError,
     IWallet,
     networks,
     OnchainWallet,
     provisionClaimSecret,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
-    setArkPsbtField,
+    setArkadePsbtField,
     SingleKey,
     Unroll,
     VHTLC,
@@ -90,7 +90,7 @@ describe("vhtlc", () => {
         const bobVHTLCIdentity: Identity = {
             sign: async (tx: Transaction, inputIndexes?: number[]) => {
                 const cpy = tx.clone();
-                setArkPsbtField(cpy, 0, ConditionWitness, [preimage]);
+                setArkadePsbtField(cpy, 0, ConditionWitness, [preimage]);
                 return bob.sign(cpy, inputIndexes);
             },
             compressedPublicKey: bob.compressedPublicKey,
@@ -99,7 +99,7 @@ describe("vhtlc", () => {
             signMessage: bob.signMessage,
         };
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestArkadeProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
@@ -219,7 +219,7 @@ describe("vhtlc", () => {
         const claimIdentity: Identity = {
             sign: async (tx: Transaction, inputIndexes?: number[]) => {
                 const cpy = tx.clone();
-                setArkPsbtField(cpy, 0, ConditionWitness, [preimage]);
+                setArkadePsbtField(cpy, 0, ConditionWitness, [preimage]);
                 return restored.sign(cpy, inputIndexes);
             },
             compressedPublicKey: () => restored.compressedPublicKey(),
@@ -228,7 +228,7 @@ describe("vhtlc", () => {
             signMessage: (message, signatureType) => restored.signMessage(message, signatureType),
         };
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestArkadeProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendable = await indexerProvider.getVtxos({
@@ -437,7 +437,7 @@ describe("vhtlc", () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestArkadeProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
         const onchainProvider = new EsploraProvider("http://localhost:3000/api");
 
@@ -522,8 +522,8 @@ describe("vhtlc", () => {
                 },
                 (e: unknown) => e,
             );
-        expect(isArkError(rejection, ArkErrorName.FORFEIT_CLOSURE_LOCKED)).toBe(true);
-        expect((rejection as ArkError).metadata?.type).toBe("height");
+        expect(isArkadeError(rejection, ArkadeErrorName.FORFEIT_CLOSURE_LOCKED)).toBe(true);
+        expect((rejection as ArkadeError).metadata?.type).toBe("height");
 
         mineBlocks(6);
         await waitFor(
@@ -555,7 +555,7 @@ describe("vhtlc", () => {
                     second.checkpoints.map((c) => base64.encode(c.toPSBT())),
                 );
             } catch (e) {
-                if (!isArkError(e, ArkErrorName.FORFEIT_CLOSURE_LOCKED)) throw e;
+                if (!isArkadeError(e, ArkadeErrorName.FORFEIT_CLOSURE_LOCKED)) throw e;
                 if (Date.now() > deadline) throw e;
                 await new Promise((resolve) => setTimeout(resolve, 1000));
             }

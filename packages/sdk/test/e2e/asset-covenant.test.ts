@@ -52,7 +52,7 @@ import {
     VHTLC,
     asset as assetExt,
     networks,
-    RestArkProvider,
+    RestArkadeProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
 } from "../../src";
@@ -236,7 +236,7 @@ const scriptV2Shaped = {
 
 describe("asset-denominated non-interactive covenant", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const arkProvider = new RestArkadeProvider(ARKADE_OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
     const receiverPkScript = randomP2TR();
 

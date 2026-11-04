@@ -15,9 +15,9 @@ import {
     teardownRestoreHarness,
 } from "../helpers/restoreWallet";
 import { TxType } from "../../src/wallet/index";
-import type { ArkTransaction } from "../../src/wallet/index";
+import type { ArkadeTransaction } from "../../src/wallet/index";
 
-function tx(id: string, over: Partial<Omit<ArkTransaction, "key">> = {}): ArkTransaction {
+function tx(id: string, over: Partial<Omit<ArkadeTransaction, "key">> = {}): ArkadeTransaction {
     return {
         key: { arkTxid: id, commitmentTxid: "", boardingTxid: "" },
         type: TxType.TxReceived,
@@ -229,7 +229,7 @@ describe("wallet.getActivityHistory", () => {
 describe("boardingResolver", () => {
     it("tags a tx with a boardingTxid as a Deposit; ignores others", () => {
         const r = boardingResolver();
-        const boarding: ArkTransaction = {
+        const boarding: ArkadeTransaction = {
             key: { arkTxid: "", commitmentTxid: "", boardingTxid: "bX" },
             type: TxType.TxReceived,
             amount: 1,
@@ -246,7 +246,7 @@ describe("boardingResolver", () => {
 describe("collabExitResolver", () => {
     it("tags an exit tx by its commitment; ignores non-exit", () => {
         const r = collabExitResolver();
-        const exit: ArkTransaction = {
+        const exit: ArkadeTransaction = {
             key: { arkTxid: "", commitmentTxid: "cX", boardingTxid: "" },
             type: TxType.TxSent,
             amount: -100,
@@ -267,7 +267,7 @@ describe("assetMintResolver", () => {
         const genesisTxid = "11".repeat(32);
         const assetId = AssetId.create(genesisTxid, 0).toString();
 
-        const mint: ArkTransaction = {
+        const mint: ArkadeTransaction = {
             key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
             type: TxType.TxSent,
             amount: 0,
@@ -286,7 +286,7 @@ describe("assetMintResolver", () => {
         ]);
 
         // an asset carried by a tx that is NOT its genesis (transfer/reissue) is not a mint here
-        const transfer: ArkTransaction = {
+        const transfer: ArkadeTransaction = {
             key: { arkTxid: "22".repeat(32), commitmentTxid: "", boardingTxid: "" },
             type: TxType.TxSent,
             amount: 0,
@@ -306,7 +306,7 @@ describe("assetMintResolver", () => {
         const genesisTxid = "01020304" + "aa".repeat(24) + "0b0c0d0e";
         const assetId = AssetId.create(genesisTxid, 7).toString();
 
-        const mint: ArkTransaction = {
+        const mint: ArkadeTransaction = {
             key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
             type: TxType.TxSent,
             amount: 0,
@@ -328,7 +328,7 @@ describe("assetMintResolver", () => {
         const genesisTxid = "33".repeat(32);
         const assetId = AssetId.create(genesisTxid, 0).toString();
 
-        const receive: ArkTransaction = {
+        const receive: ArkadeTransaction = {
             key: { arkTxid: genesisTxid, commitmentTxid: "", boardingTxid: "" },
             type: TxType.TxReceived,
             amount: 0,

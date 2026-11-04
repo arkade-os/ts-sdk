@@ -24,11 +24,11 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
     CSVMultisigTapscript,
     ConditionWitness,
-    type ArkTxInput,
+    type ArkadeTxInput,
     type Asset,
     type IContractManager,
     type Identity,
-    type ArkProvider,
+    type ArkadeProvider,
     type Network,
     RestIndexerProvider,
     Transaction,
@@ -37,7 +37,7 @@ import {
     createAssetPacket,
     decodeTapscript,
     Extension,
-    getArkPsbtFields,
+    getArkadePsbtFields,
     isVtxoSpent,
     networkFromArkadeInfo,
     signAndSubmitOffchainTx,
@@ -92,9 +92,9 @@ export async function awaitRfqResolution(
 /**
  * What a push needs from the operator: the broadcast pair, plus the info read that supplies
  * `checkpointTapscript`. Narrow so a wallet's own connection satisfies it (see
- * {@link walletOperator}) and no second connection is opened; a full `ArkProvider` also fits.
+ * {@link walletOperator}) and no second connection is opened; a full `ArkadeProvider` also fits.
  */
-export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+export type SwapOperator = Pick<ArkadeProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /**
  * A wallet's own connection, as a {@link SwapOperator}. The broadcaster is resolved lazily and
@@ -265,7 +265,7 @@ const hashesTo = (candidate: Uint8Array, paymentHash: string): boolean =>
  * miss a real settlement; reading both is free because neither is trusted until hashed.
  */
 const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[] => [
-    ...getArkPsbtFields(tx, inputIndex, ConditionWitness).flat(),
+    ...getArkadePsbtFields(tx, inputIndex, ConditionWitness).flat(),
     ...(tx.getInput(inputIndex).finalScriptWitness ?? []),
 ];
 
@@ -465,8 +465,8 @@ export const lockupAssetOutputs = (vtxos: readonly LockupVtxo[]) => {
 export const lockupInputs = (
     vtxos: readonly LockupVtxo[],
     contract: InstanceType<typeof VHTLC.ScriptV2>,
-    leaf: ArkTxInput["tapLeafScript"],
-): ArkTxInput[] => {
+    leaf: ArkadeTxInput["tapLeafScript"],
+): ArkadeTxInput[] => {
     const tapTree = contract.encode();
     return vtxos.map((vtxo) => ({
         txid: vtxo.txid,

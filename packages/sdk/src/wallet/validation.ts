@@ -2,7 +2,7 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 import type { Bytes } from "@scure/btc-signer/utils.js";
 import { base64 } from "@scure/base";
 import { Recipient, Asset } from ".";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import { Transaction } from "../utils/transaction";
 import { Packet } from "../extension/asset";
 import { Extension } from "../extension";
@@ -100,9 +100,9 @@ export function validateBatchRecipients(
     const usedOutputs = new Set<string>();
     const usedOnchainOutputs = new Set<number>();
     for (const recipient of recipients) {
-        let arkAddress: ArkAddress;
+        let arkAddress: ArkadeAddress;
         try {
-            arkAddress = ArkAddress.decode(recipient.address);
+            arkAddress = ArkadeAddress.decode(recipient.address);
         } catch {
             validateOnchainRecipient(commitmentTx, recipient, network, usedOnchainOutputs);
             continue;
@@ -134,7 +134,7 @@ export function validateBatchRecipientsWithoutTree(
     const usedOnchainOutputs = new Set<number>();
     for (const recipient of recipients) {
         try {
-            ArkAddress.decode(recipient.address);
+            ArkadeAddress.decode(recipient.address);
         } catch {
             validateOnchainRecipient(commitmentTx, recipient, network, usedOnchainOutputs);
             continue;
@@ -301,7 +301,7 @@ function validateOnchainRecipient(
 // also verify the asset packet is here, and point the same output index
 function validateOffchainRecipient(
     leaves: Transaction[],
-    arkAddress: ArkAddress,
+    arkAddress: ArkadeAddress,
     recipient: Recipient,
     usedOutputs: Set<string>, // leafIndex:outputIndex
 ): void {

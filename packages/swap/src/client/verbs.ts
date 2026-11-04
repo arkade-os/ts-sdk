@@ -6,7 +6,7 @@
  * an invoice whose claim secret exists only in memory.
  */
 import type { IWallet } from "@arkade-os/sdk";
-import { arkTarget, resolveSendAmount } from "@arkade-os/sdk";
+import { arkadeTarget, resolveSendAmount } from "@arkade-os/sdk";
 import { sameAsset, type AssetId } from "./assetId";
 import type { CorridorId } from "./corridor";
 import { MaxFeeExceeded } from "./errors";
@@ -147,7 +147,7 @@ export const pay = async (
     destination: string,
     options: PayOptions = {},
 ): Promise<PayResult> => {
-    const arkade = arkTarget(destination);
+    const arkade = arkadeTarget(destination);
     if (arkade !== undefined) {
         // Core's own amount law, so refusals match the `ark` rail's.
         const amount = resolveSendAmount(

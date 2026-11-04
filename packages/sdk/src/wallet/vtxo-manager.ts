@@ -19,8 +19,8 @@ import {
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/arkade";
-import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
+import { ArkadeInfo, ArkadeProvider, SettlementEvent } from "../providers/arkade";
+import { ArkadeErrorName, isArkadeError, maybeArkadeError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { Contract, ExtendedContractVtxo } from "../contracts/types";
 import { isContractVtxoEvent, isRecoveryOnlyContract } from "../contracts/types";
@@ -39,7 +39,7 @@ import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Estimator } from "../arkadeFee";
-import { ArkAddress } from "../script/address";
+import { ArkadeAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
@@ -83,7 +83,7 @@ export function selectPendingRecoveryOutpoints(
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
-    arkProvider: ArkProvider;
+    arkProvider: ArkadeProvider;
     network: Network;
     /**
      * Descriptor-aware signer: routes each input to the identity or its per-index descriptor
@@ -321,14 +321,14 @@ function deductOffchainOutputFee(
 }
 
 function offchainOutputFee(amount: bigint, estimator: Estimator, arkAddress: string): bigint {
-    // Mirror the estimator's early return before `ArkAddress.decode`: an operator that doesn't
+    // Mirror the estimator's early return before `ArkadeAddress.decode`: an operator that doesn't
     // price outputs shouldn't make a decodable address a precondition for renewing/recovering.
     if (!estimator.config.offchainOutput) {
         return 0n;
     }
     const outputFee = estimator.evalOffchainOutput({
         amount,
-        script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+        script: hex.encode(ArkadeAddress.decode(arkAddress).pkScript),
     });
     return BigInt(outputFee.satoshis);
 }
@@ -405,13 +405,13 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Default behavior: virtual output renewal at 3 days, boarding sweep enabled, polling every minute
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  * });
  *
  * // Custom expiry threshold of 24 hours
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *   },
@@ -420,7 +420,7 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Explicitly disable
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  *   settlementConfig: false,
  * });
  * ```
@@ -470,7 +470,7 @@ export interface SettlementConfig {
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 259_200,
  *     boardingUtxoSweep: true,
@@ -805,7 +805,7 @@ export interface DeprecatedSignerMigrationReport {
  * `Wallet`; absent on watch-only or mock wallets.
  */
 interface MigrationCapableWallet {
-    arkProvider: ArkProvider;
+    arkProvider: ArkadeProvider;
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
@@ -952,7 +952,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   arkProvider: new RestArkadeProvider(),
  *   settlementConfig: {
  *      // Seconds before virtual output expiry to trigger renewal
  *      vtxoThreshold: 259_200, // 3 days
@@ -1551,7 +1551,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *  identity,
-     *  arkProvider: new RestArkProvider(),
+     *  arkProvider: new RestArkadeProvider(),
      *  settlementConfig: {
      *      vtxoThreshold: 86_400 // 24 hours
      *  },
@@ -1857,7 +1857,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   arkProvider: new RestArkadeProvider(),
      *   settlementConfig: {
      *     boardingUtxoSweep: true,
      *   },
@@ -2591,9 +2591,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Unlike {@link getArkProvider}, doesn't require boarding-sweep capability. Undefined when no
      * provider is wired, which callers treat as "no limit".
      */
-    private getInfoProvider(): ArkProvider | undefined {
+    private getInfoProvider(): ArkadeProvider | undefined {
         // Narrow cast, so an incompatible future IWallet.arkProvider is a type error here.
-        return (this.wallet as { arkProvider?: ArkProvider }).arkProvider;
+        return (this.wallet as { arkProvider?: ArkadeProvider }).arkProvider;
     }
 
     private getNetwork() {
@@ -2709,8 +2709,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /** The outpoint a `VTXO_ALREADY_SPENT` error carries in `metadata.vtxo_outpoint`, if any. */
     private extractSpentOutpoint(error: unknown): Outpoint | undefined {
-        const ark = maybeArkError(error);
-        if (!isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return undefined;
+        const ark = maybeArkadeError(error);
+        if (!isArkadeError(ark, ArkadeErrorName.VTXO_ALREADY_SPENT)) return undefined;
         const raw = ark.metadata?.vtxo_outpoint;
         if (typeof raw !== "string") return undefined;
         const [txid, voutStr] = raw.split(":");
@@ -2976,7 +2976,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const outputFee = estimator.evalOffchainOutput({
             amount: totalAmount,
-            script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+            script: hex.encode(ArkadeAddress.decode(arkAddress).pkScript),
         });
         totalAmount -= BigInt(outputFee.satoshis);
 

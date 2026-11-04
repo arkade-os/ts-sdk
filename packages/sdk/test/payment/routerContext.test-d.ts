@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 import { PaymentRouter } from "../../src/payment/router";
-import { arkRail } from "../../src/payment/rails/arkade";
-import { arkAssetRail } from "../../src/payment/rails/arkadeAsset";
+import { arkadeRail } from "../../src/payment/rails/arkade";
+import { arkadeAssetRail } from "../../src/payment/rails/arkadeAsset";
 import { onchainRail } from "../../src/payment/rails/onchain";
 import type { RouterContext } from "../../src/payment/types";
 import type { IWallet } from "../../src/index";
@@ -23,8 +23,8 @@ describe("RouterContext wallet typing", () => {
 
     it("registers every rail on a router built with an IWallet-only wallet", () => {
         new PaymentRouter({ wallet: sw, prefs: {} })
-            .use(arkRail())
-            .use(arkAssetRail())
+            .use(arkadeRail())
+            .use(arkadeAssetRail())
             .use(onchainRail({ feeInfo }));
     });
 

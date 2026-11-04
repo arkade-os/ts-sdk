@@ -17,9 +17,9 @@ import {
     ConditionWitness,
     SingleKey,
     Transaction,
-    getArkPsbtFields,
+    getArkadePsbtFields,
     getNetwork,
-    type ArkProvider,
+    type ArkadeProvider,
 } from "@arkade-os/sdk";
 
 import { lightningReceiveContract } from "../src/rfq";
@@ -69,7 +69,7 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeOperator = ArkProvider & {
+type FakeOperator = ArkadeProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };
@@ -152,7 +152,7 @@ describe("pushClaim", () => {
         expect(result.amount).toBe(100_000);
         // The preimage rides the condition-witness field on the ark
         // transaction, attached after signing…
-        const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
+        const conditionFields = getArkadePsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
         for (const checkpoint of operator.submitted[0]!.checkpoints) {
@@ -187,7 +187,7 @@ describe("pushClaim", () => {
         expect(operator.finalized).toHaveLength(1);
         for (const checkpoint of operator.finalized[0]!.checkpoints) {
             const cp = Transaction.fromPSBT(base64.decode(checkpoint));
-            const conditionFields = getArkPsbtFields(cp, 0, ConditionWitness);
+            const conditionFields = getArkadePsbtFields(cp, 0, ConditionWitness);
             expect(conditionFields).toHaveLength(1);
             expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
         }
@@ -273,7 +273,7 @@ describe("pushClaim", () => {
                         inputIndexes ?? Array.from({ length: tx.inputsLength }, (_, i) => i);
                     for (const index of indexes) {
                         fieldPresentAtSignTime ||=
-                            getArkPsbtFields(tx, index, ConditionWitness).length > 0;
+                            getArkadePsbtFields(tx, index, ConditionWitness).length > 0;
                     }
                     return RECEIVER.sign(tx, inputIndexes);
                 },

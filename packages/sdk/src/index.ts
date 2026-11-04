@@ -64,7 +64,7 @@ import type {
     HDAllocationCapable,
     HDWalletCapable,
 } from "./wallet/hdWalletCapable";
-import { ArkAddress } from "./script/address";
+import { ArkadeAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import { DelegateVtxo } from "./script/delegate";
@@ -94,7 +94,7 @@ import {
     WalletMode,
     ReadonlyWalletConfig,
     ProviderClass,
-    ArkTransaction,
+    ArkadeTransaction,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -239,9 +239,9 @@ import type {
     Unspent as ElectrumUnspent,
 } from "./providers/electrum";
 import {
-    RestArkProvider,
+    RestArkadeProvider,
     DigestMismatchError,
-    ArkProvider,
+    ArkadeProvider,
     SettlementEvent,
     SettlementEventType,
     ArkadeInfo,
@@ -261,7 +261,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/arkade";
-import { CachingArkProvider } from "./providers/cachingArkade";
+import { CachingArkadeProvider } from "./providers/cachingArkade";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -276,43 +276,43 @@ import {
     decodeTapscript,
     MultisigTapscript,
     TapscriptType,
-    ArkTapscript,
+    ArkadeTapscript,
     RelativeTimelock,
 } from "./script/tapscript";
 import {
     hasBoardingTxExpired,
     buildOffchainTx,
-    assertSubmittedArkTxid,
+    assertSubmittedArkadeTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
     submitViaEmulator,
-    ArkTxInput,
+    ArkadeTxInput,
     OffchainTx,
     VerifyServerSignatures,
     combineTapscriptSigs,
-    isValidArkAddress,
+    isValidArkadeAddress,
 } from "./utils/arkadeTransaction";
 import { getRandomId, assertRecipientArkadeAddress } from "./wallet/utils";
 import type { RecipientArkadeAddressContext } from "./wallet/utils";
 import {
     VtxoTaprootTree,
     ConditionWitness,
-    PrevArkTxField,
+    PrevArkadeTxField,
     PrevoutTxField,
-    getArkPsbtFields,
-    setArkPsbtField,
-    ArkPsbtFieldCoder,
-    ArkPsbtFieldKey,
-    ArkPsbtFieldKeyType,
+    getArkadePsbtFields,
+    setArkadePsbtField,
+    ArkadePsbtFieldCoder,
+    ArkadePsbtFieldKey,
+    ArkadePsbtFieldKeyType,
     CosignerPublicKey,
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
 import {
     resolvePrevTxs,
-    attachPrevArkTxs,
+    attachPrevArkadeTxs,
     attachPrevoutTxs,
     withPrevTxs,
     PrevTxUnavailableError,
@@ -322,7 +322,7 @@ import {
 } from "./utils/prevoutTx";
 import { Intent, type IntentCoin } from "./intent";
 import { BIP322 } from "./bip322";
-import { ArkNote } from "./arkadeNote";
+import { ArkadeNote } from "./arkadeNote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
@@ -409,10 +409,10 @@ import type {
     ExitDataSource,
 } from "./wallet/exit";
 import {
-    ArkError,
-    ArkErrorName,
-    isArkError,
-    maybeArkError,
+    ArkadeError,
+    ArkadeErrorName,
+    isArkadeError,
+    maybeArkadeError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
 } from "./providers/errors";
@@ -452,8 +452,8 @@ import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTx
 import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
 import type {
     IntentRepository,
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
     IntentFilter,
     IntentPageFilter,
 } from "./repositories/intentRepository";
@@ -537,13 +537,13 @@ import { ArkadeContractHandler } from "./contracts/handlers/arkade";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
-    encodeArkContract,
-    decodeArkContract,
-    contractFromArkContract,
-    contractFromArkContractWithAddress,
-    isArkContract,
+    encodeArkadeContract,
+    decodeArkadeContract,
+    contractFromArkadeContract,
+    contractFromArkadeContractWithAddress,
+    isArkadeContract,
 } from "./contracts/arkadeContract";
-import type { ParsedArkContract } from "./contracts/arkadeContract";
+import type { ParsedArkadeContract } from "./contracts/arkadeContract";
 import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
 import {
     isContractGenericallySpendable,
@@ -673,8 +673,8 @@ export {
     ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
-    RestArkProvider,
-    CachingArkProvider,
+    RestArkadeProvider,
+    CachingArkadeProvider,
     DigestMismatchError,
     FetchError,
     READ_TIMEOUT_MS,
@@ -682,7 +682,7 @@ export {
     RestEmulatorProvider,
     DEFAULT_VTXO_PAGE_SIZE,
     // Script-related
-    ArkAddress,
+    ArkadeAddress,
     DefaultVtxo,
     DelegateVtxo,
     VtxoScript,
@@ -720,25 +720,25 @@ export {
     CLTVMultisigTapscript,
     TapTreeCoder,
     // Arkade PSBT fields
-    ArkPsbtFieldKey,
-    ArkPsbtFieldKeyType,
-    setArkPsbtField,
-    getArkPsbtFields,
+    ArkadePsbtFieldKey,
+    ArkadePsbtFieldKeyType,
+    setArkadePsbtField,
+    getArkadePsbtFields,
     CosignerPublicKey,
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
-    PrevArkTxField,
+    PrevArkadeTxField,
     PrevoutTxField,
     // Prevout tx resolution (emulator v0.0.7+)
     resolvePrevTxs,
-    attachPrevArkTxs,
+    attachPrevArkadeTxs,
     attachPrevoutTxs,
     withPrevTxs,
     PrevTxUnavailableError,
     // Utils
     buildOffchainTx,
-    assertSubmittedArkTxid,
+    assertSubmittedArkadeTxid,
     matchServerCheckpoints,
     verifyTapscriptSignatures,
     assertAllowedSighashTypes,
@@ -753,7 +753,7 @@ export {
     hasBoardingTxExpired,
     combineTapscriptSigs,
     isVtxoExpiringSoon,
-    isValidArkAddress,
+    isValidArkadeAddress,
     // The rotation-aware recipient check: hrp plus `classifyAgainstSignerSet`,
     // refusing an unknown or past-cutoff operator signer. Root-exported because
     // its ingredients already are and a plugin deriving against another
@@ -768,7 +768,7 @@ export {
     selectCoinsWithAsset,
     selectVirtualCoins,
     // Arknote
-    ArkNote,
+    ArkadeNote,
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
@@ -829,10 +829,10 @@ export {
     sequenceToTimelock,
     toXOnly,
     // Errors
-    ArkError,
-    ArkErrorName,
-    isArkError,
-    maybeArkError,
+    ArkadeError,
+    ArkadeErrorName,
+    isArkadeError,
+    maybeArkadeError,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
@@ -882,11 +882,11 @@ export {
     logExcludedVtxos,
     UnannotatableInputError,
     UnsupportedProgramVersionError,
-    encodeArkContract,
-    decodeArkContract,
-    contractFromArkContract,
-    contractFromArkContractWithAddress,
-    isArkContract,
+    encodeArkadeContract,
+    decodeArkadeContract,
+    contractFromArkadeContract,
+    contractFromArkadeContractWithAddress,
+    isArkadeContract,
     isDiscoverable,
     hasCandidates,
     isContractVtxoEvent,
@@ -924,7 +924,7 @@ export type {
     DescriptorSigningRequest,
     ReadonlyWalletConfig,
     ProviderClass,
-    ArkTransaction,
+    ArkadeTransaction,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -938,7 +938,7 @@ export type {
     TimeHeight,
     TxKey,
     TapscriptType,
-    ArkTxInput,
+    ArkadeTxInput,
     OffchainTx,
     PrevTxSource,
     RawTxSource,
@@ -978,7 +978,7 @@ export type {
     ConnectorTreeNode,
     // Provider types
     OnchainProvider,
-    ArkProvider,
+    ArkadeProvider,
     SettlementEvent,
     FeeInfo,
     ArkadeInfo,
@@ -1009,7 +1009,7 @@ export type {
     Network,
     NetworkName,
     // Script types
-    ArkTapscript,
+    ArkadeTapscript,
     RelativeTimelock,
     EncodedVtxoScript,
     TapLeafScript,
@@ -1063,7 +1063,7 @@ export type {
     Nonces,
     PartialSig,
     // Arkade PSBT field coder
-    ArkPsbtFieldCoder,
+    ArkadePsbtFieldCoder,
     // TxTree
     TxTreeNode,
     // Anchor
@@ -1105,7 +1105,7 @@ export type {
     CreateContractParams,
     ContractWatcherConfig,
     ContractWatcherEventCallback,
-    ParsedArkContract,
+    ParsedArkadeContract,
     ExcludableVtxo,
     VtxoExclusion,
     DefaultContractParams,
@@ -1148,11 +1148,13 @@ export type {
     ContractRepository,
     ContractFilter,
     IntentRepository,
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
     IntentFilter,
     IntentPageFilter,
     VirtualTxRepository,
     VirtualTx,
     VtxoBranch,
 };
+
+export * from "./deprecatedNames";
