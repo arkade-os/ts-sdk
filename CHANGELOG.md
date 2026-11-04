@@ -66,11 +66,13 @@ style and have not been backfilled.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
 - **Wallet-state updates can use an optional backend transaction.** Repository
-  implementations expose atomic wallet-state v1 without changing storage schemas
-  or required repository versions. SQLite activation requires an explicitly
-  dedicated or coordinated connection; shared-executor repository work uses one
-  queue. Persistence assertions remain explicit caller options. Legacy custom
-  repositories retain their existing update path.
+  implementations expose `atomicWalletState`, which `updateWalletState` uses
+  instead of a separate read and save, without changing storage schemas or
+  required repository versions. SQLite enables it with
+  `walletStateTransactions: true`, only on a dedicated connection or one
+  coordinated through `getSerializedExecutor`/`runInTransaction`. Persistence
+  assertions remain explicit caller options. Custom repositories without the
+  capability keep their existing update path.
 
 - **`@arkade-os/swap`: a claim packet can bind the amount the lockup must
   carry.** An unbound packet lets covclaimd claim whatever the solver funds,
@@ -284,6 +286,17 @@ style and have not been backfilled.
   arkd rejects an input that only the server signs (`missing tapscript spend
   sig`); a covenant leaf is fine, since the emulator adds its key. `send()` now
   says so up front, naming the function, whichever route the spend takes.
+
+- **SQLite statements no longer run inside another repository's
+  transaction.** Repositories sharing an executor sent reads and
+  single-statement writes straight to the connection, so one issued between a
+  neighbour's `BEGIN IMMEDIATE` and `COMMIT` joined that transaction and was
+  rolled back with it. Every SDK SQLite repository now routes its statements
+  through one queue per executor, for every user, not only
+  `walletStateTransactions` opt-ins: a statement waits for an in-flight
+  transaction instead of joining it. A repository or serialized-executor call
+  made inside a `runInTransaction` callback therefore deadlocks; after 10s the
+  SDK warns with that call's stack.
 
 - **Swap SQLite repositories accept the SDK's serialized executor.** Transaction
   callbacks use the supplied raw executor instead of enqueueing statements behind

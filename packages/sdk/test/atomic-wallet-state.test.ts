@@ -238,16 +238,6 @@ describe("updateWalletState capability dispatch", () => {
         expect((await repo.getWalletState())?.settings?.count).toBe(1);
     });
 
-    it("rejects unknown versions without invoking either write path", async () => {
-        const repo = legacy();
-        const update = vi.fn();
-        Object.assign(repo, { atomicWalletState: { version: 2, update } });
-        await expect(updateWalletState(repo, increment)).rejects.toThrow(/version/);
-        expect(update).not.toHaveBeenCalled();
-        expect(repo.getWalletState).not.toHaveBeenCalled();
-        expect(repo.saveWalletState).not.toHaveBeenCalled();
-    });
-
     it("does not fall back after an atomic failure and permits a subsequent update", async () => {
         const repo = legacy();
         const error = new Error("atomic storage failed");

@@ -1,12 +1,12 @@
 import { collectIntents } from "../src/repositories/intentRepository";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
 import { SQLiteIntentRepository } from "../src/repositories/sqlite/intentRepository";
 import { SQLiteVirtualTxRepository } from "../src/repositories/sqlite/virtualTxRepository";
 import { SQLiteWalletRepository } from "../src/repositories/sqlite/walletRepository";
 import { SQLiteContractRepository } from "../src/repositories/sqlite/contractRepository";
 import type { Contract } from "../src/contracts/types";
-import { runInTransaction } from "../src/repositories/sqlite/transaction";
+import { getSerializedExecutor, runInTransaction } from "../src/repositories/sqlite/transaction";
 import { ChainedTxType, type VirtualTx } from "../src/repositories/virtualTxRepository";
 import type { ArkIntent } from "../src/repositories/intentRepository";
 
@@ -220,5 +220,62 @@ describe("SQLite transaction serialization (shared connection)", () => {
             "PRAGMA table_info(ark_vtxos)",
         );
         expect(cols.find((c) => c.name === "script")?.notnull).toBe(1);
+    });
+});
+
+describe("SQLite stalled-transaction warning", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it("warns with the call site when a transaction callback calls the queue", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const db = createNodeSQLExecutor();
+        const facade = getSerializedExecutor(db);
+        let reached!: () => void;
+        const nested = new Promise<void>((resolve) => {
+            reached = resolve;
+        });
+        // Deadlocks by design; the transaction never settles.
+        void runInTransaction(db, async () => {
+            const read = facade.get("SELECT 1");
+            reached();
+            await read;
+        });
+        await nested;
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(warn).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(warn).toHaveBeenCalledOnce();
+        const site = warn.mock.calls[0][0] as Error;
+        expect(site.message).toMatch(/inside a runInTransaction callback deadlocks/);
+        expect(site.stack).toContain("sqlite-transaction-serialization.test.ts");
+    });
+
+    it("stays quiet for a call that only waits for a transaction to finish", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const db = createNodeSQLExecutor();
+        let started!: () => void;
+        const running = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const transaction = runInTransaction(db, async () => {
+            started();
+            await gate;
+        });
+        await running;
+        const read = getSerializedExecutor(db).get<{ one: number }>("SELECT 1 AS one");
+        release();
+        await transaction;
+        expect(await read).toEqual({ one: 1 });
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(warn).not.toHaveBeenCalled();
     });
 });

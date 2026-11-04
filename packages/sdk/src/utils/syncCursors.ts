@@ -33,8 +33,6 @@ export async function updateWalletState(
     const op = prev.then(() =>
         withWebLock(WALLET_STATE_LOCK_NAME, async () => {
             if (atomic !== undefined) {
-                if (atomic.version !== 1)
-                    throw new Error("unsupported atomic wallet-state version");
                 await atomic.update(updater);
                 return;
             }

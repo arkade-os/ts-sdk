@@ -4,11 +4,29 @@ type ExecutorQueue = {
     raw: SQLExecutor;
     facade: SQLExecutor;
     tail: Promise<unknown>;
+    inTransaction: boolean;
 };
 const executorQueues = new WeakMap<SQLExecutor, ExecutorQueue>();
 
+const STALL_WARN_MS = 10_000;
+
 function enqueue<T>(queue: ExecutorQueue, operation: () => Promise<T>): Promise<T> {
-    const run = queue.tail.then(operation);
+    // A queued call made from inside a transaction callback waits on that callback forever.
+    // Telling it apart from a concurrent caller needs async context that Hermes lacks, so warn
+    // instead of failing, with the stack captured at the call site.
+    let stall: ReturnType<typeof setTimeout> | undefined;
+    if (queue.inTransaction) {
+        const site = new Error(
+            `SQLite operation waited ${STALL_WARN_MS / 1000}s behind a transaction. A repository, ` +
+                "getSerializedExecutor or runInTransaction call inside a runInTransaction " +
+                "callback deadlocks; use the callback's tx.",
+        );
+        stall = setTimeout(() => console.warn(site), STALL_WARN_MS);
+    }
+    const run = queue.tail.then(() => {
+        clearTimeout(stall);
+        return operation();
+    });
     queue.tail = run.catch(() => undefined);
     return run;
 }
@@ -22,7 +40,12 @@ function queueFor(db: SQLExecutor): ExecutorQueue {
         get: <T>(sql: string, params?: unknown[]) => enqueue(queue, () => db.get<T>(sql, params)),
         all: <T>(sql: string, params?: unknown[]) => enqueue(queue, () => db.all<T>(sql, params)),
     };
-    const queue: ExecutorQueue = { raw: db, facade, tail: Promise.resolve() };
+    const queue: ExecutorQueue = {
+        raw: db,
+        facade,
+        tail: Promise.resolve(),
+        inTransaction: false,
+    };
     executorQueues.set(db, queue);
     executorQueues.set(facade, queue);
     return queue;
@@ -45,17 +68,22 @@ export function runInTransaction(
     const queue = queueFor(db);
     return enqueue(queue, async () => {
         const tx = queue.raw;
-        await tx.run("BEGIN IMMEDIATE");
+        queue.inTransaction = true;
         try {
-            await fn(tx);
-            await tx.run("COMMIT");
-        } catch (e) {
+            await tx.run("BEGIN IMMEDIATE");
             try {
-                await tx.run("ROLLBACK");
-            } catch {
-                /* already rolled back */
+                await fn(tx);
+                await tx.run("COMMIT");
+            } catch (e) {
+                try {
+                    await tx.run("ROLLBACK");
+                } catch {
+                    /* already rolled back */
+                }
+                throw e;
             }
-            throw e;
+        } finally {
+            queue.inTransaction = false;
         }
     });
 }
