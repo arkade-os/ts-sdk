@@ -152,9 +152,18 @@ async function observeRecord(
                         { txid: record.source.txid, vout: record.source.vout },
                         { txid: record.operationId, vout: 0 },
                     ],
+                    pageIndex: 0,
+                    pageSize: 2,
+                    maxResponseBytes: MAX_REQUEST_BYTES,
                 }),
             ),
-            Promise.resolve().then(() => getVirtualTxs([localCheckpoint.id, record.operationId])),
+            Promise.resolve().then(() =>
+                getVirtualTxs([localCheckpoint.id, record.operationId], {
+                    pageIndex: 0,
+                    pageSize: 2,
+                    maxResponseBytes: MAX_REQUEST_BYTES,
+                }),
+            ),
         ]);
         assertCompleteReply(coins, "vtxos");
         assertCompleteReply(transactions, "txs");
@@ -237,6 +246,7 @@ function assertCompleteReply(reply: unknown, field: "vtxos" | "txs"): void {
         (!page ||
             !Number.isInteger(page.current) ||
             page.current < 0 ||
+            page.current > page.total ||
             page.next !== 0 ||
             !Number.isInteger(page.total) ||
             page.total < 0 ||

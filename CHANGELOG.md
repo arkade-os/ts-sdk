@@ -577,6 +577,12 @@ style and have not been backfilled.
   and failsafe polling outlived the failure. The start-up now disposes it
   before the rejection reaches the caller, which can retry as before.
 
+- **Native journal observation bounds REST bodies before parsing.** Observation
+  requests one explicit two-item page with an opt-in 4 MiB wire-byte cap, including
+  error bodies. Oversized or unstreamable replies remain unknown; legacy indexer
+  reads keep their existing defaults. Pagination whose current page exceeds its
+  total cannot acknowledge a receipt or release the occupied prepared slot.
+
 - **Native execution preserves its imported payout and delegation binding.**
   Mutating a handle's destination no longer changes its spend. Remote watches
   must match the captured template, artifact and variables; restored handles
