@@ -51,7 +51,7 @@ const arkInfo = () => ({
     deprecatedSigners: [],
     digest: "d",
     dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
+    fees: { batchFee: {}, intentFee: {}, txFeeRate: "0" },
     forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
     forfeitPubkey: SIGNER_PUBKEY,
     network: "regtest",
