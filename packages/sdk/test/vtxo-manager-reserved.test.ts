@@ -49,7 +49,7 @@ describe("VtxoManager and a concurrent spend", () => {
             settle: vi.fn().mockRejectedValue(reserved()),
             dustAmount: 1000n,
             arkProvider: {
-                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} }, vtxoMaxAmount: -1n }),
+                getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} }, vtxoMaxAmount: -1n }),
             },
         } as any;
 
@@ -104,7 +104,7 @@ describe("VtxoManager and a concurrent spend", () => {
                     hash: "0".repeat(64),
                 }),
             },
-            arkProvider: { getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }) },
+            arkProvider: { getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }) },
             network: { bech32: "bcrt", pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef },
             identity: {
                 sign: vi.fn().mockImplementation((tx: unknown) => tx),

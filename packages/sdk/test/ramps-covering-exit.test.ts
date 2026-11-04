@@ -5,7 +5,7 @@ import { isSdkPicked } from "../src/wallet/utils";
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ARK_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
-const fees = { intentFee: {}, txFeeRate: "1" } as any;
+const fees = { batchFee: {}, txFeeRate: "1" } as any;
 const HOUR = 3_600_000;
 const NOW = Date.now();
 

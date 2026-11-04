@@ -16,7 +16,7 @@ import {
     RestIndexerProvider,
     SingleKey,
     Transaction,
-    Intent,
+    Proof,
     Batch,
     RestEmulatorProvider,
     Extension,
@@ -537,7 +537,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -568,7 +568,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -579,22 +579,22 @@ describe("arkade", () => {
 
         // Submit to emulator
         const signedProofB64 = base64.encode(signedProof.toPSBT());
-        const introSignedProof = await emulator.submitIntent({
+        const introSignedProof = await emulator.submitProof({
             proof: signedProofB64,
             message,
         });
 
         // Register intent with server
-        const intentId = await arkProvider.registerIntent({
+        const registrationId = await arkProvider.registerProof({
             proof: introSignedProof,
             message,
         });
 
-        expect(intentId).toBeDefined();
+        expect(registrationId).toBeDefined();
 
         // Create batch handler for arkade settlement
         const handler = arkade.createArkadeBatchHandler(
-            intentId,
+            registrationId,
             [{ ...coin, arkadeScriptBytes }],
             bob,
             introSignedProof,
@@ -712,7 +712,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -741,7 +741,7 @@ describe("arkade", () => {
             explorer,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -750,20 +750,20 @@ describe("arkade", () => {
         const signedProof = await bob.sign(intentProof);
         const signedProofB64 = base64.encode(signedProof.toPSBT());
 
-        const introSignedProof = await emulator.submitIntent({
+        const introSignedProof = await emulator.submitProof({
             proof: signedProofB64,
             message,
         });
 
-        const intentId = await arkProvider.registerIntent({
+        const registrationId = await arkProvider.registerProof({
             proof: introSignedProof,
             message,
         });
-        expect(intentId).toBeDefined();
+        expect(registrationId).toBeDefined();
 
         // Create batch handler (auto-detects boarding input)
         const handler = arkade.createArkadeBatchHandler(
-            intentId,
+            registrationId,
             [{ ...coin, arkadeScriptBytes }],
             bob,
             introSignedProof,
@@ -989,7 +989,7 @@ describe("arkade", () => {
             },
         ];
 
-        const settleMessage: Intent.RegisterMessage = {
+        const settleMessage: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -1017,7 +1017,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const settleIntentProof = Intent.create(
+        const settleIntentProof = Proof.create(
             settleMessage,
             [settleCoin],
             [...outputs, makeEmulatorExtensionOutput(1, settleArkadeScript, transferPacket)],
@@ -1026,12 +1026,12 @@ describe("arkade", () => {
         const signedSettleProof = await bob.sign(settleIntentProof);
         const signedSettleProofB64 = base64.encode(signedSettleProof.toPSBT());
 
-        const introSettleProof = await emulator.submitIntent({
+        const introSettleProof = await emulator.submitProof({
             proof: signedSettleProofB64,
             message: settleMessage,
         });
 
-        const settleIntentId = await arkProvider.registerIntent({
+        const settleIntentId = await arkProvider.registerProof({
             proof: introSettleProof,
             message: settleMessage,
         });

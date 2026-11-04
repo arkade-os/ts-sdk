@@ -313,7 +313,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
      * the sender can satisfy. It carries a CLTV: settling on it before `refundLocktime` matures is
      * rejected, and this handler has no clock, so `recoverVtxos` filters on
      * {@link assertSpendableNow}. Role-blind: a receiver's row gets the same leaf and fails at
-     * intent registration.
+     * proof registration.
      */
     deriveTapscripts(script: VHTLC.ScriptV2): DerivedContractTapscripts {
         return deriveVhtlcTapscripts(script);

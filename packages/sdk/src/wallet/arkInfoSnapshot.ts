@@ -191,8 +191,11 @@ function assertFeeInfo(value: unknown, path: string): asserts value is FeeInfo {
     }
     const fees = value as Record<string, unknown>;
     assertString(fees.txFeeRate, `${path}.txFeeRate`);
-    if (typeof fees.intentFee !== "object" || fees.intentFee === null) {
-        throw new MalformedArkInfoSnapshotError(`${path}.intentFee must be an object`);
+    // Snapshots written before the batch fee rename carry only `intentFee`.
+    fees.batchFee ??= fees.intentFee;
+    fees.intentFee ??= fees.batchFee;
+    if (typeof fees.batchFee !== "object" || fees.batchFee === null) {
+        throw new MalformedArkInfoSnapshotError(`${path}.batchFee must be an object`);
     }
 }
 

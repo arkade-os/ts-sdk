@@ -1,44 +1,47 @@
-import { collectIntents } from "../repositories/intentRepository";
+import { collectBatchRegistrations } from "../repositories/batchRegistrationRepository";
 import { SettlementEvent } from "../providers/ark";
-import { IntentRepository } from "../repositories/intentRepository";
+import { BatchRegistrationRepository } from "../repositories/batchRegistrationRepository";
 import { Batch } from "./batch";
-import { applySettlementEventToIntent } from "./intentStateReducer";
+import { applySettlementEventToRegistration } from "./batchRegistrationStateReducer";
 
-export interface IntentPersistenceDeps {
-    intentRepository?: Pick<IntentRepository, "getIntentsPage" | "saveIntent">;
-    intentTxId: string;
+export interface RegistrationPersistenceDeps {
+    batchRegistrationRepository?: Pick<
+        BatchRegistrationRepository,
+        "getRegistrationsPage" | "saveRegistration"
+    >;
+    proofTxId: string;
 }
 
 /**
- * Best-effort intent transition for one settlement event. Repo errors are
+ * Best-effort registration transition for one settlement event. Repo errors are
  * logged, never thrown — persistence must not break the settlement stream.
  */
 async function persistTransition(
-    deps: IntentPersistenceDeps,
+    deps: RegistrationPersistenceDeps,
     event: SettlementEvent,
 ): Promise<void> {
-    const repo = deps.intentRepository;
+    const repo = deps.batchRegistrationRepository;
     if (!repo) return;
     try {
-        const cur = (await collectIntents(repo, { intentTxIds: [deps.intentTxId] }))[0];
+        const cur = (await collectBatchRegistrations(repo, { proofTxIds: [deps.proofTxId] }))[0];
         if (!cur) return;
-        const next = applySettlementEventToIntent(cur, event);
-        if (next) await repo.saveIntent(next);
+        const next = applySettlementEventToRegistration(cur, event);
+        if (next) await repo.saveRegistration(next);
     } catch (e) {
-        console.error(`Failed to apply settlement event to intent ${deps.intentTxId}`, e);
+        console.error(`Failed to apply settlement event to registration ${deps.proofTxId}`, e);
     }
 }
 
 /**
- * Wrap a {@link Batch.Handler} so SDK-owned intent state is persisted from the
+ * Wrap a {@link Batch.Handler} so SDK-owned registration state is persisted from the
  * batch lifecycle hooks that {@link Batch.join} awaits, rather than from the
  * fire-and-forget `eventCallback`. This makes the terminal write ordered: it
  * completes before `Batch.join` returns (finalized) or before the failure
  * propagates (failed), so a later local step can't clobber a committed outcome.
  */
-export function wrapHandlerWithIntentPersistence(
+export function wrapHandlerWithRegistrationPersistence(
     base: Batch.Handler,
-    deps: IntentPersistenceDeps,
+    deps: RegistrationPersistenceDeps,
 ): Batch.Handler {
     return {
         ...base,

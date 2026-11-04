@@ -982,7 +982,7 @@ describe("Common", () => {
                 }
             });
 
-            it("should register and delete intents", { timeout: 60000 }, async () => {
+            it("should register and delete registrations", { timeout: 60000 }, async () => {
                 const provider = new RestArkProvider("http://localhost:7070");
 
                 // Create fresh wallet instances for this test
@@ -1020,22 +1020,22 @@ describe("Common", () => {
                     },
                 ];
 
-                const intent = await alice.wallet.makeRegisterIntentSignature(
+                const intent = await alice.wallet.makeRegisterProof(
                     virtualCoins,
                     outputs,
                     onchainOutputsIndexes,
                     cosignerPubkeys,
                 );
 
-                const deleteIntent = await alice.wallet.makeDeleteIntentSignature(virtualCoins);
+                const deleteRegistration = await alice.wallet.makeDeleteProof(virtualCoins);
 
                 // register intent
-                const registerResponse = await provider.registerIntent(intent);
+                const registerResponse = await provider.registerProof(intent);
                 expect(registerResponse).toBeDefined();
 
                 // should fail to register the same intent again
                 try {
-                    await provider.registerIntent(intent);
+                    await provider.registerProof(intent);
                 } catch (error: any) {
                     expect(error).toBeDefined();
                     expect(error).toBeInstanceOf(ArkError);
@@ -1046,7 +1046,7 @@ describe("Common", () => {
                 }
 
                 // delete intent
-                await provider.deleteIntent(deleteIntent);
+                await provider.deleteRegistration(deleteRegistration);
             });
 
             it("should finalize pending transactions", { timeout: 60000 }, async () => {
@@ -1151,7 +1151,7 @@ describe("Common", () => {
 
                     const { fees } = await alice.wallet.arkProvider.getInfo();
 
-                    expect(fees.intentFee.onchainInput).toBe("1000.0");
+                    expect(fees.batchFee.onchainInput).toBe("1000.0");
 
                     const settleTxid = await new Ramps(alice.wallet).onboard(fees);
                     expect(settleTxid).toBeDefined();

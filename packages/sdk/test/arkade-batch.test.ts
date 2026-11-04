@@ -25,7 +25,7 @@ import type { SignerSession } from "../src/tree/signingSession";
 import type { ArkProvider, BatchStartedEvent, TreeSigningStartedEvent } from "../src/providers/ark";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
-import type { Intent } from "../src/intent";
+import type { Proof } from "../src/proof";
 import type { TxTree } from "../src/tree/txTree";
 
 const SIGNER_XONLY = "11".repeat(32);
@@ -79,7 +79,7 @@ function makeEvents() {
 
     const batchStarted = {
         id: "batch-1",
-        intentIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
+        registrationIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
         batchExpiry: 100n,
     } as unknown as BatchStartedEvent;
 
@@ -121,7 +121,7 @@ function makeHandler(
         [],
         {} as unknown as Identity,
         signedProof,
-        { onchain_output_indexes: onchainOutputIndexes } as unknown as Intent.RegisterMessage,
+        { onchain_output_indexes: onchainOutputIndexes } as unknown as Proof.RegisterMessage,
         session,
         arkProvider,
         emulator,
@@ -185,7 +185,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
         expect(validateBatchRecipients).not.toHaveBeenCalled();
     });
 
-    it("falls back to the intent proof's own outputs when no recipients are given", async () => {
+    it("falls back to the proof's own outputs when no recipients are given", async () => {
         const session = makeSession();
         const handler = makeHandler(
             session,
@@ -206,7 +206,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
         expect(session.init).toHaveBeenCalled();
     });
 
-    it("aborts when the tree omits an output the intent proof declared", async () => {
+    it("aborts when the tree omits an output the proof declared", async () => {
         const session = makeSession();
         const handler = makeHandler(
             session,
@@ -219,7 +219,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
 
         await handler.onBatchStarted(batchStarted);
         await expect(handler.onTreeSigningStarted(treeSigningStarted, vtxoTree)).rejects.toThrow(
-            /offchain output 1 of the intent proof is not present/,
+            /offchain output 1 of the proof is not present/,
         );
         expect(session.init).not.toHaveBeenCalled();
     });

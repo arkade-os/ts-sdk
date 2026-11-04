@@ -245,7 +245,7 @@ import {
     SettlementEvent,
     SettlementEventType,
     ArkadeInfo,
-    SignedIntent,
+    SignedProof,
     Output,
     TxNotification,
     TxNotificationEvent,
@@ -260,6 +260,7 @@ import {
     TreeSignatureEvent,
     ScheduledSession,
     FeeInfo,
+    FeeInfoInput,
 } from "./providers/ark";
 import { CachingArkProvider } from "./providers/cachingArk";
 import {
@@ -320,7 +321,7 @@ import {
     type RawTxSource,
     type WithPrevTx,
 } from "./utils/prevoutTx";
-import { Intent, type IntentCoin } from "./intent";
+import { Proof, type ProofCoin } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
@@ -445,18 +446,21 @@ import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletReposi
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
-import { InMemoryIntentRepository } from "./repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "./repositories/inMemory/batchRegistrationRepository";
 import { InMemoryVirtualTxRepository } from "./repositories/inMemory/virtualTxRepository";
-import { IndexedDBIntentRepository } from "./repositories/indexedDB/intentRepository";
+import { IndexedDBBatchRegistrationRepository } from "./repositories/indexedDB/batchRegistrationRepository";
 import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTxRepository";
-import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
+import {
+    isTerminalBatchRegistrationState,
+    BATCH_REGISTRATION_TERMINAL_STATES,
+} from "./repositories/batchRegistrationRepository";
 import type {
-    IntentRepository,
-    ArkIntent,
-    ArkIntentState,
-    IntentFilter,
-    IntentPageFilter,
-} from "./repositories/intentRepository";
+    BatchRegistrationRepository,
+    BatchRegistration,
+    BatchRegistrationState,
+    BatchRegistrationFilter,
+    BatchRegistrationPageFilter,
+} from "./repositories/batchRegistrationRepository";
 import type {
     VirtualTxRepository,
     VirtualTx,
@@ -491,7 +495,23 @@ export {
     collectTransactionHistory,
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
-export { collectIntents } from "./repositories/intentRepository";
+export { collectBatchRegistrations } from "./repositories/batchRegistrationRepository";
+
+// Deprecated names, kept so existing code keeps working.
+export { Intent, type IntentCoin } from "./proof";
+export type { SignedIntent } from "./providers/ark";
+export { InMemoryIntentRepository } from "./repositories/inMemory/batchRegistrationRepository";
+export { IndexedDBIntentRepository } from "./repositories/indexedDB/batchRegistrationRepository";
+export {
+    collectIntents,
+    INTENT_TERMINAL_STATES,
+    isTerminalIntentState,
+    type ArkIntent,
+    type ArkIntentState,
+    type IntentFilter,
+    type IntentPageFilter,
+    type IntentRepository,
+} from "./repositories/batchRegistrationRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -799,15 +819,15 @@ export {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    InMemoryIntentRepository,
+    InMemoryBatchRegistrationRepository,
     InMemoryVirtualTxRepository,
-    IndexedDBIntentRepository,
+    IndexedDBBatchRegistrationRepository,
     IndexedDBVirtualTxRepository,
-    isTerminalIntentState,
-    INTENT_TERMINAL_STATES,
+    isTerminalBatchRegistrationState,
+    BATCH_REGISTRATION_TERMINAL_STATES,
     ChainedTxType,
-    // Intent proof
-    Intent,
+    // Proof
+    Proof,
     // BIP-322 message signing
     BIP322,
     // TxTree
@@ -943,7 +963,7 @@ export type {
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
-    IntentCoin,
+    ProofCoin,
     VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,
@@ -981,8 +1001,9 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    FeeInfoInput,
     ArkadeInfo,
-    SignedIntent,
+    SignedProof,
     Output,
     TxNotification,
     TxNotificationEvent,
@@ -1147,11 +1168,11 @@ export type {
     StoredVtxo,
     ContractRepository,
     ContractFilter,
-    IntentRepository,
-    ArkIntent,
-    ArkIntentState,
-    IntentFilter,
-    IntentPageFilter,
+    BatchRegistrationRepository,
+    BatchRegistration,
+    BatchRegistrationState,
+    BatchRegistrationFilter,
+    BatchRegistrationPageFilter,
     VirtualTxRepository,
     VirtualTx,
     VtxoBranch,

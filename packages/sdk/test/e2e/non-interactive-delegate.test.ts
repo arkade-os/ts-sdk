@@ -9,7 +9,7 @@ import {
     Batch,
     CSVMultisigTapscript,
     resolveBatchExpiryPolicy,
-    Intent,
+    Proof,
     networks,
     RestArkProvider,
     RestIndexerProvider,
@@ -73,7 +73,7 @@ const delegateProgram = {
     },
 } satisfies arkade.Program;
 
-describe("arkade delegate (covenant batch refresh) — intent submission", () => {
+describe("arkade delegate (covenant batch refresh) — registration submission", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
@@ -113,7 +113,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         const session = solverIdentity.signerSession();
         const sessionPubKey = hex.encode(await session.getPublicKey());
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -141,7 +141,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         );
 
         // Self-send to the same pkScript with the same amount.
-        const validProof = Intent.create(
+        const validProof = Proof.create(
             message,
             [coin],
             [{ script: delegatePkScript, amount: BigInt(DELEGATE_AMOUNT) }],
@@ -156,22 +156,22 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             },
         ]);
 
-        const signedProof = await emulator.submitIntent({
+        const signedProof = await emulator.submitProof({
             proof: base64.encode(validProof.toPSBT()),
             message,
         });
 
         // Server accepts the emulator-co-signed proof.
-        const intentId = await arkProvider.registerIntent({
+        const registrationId = await arkProvider.registerProof({
             proof: signedProof,
             message,
         });
-        expect(intentId).toBeTruthy();
+        expect(registrationId).toBeTruthy();
 
         // === Drive the batch session ===
 
         const handler = buildDelegateHandler({
-            intentId,
+            registrationId,
             signedProof,
             message,
             coin,
@@ -236,9 +236,9 @@ async function waitForVtxo(indexer: RestIndexerProvider, pkScript: Uint8Array, t
  * the server + tweaked-emulator co-signatures.
  */
 function buildDelegateHandler(opts: {
-    intentId: string;
+    registrationId: string;
     signedProof: string;
-    message: Intent.RegisterMessage;
+    message: Proof.RegisterMessage;
     coin: {
         txid: string;
         vout: number;
@@ -256,8 +256,10 @@ function buildDelegateHandler(opts: {
 
     return {
         async onBatchStarted(event) {
-            const intentIdHash = hex.encode(sha256(new TextEncoder().encode(opts.intentId)));
-            if (!event.intentIdHashes.includes(intentIdHash)) {
+            const registrationIdHash = hex.encode(
+                sha256(new TextEncoder().encode(opts.registrationId)),
+            );
+            if (!event.registrationIdHashes.includes(registrationIdHash)) {
                 return { skip: true };
             }
             const info = await arkProvider.getInfo();
@@ -268,7 +270,7 @@ function buildDelegateHandler(opts: {
                 }),
             );
 
-            await arkProvider.confirmRegistration(opts.intentId);
+            await arkProvider.confirmRegistration(opts.registrationId);
             batchId = event.id;
 
             const sweepTapscript = CSVMultisigTapscript.encode({

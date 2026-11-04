@@ -10,11 +10,11 @@ import {
     BATCHES_DB_NAME,
     BATCHES_DB_VERSION,
     initBatchesDatabase,
-    STORE_INTENTS,
+    STORE_BATCH_REGISTRATIONS,
 } from "../src/repositories/indexedDB/batchesSchema";
-import { IndexedDBIntentRepository } from "../src/repositories/indexedDB/intentRepository";
+import { IndexedDBBatchRegistrationRepository } from "../src/repositories/indexedDB/batchRegistrationRepository";
 import { IndexedDBVirtualTxRepository } from "../src/repositories/indexedDB/virtualTxRepository";
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/batchRegistrationRepository";
 import { DEFAULT_DB_NAME } from "../src/worker/browser/utils";
 import { awaitTransaction, promisifyRequest } from "../src/repositories/indexedDB/idbUtils";
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
@@ -30,7 +30,7 @@ function indexIsUnique(db: IDBDatabase, store: string, index: string): boolean {
 describe("IndexedDB schema", () => {
     // The shared wallet/contract schema adds a history index at v5 and contract
     // watch indexes at v6; the intent-persistence stores live in the batches database.
-    it("keeps intent/virtualtx stores out of the shared v6 schema", async () => {
+    it("keeps batch registration/virtualtx stores out of the shared v6 schema", async () => {
         expect(DB_VERSION).toBe(6);
         const db = await openDatabase("schema-shared-inert-test", DB_VERSION, initDatabase);
         const names = Array.from(db.objectStoreNames);
@@ -46,7 +46,7 @@ describe("IndexedDB schema", () => {
         await closeDatabase("schema-shared-inert-test");
     });
 
-    it("creates the intent/virtualtx/branch stores in the batches database", async () => {
+    it("creates the batch registration/virtualtx/branch stores in the batches database", async () => {
         const db = await openDatabase(
             "schema-batches-fresh-test",
             BATCHES_DB_VERSION,
@@ -55,19 +55,19 @@ describe("IndexedDB schema", () => {
         const names = Array.from(db.objectStoreNames);
         expect(names).toEqual(expect.arrayContaining(["intents", "virtualTxs", "vtxoBranches"]));
         expect(names).not.toContain(STORE_CONTRACTS);
-        expect(indexIsUnique(db, STORE_INTENTS, "intentId")).toBe(true);
+        expect(indexIsUnique(db, STORE_BATCH_REGISTRATIONS, "intentId")).toBe(true);
         await closeDatabase("schema-batches-fresh-test");
     });
 
     // Default names: the intent/virtualtx repositories must never open the wallet database.
-    it("keeps the intent/virtualtx repositories out of the wallet database", async () => {
+    it("keeps the batch registration/virtualtx repositories out of the wallet database", async () => {
         expect(BATCHES_DB_NAME).not.toBe(DEFAULT_DB_NAME);
         const contracts = new IndexedDBContractRepository();
-        const intents = new IndexedDBIntentRepository();
+        const intents = new IndexedDBBatchRegistrationRepository();
         const virtualTxs = new IndexedDBVirtualTxRepository();
         try {
             // intent repository first: on a shared name it would fix the version
-            await expect(collectIntents(intents, {})).resolves.toEqual([]);
+            await expect(collectBatchRegistrations(intents, {})).resolves.toEqual([]);
             await expect(collectContracts(contracts, {})).resolves.toEqual([]);
             await expect(virtualTxs.getVirtualTx("00".repeat(32))).resolves.toBeNull();
         } finally {

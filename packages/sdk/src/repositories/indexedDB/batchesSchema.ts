@@ -1,10 +1,12 @@
-// Experimental intent and virtual-tx persistence. Its own database, apart from
+// Experimental batch registration and virtual-tx persistence. Its own database, apart from
 // the wallet's (`schema.ts`): these stores evolve without upgrading the wallet
 // schema, and only the opt-in repositories ever open it.
 export const BATCHES_DB_NAME = "arkade-batches";
 export const BATCHES_DB_VERSION = 1;
 
-export const STORE_INTENTS = "intents";
+// PERSISTED: this store name, its keyPath and its index names keep their pre-rename
+// spelling. Changing them orphans every record on disk.
+export const STORE_BATCH_REGISTRATIONS = "intents";
 export const STORE_VIRTUAL_TXS = "virtualTxs";
 export const STORE_VTXO_BRANCHES = "vtxoBranches";
 
@@ -13,14 +15,14 @@ export function initBatchesDatabase(
     _oldVersion: number,
     _transaction: IDBTransaction | null,
 ): void {
-    if (!db.objectStoreNames.contains(STORE_INTENTS)) {
-        const intentsStore = db.createObjectStore(STORE_INTENTS, {
+    if (!db.objectStoreNames.contains(STORE_BATCH_REGISTRATIONS)) {
+        const registrationsStore = db.createObjectStore(STORE_BATCH_REGISTRATIONS, {
             keyPath: "intentTxId",
         });
         // Unique-when-present: records with no intentId aren't indexed, so many
-        // pre-registration intents coexist; a duplicate intentId is rejected.
-        intentsStore.createIndex("intentId", "intentId", { unique: true });
-        intentsStore.createIndex("state", "state", { unique: false });
+        // unregistered records coexist; a duplicate intentId is rejected.
+        registrationsStore.createIndex("intentId", "intentId", { unique: true });
+        registrationsStore.createIndex("state", "state", { unique: false });
     }
     if (!db.objectStoreNames.contains(STORE_VIRTUAL_TXS)) {
         db.createObjectStore(STORE_VIRTUAL_TXS, { keyPath: "txid" });

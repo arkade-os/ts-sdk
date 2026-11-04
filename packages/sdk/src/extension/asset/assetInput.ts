@@ -9,18 +9,18 @@ type AssetInputLocal = {
     amount: bigint;
 };
 
-type AssetInputIntent = Pick<AssetInputLocal, "vin" | "amount"> & {
-    type: AssetInputType.Intent;
+type AssetInputProof = Pick<AssetInputLocal, "vin" | "amount"> & {
+    type: AssetInputType.Proof;
     txid: Uint8Array;
 };
 
 /**
  * AssetInput represents an input of an asset group.
  * a local input references a real transaction input and specify the amount in satoshis.
- * an intent input references an external intent transaction. It is created by the server to handle batch leaf transaction.
+ * a proof input references an external proof transaction. It is created by the server to handle batch leaf transaction.
  */
 export class AssetInput {
-    private constructor(readonly input: AssetInputLocal | AssetInputIntent) {}
+    private constructor(readonly input: AssetInputLocal | AssetInputProof) {}
 
     /** Gets the transaction input index for an asset input, e.g. 0 */
     get vin(): number {
@@ -43,8 +43,8 @@ export class AssetInput {
         return input;
     }
 
-    /** Create an intent-backed asset input referencing an external intent transaction. */
-    static createIntent(txid: string, vin: number, amount: bigint | number): AssetInput {
+    /** Create a proof-backed asset input referencing an external proof transaction. */
+    static createProof(txid: string, vin: number, amount: bigint | number): AssetInput {
         if (!txid || txid.length === 0) {
             throw new Error("missing input intent txid");
         }
@@ -56,7 +56,7 @@ export class AssetInput {
         }
 
         const input = new AssetInput({
-            type: AssetInputType.Intent,
+            type: AssetInputType.Proof,
             txid: buf,
             vin,
             amount: typeof amount === "number" ? BigInt(amount) : amount,
@@ -64,6 +64,9 @@ export class AssetInput {
         input.validate();
         return input;
     }
+
+    /** @deprecated Use {@link createProof}. */
+    static createIntent = AssetInput.createProof;
 
     /** Decode an asset input from its hex string form. */
     static fromString(s: string): AssetInput {
@@ -93,7 +96,7 @@ export class AssetInput {
         switch (this.input.type) {
             case AssetInputType.Local:
                 break;
-            case AssetInputType.Intent:
+            case AssetInputType.Proof:
                 if (isZeroBytes(this.input.txid)) {
                     throw new Error("missing input intent txid");
                 }
@@ -117,7 +120,7 @@ export class AssetInput {
                 });
                 break;
             }
-            case AssetInputType.Intent: {
+            case AssetInputType.Proof: {
                 if (reader.remaining() < TX_HASH_SIZE) {
                     throw new Error("invalid input intent txid length");
                 }
@@ -125,7 +128,7 @@ export class AssetInput {
                 const vin = reader.readUint16LE();
                 const amount = reader.readVarUint();
                 input = new AssetInput({
-                    type: AssetInputType.Intent,
+                    type: AssetInputType.Proof,
                     txid: new Uint8Array(txid),
                     vin,
                     amount,
@@ -145,7 +148,7 @@ export class AssetInput {
     /** Serialize the asset input into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         writer.writeByte(this.input.type);
-        if (this.input.type === AssetInputType.Intent) {
+        if (this.input.type === AssetInputType.Proof) {
             writer.write(this.input.txid);
         }
         writer.writeUint16LE(this.input.vin);

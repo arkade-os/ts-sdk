@@ -94,7 +94,7 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array) {
         async submitTx(arkTx: string, cps: string[]) {
             return { signedArkTx: arkTx, signedCheckpointTxs: cps };
         },
-        async submitIntent() {
+        async submitProof() {
             throw new Error("x");
         },
         async submitFinalization() {

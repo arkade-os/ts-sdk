@@ -1055,10 +1055,10 @@ describe("Wallet HD rotation", () => {
                 const coin = makeVtxoForContract(rotated);
                 const intent =
                     operation === "register"
-                        ? await wallet.makeRegisterIntentSignature([coin], [], [], [])
+                        ? await wallet.makeRegisterProof([coin], [], [], [])
                         : operation === "delete"
-                          ? await wallet.makeDeleteIntentSignature([coin])
-                          : await wallet.makeGetPendingTxIntentSignature([coin]);
+                          ? await wallet.makeDeleteProof([coin])
+                          : await wallet.makeGetPendingTxProof([coin]);
                 const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
                 expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
@@ -1068,7 +1068,7 @@ describe("Wallet HD rotation", () => {
             }
         });
 
-        it("mixed baseline + rotated VTXO in one intent: each input is signed by its own pubkey", async () => {
+        it("mixed baseline + rotated VTXO in one registration: each input is signed by its own pubkey", async () => {
             // Proves the sequential threading inside `InputSignerRouter`
             // accumulates signatures across groups: identity-signed
             // inputs and descriptor-signed inputs end up on the SAME
@@ -1092,12 +1092,7 @@ describe("Wallet HD rotation", () => {
             // Order: rotated-coin FIRST so tx-input 0 (synthetic
             // toSpend) carries the rotated pubkey signature too;
             // tx-input 1 = rotated coin; tx-input 2 = baseline coin.
-            const intent = await wallet.makeRegisterIntentSignature(
-                [rotatedCoin, baselineCoin],
-                [],
-                [],
-                [],
-            );
+            const intent = await wallet.makeRegisterProof([rotatedCoin, baselineCoin], [], [], []);
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
             const rotatedPubKeyHex = rotated.params.pubKey;
@@ -1165,15 +1160,15 @@ describe("Wallet HD rotation", () => {
                 script: orphanScriptHex,
             } as Contract);
 
-            await expect(
-                wallet.makeRegisterIntentSignature([orphanCoin], [], [], []),
-            ).rejects.toBeInstanceOf(MissingSigningDescriptorError);
+            await expect(wallet.makeRegisterProof([orphanCoin], [], [], [])).rejects.toBeInstanceOf(
+                MissingSigningDescriptorError,
+            );
 
             // Re-throw to capture the typed instance and assert on its
             // exposed fields (test the contract on the error, not just
             // the message).
             try {
-                await wallet.makeRegisterIntentSignature([orphanCoin], [], [], []);
+                await wallet.makeRegisterProof([orphanCoin], [], [], []);
                 throw new Error("expected throw");
             } catch (err) {
                 expect(err).toBeInstanceOf(MissingSigningDescriptorError);
@@ -1228,12 +1223,7 @@ describe("Wallet HD rotation", () => {
                 tapTree: cosignerScript.encode(),
             };
 
-            const intent = await wallet.makeRegisterIntentSignature(
-                [rotatedCoin, cosignerCoin],
-                [],
-                [],
-                [],
-            );
+            const intent = await wallet.makeRegisterProof([rotatedCoin, cosignerCoin], [], [], []);
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
             // Tx-input 0 / 1 = rotated coin → signed.
@@ -1375,7 +1365,7 @@ describe("Wallet HD rotation", () => {
             )!;
             const coin = makeVtxoForContract(baseline);
 
-            const intent = await wallet.makeRegisterIntentSignature([coin], [], [], []);
+            const intent = await wallet.makeRegisterProof([coin], [], [], []);
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
             expect(signSpy).not.toHaveBeenCalled();

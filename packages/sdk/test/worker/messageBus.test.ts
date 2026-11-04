@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    InMemoryIntentRepository,
+    InMemoryBatchRegistrationRepository,
     ReadonlyWallet,
     Wallet,
-    type IntentRepository,
+    type BatchRegistrationRepository,
 } from "../../src";
 import {
     MessageBus,
@@ -1399,11 +1399,14 @@ describe("MessageBus default buildServices", () => {
         arkServer: { url: "https://ark.example.test" },
     } as never;
 
-    const buildServices = async (intentRepository?: IntentRepository) => {
+    const buildServices = async (batchRegistrationRepository?: BatchRegistrationRepository) => {
         const bus = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [], ...(intentRepository ? { intentRepository } : {}) },
+            {
+                messageHandlers: [],
+                ...(batchRegistrationRepository ? { batchRegistrationRepository } : {}),
+            },
         );
         const create = vi
             .spyOn(Wallet, "create")
@@ -1418,12 +1421,31 @@ describe("MessageBus default buildServices", () => {
         // Without this the worker builds an intent-repo-less wallet: no
         // persisted intents, no reconciliation on restart, and intent-locked
         // VTXOs counted as available — silently unlike a main-thread wallet.
-        const intentRepository = new InMemoryIntentRepository();
-        expect(await buildServices(intentRepository)).toMatchObject({ intentRepository });
+        const batchRegistrationRepository = new InMemoryBatchRegistrationRepository();
+        expect(await buildServices(batchRegistrationRepository)).toMatchObject({
+            batchRegistrationRepository,
+        });
     });
 
     it("leaves it unset when none is configured", async () => {
-        expect(await buildServices()).not.toHaveProperty("intentRepository");
+        expect(await buildServices()).not.toHaveProperty("batchRegistrationRepository");
+    });
+
+    it("still accepts the deprecated intentRepository option", async () => {
+        const intentRepository = new InMemoryBatchRegistrationRepository();
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [], intentRepository },
+        );
+        const create = vi
+            .spyOn(Wallet, "create")
+            .mockResolvedValue({ dispose: vi.fn() } as unknown as Wallet);
+        await (bus as any).buildServices(config);
+        expect(create.mock.calls[0][0].storage).toMatchObject({
+            batchRegistrationRepository: intentRepository,
+        });
+        create.mockRestore();
     });
 
     it("hands the configured onchainProvider factory to both wallet kinds", async () => {

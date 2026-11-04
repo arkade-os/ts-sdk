@@ -4,18 +4,20 @@ import {
     ArkadeInfo,
     ArkProvider,
     Asset,
+    BatchFeeConfig,
+    batchFeeConfig,
     decodeTapscript,
     DelegateInfo,
     Estimator,
     ExtendedCoin,
     ExtendedVirtualCoin,
     Identity,
-    Intent,
+    Proof,
     isSubdust,
     MultisigTapscript,
     Outpoint,
     Recipient,
-    SignedIntent,
+    SignedProof,
     TapLeafScript,
     Transaction,
     VirtualCoin,
@@ -249,7 +251,7 @@ async function delegate(
     const { fees, dust, forfeitAddress, network } = arkInfo;
 
     const delegateAtSeconds = delegateAt.getTime() / 1000;
-    const estimator = estimatorAt(fees.intentFee, delegateAt);
+    const estimator = estimatorAt(batchFeeConfig(fees), delegateAt);
 
     let amount = 0n;
     for (const coin of vtxos) {
@@ -302,7 +304,7 @@ async function delegate(
         amount: amount,
     });
 
-    const registerIntent = await makeSignedDelegateIntent(
+    const registerProof = await makeSignedDelegateProof(
         identity,
         vtxos,
         outputs,
@@ -331,7 +333,7 @@ async function delegate(
             }),
     );
 
-    await delegateProvider.delegate(registerIntent, forfeits);
+    await delegateProvider.delegate(registerProof, forfeits);
 }
 
 async function makeDelegateForfeitTx(
@@ -368,7 +370,7 @@ async function makeDelegateForfeitTx(
     return identity.sign(tx);
 }
 
-async function makeSignedDelegateIntent(
+async function makeSignedDelegateProof(
     identity: Identity,
     coins: ExtendedCoin[],
     outputs: TransactionOutput[],
@@ -376,9 +378,9 @@ async function makeSignedDelegateIntent(
     cosignerPubKeys: string[],
     validAt: number,
     destinationScript: Bytes,
-): Promise<SignedIntent<Intent.RegisterMessage>> {
+): Promise<SignedProof<Proof.RegisterMessage>> {
     // if some of the inputs hold assets, build the asset packet and append as output
-    // in the intent proof tx, there is a "fake" input at index 0
+    // in the proof tx, there is a "fake" input at index 0
     // so the real coin indices are offset by +1
     const assetInputs = new Map<number, Asset[]>();
     for (let i = 0; i < coins.length; i++) {
@@ -424,7 +426,7 @@ async function makeSignedDelegateIntent(
         outputs.push(Extension.create([assetPacket]).txOut());
     }
 
-    const message: Intent.RegisterMessage = {
+    const message: Proof.RegisterMessage = {
         type: "register",
         onchain_output_indexes: onchainOutputsIndexes,
         valid_at: Math.floor(validAt),
@@ -432,7 +434,7 @@ async function makeSignedDelegateIntent(
         cosigners_public_keys: cosignerPubKeys,
     };
 
-    const proof = Intent.create(message, coins, outputs);
+    const proof = Proof.create(message, coins, outputs);
     const signedProof = await identity.sign(proof);
 
     return {
@@ -480,12 +482,12 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
     );
 }
 
-function estimatorAt(intentFee: ArkadeInfo["fees"]["intentFee"], at: Date): Estimator {
+function estimatorAt(batchFee: BatchFeeConfig, at: Date): Estimator {
     // replace now() function with the delegation timestamp
     const now = `double(${at.getTime() / 1000})`;
     return new Estimator({
-        ...intentFee,
-        offchainInput: intentFee.offchainInput?.replace("now()", now),
-        offchainOutput: intentFee.offchainOutput?.replace("now()", now),
+        ...batchFee,
+        offchainInput: batchFee.offchainInput?.replace("now()", now),
+        offchainOutput: batchFee.offchainOutput?.replace("now()", now),
     });
 }

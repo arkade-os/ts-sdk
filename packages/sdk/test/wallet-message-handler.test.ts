@@ -8,7 +8,7 @@ import {
     deserializeMigrationReport,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
 import { InMemoryWalletRepository } from "../src";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/batchRegistrationRepository";
 import {
     createMockExtendedVtxo,
     createMockIndexerProvider,
@@ -1749,7 +1749,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         tag: DEFAULT_MESSAGE_TAG,
     });
 
-    const setupHandler = (contracts: any[] = [], intents?: InMemoryIntentRepository) => {
+    const setupHandler = (contracts: any[] = [], intents?: InMemoryBatchRegistrationRepository) => {
         mockIndexer = createMockIndexerProvider();
         walletRepo = new InMemoryWalletRepository();
 
@@ -1765,7 +1765,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 commitmentsToIgnore: new Set(),
             }),
             dustAmount: 546n,
-            ...(intents ? { intentRepository: intents } : {}),
+            ...(intents ? { batchRegistrationRepository: intents } : {}),
             pendingRecoveryOutpoints: vi.fn().mockResolvedValue(new Set<string>()),
             pendingRecoveryOutpointsIn: vi.fn().mockReturnValue(new Set<string>()),
             getContractManager: vi.fn().mockResolvedValue({
@@ -2360,8 +2360,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
         });
     });
 
-    it("GET_BALANCE reports an intent-locked VTXO as pendingSettlement", async () => {
-        const intents = new InMemoryIntentRepository();
+    it("GET_BALANCE reports an registration-locked VTXO as pendingSettlement", async () => {
+        const intents = new InMemoryBatchRegistrationRepository();
         setupHandler([{ address: "contract-1", script: "s1", type: "default" }], intents);
 
         await walletRepo.saveVtxos("contract-1", [
@@ -2371,8 +2371,8 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 script: "s1",
             }),
         ]);
-        await intents.saveIntent({
-            intentTxId: "i",
+        await intents.saveRegistration({
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -2381,7 +2381,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: "aa".repeat(32), vout: 0 }],
+            inputs: [{ txid: "aa".repeat(32), vout: 0 }],
         });
 
         const response = await updater.handleMessage({

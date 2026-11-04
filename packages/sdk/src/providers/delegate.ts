@@ -1,5 +1,5 @@
-import { Intent } from "../intent";
-import { SignedIntent } from "./ark";
+import { Proof } from "../proof";
+import { SignedProof } from "./ark";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
@@ -16,7 +16,7 @@ export interface DelegateInfo {
 /** Optional delegate behavior flags. */
 export interface DelegateOptions {
     /**
-     * Tell the delegate not to replace an existing delegation (signed register intent + its
+     * Tell the delegate not to replace an existing delegation (signed register proof and its
      * forfeits) that already includes at least one virtual output from this request.
      *
      * @defaultValue `false`
@@ -27,12 +27,12 @@ export interface DelegateOptions {
 /** Provider interface for a remote delegation service. */
 export interface DelegateProvider {
     /**
-     * Request delegation for a signed register intent and its forfeit transactions.
+     * Request delegation for a signed register proof and its forfeit transactions.
      *
      * @param forfeitTxs - Forfeit transactions associated with the delegation request
      */
     delegate(
-        intent: SignedIntent<Intent.RegisterMessage>,
+        signedProof: SignedProof<Proof.RegisterMessage>,
         forfeitTxs: string[],
         options?: DelegateOptions,
     ): Promise<void>;
@@ -47,7 +47,7 @@ export interface DelegateProvider {
  * ```typescript
  * const provider = new RestDelegateProvider('https://delegate.example.com');
  * const info = await provider.getDelegateInfo();
- * await provider.delegate(intent, forfeitTxs);
+ * await provider.delegate(signedProof, forfeitTxs);
  * ```
  */
 export class RestDelegateProvider implements DelegateProvider {
@@ -60,7 +60,7 @@ export class RestDelegateProvider implements DelegateProvider {
      * @throws Error if the remote service rejects the request
      */
     async delegate(
-        intent: SignedIntent<Intent.RegisterMessage>,
+        signedProof: SignedProof<Proof.RegisterMessage>,
         forfeitTxs: string[],
         options?: DelegateOptions,
     ): Promise<void> {
@@ -72,8 +72,8 @@ export class RestDelegateProvider implements DelegateProvider {
             },
             body: JSON.stringify({
                 intent: {
-                    message: Intent.encodeMessage(intent.message),
-                    proof: intent.proof,
+                    message: Proof.encodeMessage(signedProof.message),
+                    proof: signedProof.proof,
                 },
                 forfeit_txs: forfeitTxs,
                 reject_replace: options?.rejectReplace ?? false,

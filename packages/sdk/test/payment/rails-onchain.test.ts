@@ -7,7 +7,7 @@ import type { RouterContext } from "../../src/payment/types";
 const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
 
-const fees = { intentFee: {}, txFeeRate: "1" };
+const fees = { batchFee: {}, txFeeRate: "1" };
 
 const ctx = (wallet: Partial<Record<string, any>> = {}): RouterContext => ({
     wallet: { getAddress: async () => arkAddr, ...wallet } as any,
@@ -66,7 +66,7 @@ describe("onchainRail (collaborative exit)", () => {
 
     it("prices the exit on the destination amount, so the recipient is exact on any schedule", async () => {
         // 1% of 10_000 is 100, not the 102 a fixpoint on the gross lands on.
-        const feeInfo = { intentFee: { onchainOutput: "amount * 0.01" }, txFeeRate: "1" };
+        const feeInfo = { batchFee: { onchainOutput: "amount * 0.01" }, txFeeRate: "1" };
         const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 10_000 }, ctx());
 
         expect(q.amount).toBe(10_000); // what the recipient receives
@@ -82,7 +82,7 @@ describe("onchainRail (collaborative exit)", () => {
     });
 
     it("reports an amount-independent offboard fee on the quote", async () => {
-        const feeInfo = { intentFee: { onchainOutput: "200.0" }, txFeeRate: "1" };
+        const feeInfo = { batchFee: { onchainOutput: "200.0" }, txFeeRate: "1" };
         const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000 }, ctx());
 
         expect(q).toMatchObject({ amount: 1000, fee: 200, total: 1200 });
@@ -109,7 +109,7 @@ describe("onchainRail (collaborative exit)", () => {
 
     it("prices the per-input fees and the change output once the inputs are named", async () => {
         const feeInfo = {
-            intentFee: { onchainOutput: "200.0", offchainInput: "7.0", offchainOutput: "50.0" },
+            batchFee: { onchainOutput: "200.0", offchainInput: "7.0", offchainOutput: "50.0" },
             txFeeRate: "1",
         };
         const selectedVtxos = [
@@ -127,7 +127,7 @@ describe("onchainRail (collaborative exit)", () => {
 
     it("leaves the input fees out of the quote when no inputs are named", async () => {
         const feeInfo = {
-            intentFee: { onchainOutput: "200.0", offchainInput: "7.0" },
+            batchFee: { onchainOutput: "200.0", offchainInput: "7.0" },
             txFeeRate: "1",
         };
         const q = await rail(feeInfo).quote({ raw: btcAddr, amount: 1000 }, ctx());

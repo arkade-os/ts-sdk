@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { excludeLockedOutpoints, spendableVtxosExcludingLocked } from "../src/wallet/wallet";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/batchRegistrationRepository";
+import type { BatchRegistration } from "../src/repositories/batchRegistrationRepository";
 
 describe("excludeLockedOutpoints", () => {
-    it("drops vtxos locked by non-terminal intents", () => {
+    it("drops vtxos locked by non-terminal registrations", () => {
         const vtxos = [
             { txid: "a", vout: 0, value: 100 },
             { txid: "b", vout: 1, value: 200 },
@@ -34,11 +34,11 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
         { txid: "b", vout: 1, value: 200 },
     ];
 
-    it("returns the input unchanged when no intent repository is configured", async () => {
+    it("returns the input unchanged when no batch registration repository is configured", async () => {
         expect(await spendableVtxosExcludingLocked(vtxos, undefined)).toBe(vtxos);
     });
 
-    it("excludes VTXOs locked by non-terminal intents", async () => {
+    it("excludes VTXOs locked by non-terminal registrations", async () => {
         const repo = {
             getLockedVtxoOutpoints: vi.fn().mockResolvedValue([{ txid: "a", vout: 0 }]),
         };
@@ -46,19 +46,19 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
         expect(kept.map((v) => v.txid)).toEqual(["b"]);
     });
 
-    it("fails open to the unfiltered set when the intent store read rejects", async () => {
+    it("fails open to the unfiltered set when the registration store read rejects", async () => {
         const repo = {
             getLockedVtxoOutpoints: vi.fn().mockRejectedValue(new Error("db corrupt")),
         };
         expect(await spendableVtxosExcludingLocked(vtxos, repo)).toBe(vtxos);
     });
 
-    it("hides a batch_in_progress intent's VTXO end-to-end (real repo lock logic)", async () => {
+    it("hides a batch_in_progress registration's VTXO end-to-end (real repo lock logic)", async () => {
         // Pins the deliberate divergence from NArk EF storage: batch_in_progress
         // is non-terminal, so its inputs stay out of spendable balance.
-        const repo = new InMemoryIntentRepository();
-        const base: Omit<ArkIntent, "state" | "intentVtxos"> = {
-            intentTxId: "i",
+        const repo = new InMemoryBatchRegistrationRepository();
+        const base: Omit<BatchRegistration, "state" | "inputs"> = {
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -67,10 +67,10 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
             deleteProofMessage: "",
             partialForfeits: [],
         };
-        await repo.saveIntent({
+        await repo.saveRegistration({
             ...base,
             state: "batch_in_progress",
-            intentVtxos: [{ txid: "a", vout: 0 }],
+            inputs: [{ txid: "a", vout: 0 }],
         });
         expect((await spendableVtxosExcludingLocked(vtxos, repo)).map((v) => v.txid)).toEqual([
             "b",

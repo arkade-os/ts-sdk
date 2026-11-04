@@ -5,7 +5,7 @@ const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const ARK_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 
-const fees = { intentFee: {}, txFeeRate: "1" } as any;
+const fees = { batchFee: {}, txFeeRate: "1" } as any;
 
 const vtxo = (fill: string, value: number) => ({
     txid: fill.repeat(32),
@@ -87,7 +87,7 @@ describe("Ramps.offboard with a named input set", () => {
         expect(w.settle).not.toHaveBeenCalled();
     });
 
-    const pricedFees = { intentFee: { offchainInput: "1000.0" }, txFeeRate: "1" } as any;
+    const pricedFees = { batchFee: { offchainInput: "1000.0" }, txFeeRate: "1" } as any;
     const uneconomic = () => vtxo("44", 500);
 
     it("refuses a named input worth less than it costs to spend", async () => {
@@ -133,7 +133,7 @@ describe("Ramps.offboard with a named input set", () => {
 describe("Ramps.offboard pays for the change it creates", () => {
     // 7 per input, 100 for the exit output, 50 for the change output.
     const priced = {
-        intentFee: { offchainInput: "7.0", onchainOutput: "100.0", offchainOutput: "50.0" },
+        batchFee: { offchainInput: "7.0", onchainOutput: "100.0", offchainOutput: "50.0" },
     } as any;
 
     it("funds the change output's own fee, so the settlement balances", async () => {
@@ -169,7 +169,7 @@ describe("Ramps.offboard pays for the change it creates", () => {
 
     it("refuses a change fee that never settles, instead of underfunding the exit", async () => {
         // Charging the whole output oscillates change → 0 → change, never reaching a fixpoint.
-        const absurd = { intentFee: { offchainOutput: "amount" } } as any;
+        const absurd = { batchFee: { offchainOutput: "amount" } } as any;
         const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
 
         await expect(new Ramps(w).offboard(BTC_ADDR, absurd, 50_000n)).rejects.toThrow(
@@ -180,7 +180,7 @@ describe("Ramps.offboard pays for the change it creates", () => {
 
     it("refuses a super-linear schedule that diverges instead of oscillating", async () => {
         // Overshoots every round, alternating sign — so the refusal cannot depend on the last one's.
-        const superLinear = { intentFee: { offchainOutput: "amount * 1.5" } } as any;
+        const superLinear = { batchFee: { offchainOutput: "amount * 1.5" } } as any;
         const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
 
         await expect(new Ramps(w).offboard(BTC_ADDR, superLinear, 50_000n)).rejects.toThrow(
@@ -190,7 +190,7 @@ describe("Ramps.offboard pays for the change it creates", () => {
     });
 
     it("emits no change when a flat fee outruns it, rather than refusing", async () => {
-        const steep = { intentFee: { offchainOutput: "100000.0" } } as any;
+        const steep = { batchFee: { offchainOutput: "100000.0" } } as any;
         const w = wallet({ getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 100_000)]) });
 
         await new Ramps(w).offboard(BTC_ADDR, steep, 50_000n);
@@ -221,7 +221,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
     it("takes a flat exit fee out of the balance, not out of the recipient's figure", async () => {
         const w = one();
 
-        await exactExit(w, { intentFee: { onchainOutput: "100.0" } }, 50_000n);
+        await exactExit(w, { batchFee: { onchainOutput: "100.0" } }, 50_000n);
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
             { address: BTC_ADDR, amount: 50_000n },
@@ -235,7 +235,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
     it("prices the fee on the destination output, not on a grossed-up amount", async () => {
         const w = one();
 
-        await exactExit(w, { intentFee: { onchainOutput: "amount * 0.01" } }, 50_000n);
+        await exactExit(w, { batchFee: { onchainOutput: "amount * 0.01" } }, 50_000n);
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
             { address: BTC_ADDR, amount: 50_000n },
@@ -247,7 +247,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
         // 100_000 - 7 input - 50_000 - 500 exit = 49_493, less the change's own 50.
         const w = one();
         const feeInfo = {
-            intentFee: {
+            batchFee: {
                 offchainInput: "7.0",
                 onchainOutput: "amount * 0.01",
                 offchainOutput: "50.0",
@@ -268,7 +268,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
         });
 
         await expect(
-            exactExit(short, { intentFee: { onchainOutput: "100.0" } }, 50_000n),
+            exactExit(short, { batchFee: { onchainOutput: "100.0" } }, 50_000n),
         ).rejects.toThrow(/needed to deliver 50000 exactly/);
         await expect(exactExit(wallet(), fees, 0n)).rejects.toThrow(/must be positive/);
         expect(short.settle).not.toHaveBeenCalled();
@@ -276,7 +276,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
 });
 
 describe("both exits keep the change under the server's per-output ceiling", () => {
-    const priced = { intentFee: { onchainOutput: "100.0" } } as any;
+    const priced = { batchFee: { onchainOutput: "100.0" } } as any;
     // 100_000 - 30_100 = 69_900 of change.
     const ceiling = (vtxoMaxAmount: bigint) =>
         wallet({

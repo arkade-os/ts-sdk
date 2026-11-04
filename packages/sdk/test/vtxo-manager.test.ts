@@ -13,7 +13,7 @@ import {
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { NormalizedExtendedVirtualCoin } from "../src/wallet/vtxo";
-import type { IntentFeeConfig } from "../src/arkfee";
+import type { BatchFeeConfig } from "../src/arkfee";
 import { filterSnapshotVtxos, Wallet } from "../src/wallet/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { hex } from "@scure/base";
@@ -36,7 +36,7 @@ type MockWalletOptions = {
      * programs, exactly as arkd serves them. Defaults to `{}` — no program on
      * any side, i.e. free — so existing recovery/renewal tests are unaffected.
      */
-    intentFee?: IntentFeeConfig;
+    batchFee?: BatchFeeConfig;
 };
 
 type LegacyVirtualStatus = {
@@ -101,7 +101,7 @@ const createMockWallet = (
         // non-sweep-capable and the boarding-poll paths are untouched.
         arkProvider: {
             getInfo: vi.fn().mockResolvedValue({
-                fees: { intentFee: options.intentFee ?? {} },
+                fees: { batchFee: options.batchFee ?? {} },
                 vtxoMaxAmount: options.vtxoMaxAmount ?? -1n,
             }),
         },
@@ -1986,7 +1986,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 }),
             },
             arkProvider: {
-                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+                getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -2219,7 +2219,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     }),
                 },
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+                    getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
@@ -2568,7 +2568,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
                 }),
             },
             arkProvider: {
-                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+                getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -2852,7 +2852,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                 }),
             },
             arkProvider: {
-                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+                getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -2910,7 +2910,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
             tapTree: new Uint8Array(),
         }) as any;
 
-    it("bundles boarding UTXO and expiring VTXO into a single settle intent", async () => {
+    it("bundles boarding UTXO and expiring VTXO into a single settle registration", async () => {
         const boarding = makeUnexpiredUtxo(10_000);
         const vtxo = makeExpiringVtxo(5_000);
         const wallet = buildWallet([boarding], [vtxo]);
@@ -2934,13 +2934,13 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         expect(call.outputs[0].amount).toBe(15_000n);
     });
 
-    it("subtracts the server intent fee from the output so settle is not rejected with INTENT_INSUFFICIENT_FEE", async () => {
+    it("subtracts the server batch fee from the output so settle is not rejected with INTENT_INSUFFICIENT_FEE", async () => {
         const boarding = makeUnexpiredUtxo(10_000);
         const wallet = buildWallet([boarding], []);
         // Server charges 200 sats per onchain input and 50 sats per offchain output.
         (wallet.arkProvider.getInfo as any).mockResolvedValue({
             fees: {
-                intentFee: {
+                batchFee: {
                     onchainInput: "200.0",
                     offchainOutput: "50.0",
                 },
@@ -2962,12 +2962,12 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         expect(call.outputs[0].amount).toBe(9_750n);
     });
 
-    it("skips a boarding UTXO whose onchain intent fee is greater than its value", async () => {
+    it("skips a boarding UTXO whose onchain batch fee is greater than its value", async () => {
         const tiny = makeUnexpiredUtxo(100);
         const normal = makeUnexpiredUtxo(10_000, 1);
         const wallet = buildWallet([tiny, normal], []);
         (wallet.arkProvider.getInfo as any).mockResolvedValue({
-            fees: { intentFee: { onchainInput: "200.0" } },
+            fees: { batchFee: { onchainInput: "200.0" } },
         });
 
         const manager = new VtxoManager(wallet, {
@@ -3015,7 +3015,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         const wallet = buildWallet([], [...tiny, ...normal]);
         // Flat 200-sat fee per offchain input makes the 100-sat VTXOs uneconomic.
         (wallet.arkProvider.getInfo as any).mockResolvedValue({
-            fees: { intentFee: { offchainInput: "200.0" } },
+            fees: { batchFee: { offchainInput: "200.0" } },
         });
 
         const manager = new VtxoManager(wallet, {
@@ -3111,7 +3111,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         const wallet = buildWallet([], vtxos);
         // No intent fees, so net == value; the 12000 ceiling fits only 2 VTXOs.
         (wallet.arkProvider.getInfo as any).mockResolvedValue({
-            fees: { intentFee: {} },
+            fees: { batchFee: {} },
             vtxoMaxAmount: 12000n,
         });
 
@@ -3137,7 +3137,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         const vtxos = [makeExpiringVtxo(12_000, 0, expiry), makeExpiringVtxo(5_000, 1, expiry)];
         const wallet = buildWallet([], vtxos);
         (wallet.arkProvider.getInfo as any).mockResolvedValue({
-            fees: { intentFee: {} },
+            fees: { batchFee: {} },
             vtxoMaxAmount: 10_000n,
         });
 
@@ -3278,7 +3278,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
                 }),
             },
             arkProvider: {
-                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+                getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -3419,7 +3419,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                     }),
                 },
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+                    getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
@@ -3796,7 +3796,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
  * `offchainInput: "amount * 0.01"` by default, alongside flat `"250.0"` programs
  * on the onchain side of the same policy.
  */
-describe("VtxoManager - intent fee pricing", () => {
+describe("VtxoManager - batch fee pricing", () => {
     /**
      * A decodable ark address: the offchain output fee is priced against its
      * pkScript, so a placeholder would fail inside `ArkAddress.decode` rather
@@ -3851,7 +3851,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("pays a flat per-input fee out of the renewed output", async () => {
             const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
-                intentFee: { offchainInput: "250.0" },
+                batchFee: { offchainInput: "250.0" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3863,7 +3863,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("pays a percentage per-input fee — the policy arkade-regtest ships", async () => {
             const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3878,7 +3878,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("prices the output fee too, not just the inputs", async () => {
             const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
-                intentFee: { offchainOutput: "250.0" },
+                batchFee: { offchainOutput: "250.0" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3901,7 +3901,7 @@ describe("VtxoManager - intent fee pricing", () => {
          */
         it("over-pays rather than under-pays when both sides are a percentage", async () => {
             const wallet = createMockWallet([expiring(1_000_000)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01", offchainOutput: "amount * 0.01" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3923,7 +3923,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("drops a VTXO whose own fee meets its value instead of settling it", async () => {
             const wallet = createMockWallet([expiring(5000), expiring(1500)], ADDRESS, {
-                intentFee: { offchainInput: "2000.0" },
+                batchFee: { offchainInput: "2000.0" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3942,7 +3942,7 @@ describe("VtxoManager - intent fee pricing", () => {
          */
         it("refuses when every expiring VTXO is below its own fee", async () => {
             const wallet = createMockWallet([expiring(1500)], ADDRESS, {
-                intentFee: { offchainInput: "2000.0" },
+                batchFee: { offchainInput: "2000.0" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3957,7 +3957,7 @@ describe("VtxoManager - intent fee pricing", () => {
          */
         it("checks dust against the net output, not the gross input sum", async () => {
             const wallet = createMockWallet([expiring(1200)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.5" },
+                batchFee: { offchainInput: "amount * 0.5" },
             });
             const manager = new VtxoManager(wallet, {});
 
@@ -3978,9 +3978,9 @@ describe("VtxoManager - intent fee pricing", () => {
             expect(settled(wallet).outputs[0].amount).toBe(8000n);
         });
 
-        it("pays the operator's intent fee on recovery too", async () => {
+        it("pays the operator's batch fee on recovery too", async () => {
             const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01" },
             });
             const manager = new VtxoManager(wallet);
 
@@ -3991,7 +3991,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("prices the recovery output fee as well as the inputs", async () => {
             const wallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01", offchainOutput: "amount * 0.01" },
             });
             const manager = new VtxoManager(wallet);
 
@@ -4015,7 +4015,7 @@ describe("VtxoManager - intent fee pricing", () => {
                 swept(100, "subdust-c"),
             ];
             const wallet = createMockWallet(vtxos, ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01" },
             });
             const manager = new VtxoManager(wallet);
 
@@ -4035,7 +4035,7 @@ describe("VtxoManager - intent fee pricing", () => {
                 swept(100, "subdust-b"),
             ];
             const wallet = createMockWallet(vtxos, ADDRESS, {
-                intentFee: { offchainInput: "250.0" },
+                batchFee: { offchainInput: "250.0" },
             });
             const manager = new VtxoManager(wallet);
 
@@ -4055,13 +4055,13 @@ describe("VtxoManager - intent fee pricing", () => {
          * different numbers. `getRecoverableBalance` prices exactly as
          * `recoverVtxos` does.
          */
-        it("previews the recoverable amount net of intent fees", async () => {
-            const fee: IntentFeeConfig = { offchainInput: "amount * 0.01" };
+        it("previews the recoverable amount net of batch fees", async () => {
+            const fee: BatchFeeConfig = { offchainInput: "amount * 0.01" };
             const previewWallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
-                intentFee: fee,
+                batchFee: fee,
             });
             const sweepWallet = createMockWallet([swept(5000), swept(3000)], ADDRESS, {
-                intentFee: fee,
+                batchFee: fee,
             });
 
             const preview = await new VtxoManager(previewWallet).getRecoverableBalance();
@@ -4089,7 +4089,7 @@ describe("VtxoManager - intent fee pricing", () => {
             // Both are subdust against the 1000 threshold but total 1100, so
             // getRecoverableWithSubdust folds them in.
             const wallet = createMockWallet([swept(600), swept(500)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01" },
             });
             const balance = await new VtxoManager(wallet).getRecoverableBalance();
 
@@ -4102,7 +4102,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("prices only the subdust coins into subdust when the set is mixed", async () => {
             const wallet = createMockWallet([swept(5000), swept(600), swept(500)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01" },
+                batchFee: { offchainInput: "amount * 0.01" },
             });
             const balance = await new VtxoManager(wallet).getRecoverableBalance();
 
@@ -4123,7 +4123,7 @@ describe("VtxoManager - intent fee pricing", () => {
          */
         it("does not attribute the batch-level output fee to subdust", async () => {
             const wallet = createMockWallet([swept(600), swept(500)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.01", offchainOutput: "200.0" },
+                batchFee: { offchainInput: "amount * 0.01", offchainOutput: "200.0" },
             });
             const balance = await new VtxoManager(wallet).getRecoverableBalance();
 
@@ -4135,7 +4135,7 @@ describe("VtxoManager - intent fee pricing", () => {
 
         it("omits from the preview a VTXO that cannot pay its own fee", async () => {
             const wallet = createMockWallet([swept(5000), swept(100)], ADDRESS, {
-                intentFee: { offchainInput: "250.0" },
+                batchFee: { offchainInput: "250.0" },
             });
             const balance = await new VtxoManager(wallet).getRecoverableBalance();
 
@@ -4150,13 +4150,13 @@ describe("VtxoManager - intent fee pricing", () => {
          * cause: a size cap defers the rest to the next cycle, whereas fee
          * filtering means no later cycle helps by itself.
          */
-        it("names intent fees, not the size caps, when fees alone empty the batch", async () => {
+        it("names batch fees, not the size caps, when fees alone empty the batch", async () => {
             const wallet = createMockWallet([swept(1500), swept(1200)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 1.0" },
+                batchFee: { offchainInput: "amount * 1.0" },
             });
 
             await expect(new VtxoManager(wallet).recoverVtxos()).rejects.toThrow(
-                "All 2 recoverable VTXOs that can pay their own intent fee total less than " +
+                "All 2 recoverable VTXOs that can pay their own batch fee total less than " +
                     "the dust threshold 1000",
             );
         });
@@ -4169,12 +4169,12 @@ describe("VtxoManager - intent fee pricing", () => {
          */
         it("refuses a recovery the fee has driven under dust", async () => {
             const wallet = createMockWallet([swept(1200)], ADDRESS, {
-                intentFee: { offchainInput: "amount * 0.5" },
+                batchFee: { offchainInput: "amount * 0.5" },
             });
             const manager = new VtxoManager(wallet);
 
             await expect(manager.recoverVtxos()).rejects.toThrow(
-                "Recoverable amount 600 net of intent fees is below dust threshold 1000",
+                "Recoverable amount 600 net of batch fees is below dust threshold 1000",
             );
             expect(wallet.settle).not.toHaveBeenCalled();
         });
@@ -4237,9 +4237,9 @@ describe("VtxoManager - renewal output split", () => {
         expect(settled(wallet).outputs).toEqual([{ address: ADDRESS, amount: 8000n }]);
     });
 
-    it("offers the plan the subtotal net of each input's own intent fee", async () => {
+    it("offers the plan the subtotal net of each input's own batch fee", async () => {
         const wallet = createMockWallet([expiring(5000), expiring(3000)], ADDRESS, {
-            intentFee: { offchainInput: "amount * 0.01" },
+            batchFee: { offchainInput: "amount * 0.01" },
         });
         const split = fixedSplit(4, [7000n]);
 
@@ -4252,7 +4252,7 @@ describe("VtxoManager - renewal output split", () => {
     // `gross - n * fee` is wrong for a proportional policy; one evaluation at the subtotal is wrong for all but one piece.
     it("prices each piece's output fee at that piece's own size", async () => {
         const wallet = createMockWallet([expiring(152_000)], ADDRESS, {
-            intentFee: { offchainOutput: "amount * 0.01" },
+            batchFee: { offchainOutput: "amount * 0.01" },
         });
         const split = fixedSplit(4, [100_000n, 50_000n]);
 
@@ -4322,7 +4322,7 @@ describe("VtxoManager - renewal output split", () => {
 
         it("when the pieces plus their fees claim more than the subtotal", async () => {
             const { wallet, run } = renewWith(fixedSplit(4, [8000n]), {
-                intentFee: { offchainOutput: "250.0" },
+                batchFee: { offchainOutput: "250.0" },
             });
 
             await expect(run()).rejects.toThrow("claims 8250 with fees, more than the 8000");
@@ -4450,7 +4450,7 @@ describe("VtxoManager - renewal output split", () => {
         it("lets the plan split again once no asset-bearing input survives selection", async () => {
             // The 1500 carries the assets and cannot pay its own 2000 fee.
             const wallet = createMockWallet([expiring(5000), withAssets(1500)], ADDRESS, {
-                intentFee: { offchainInput: "2000.0" },
+                batchFee: { offchainInput: "2000.0" },
             });
             const split = fixedSplit(4, [2000n, 1000n]);
 

@@ -111,7 +111,7 @@ export const ArkContractSchema = {
     },
 } as const;
 
-export const ArkIntentSchema = {
+export const BatchRegistrationSchema = {
     name: "ArkIntent",
     primaryKey: "intentTxId",
     properties: {
@@ -172,7 +172,7 @@ export const ArkRealmSchemas = [
 ];
 
 /**
- * @experimental Schemas for the inert intent/virtualtx persistence layer.
+ * @experimental Schemas for the inert batch registration/virtualtx persistence layer.
  *
  * Deliberately kept OUT of {@link ArkRealmSchemas} and {@link
  * ARK_REALM_SCHEMA_VERSION} so upgrading the SDK never migrates an existing
@@ -185,7 +185,7 @@ export const ArkRealmSchemas = [
  * ```
  */
 export const ArkExperimentalRealmSchemas = [
-    ArkIntentSchema,
+    BatchRegistrationSchema,
     ArkVirtualTxSchema,
     ArkVtxoBranchSchema,
 ];
@@ -219,10 +219,10 @@ export const ArkExperimentalRealmSchemas = [
  *     `isSwept`, `isPreconfirmed`, `commitmentTxIdsJson`, `expiresAt`,
  *     `expiresAtHeight` — backfilled from it during migration.
  *
- * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
+ * The batch registration/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
  * advertised version on their own. `runArkRealmMigrations` still carries the
- * intent-schema migration steps (guarded per-schema) for consumers who opt in
+ * batch registration schema migration steps (guarded per-schema) for consumers who opt in
  * and bump their own version.
  */
 export const ARK_REALM_SCHEMA_VERSION = 5;

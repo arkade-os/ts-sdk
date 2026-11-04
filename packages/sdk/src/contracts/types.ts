@@ -109,7 +109,7 @@ export interface Contract {
 /**
  * True when a contract was imported solely so the wallet can recover its
  * funds (see `Wallet.claimCash`'s server-swept branch), not as spendable
- * wallet holdings. Such contracts are settled in their **own isolated intent**
+ * wallet holdings. Such contracts are settled in their **own isolated batch registration**
  * and are excluded from the wallet's own balance / renewal / recovery / coin
  * selection, so a persistently rejected recovery input can never poison the
  * wallet's own fund lifecycle.
@@ -372,7 +372,7 @@ export function isDiscoverable(
 /**
  * The per-contract tapscript annotation stamped onto every VTXO locked to a
  * contract (see `extendVirtualCoinForContract`): the leaf used to co-sign
- * forfeits, the leaf committed in intent proofs, and the encoded taproot tree.
+ * forfeits, the leaf committed in proofs, and the encoded taproot tree.
  */
 export interface DerivedContractTapscripts {
     forfeitTapLeafScript: TapLeafScript;
@@ -381,7 +381,7 @@ export interface DerivedContractTapscripts {
 }
 
 /**
- * Optional {@link ContractHandler} capability providing the forfeit/intent tapscripts for VTXO
+ * Optional {@link ContractHandler} capability providing the forfeit/proof tapscripts for VTXO
  * annotation, for scripts without the legacy `forfeit()` (e.g. program-compiled arkade contracts).
  * Must be pure in `(contract.type, contract.script, contract.params)`: `ContractManager` memoizes
  * the result for its lifetime.

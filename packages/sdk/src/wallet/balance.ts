@@ -16,12 +16,12 @@ export interface OffchainBalance {
      * VTXOs under a contract {@link BalanceCapabilities.isGenericallySpendable} refuses (VHTLC
      * lockup, unmarked `arkade` program, unregistered handler type). In `settled`/`preconfirmed`
      * and `total`, never in `available`. Takes precedence over {@link pendingSettlement}: the gate is
-     * durable while an intent lock clears on its own.
+     * durable while a registration lock clears on its own.
      */
     contractLocked: number;
     /**
-     * Funds committed to an in-flight (non-terminal) intent and not {@link contractLocked}; they
-     * return to `available` when the intent terminates. Zero when the caller can't tell (no intent
+     * Funds committed to an in-flight (non-terminal) registration and not {@link contractLocked}; they
+     * return to `available` when the registration terminates. Zero when the caller can't tell (no registration
      * repository, or its read fails), so it under-reports into `available` rather than
      * misattributing. Worker and main-thread figures come from different reads and may differ.
      */
@@ -58,7 +58,7 @@ export interface BalanceCapabilities {
     isPendingRecovery: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /** The generic-spending gate. @see isContractGenericallySpendable */
     isGenericallySpendable: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
-    /** Not committed to an in-flight (non-terminal) intent. */
+    /** Not committed to an in-flight (non-terminal) registration. */
     isUnlocked: (vtxo: NormalizedExtendedVirtualCoin) => boolean;
     /** Held by `reserveVtxos`; absent means nothing is held. */
     isReserved?: (vtxo: NormalizedExtendedVirtualCoin) => boolean;

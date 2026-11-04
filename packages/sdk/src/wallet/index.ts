@@ -12,7 +12,7 @@ import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
     ContractRepository,
     WalletRepository,
-    IntentRepository,
+    BatchRegistrationRepository,
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
@@ -265,13 +265,15 @@ export type StorageConfig = {
     /** Contract-state repository implementation. */
     contractRepository: ContractRepository;
     /**
-     * Optional intent-lifecycle repository. Opt-in: when present, the wallet
-     * persists settlement intents and excludes intent-locked VTXOs from
+     * Optional batch registration repository. Opt-in: when present, the wallet
+     * persists its batch registrations and excludes the VTXOs they lock from
      * spendable balance. Absent ⇒ those code paths are no-ops. Only one wallet
-     * instance may settle against it: reconciliation deletes from the server any
-     * pending intent that instance is not settling itself.
+     * instance may settle against it: reconciliation deletes from the operator any
+     * pending registration that instance is not settling itself.
      */
-    intentRepository?: IntentRepository;
+    batchRegistrationRepository?: BatchRegistrationRepository;
+    /** @deprecated Use {@link batchRegistrationRepository}. */
+    intentRepository?: BatchRegistrationRepository;
     /**
      * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
      * VTXO's exit branch into it and prunes it on spend (both best-effort, see
@@ -346,8 +348,8 @@ export interface WalletBalance {
      */
     contractLocked: number;
     /**
-     * Committed to an in-flight intent and not {@link contractLocked}; returns to `available` when
-     * the intent terminates. Zero when unknown (no intent repository or a failed read), so it
+     * Committed to an in-flight registration and not {@link contractLocked}; returns to `available` when
+     * the registration terminates. Zero when unknown (no batch registration repository or a failed read), so it
      * under-reports into `available` rather than misattributing.
      */
     pendingSettlement: number;
@@ -795,7 +797,7 @@ export type TapLeaves = {
     /** Tapleaf script used for the forfeit path. */
     forfeitTapLeafScript: TapLeafScript;
 
-    /** Tapleaf script used for the intent path. */
+    /** Tapleaf script used for the proof path. */
     intentTapLeafScript: TapLeafScript;
 };
 

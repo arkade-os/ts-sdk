@@ -15,6 +15,62 @@ style and have not been backfilled.
 ### Breaking Changes
 
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
+
+- **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
+  A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin
+  outputs, its signature proves the user controls them, and its message says what
+  to do with them. The former `Intent.Proof` type is now `Proof`, which shares its
+  name with the `Proof` namespace, so `const proof: Proof = Proof.create(...)` reads
+  directly.
+
+  | Old name | New name |
+  | --- | --- |
+  | `Intent`, `IntentCoin`, `SignedIntent` | `Proof`, `ProofCoin`, `SignedProof` |
+  | `ArkProvider.registerIntent`, `deleteIntent` | `registerProof`, `deleteRegistration` |
+  | `EmulatorProvider.submitIntent` | `submitProof` |
+  | `Wallet.safeRegisterIntent` | `safeRegisterProof` |
+  | `Wallet.makeRegisterIntentSignature` | `makeRegisterProof` |
+  | `Wallet.makeDeleteIntentSignature` | `makeDeleteProof` |
+  | `Wallet.makeGetPendingTxIntentSignature` | `makeGetPendingTxProof` |
+  | `AssetInputType.Intent`, `AssetInput.createIntent` | `AssetInputType.Proof`, `AssetInput.createProof` |
+  | `BatchStartedEvent.intentIdHashes` | `registrationIdHashes` |
+  | `IntentFeeConfig`, `fees.intentFee` | `BatchFeeConfig`, `fees.batchFee` |
+  | `IntentRepository`, `ArkIntent`, `ArkIntentState` | `BatchRegistrationRepository`, `BatchRegistration`, `BatchRegistrationState` |
+  | `IntentFilter`, `IntentPageFilter` | `BatchRegistrationFilter`, `BatchRegistrationPageFilter` |
+  | `saveIntent`, `getIntentsPage`, `collectIntents` | `saveRegistration`, `getRegistrationsPage`, `collectBatchRegistrations` |
+  | `isTerminalIntentState`, `INTENT_TERMINAL_STATES` | `isTerminalBatchRegistrationState`, `BATCH_REGISTRATION_TERMINAL_STATES` |
+  | `InMemoryIntentRepository`, `IndexedDBIntentRepository` | `InMemoryBatchRegistrationRepository`, `IndexedDBBatchRegistrationRepository` |
+  | `SQLiteIntentRepository`, `RealmIntentRepository` | `SQLiteBatchRegistrationRepository`, `RealmBatchRegistrationRepository` |
+  | `storage.intentRepository`, `MessageBus` `intentRepository` | `storage.batchRegistrationRepository`, `MessageBus` `batchRegistrationRepository` |
+
+  Every old name above still works as a `@deprecated` alias. Functions that take
+  fees accept either `batchFee` or `intentFee`, and `getInfo` returns both with the
+  same value. The batch fee covers what joins a batch: boarding, collaborative exit,
+  renewal and recovery. A unilateral exit pays only miner fees.
+
+  Stored data needs no migration. The backends keep their `intent` table, column,
+  store and key names on disk and map them at the repository boundary, so an
+  in-flight lock survives an upgrade or a rollback. Server-info snapshots written
+  before this change load unchanged, and new snapshots keep `intentFee` for older
+  SDK releases. Names the operator or the emulator parse are unchanged too: the
+  `ark-intent-proof-message` tag, the `registerIntent` and `deleteIntent` routes,
+  and the `intent` and `intentId` request keys.
+
+  Four changes have no alias:
+
+  - `BatchRegistration` fields are renamed: `intentTxId` is `proofTxId`, `intentId`
+    is `registrationId`, and `intentVtxos` is `inputs`. Filters follow with
+    `proofTxIds` and `registrationIds`. Repository `version` is now 2, so a custom
+    repository fails to compile until it is updated.
+  - A custom `ArkProvider` must add `registerProof` and `deleteRegistration`, and a
+    custom `EmulatorProvider` must add `submitProof`.
+  - An object typed as `FeeInfo` or `BatchStartedEvent` must set both the new key
+    and the deprecated key. `FeeInfoInput` accepts either batch fee key.
+  - `ContractManagerConfig.intentReconciliation` is `registrationReconciliation`.
+
+  `intentTapLeafScript` keeps its name. Callers set it on coins directly, and a
+  second key could leave a stale leaf on a signing path.
+
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already

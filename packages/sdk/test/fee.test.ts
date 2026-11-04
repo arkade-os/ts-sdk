@@ -5,7 +5,7 @@ import { dirname, join } from "path";
 import {
     Estimator,
     toOffchainInputFeeParams,
-    type IntentFeeConfig,
+    type BatchFeeConfig,
     type OffchainInput,
     type OnchainInput,
     type FeeOutput,
@@ -76,7 +76,7 @@ describe("Estimator", () => {
         describe("Invalid", () => {
             for (const testCase of invalidTestData.invalidConfigs) {
                 it(testCase.name, () => {
-                    const config: IntentFeeConfig = {
+                    const config: BatchFeeConfig = {
                         offchainInput: testCase.config.offchainInputProgram,
                         onchainInput: testCase.config.onchainInputProgram,
                         offchainOutput: testCase.config.offchainOutputProgram,
@@ -245,7 +245,7 @@ describe("Estimator", () => {
             describe(fixture.name, () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
-                        const config: IntentFeeConfig = {
+                        const config: BatchFeeConfig = {
                             offchainInput: fixture.offchainInputProgram,
                             onchainInput: fixture.onchainInputProgram,
                             offchainOutput: fixture.offchainOutputProgram,

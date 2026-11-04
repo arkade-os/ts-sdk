@@ -23,7 +23,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/batchRegistrationRepository";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
@@ -52,7 +52,7 @@ const arkInfo = (): ArkadeInfo => ({
     deprecatedSigners: [],
     digest: "d",
     dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
+    fees: { batchFee: {}, intentFee: {}, txFeeRate: "0" },
     forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
     forfeitPubkey: serverKeyHex,
     network: "mutinynet",
@@ -116,7 +116,7 @@ const vtxo = (script: string, value: number, assets?: { assetId: string; amount:
  * no handler at all.
  */
 async function seededWallet(opts?: {
-    intents?: InMemoryIntentRepository;
+    intents?: InMemoryBatchRegistrationRepository;
     signing?: boolean;
     indexerProvider?: IndexerProvider;
     minimal?: boolean;
@@ -149,7 +149,7 @@ async function seededWallet(opts?: {
         storage: {
             walletRepository,
             contractRepository,
-            ...(opts?.intents ? { intentRepository: opts.intents } : {}),
+            ...(opts?.intents ? { batchRegistrationRepository: opts.intents } : {}),
         },
     };
 
@@ -406,11 +406,11 @@ describe("getSpendableVtxos", () => {
         }
     });
 
-    it("excludes intent-locked outpoints", async () => {
-        const intents = new InMemoryIntentRepository();
+    it("excludes registration-locked outpoints", async () => {
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
-        await intents.saveIntent({
-            intentTxId: "i",
+        await intents.saveRegistration({
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -419,7 +419,7 @@ describe("getSpendableVtxos", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
+            inputs: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
         });
 
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual([MARKED_SCRIPT]);
@@ -497,9 +497,9 @@ describe("getBalance", () => {
         );
     };
 
-    const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
-        intents.saveIntent({
-            intentTxId: `i-${txid.slice(0, 4)}`,
+    const lockOutpoint = async (intents: InMemoryBatchRegistrationRepository, txid: string) =>
+        intents.saveRegistration({
+            proofTxId: `i-${txid.slice(0, 4)}`,
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -508,7 +508,7 @@ describe("getBalance", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid, vout: 0 }],
+            inputs: [{ txid, vout: 0 }],
         });
 
     it("counts gated funds as owned but not as available (D1c)", async () => {
@@ -623,7 +623,7 @@ describe("getBalance", () => {
     });
 
     it("counts a gated-and-locked VTXO once, as contractLocked", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet } = await seededWallet({ intents });
         const escrowTxid = ESCROW_SCRIPT.slice(-2).repeat(32);
         await lockOutpoint(intents, escrowTxid);
@@ -642,8 +642,8 @@ describe("getBalance", () => {
         expectSplit(balance);
     });
 
-    it("reports an ungated intent-locked VTXO as pendingSettlement", async () => {
-        const intents = new InMemoryIntentRepository();
+    it("reports an ungated registration-locked VTXO as pendingSettlement", async () => {
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
@@ -655,7 +655,7 @@ describe("getBalance", () => {
     });
 
     it("mirrors each bucket into its deprecated alias", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
@@ -780,15 +780,15 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
                         return this;
                     },
                 }),
-                deleteIntent: vi.fn().mockResolvedValue(undefined),
+                deleteRegistration: vi.fn().mockResolvedValue(undefined),
             },
             getSpendableVtxos,
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
-            makeRegisterIntentSignature: registerInputs,
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeRegisterProof: registerInputs,
+            makeDeleteProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -798,8 +798,8 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: vi.fn().mockRejectedValue(new Error("stop-after-selection")),
-            persistIntentSnapshot: vi.fn(),
+            safeRegisterProof: vi.fn().mockRejectedValue(new Error("stop-after-selection")),
+            persistRegistrationSnapshot: vi.fn(),
         };
 
         await expect(
@@ -848,7 +848,7 @@ describe("spending sites consume the accessor", () => {
 
         await expect(
             ramps.offboard("bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080", {
-                intentFee: {},
+                batchFee: {},
                 txFeeRate: "1",
             }),
         ).rejects.toThrow();
@@ -905,7 +905,7 @@ describe("logUngatedInputs", () => {
     const EXPIRED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
 
     it("reports all three exclusions, not just the contract gate", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, contractRepository, defaultScript } = await seededWallet({ intents });
 
         // A contract on a deprecated signer whose cutoff has passed: the
@@ -919,8 +919,8 @@ describe("logUngatedInputs", () => {
         });
 
         const lockedTxid = "e3".repeat(32);
-        await intents.saveIntent({
-            intentTxId: "i",
+        await intents.saveRegistration({
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -929,7 +929,7 @@ describe("logUngatedInputs", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: lockedTxid, vout: 0 }],
+            inputs: [{ txid: lockedTxid, vout: 0 }],
         });
 
         const inputs = [
@@ -946,7 +946,7 @@ describe("logUngatedInputs", () => {
         expect(lines).toHaveLength(3);
         expect(lines[0]).toContain("is not generically spendable");
         expect(lines[1]).toContain("rotation cutoff");
-        expect(lines[2]).toContain("in-flight settlement intent");
+        expect(lines[2]).toContain("in-flight batch registration");
         // The one input generic selection would have picked stays silent.
         expect(lines.join("\n")).not.toContain(MARKED_SCRIPT.slice(-2).repeat(32));
     });

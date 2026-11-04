@@ -1,5 +1,5 @@
 import { collectUtxos } from "../repositories/walletRepository";
-import { collectIntents } from "../repositories/intentRepository";
+import { collectBatchRegistrations } from "../repositories/batchRegistrationRepository";
 import { collectContracts } from "../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
@@ -23,7 +23,7 @@ import {
     PendingTx,
     RestArkProvider,
     SettlementEvent,
-    SignedIntent,
+    SignedProof,
     TreeNoncesEvent,
     TreeSigningStartedEvent,
 } from "../providers/ark";
@@ -108,7 +108,7 @@ import { Transaction } from "../utils/transaction";
 import {
     byValueDescending,
     DEFAULT_SETTLEMENT_CONFIG,
-    MAX_INPUTS_PER_INTENT,
+    MAX_INPUTS_PER_PROOF,
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
@@ -116,16 +116,23 @@ import {
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { ArkadeCash } from "../arkadeCash";
-import { Intent } from "../intent";
+import { Proof } from "../proof";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
-import { isTerminalIntentState } from "../repositories/intentRepository";
-import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
+import type {
+    BatchRegistrationRepository,
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../repositories/batchRegistrationRepository";
+import { isTerminalBatchRegistrationState } from "../repositories/batchRegistrationRepository";
+import {
+    isNoMatchingRegistrationsError,
+    releaseRegistrations,
+} from "./batchRegistrationReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
-import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
+import { wrapHandlerWithRegistrationPersistence } from "./batchRegistrationPersistenceHandler";
 import {
     assertRecipientArkadeAddress,
     extendCoinWithTapscript,
@@ -150,7 +157,7 @@ import {
     type ServerInfoSource,
 } from "./arkInfoSnapshot";
 import { Batch } from "./batch";
-import { Estimator } from "../arkfee";
+import { batchFeeConfig, Estimator } from "../arkfee";
 import { DelegateProvider } from "../providers/delegate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
@@ -222,11 +229,11 @@ import {
     MissingSigningDescriptorError,
 } from "./signingErrors";
 
-// Build per-input jobs for an intent proof. Index 0 of the proof is a
+// Build per-input jobs for a proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
 // coin[0]'s pkScript, so we map it to the same source contract as
 // coin[0]; coins 0..N-1 then map to proof inputs 1..N.
-function intentProofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigningJob[] {
+function proofJobs(coins: ReadonlyArray<{ tapTree: Bytes }>): InputSigningJob[] {
     if (coins.length === 0) return [];
     const coinJobs = coins.map((coin, i) => ({
         index: i + 1,
@@ -391,7 +398,7 @@ export function filterSnapshotVtxos(
 ): NormalizedExtendedVirtualCoin[] {
     return filterFlatVtxos(
         // Recovery-only contracts (claimCash's server-swept arkadeCash) settle in their own
-        // isolated intent; excluding them here keeps them out of balance, renewal, recovery and
+        // isolated batch registration; excluding them here keeps them out of balance, renewal, recovery and
         // coin selection, so a persistently rejected recovery input can't poison those.
         snapshot
             .filter(({ contract }) => !isRecoveryOnlyContract(contract))
@@ -528,7 +535,7 @@ function coinKeys(inputs: readonly ExtendedCoin[]): string[] {
         .map((input) => `${input.txid}:${input.vout}`);
 }
 
-/** Drop VTXOs whose outpoint is locked by a non-terminal intent; same array when none is. */
+/** Drop VTXOs whose outpoint is locked by a non-terminal registration; same array when none is. */
 export function excludeLockedOutpoints<T extends { txid: string; vout: number }>(
     vtxos: T[],
     locked: { txid: string; vout: number }[],
@@ -539,18 +546,18 @@ export function excludeLockedOutpoints<T extends { txid: string; vout: number }>
 }
 
 /**
- * `vtxos` minus outpoints locked by a non-terminal settlement intent. Reads only the intent
+ * `vtxos` minus outpoints locked by a non-terminal batch registration. Reads only the registration
  * store, and **fails open** if that read rejects: a broken store must not sink the whole balance,
  * at the cost of a locked VTXO briefly showing as spendable.
  */
 export async function spendableVtxosExcludingLocked<T extends { txid: string; vout: number }>(
     vtxos: T[],
-    intentRepository?: Pick<IntentRepository, "getLockedVtxoOutpoints">,
+    batchRegistrationRepository?: Pick<BatchRegistrationRepository, "getLockedVtxoOutpoints">,
 ): Promise<T[]> {
-    if (!intentRepository) return vtxos;
+    if (!batchRegistrationRepository) return vtxos;
     let locked: Outpoint[];
     try {
-        locked = await intentRepository.getLockedVtxoOutpoints();
+        locked = await batchRegistrationRepository.getLockedVtxoOutpoints();
     } catch (e) {
         console.error("getLockedVtxoOutpoints failed; reporting unfiltered balance", e);
         return vtxos;
@@ -721,8 +728,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
         wallet.vtxoSyncOverlapMs = this.vtxoSyncOverlapMs;
     }
 
-    /** Opt-in intent-lifecycle repository; `undefined` ⇒ intent persistence is a no-op. */
-    public intentRepository?: IntentRepository;
+    /** Opt-in batch registration repository; `undefined` ⇒ registration persistence is a no-op. */
+    public batchRegistrationRepository?: BatchRegistrationRepository;
+
+    /** @deprecated Use {@link batchRegistrationRepository}. */
+    get intentRepository(): BatchRegistrationRepository | undefined {
+        return this.batchRegistrationRepository;
+    }
+    set intentRepository(repository: BatchRegistrationRepository | undefined) {
+        this.batchRegistrationRepository = repository;
+    }
     /**
      * **Experimental / inert.** Opt-in virtual-tx repository, exposed so callers can pass it to
      * {@link Unroll.Session.create} as a best-effort raw-tx cache. Normal sync never writes it.
@@ -1209,7 +1224,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.walletContractTimelocks,
         );
         wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
-        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.batchRegistrationRepository =
+            config.storage?.batchRegistrationRepository ?? config.storage?.intentRepository;
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
@@ -1285,7 +1301,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
 
         // `settled`/`preconfirmed`/`total` and the `assets` rollup count every VTXO
-        // the wallet owns, including escrowed and intent-locked ones; `available`
+        // the wallet owns, including escrowed and registration-locked ones; `available`
         // and `availableAssets` count only what generic spending would pick, so
         // nothing reported as available can be refused by `send`.
         const offchain = computeOffchainBalance(
@@ -1347,14 +1363,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 !pendingRecovery.has(`${vtxo.txid}:${vtxo.vout}`) &&
                 !this._heldOutpoints.has(`${vtxo.txid}:${vtxo.vout}`),
         );
-        const unlocked = await spendableVtxosExcludingLocked(selectable, this.intentRepository);
+        const unlocked = await spendableVtxosExcludingLocked(
+            selectable,
+            this.batchRegistrationRepository,
+        );
         logExcludedVtxos("getSpendableVtxos", vtxos, [
             gateExclusion(gated),
             outpointExclusion(pendingRecovery, PENDING_RECOVERY_REASON),
             outpointExclusion(this._heldOutpoints, "is held by reserveVtxos"),
             outpointExclusion(
                 omittedOutpoints(selectable, unlocked),
-                "is locked by an in-flight settlement intent",
+                "is locked by an in-flight batch registration",
             ),
         ]);
         // Separate call: widening the set above to the raw snapshot would report every
@@ -1390,7 +1409,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             logExcludedVtxos(source, inputs, [
                 gateExclusion(gatedContracts(contracts)),
                 this.expiredSignerExclusion(contracts),
-                outpointExclusion(locked, "is locked by an in-flight settlement intent"),
+                outpointExclusion(locked, "is locked by an in-flight batch registration"),
             ]);
         } catch {
             // diagnostics only
@@ -1429,11 +1448,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 : undefined;
     }
 
-    /** The intent store's lock set. Fails open, like every other read of it. */
+    /** The registration store's lock set. Fails open, like every other read of it. */
     private async lockedOutpoints(): Promise<Set<string>> {
-        if (!this.intentRepository) return new Set();
+        if (!this.batchRegistrationRepository) return new Set();
         try {
-            const locked = await this.intentRepository.getLockedVtxoOutpoints();
+            const locked = await this.batchRegistrationRepository.getLockedVtxoOutpoints();
             return new Set(locked.map((o) => `${o.txid}:${o.vout}`));
         } catch {
             return new Set();
@@ -1499,7 +1518,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { gated, pendingRecovery } = this.spendabilityView(snapshot);
         // Offline-first and fails open — see {@link spendableVtxosExcludingLocked}.
         const unlocked = new Set(
-            (await spendableVtxosExcludingLocked([...vtxos], this.intentRepository)).map(
+            (await spendableVtxosExcludingLocked([...vtxos], this.batchRegistrationRepository)).map(
                 (vtxo) => `${vtxo.txid}:${vtxo.vout}`,
             ),
         );
@@ -1580,8 +1599,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Wipe all locally persisted wallet data (VTXOs, UTXOs, history, sync
-     * cursor, contracts, intents). Create a fresh wallet instance afterward.
-     * Intents are kept while any may still be held by arkd, so a later
+     * cursor, contracts, registrations). Create a fresh wallet instance afterward.
+     * Registrations are kept while any may still be held by arkd, so a later
      * reconciliation can release them with their stored proofs.
      */
     async clear(): Promise<void> {
@@ -1591,22 +1610,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
             await Promise.all([
                 this.walletRepository.clear(),
                 this.contractRepository.clear(),
-                this.clearIntents(),
+                this.clearRegistrations(),
             ]);
         }
     }
 
-    private async clearIntents(): Promise<void> {
-        const intentRepository = this.intentRepository;
-        if (!intentRepository) return;
-        const released = await releaseIntents({
-            ...this.intentReconciliationConfig(),
-            intentRepository,
+    private async clearRegistrations(): Promise<void> {
+        const batchRegistrationRepository = this.batchRegistrationRepository;
+        if (!batchRegistrationRepository) return;
+        const released = await releaseRegistrations({
+            ...this.registrationReconciliationConfig(),
+            batchRegistrationRepository,
         });
         if (released) {
-            await intentRepository.clear();
+            await batchRegistrationRepository.clear();
         } else {
-            console.warn("clear: kept intents that could not be released from the server");
+            console.warn("clear: kept registrations that could not be released from the server");
         }
     }
     /**
@@ -1894,7 +1913,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
-     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * unresolved registration locks, for SDK picks. The getter itself lists them: callers that mirror it
      * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
      * stay gone if it fails.
      */
@@ -2174,8 +2193,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return undefined;
     }
 
-    /** Readonly wallets never settle, so they neither release nor own server intents. */
-    protected intentReconciliationConfig(): ContractManagerConfig["intentReconciliation"] {
+    /** Readonly wallets never settle, so they neither release nor own server registrations. */
+    protected registrationReconciliationConfig(): ContractManagerConfig["registrationReconciliation"] {
         return undefined;
     }
 
@@ -2223,8 +2242,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
-            intentRepository: this.intentRepository,
-            intentReconciliation: this.intentReconciliationConfig(),
+            batchRegistrationRepository: this.batchRegistrationRepository,
+            registrationReconciliation: this.registrationReconciliationConfig(),
             onVtxosPersisted,
             onVtxosSpent,
             watcherConfig: this.watcherConfig,
@@ -2504,9 +2523,9 @@ export class Wallet
     /** Per-side width of the HD look-ahead band. @see WalletConfig.lookAheadWindow */
     private readonly _lookAheadWindow: number;
 
-    protected override intentReconciliationConfig(): ContractManagerConfig["intentReconciliation"] {
+    protected override registrationReconciliationConfig(): ContractManagerConfig["registrationReconciliation"] {
         return {
-            deleteIntent: (intent) => this.arkProvider.deleteIntent(intent),
+            deleteRegistration: (signedProof) => this.arkProvider.deleteRegistration(signedProof),
             isOutpointInFlight: (o) => this._settlingOutpoints.has(`${o.txid}:${o.vout}`),
         };
     }
@@ -3073,7 +3092,7 @@ export class Wallet
      * transactions for the same inputs; with `concurrentSpending`, only until inputs are reserved.
      */
     private _txLock: Promise<void> = Promise.resolve();
-    // Every input (boarding included) of an intent a live settle owns; reconciliation skips them.
+    // Every input (boarding included) of a registration a live settle owns; reconciliation skips them.
     private readonly _settlingOutpoints = new Set<string>();
 
     /** Coalesces concurrent {@link restore} calls into one scan; cleared on settle. */
@@ -3617,7 +3636,8 @@ export class Wallet
         }
 
         wallet.vtxoSyncOverlapMs = config.vtxoSyncOverlapMs;
-        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.batchRegistrationRepository =
+            config.storage?.batchRegistrationRepository ?? config.storage?.intentRepository;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
         wallet._concurrentSpending = config.concurrentSpending === true;
@@ -3686,7 +3706,7 @@ export class Wallet
      *
      * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
      * @param eventCallback - Optional callback invoked for settlement stream events.
-     * @param hooks - Optional phases for preparation and intent registration.
+     * @param hooks - Optional phases for preparation and proof registration.
      * @returns The finalized Arkade transaction id
      */
     async settle(
@@ -3739,7 +3759,7 @@ export class Wallet
         // and send all to the offchain address
         if (!params) {
             const { fees, vtxoMaxAmount } = await this.arkProvider.getInfo();
-            const estimator = new Estimator(fees.intentFee);
+            const estimator = new Estimator(batchFeeConfig(fees));
 
             let amount = 0;
 
@@ -3781,7 +3801,7 @@ export class Wallet
                 genericallySpendableOnly: true,
             });
 
-            // Cap to the server's intent-size limit (MAX_VTXOS_PER_SETTLEMENT) and per-output
+            // Cap to the server's proof-size limit (MAX_VTXOS_PER_SETTLEMENT) and per-output
             // ceiling (vtxoMaxAmount; -1 = none), highest value first, counting only economic
             // VTXOs so an uneconomic prefix can't starve the rest. Boarding inputs are uncapped
             // but count toward the amount. Overflow settles on the next call.
@@ -3882,7 +3902,7 @@ export class Wallet
         }
 
         // if some of the inputs hold assets, build the asset packet and append as output
-        // in the intent proof tx, there is a "fake" input at index 0
+        // in the proof tx, there is a "fake" input at index 0
         // so the real coin indices are offset by +1
         const assetInputs = new Map<number, Asset[]>();
         for (let i = 0; i < params.inputs.length; i++) {
@@ -3936,24 +3956,19 @@ export class Wallet
             signingPublicKeys.push(hex.encode(await session.getPublicKey()));
         }
 
-        const [intent, deleteIntent] = await Promise.all([
-            this.makeRegisterIntentSignature(
-                params.inputs,
-                outputs,
-                onchainOutputIndexes,
-                signingPublicKeys,
-            ),
-            this.makeDeleteIntentSignature(params.inputs),
+        const [signedProof, deleteProof] = await Promise.all([
+            this.makeRegisterProof(params.inputs, outputs, onchainOutputIndexes, signingPublicKeys),
+            this.makeDeleteProof(params.inputs),
         ]);
 
-        // Client-side intent key: the intent proof's txid (NArk parity).
+        // Client-side registration key: the proof's txid (NArk parity).
         // Falls back to a deterministic outpoint digest if the special
-        // intent PSBT can't be decoded — keeps persistence resilient.
-        let intentTxId: string;
+        // proof PSBT can't be decoded — keeps persistence resilient.
+        let proofTxId: string;
         try {
-            intentTxId = Transaction.fromPSBT(base64.decode(intent.proof)).id;
+            proofTxId = Transaction.fromPSBT(base64.decode(signedProof.proof)).id;
         } catch {
-            intentTxId = params.inputs
+            proofTxId = params.inputs
                 .map((i) => `${i.txid}:${i.vout}`)
                 .sort()
                 .join("|");
@@ -3961,7 +3976,7 @@ export class Wallet
 
         // Last check before anything leaves the wallet: `updateDbAfterSettle` re-annotates these
         // inputs only after the batch finalized. After the cheap local validation, before the
-        // intent; arknotes and boarding inputs carry no vtxo script.
+        // registration; arknotes and boarding inputs carry no vtxo script.
         const settleInputVtxos = params.inputs.filter(isVirtualCoin);
         const contractManager = await this.getContractManager();
         await contractManager.assertAnnotatable(settleInputVtxos);
@@ -3974,7 +3989,7 @@ export class Wallet
         // After the last await before the inputs go pending, so a hold placed during signing is
         // caught; a throw here leaves nothing pending, so the holder can spend them.
         if (picked) this._assertNotHeld(params.inputs);
-        // Hide the inputs from concurrent getVtxos() callers before the intent registers, and
+        // Hide the inputs from concurrent getVtxos() callers before the registration registers, and
         // claim them before the first persist so reconciliation never races this settle.
         this._addPendingSpends(params.inputs);
         const boardingKeys = onReserved
@@ -3984,11 +3999,11 @@ export class Wallet
         const settlingKeys = params.inputs.map((i) => `${i.txid}:${i.vout}`);
         for (const key of settlingKeys) this._settlingOutpoints.add(key);
         onReserved?.();
-        await this.persistIntentSnapshot(
-            intentTxId,
+        await this.persistRegistrationSnapshot(
+            proofTxId,
             "waiting_to_submit",
-            intent,
-            deleteIntent,
+            signedProof,
+            deleteProof,
             params.inputs,
         );
 
@@ -3999,7 +4014,7 @@ export class Wallet
 
         const abortController = new AbortController();
         let stream: AsyncIterableIterator<SettlementEvent> | undefined;
-        // Set just before registering: a failure earlier has no server intent to delete.
+        // Set just before registering: a failure earlier has no server registration to delete.
         let registering = false;
         // Set once Batch.join returns: the batch is committed on-chain and no
         // local cleanup failure may cancel it. Authoritative in memory even if
@@ -4010,7 +4025,7 @@ export class Wallet
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
 
             // Prime the iterator so the provider opens the SSE subscription
-            // before safeRegisterIntent can trigger server-side batch events.
+            // before safeRegisterProof can trigger server-side batch events.
             const firstNext = stream.next();
             // If settle exits before Batch.join consumes the primed result,
             // keep the orphaned promise from surfacing as an unhandled rejection.
@@ -4025,22 +4040,22 @@ export class Wallet
 
             registering = true;
             onRegistrationAttempt?.();
-            const intentId = await this.safeRegisterIntent(intent, params.inputs);
+            const registrationId = await this.safeRegisterProof(signedProof, params.inputs);
 
-            await this.persistIntentSnapshot(
-                intentTxId,
+            await this.persistRegistrationSnapshot(
+                proofTxId,
                 "waiting_for_batch",
-                intent,
-                deleteIntent,
+                signedProof,
+                deleteProof,
                 params.inputs,
-                { intentId },
+                { registrationId },
             );
 
-            // SDK-owned intent persistence runs from the awaited batch hooks;
+            // SDK-owned registration persistence runs from the awaited batch hooks;
             // the caller's eventCallback stays purely observational.
-            const handler = wrapHandlerWithIntentPersistence(
-                this.createBatchHandler(intentId, params.inputs, recipients, session),
-                { intentRepository: this.intentRepository, intentTxId },
+            const handler = wrapHandlerWithRegistrationPersistence(
+                this.createBatchHandler(registrationId, params.inputs, recipients, session),
+                { batchRegistrationRepository: this.batchRegistrationRepository, proofTxId },
             );
 
             const commitmentTxid = await Batch.join(primedStream, handler, {
@@ -4065,11 +4080,11 @@ export class Wallet
             if (committedTxid !== undefined) {
                 // Committed, then a local step threw: the settlement stands, never cancel it.
                 // Re-persist success in case the hook's write failed (no-op if it landed).
-                await this.persistIntentSnapshot(
-                    intentTxId,
+                await this.persistRegistrationSnapshot(
+                    proofTxId,
                     "batch_succeeded",
-                    intent,
-                    deleteIntent,
+                    signedProof,
+                    deleteProof,
                     params.inputs,
                     { commitmentTransactionId: committedTxid },
                 );
@@ -4080,24 +4095,24 @@ export class Wallet
             let released = !registering;
             if (registering) {
                 try {
-                    await this.arkProvider.deleteIntent(deleteIntent);
+                    await this.arkProvider.deleteRegistration(deleteProof);
                     released = true;
                 } catch (e) {
-                    if (isNoMatchingIntentsError(e)) released = true;
+                    if (isNoMatchingRegistrationsError(e)) released = true;
                     else {
                         console.warn(
-                            `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                            `Failed to delete registration after settle failure for inputs [${inputIds}]; registration may linger on server and cause 'duplicated input' on next settle`,
                             e,
                         );
                     }
                 }
             }
             if (released) {
-                await this.persistIntentSnapshot(
-                    intentTxId,
+                await this.persistRegistrationSnapshot(
+                    proofTxId,
                     "cancelled",
-                    intent,
-                    deleteIntent,
+                    signedProof,
+                    deleteProof,
                     params.inputs,
                     {
                         cancellationReason: error instanceof Error ? error.message : String(error),
@@ -4315,13 +4330,13 @@ export class Wallet
     /**
      * Create a batch event handler for settlement flows.
      *
-     * @param intentId - The intent ID.
-     * @param inputs - Inputs used by the intent.
+     * @param registrationId - The registration ID.
+     * @param inputs - Inputs used by the registration.
      * @param expectedRecipients - Expected recipients to validate in the virtual output tree.
      * @param session - Optional musig2 signing session. When omitted, signing steps are skipped.
      */
     createBatchHandler(
-        intentId: string,
+        registrationId: string,
         inputs: ExtendedCoin[],
         expectedRecipients: Recipient[],
         session?: SignerSession,
@@ -4332,12 +4347,12 @@ export class Wallet
         let validatedCommitmentTxid: string | undefined;
         return {
             onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
-                const utf8IntentId = new TextEncoder().encode(intentId);
-                const intentIdHash = sha256(utf8IntentId);
-                const intentIdHashStr = hex.encode(intentIdHash);
+                const utf8RegistrationId = new TextEncoder().encode(registrationId);
+                const registrationIdHash = sha256(utf8RegistrationId);
+                const registrationIdHashStr = hex.encode(registrationIdHash);
 
-                // check if our intent ID hash matches any in the event
-                const skip = !event.intentIdHashes.includes(intentIdHashStr);
+                // check if our registration ID hash matches any in the event
+                const skip = !event.registrationIdHashes.includes(registrationIdHashStr);
 
                 if (skip) {
                     return { skip };
@@ -4354,7 +4369,7 @@ export class Wallet
                     resolveBatchExpiryPolicy(this.network, this.batchExpiryPolicy),
                 );
 
-                await this.arkProvider.confirmRegistration(intentId);
+                await this.arkProvider.confirmRegistration(registrationId);
 
                 const sweepTapscript = CSVMultisigTapscript.encode({
                     timelock,
@@ -4478,35 +4493,37 @@ export class Wallet
     }
 
     /**
-     * Best-effort upsert into {@link intentRepository}; never throws into the settle path.
+     * Best-effort upsert into {@link batchRegistrationRepository}; never throws into the settle path.
      * Preserves fields the event reducer already wrote.
      */
-    private async persistIntentSnapshot(
-        intentTxId: string,
-        state: ArkIntentState,
-        intent: SignedIntent<Intent.RegisterMessage>,
-        deleteIntent: SignedIntent<Intent.DeleteMessage>,
+    private async persistRegistrationSnapshot(
+        proofTxId: string,
+        state: BatchRegistrationState,
+        signedProof: SignedProof<Proof.RegisterMessage>,
+        deleteProof: SignedProof<Proof.DeleteMessage>,
         inputs: ExtendedCoin[],
-        patch?: Partial<ArkIntent>,
+        patch?: Partial<BatchRegistration>,
     ): Promise<void> {
-        const repo = this.intentRepository;
+        const repo = this.batchRegistrationRepository;
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (await collectIntents(repo, { intentTxIds: [intentTxId] }))[0];
+            const existing = (
+                await collectBatchRegistrations(repo, { proofTxIds: [proofTxId] })
+            )[0];
             // Terminal is sticky: a later step throwing into settle()'s catch passes "cancelled",
             // which must not clobber a `batch_succeeded` whose money already moved.
-            if (existing && isTerminalIntentState(existing.state)) {
+            if (existing && isTerminalBatchRegistrationState(existing.state)) {
                 return;
             }
-            await repo.saveIntent({
+            await repo.saveRegistration({
                 ...(existing ?? {}),
-                intentTxId,
-                registerProof: intent.proof,
-                registerProofMessage: Intent.encodeMessage(intent.message),
-                deleteProof: deleteIntent.proof,
-                deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
-                intentVtxos: inputs.map((i) => ({
+                proofTxId,
+                registerProof: signedProof.proof,
+                registerProofMessage: Proof.encodeMessage(signedProof.message),
+                deleteProof: deleteProof.proof,
+                deleteProofMessage: Proof.encodeMessage(deleteProof.message),
+                inputs: inputs.map((i) => ({
                     txid: i.txid,
                     vout: i.vout,
                 })),
@@ -4517,7 +4534,7 @@ export class Wallet
                 ...patch,
             });
         } catch (e) {
-            console.error(`Failed to persist intent ${intentTxId} (state=${state})`, e);
+            console.error(`Failed to persist registration ${proofTxId} (state=${state})`, e);
         }
     }
 
@@ -4537,12 +4554,12 @@ export class Wallet
         return signed as Transaction;
     }
 
-    async safeRegisterIntent(
-        intent: SignedIntent<Intent.RegisterMessage>,
+    async safeRegisterProof(
+        signedProof: SignedProof<Proof.RegisterMessage>,
         inputs: ExtendedCoin[],
     ): Promise<string> {
         try {
-            return await this.arkProvider.registerIntent(intent);
+            return await this.arkProvider.registerProof(signedProof);
         } catch (error) {
             // catch the "already registered by another intent" error
             if (
@@ -4552,25 +4569,25 @@ export class Wallet
             ) {
                 // Delete over the caller's own inputs, not getVtxos(): boarding UTXOs are the
                 // most common "duplicated input" trigger and getVtxos() misses them.
-                const deleteIntent = await this.makeDeleteIntentSignature(inputs);
-                await this.arkProvider.deleteIntent(deleteIntent);
+                const deleteProof = await this.makeDeleteProof(inputs);
+                await this.arkProvider.deleteRegistration(deleteProof);
 
                 // try again
-                return this.arkProvider.registerIntent(intent);
+                return this.arkProvider.registerProof(signedProof);
             }
 
             throw error;
         }
     }
 
-    async makeRegisterIntentSignature(
+    async makeRegisterProof(
         coins: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[],
         validAt?: number,
-    ): Promise<SignedIntent<Intent.RegisterMessage>> {
-        const message: Intent.RegisterMessage = {
+    ): Promise<SignedProof<Proof.RegisterMessage>> {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: validAt ? Math.floor(validAt) : 0,
@@ -4578,8 +4595,8 @@ export class Wallet
             cosigners_public_keys: cosignerPubKeys,
         };
 
-        const proof = Intent.create(message, coins, outputs);
-        const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
+        const proof = Proof.create(message, coins, outputs);
+        const signedProof = await this._signerRouter.sign(proof, proofJobs(coins));
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
@@ -4587,16 +4604,14 @@ export class Wallet
         };
     }
 
-    async makeDeleteIntentSignature(
-        coins: ExtendedCoin[],
-    ): Promise<SignedIntent<Intent.DeleteMessage>> {
-        const message: Intent.DeleteMessage = {
+    async makeDeleteProof(coins: ExtendedCoin[]): Promise<SignedProof<Proof.DeleteMessage>> {
+        const message: Proof.DeleteMessage = {
             type: "delete",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, coins, []);
-        const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
+        const proof = Proof.create(message, coins, []);
+        const signedProof = await this._signerRouter.sign(proof, proofJobs(coins));
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
@@ -4604,21 +4619,41 @@ export class Wallet
         };
     }
 
-    async makeGetPendingTxIntentSignature(
+    async makeGetPendingTxProof(
         coins: ExtendedVirtualCoin[],
-    ): Promise<SignedIntent<Intent.GetPendingTxMessage>> {
-        const message: Intent.GetPendingTxMessage = {
+    ): Promise<SignedProof<Proof.GetPendingTxMessage>> {
+        const message: Proof.GetPendingTxMessage = {
             type: "get-pending-tx",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, coins, []);
-        const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
+        const proof = Proof.create(message, coins, []);
+        const signedProof = await this._signerRouter.sign(proof, proofJobs(coins));
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
             message,
         };
+    }
+
+    /** @deprecated Use {@link safeRegisterProof}. */
+    safeRegisterIntent(...args: Parameters<Wallet["safeRegisterProof"]>) {
+        return this.safeRegisterProof(...args);
+    }
+
+    /** @deprecated Use {@link makeRegisterProof}. */
+    makeRegisterIntentSignature(...args: Parameters<Wallet["makeRegisterProof"]>) {
+        return this.makeRegisterProof(...args);
+    }
+
+    /** @deprecated Use {@link makeDeleteProof}. */
+    makeDeleteIntentSignature(...args: Parameters<Wallet["makeDeleteProof"]>) {
+        return this.makeDeleteProof(...args);
+    }
+
+    /** @deprecated Use {@link makeGetPendingTxProof}. */
+    makeGetPendingTxIntentSignature(...args: Parameters<Wallet["makeGetPendingTxProof"]>) {
+        return this.makeGetPendingTxProof(...args);
     }
 
     /**
@@ -4666,8 +4701,8 @@ export class Wallet
             vtxos = allExtended;
         }
         const batches: ExtendedVirtualCoin[][] = [];
-        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
-            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
+        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_PROOF) {
+            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_PROOF));
         }
 
         const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
@@ -4687,8 +4722,8 @@ export class Wallet
                 const batchFinalized: string[] = [];
                 const batchPending: string[] = [];
 
-                const intent = await this.makeGetPendingTxIntentSignature(batch);
-                const pendingTxs = await this.arkProvider.getPendingTxs(intent);
+                const signedProof = await this.makeGetPendingTxProof(batch);
+                const pendingTxs = await this.arkProvider.getPendingTxs(signedProof);
 
                 for (const pendingTx of pendingTxs) {
                     if (seen.has(pendingTx.arkTxid)) continue;
@@ -5037,7 +5072,7 @@ export class Wallet
      * - a `default` contract for the arkadeCash script is registered carrying that
      *   descriptor as `metadata.signingDescriptor` (so the signer router can
      *   sign the swept inputs) and `metadata.recoveryOnly` (so the contract is
-     *   settled in its own isolated intent, never bundled into the wallet's own
+     *   settled in its own isolated batch registration, never bundled into the wallet's own
      *   renewal/recovery — a persistently rejected input then dents only its
      *   own recovery, never the wallet's funds).
      *
@@ -5258,14 +5293,14 @@ export class Wallet
 
         const identity = cash.identity;
 
-        // Chunked to the server's MAX_INPUTS_PER_INTENT; deduped by arkTxid since a tx can
+        // Chunked to the server's MAX_INPUTS_PER_PROOF; deduped by arkTxid since a tx can
         // surface under two chunks.
         const seenTxids = new Set<string>();
         const pendingTxs: PendingTx[] = [];
-        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_INTENT) {
-            const batch = inputs.slice(i, i + MAX_INPUTS_PER_INTENT);
-            const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
-            const proof = Intent.create(message, batch, []);
+        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_PROOF) {
+            const batch = inputs.slice(i, i + MAX_INPUTS_PER_PROOF);
+            const message: Proof.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
+            const proof = Proof.create(message, batch, []);
             // All inputs incl. index 0 (BIP-322 toSpend, mirroring input 1) are cash inputs;
             // explicit indexes surface a failure instead of shipping a half-signed proof.
             const signedProof = await identity.sign(
@@ -5439,7 +5474,7 @@ export class Wallet
         );
 
         // Empty when the caller named inputs: that path never reaches for a coin it wasn't given.
-        // Otherwise the accessor excludes escrowed, past-cutoff-signer and intent-locked coins.
+        // Otherwise the accessor excludes escrowed, past-cutoff-signer and registration-locked coins.
         let virtualCoins: NormalizedExtendedVirtualCoin[] = [];
         if (!selectedVtxos) {
             virtualCoins = await this.getSpendableVtxos({

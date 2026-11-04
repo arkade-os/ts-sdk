@@ -1,18 +1,18 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
-    ArkIntentState,
-    IntentPageFilter,
+    BatchRegistration,
+    BatchRegistrationState,
+    BatchRegistrationPageFilter,
     IntentRepository,
-    intentMatchesFilter,
-    isTerminalIntentState,
-} from "../intentRepository";
+    registrationMatchesFilter,
+    isTerminalBatchRegistrationState,
+} from "../batchRegistrationRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
 import { getSerializedExecutor, runInTransaction } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
 
-interface IntentRow {
+interface RegistrationRow {
     intent_tx_id: string;
     intent_id: string | null;
     state: string;
@@ -32,8 +32,12 @@ interface IntentRow {
     intent_vtxos_json: string;
 }
 
-export class SQLiteIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+export class SQLiteBatchRegistrationRepository implements IntentRepository {
+    readonly version = 2 as const;
+    /** @deprecated Use {@link saveRegistration}. */
+    saveIntent = this.saveRegistration;
+    /** @deprecated Use {@link getRegistrationsPage}. */
+    getIntentsPage = this.getRegistrationsPage;
     private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
@@ -80,14 +84,14 @@ export class SQLiteIntentRepository implements IntentRepository {
 
     async clear(): Promise<void> {
         await this.ensureInit();
-        // Route through the same serialized write chain as saveIntent so a
+        // Route through the same serialized write chain as saveRegistration so a
         // clear can't interleave with an in-flight transaction on this executor.
         await runInTransaction(this.db, async (tx) => {
             await tx.run(`DELETE FROM ${this.t}`);
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveRegistration(registration: BatchRegistration): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
         await runInTransaction(this.db, async (tx) => {
@@ -121,32 +125,32 @@ export class SQLiteIntentRepository implements IntentRepository {
                   signer_descriptor = excluded.signer_descriptor,
                   intent_vtxos_json = excluded.intent_vtxos_json`,
                 [
-                    intent.intentTxId,
-                    intent.intentId ?? null,
-                    intent.state,
-                    intent.validFrom ?? null,
-                    intent.validUntil ?? null,
-                    intent.createdAt,
+                    registration.proofTxId,
+                    registration.registrationId ?? null,
+                    registration.state,
+                    registration.validFrom ?? null,
+                    registration.validUntil ?? null,
+                    registration.createdAt,
                     now,
-                    intent.registerProof,
-                    intent.registerProofMessage,
-                    intent.deleteProof,
-                    intent.deleteProofMessage,
-                    intent.batchId ?? null,
-                    intent.commitmentTransactionId ?? null,
-                    intent.cancellationReason ?? null,
-                    JSON.stringify(intent.partialForfeits),
-                    intent.signerDescriptor ?? null,
-                    JSON.stringify(intent.intentVtxos),
+                    registration.registerProof,
+                    registration.registerProofMessage,
+                    registration.deleteProof,
+                    registration.deleteProofMessage,
+                    registration.batchId ?? null,
+                    registration.commitmentTransactionId ?? null,
+                    registration.cancellationReason ?? null,
+                    JSON.stringify(registration.partialForfeits),
+                    registration.signerDescriptor ?? null,
+                    JSON.stringify(registration.inputs),
                 ],
             );
         });
     }
 
-    async getIntentsPage(
-        filter: IntentPageFilter | undefined,
+    async getRegistrationsPage(
+        filter: BatchRegistrationPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         await this.ensureInit();
         if (filter?.states?.length === 0) return { items: [] };
@@ -155,32 +159,33 @@ export class SQLiteIntentRepository implements IntentRepository {
             : "";
         const stateParams = filter?.states ?? [];
         const batchSize = Math.max(64, page.limit + 1);
-        const rows: ArkIntent[] = [];
+        const rows: BatchRegistration[] = [];
         let after = page.after;
         // SQL narrows by indexed state; the shared filter handles the remaining predicates.
         while (rows.length <= page.limit) {
-            const batch = await this.db.all<IntentRow>(
+            const batch = await this.db.all<RegistrationRow>(
                 `SELECT * FROM ${this.t} WHERE intent_tx_id > ?${stateSql} ORDER BY intent_tx_id LIMIT ?`,
                 [after ?? "", ...stateParams, batchSize],
             );
             if (batch.length === 0) break;
             for (const row of batch) {
                 after = row.intent_tx_id;
-                const intent = rowToIntent(row);
-                if (!filter || intentMatchesFilter(intent, filter)) rows.push(intent);
+                const registration = rowToRegistration(row);
+                if (!filter || registrationMatchesFilter(registration, filter))
+                    rows.push(registration);
                 if (rows.length > page.limit) break;
             }
             if (batch.length < batchSize) break;
         }
-        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
+        return pageResult(rows, page.limit, (registration) => registration.proofTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         await this.ensureInit();
-        const rows = await this.db.all<IntentRow>(`SELECT * FROM ${this.t}`);
+        const rows = await this.db.all<RegistrationRow>(`SELECT * FROM ${this.t}`);
         const out: Outpoint[] = [];
         for (const r of rows) {
-            if (isTerminalIntentState(r.state as ArkIntentState)) continue;
+            if (isTerminalBatchRegistrationState(r.state as BatchRegistrationState)) continue;
             for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
@@ -189,11 +194,11 @@ export class SQLiteIntentRepository implements IntentRepository {
     async [Symbol.asyncDispose](): Promise<void> {}
 }
 
-function rowToIntent(r: IntentRow): ArkIntent {
+function rowToRegistration(r: RegistrationRow): BatchRegistration {
     return {
-        intentTxId: r.intent_tx_id,
-        intentId: r.intent_id ?? undefined,
-        state: r.state as ArkIntentState,
+        proofTxId: r.intent_tx_id,
+        registrationId: r.intent_id ?? undefined,
+        state: r.state as BatchRegistrationState,
         validFrom: r.valid_from ?? undefined,
         validUntil: r.valid_until ?? undefined,
         createdAt: r.created_at,
@@ -207,6 +212,11 @@ function rowToIntent(r: IntentRow): ArkIntent {
         cancellationReason: r.cancellation_reason ?? undefined,
         partialForfeits: JSON.parse(r.partial_forfeits_json),
         signerDescriptor: r.signer_descriptor ?? undefined,
-        intentVtxos: JSON.parse(r.intent_vtxos_json),
+        inputs: JSON.parse(r.intent_vtxos_json),
     };
 }
+
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export const SQLiteIntentRepository = SQLiteBatchRegistrationRepository;
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export type SQLiteIntentRepository = SQLiteBatchRegistrationRepository;

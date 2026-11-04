@@ -100,7 +100,7 @@ describe("Settlement fee premium", () => {
 
             wallet = await testWallet();
             const { fees } = await wallet.arkProvider.getInfo();
-            expect(fees.intentFee.offchainInput).toBe(LIVE_PREMIUM_FEE);
+            expect(fees.batchFee.offchainInput).toBe(LIVE_PREMIUM_FEE);
 
             const address = await wallet.getAddress();
             execCommand(

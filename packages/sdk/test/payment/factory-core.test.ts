@@ -9,7 +9,7 @@ const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const wallet = () =>
     ({
         arkProvider: {
-            getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {}, txFeeRate: "1" } }),
+            getInfo: vi.fn().mockResolvedValue({ fees: { batchFee: {}, txFeeRate: "1" } }),
         },
     }) as any;
 

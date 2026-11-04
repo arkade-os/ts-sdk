@@ -164,7 +164,7 @@ describe("delegation forfeits a VTXO past expiry that is not swept", () => {
         };
         const arkInfoProvider = {
             getInfo: vi.fn(async () => ({
-                fees: { intentFee: {}, txFeeRate: "1" },
+                fees: { batchFee: {}, txFeeRate: "1" },
                 dust: 330n,
                 forfeitAddress: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080",
                 network: "regtest",
@@ -229,11 +229,11 @@ describe("settle refreshes the swept state of expired inputs", () => {
             getContractManager: vi.fn(async () => ({ refreshOutpoints })),
             getVtxos: vi.fn(async () => opts.fresh ?? []),
             logUngatedInputs: vi.fn(async () => {}),
-            makeRegisterIntentSignature: vi.fn(async (inputs: ExtendedCoin[]) => {
+            makeRegisterProof: vi.fn(async (inputs: ExtendedCoin[]) => {
                 captured.push(inputs);
                 throw new Error(STOP);
             }),
-            makeDeleteIntentSignature: vi.fn(async () => ({})),
+            makeDeleteProof: vi.fn(async () => ({})),
         };
         return { thisArg, refreshOutpoints, getChainTip, captured };
     }
@@ -290,7 +290,7 @@ describe("settle refreshes the swept state of expired inputs", () => {
         expect(refreshOutpoints).not.toHaveBeenCalled();
     });
 
-    it("aborts before the intent when the swept state cannot be confirmed", async () => {
+    it("aborts before the registration when the swept state cannot be confirmed", async () => {
         const { h, result } = runSettle([vtxoInput(vtxoScript)], {
             refreshOutpoints: async () => {
                 throw new Error("indexer down");
@@ -300,7 +300,7 @@ describe("settle refreshes the swept state of expired inputs", () => {
         await expect(result).rejects.toThrow(/could not confirm the swept state/i);
 
         expect(h.refreshOutpoints).toHaveBeenCalled();
-        expect(h.thisArg.makeRegisterIntentSignature).not.toHaveBeenCalled();
+        expect(h.thisArg.makeRegisterProof).not.toHaveBeenCalled();
         expect(h.captured).toEqual([]);
         await expect(result).rejects.not.toBeInstanceOf(ProviderUnavailableError);
     });

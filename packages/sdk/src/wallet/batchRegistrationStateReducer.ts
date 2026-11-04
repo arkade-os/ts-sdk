@@ -1,8 +1,12 @@
 import { SettlementEvent, SettlementEventType } from "../providers/ark";
-import { ArkIntent, ArkIntentState, isTerminalIntentState } from "../repositories/intentRepository";
+import {
+    BatchRegistration,
+    BatchRegistrationState,
+    isTerminalBatchRegistrationState,
+} from "../repositories/batchRegistrationRepository";
 
 /**
- * Pure, monotonic reducer: maps a settlement event onto the next intent
+ * Pure, monotonic reducer: maps a settlement event onto the next registration
  * state. Terminal states are sticky; tree/stream sub-step events and any
  * out-of-order event are no-ops (return the current state unchanged).
  *
@@ -11,8 +15,11 @@ import { ArkIntent, ArkIntentState, isTerminalIntentState } from "../repositorie
  *   - BatchFinalized  → batch_succeeded
  *   - BatchFailed     → batch_failed
  */
-export function reduceIntentState(current: ArkIntentState, event: SettlementEvent): ArkIntentState {
-    if (isTerminalIntentState(current)) return current;
+export function reduceRegistrationState(
+    current: BatchRegistrationState,
+    event: SettlementEvent,
+): BatchRegistrationState {
+    if (isTerminalBatchRegistrationState(current)) return current;
 
     switch (event.type) {
         case SettlementEventType.BatchStarted:
@@ -27,18 +34,18 @@ export function reduceIntentState(current: ArkIntentState, event: SettlementEven
 }
 
 /**
- * Apply a settlement event to one intent, returning the updated intent when
+ * Apply a settlement event to one registration, returning the updated registration when
  * the state (or a derived field) changed, or `undefined` for a no-op so the
  * caller can skip the persist.
  */
-export function applySettlementEventToIntent(
-    intent: ArkIntent,
+export function applySettlementEventToRegistration(
+    registration: BatchRegistration,
     event: SettlementEvent,
-): ArkIntent | undefined {
-    const next = reduceIntentState(intent.state, event);
-    if (next === intent.state) return undefined;
+): BatchRegistration | undefined {
+    const next = reduceRegistrationState(registration.state, event);
+    if (next === registration.state) return undefined;
 
-    const updated: ArkIntent = { ...intent, state: next };
+    const updated: BatchRegistration = { ...registration, state: next };
     // Every settlement event carries the batch/round id.
     if ("id" in event && typeof event.id === "string") {
         updated.batchId = event.id;

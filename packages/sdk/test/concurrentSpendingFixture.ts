@@ -11,7 +11,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
-import type { IntentRepository } from "../src/repositories/intentRepository";
+import type { BatchRegistrationRepository } from "../src/repositories/batchRegistrationRepository";
 import { SingleKey } from "../src/identity/singleKey";
 
 const SERVER_KEY = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -26,7 +26,7 @@ const arkInfo = (): ArkadeInfo => ({
     deprecatedSigners: [],
     digest: "d",
     dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
+    fees: { batchFee: {}, intentFee: {}, txFeeRate: "0" },
     forfeitAddress: BTC_ADDR,
     forfeitPubkey: SERVER_KEY,
     network: "mutinynet",
@@ -56,13 +56,16 @@ const outpoint = (coin: { txid: string; vout: number }) => `${coin.txid}:${coin.
 
 /** Three 10,000-sat VTXOs on the wallet's own script, expiring 10h, 20h and 30h out. */
 export async function fundedWallet(
-    opts: { concurrentSpending?: boolean; intentRepository?: IntentRepository } = {},
+    opts: {
+        concurrentSpending?: boolean;
+        batchRegistrationRepository?: BatchRegistrationRepository;
+    } = {},
 ) {
     const walletRepository = new InMemoryWalletRepository();
     const arkProvider = {
         getInfo: vi.fn(async () => arkInfo()),
-        registerIntent: vi.fn(async () => "intent-1"),
-        deleteIntent: vi.fn(async () => undefined),
+        registerProof: vi.fn(async () => "intent-1"),
+        deleteRegistration: vi.fn(async () => undefined),
         getEventStream: vi.fn(),
     };
     const wallet = await Wallet.create({
@@ -80,7 +83,9 @@ export async function fundedWallet(
         storage: {
             walletRepository,
             contractRepository: new InMemoryContractRepository(),
-            ...(opts.intentRepository ? { intentRepository: opts.intentRepository } : {}),
+            ...(opts.batchRegistrationRepository
+                ? { batchRegistrationRepository: opts.batchRegistrationRepository }
+                : {}),
         },
         settlementConfig: false,
         ...(opts.concurrentSpending === undefined
@@ -147,7 +152,7 @@ export function parkSettle(
         throw new Error("event stream closed by test");
     });
     const intent = { proof: "", message: {} };
-    vi.spyOn(wallet as any, "makeRegisterIntentSignature").mockResolvedValue(intent);
-    vi.spyOn(wallet as any, "makeDeleteIntentSignature").mockResolvedValue(intent);
+    vi.spyOn(wallet as any, "makeRegisterProof").mockResolvedValue(intent);
+    vi.spyOn(wallet as any, "makeDeleteProof").mockResolvedValue(intent);
     return { open };
 }

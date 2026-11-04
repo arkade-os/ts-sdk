@@ -38,7 +38,7 @@ import { hex } from "@scure/base";
 import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { Estimator } from "../arkfee";
+import { batchFeeConfig, Estimator } from "../arkfee";
 import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
@@ -147,20 +147,20 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
 }
 
 /**
- * Maximum number of VTXOs in a single settlement intent; the overflow waits for the next cycle.
+ * Maximum number of VTXOs in a single batch registration; the overflow waits for the next cycle.
  *
- * arkd has no count limit but rejects an intent with `TX_TOO_LARGE` past `maxTxWeight` (~40k WU
+ * arkd has no count limit but rejects a registration with `TX_TOO_LARGE` past `maxTxWeight` (~40k WU
  * by default); 50 stays well under it with headroom for (uncapped) boarding inputs. SDK-only:
- * go-sdk and NArk submit every spendable VTXO in one unordered intent, so we are free to order
+ * go-sdk and NArk submit every spendable VTXO in one unordered registration, so we are free to order
  * candidates before capping — see {@link byValueDescending} and {@link byExpiryAscending}.
  */
 export const MAX_VTXOS_PER_SETTLEMENT = 50;
 
 /**
- * Maximum number of inputs the server accepts in a single intent proof
+ * Maximum number of inputs the server accepts in a single proof
  * (get-pending-tx and friends). Larger input sets must be split into batches.
  */
-export const MAX_INPUTS_PER_INTENT = 20;
+export const MAX_INPUTS_PER_PROOF = 20;
 
 /**
  * Order VTXOs highest-value first (new array). For value-driven paths (recovery, manual full
@@ -258,10 +258,10 @@ export function capSettlementBatch<T extends { value: number }>(
 }
 
 /**
- * Price a settlement's VTXO inputs against the operator's intent-fee policy, dropping any input
+ * Price a settlement's VTXO inputs against the operator's batch fee policy, dropping any input
  * whose fee meets or exceeds its value.
  *
- * An intent's fee IS `sum(inputs) - sum(outputs)`, so an output asking for the gross input sum
+ * A registration's fee IS `sum(inputs) - sum(outputs)`, so an output asking for the gross input sum
  * offers zero fee and gets `INTENT_INSUFFICIENT_FEE`. Callers still owe
  * {@link deductOffchainOutputFee}, and must filter BEFORE {@link capSettlementBatch} so an
  * uneconomic input cannot take a viable one's slot. Nets are returned for {@link subtotalOf}.
@@ -640,7 +640,7 @@ export interface RenewalSplit {
 
 /** What a {@link RenewalSplit} gets to decide against. */
 export interface RenewalSplitContext {
-    /** Inputs' worth net of their own intent fees, BEFORE any output fee. */
+    /** Inputs' worth net of their own batch fees, BEFORE any output fee. */
     subtotal: bigint;
     outputFeeOn(amount: bigint): bigint;
     /** Server per-output ceiling; `-1n` means none. */
@@ -663,7 +663,7 @@ export interface RenewalSplitContext {
  * Optional arguments for {@link IVtxoManager.migrateDeprecatedSignerVtxos}.
  */
 export interface MigrateDeprecatedSignerOptions {
-    /** Callback to receive settlement events during the migration intent. */
+    /** Callback to receive settlement events during the migration registration. */
     eventCallback?: (event: SettlementEvent) => void;
 }
 
@@ -775,7 +775,7 @@ export interface MigrationLegReport {
 
 /**
  * Result of a {@link IVtxoManager.migrateDeprecatedSignerVtxos} pass: two legs (see
- * {@link MigrationLegReport}), never combined into one intent.
+ * {@link MigrationLegReport}), never combined into one registration.
  */
 export interface DeprecatedSignerMigrationReport {
     /**
@@ -1052,8 +1052,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
 
     // Periodic-settle cooldown with exponential backoff, so a failing settle doesn't re-submit an
-    // identical intent (plus a DeleteIntent RPC) every poll forever. Shared by boarding and
-    // expiring-VTXO work, which ride the same settle intent.
+    // identical registration (plus a DeleteIntent RPC) every poll forever. Shared by boarding and
+    // expiring-VTXO work, which ride the same batch registration.
     private lastPeriodicSettleTimestamp = 0;
     private consecutivePeriodicSettleFailures = 0;
     private static readonly PERIODIC_SETTLE_COOLDOWN_MS = 30_000;
@@ -1186,7 +1186,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
         // `info` is undefined only with no ark provider wired, which prices as zero (gross).
-        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(info?.fees));
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);
         // Against the pre-pricing count on purpose: fee pricing OR the cap narrowing the batch
@@ -1203,13 +1203,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 if (!cappedAway) {
                     throw new Error(
                         `All ${recoverableCount} recoverable VTXOs that can pay their own ` +
-                            `intent fee total less than the dust threshold ${dustAmount}`,
+                            `batch fee total less than the dust threshold ${dustAmount}`,
                     );
                 }
                 throw new Error(
                     `Capped recovery batch (highest-value subset of ${recoverableCount} ` +
                         `recoverable VTXOs within the ${MAX_VTXOS_PER_SETTLEMENT}-input and ` +
-                        `${vtxoMaxAmount}-sat limits, net of intent fees) is below the ` +
+                        `${vtxoMaxAmount}-sat limits, net of batch fees) is below the ` +
                         `dust threshold ${dustAmount}`,
                 );
             }
@@ -1236,7 +1236,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // under dust, which the server would reject.
         if (totalAmount < dustAmount) {
             throw new Error(
-                `Recoverable amount ${totalAmount} net of intent fees is below ` +
+                `Recoverable amount ${totalAmount} net of batch fees is below ` +
                     `dust threshold ${dustAmount}`,
             );
         }
@@ -1258,7 +1258,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Get information about recoverable balance without executing recovery.
      *
-     * `recoverable` is net of the operator's intent fees — what {@link recoverVtxos} would
+     * `recoverable` is net of the operator's batch fees — what {@link recoverVtxos} would
      * actually hand back. `subdust` is net of per-input fees only (the output fee is charged per
      * batch, not per coin), so it is not strictly a slice of `recoverable` and can exceed it when
      * a flat output fee meets a wholly subdust wallet. Batch size caps are not applied: they
@@ -1324,7 +1324,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Priced exactly as `recoverVtxos` prices what it settles; batch caps not applied (see
         // the JSDoc). `info` and the address were fetched with the coin list.
-        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(info?.fees));
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const priced = deductOffchainOutputFee(subtotalOf(payable, net), estimator, arkAddress);
         // A flat output fee can outweigh the inputs; recovery refuses that rather
@@ -1351,7 +1351,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Recover the funds of every contract imported purely for recovery (see
      * `Wallet.claimCash`'s server-swept branch). Each imported contract is
-     * settled back to the wallet in its **own isolated intent**, so a
+     * settled back to the wallet in its **own isolated batch registration**, so a
      * persistently rejected input dents only its own recovery and never the
      * wallet's own renewal/recovery bundle. Rotation-aware: a swept input
      * minted under a now-deprecated signer re-mints under the active one.
@@ -1377,11 +1377,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         try {
             // Cross-instance serialization: the prompt `claimCash` kick and the
             // poll loop both land here, and two tabs/workers can share one repo.
-            // Without a shared lock they submit duplicate recovery intents for
+            // Without a shared lock they submit duplicate recovery registrations for
             // the same swept VTXO, and the server's duplicated-input handling
             // then issues a DeleteIntent that can cancel a sibling's valid
             // recovery — the very race the boarding poll's lock prevents for its
-            // intents. `ifAvailable` never blocks (it runs or skips), so this
+            // registrations. `ifAvailable` never blocks (it runs or skips), so this
             // cannot deadlock even when the poll drives it inside the boarding
             // lock; a skipped cycle is retried by the next poll.
             await runWithCrossInstanceLock(IMPORTED_RECOVERY_LOCK_NAME, () =>
@@ -1461,13 +1461,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // partial/complete recovery sees the rest already spent.
         const recoverable = vtxos.filter((vtxo) => vtxo.isSwept && !isVtxoSpent(vtxo));
 
-        // Price against the intent-fee policy BEFORE capping, so an input that
+        // Price against the batch fee policy BEFORE capping, so an input that
         // can't pay its own fee neither takes a viable one's slot nor joins the
         // batch; it stays at the address (mirrors recoverVtxos). Then cap to the
-        // server's intent-size and per-output limits, highest-value first; the
+        // server's proof-size and per-output limits, highest-value first; the
         // overflow recovers next cycle. `info` is undefined only with no ark
         // provider wired, which prices as zero.
-        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(info?.fees));
         const { payable, net } = priceSettlementInputs(recoverable, estimator);
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
         const batch =
@@ -1715,13 +1715,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
-            const estimator = new Estimator(info?.fees.intentFee ?? {});
+            const estimator = new Estimator(batchFeeConfig(info?.fees));
             const { payable, net } = priceSettlementInputs(vtxos, estimator);
             vtxos = payable;
             if (vtxos.length === 0) {
                 // Worded to match the benign cases the vtxo_received subscription swallows.
                 throw new Error(
-                    "No VTXOs available to renew: every expiring VTXO is worth less than its own intent fee",
+                    "No VTXOs available to renew: every expiring VTXO is worth less than its own batch fee",
                 );
             }
 
@@ -2837,11 +2837,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
 
                 // Recover funds of contracts imported for recovery (claimCash's
-                // server-swept branch), each in its own isolated intent.
+                // server-swept branch), each in its own isolated batch registration.
                 // Self-serializing on its own cross-instance lock, so it stays
                 // coordinated with the prompt claimCash kick (which calls it
                 // outside this boarding lock) — the two never submit duplicate
-                // recovery intents. Self-contained (per-contract try/catch,
+                // recovery registrations. Self-contained (per-contract try/catch,
                 // never throws) so it neither stacks the poll backoff nor
                 // affects the wallet's own settle above.
                 await this.recoverImportedContracts();
@@ -2863,7 +2863,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Auto-settle new, unexpired boarding inputs AND near-expiry VTXOs in a single intent.
+     * Auto-settle new, unexpired boarding inputs AND near-expiry VTXOs in a single registration.
      * Skips expired boarding (swept instead) and in-flight boarding (knownBoardingUtxos); omits
      * VTXOs while the event-driven renewal runs, to avoid double-spending.
      */
@@ -2924,7 +2924,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const info = await this.getArkProvider().getInfo();
         const { fees, vtxoMaxAmount } = info;
-        const estimator = new Estimator(fees.intentFee);
+        const estimator = new Estimator(batchFeeConfig(fees));
 
         let totalAmount = 0n;
 

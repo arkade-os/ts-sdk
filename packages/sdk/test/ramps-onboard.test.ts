@@ -24,7 +24,7 @@ describe("Ramps.onboard picks only selectable boarding UTXOs", () => {
             getSelectableBoardingUtxos: vi.fn().mockResolvedValue([utxo("22", 50_000)]),
         });
 
-        await new Ramps(w).onboard({ intentFee: {} } as any);
+        await new Ramps(w).onboard({ batchFee: {} } as any);
 
         expect(w.settle.mock.calls[0]![0].inputs).toEqual([utxo("22", 50_000)]);
         expect(w.getBoardingUtxos).not.toHaveBeenCalled();
@@ -33,7 +33,7 @@ describe("Ramps.onboard picks only selectable boarding UTXOs", () => {
     it("falls back to the getter for a wallet without the selectable read", async () => {
         const w = wallet();
 
-        await new Ramps(w).onboard({ intentFee: {} } as any);
+        await new Ramps(w).onboard({ batchFee: {} } as any);
 
         expect(w.settle.mock.calls[0]![0].inputs).toEqual([utxo("11", 100_000)]);
     });
@@ -42,7 +42,7 @@ describe("Ramps.onboard picks only selectable boarding UTXOs", () => {
 describe("Ramps.onboard pays for the change it creates", () => {
     // 7 per input, 100 for the onboarded vtxo, 50 for the boarding change.
     const priced = {
-        intentFee: { onchainInput: "7.0", offchainOutput: "100.0", onchainOutput: "50.0" },
+        batchFee: { onchainInput: "7.0", offchainOutput: "100.0", onchainOutput: "50.0" },
     } as any;
 
     it("funds the change output's own fee, so the settlement balances", async () => {
@@ -77,7 +77,7 @@ describe("Ramps.onboard pays for the change it creates", () => {
     });
 
     it("refuses a change fee that never settles, instead of underfunding the onboard", async () => {
-        const absurd = { intentFee: { onchainOutput: "amount" } } as any;
+        const absurd = { batchFee: { onchainOutput: "amount" } } as any;
         const w = wallet();
 
         await expect(new Ramps(w).onboard(absurd, undefined, 50_000n)).rejects.toThrow(
@@ -97,7 +97,7 @@ describe("Ramps.onboard pays for the change it creates", () => {
     });
 
     it("emits no change when the fee outruns it, rather than refusing", async () => {
-        const steep = { intentFee: { onchainOutput: "100000.0" } } as any;
+        const steep = { batchFee: { onchainOutput: "100000.0" } } as any;
         const w = wallet();
 
         await new Ramps(w).onboard(steep, undefined, 50_000n);

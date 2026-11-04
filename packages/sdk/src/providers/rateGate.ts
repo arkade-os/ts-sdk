@@ -11,7 +11,7 @@
  * - **Wait + report** ({@link OriginRateGate.runHttp}) — indexer and operator
  *   reads, where delaying a send is safe. Waiting is separate from retrying:
  *   an indexer POST waits and reports but is not replayed (see `indexerFetch`).
- * - **Report-only** ({@link OriginRateGate.reportRateLimited}) — intent and
+ * - **Report-only** ({@link OriginRateGate.reportRateLimited}) — registration and
  *   settlement POSTs, which feed the shared signal but never wait or retry:
  *   batch sessions have deadlines, and these POSTs are not idempotent at the
  *   application level, so a certain missed round beats a possible `429`.

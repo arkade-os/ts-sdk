@@ -34,15 +34,15 @@ import { Transaction } from "../utils/transaction";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import {
     assertFinalCommitmentMatchesValidated,
-    declaredIntentOutputs,
-    validateBatchAgainstIntent,
-    validateBatchAgainstIntentWithoutTree,
+    declaredProofOutputs,
+    validateBatchAgainstProof,
+    validateBatchAgainstProofWithoutTree,
     validateBatchRecipients,
     validateBatchRecipientsWithoutTree,
 } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
-import { Intent } from "../intent";
+import { Proof } from "../proof";
 import { isSubdust, isVirtualCoin, requiresForfeit } from "../wallet";
 import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
@@ -73,11 +73,11 @@ const isVtxoCoin = (input: ArkadeBatchInput): input is ArkadeExtendedVirtualCoin
     isVirtualCoin(input);
 
 export function createArkadeBatchHandler(
-    intentId: string,
+    registrationId: string,
     inputs: ArkadeBatchInput[],
     signer: Identity,
     signedProof: string,
-    message: Intent.RegisterMessage,
+    message: Proof.RegisterMessage,
     session: SignerSession,
     arkProvider: ArkProvider,
     emulator: EmulatorProvider,
@@ -101,11 +101,11 @@ export function createArkadeBatchHandler(
 
     return {
         onBatchStarted: async (event: BatchStartedEvent): Promise<{ skip: boolean }> => {
-            const utf8IntentId = new TextEncoder().encode(intentId);
-            const intentIdHash = sha256(utf8IntentId);
-            const intentIdHashStr = hex.encode(intentIdHash);
+            const utf8RegistrationId = new TextEncoder().encode(registrationId);
+            const registrationIdHash = sha256(utf8RegistrationId);
+            const registrationIdHashStr = hex.encode(registrationIdHash);
 
-            if (!event.intentIdHashes.includes(intentIdHashStr)) return { skip: true };
+            if (!event.registrationIdHashes.includes(registrationIdHashStr)) return { skip: true };
 
             const info = await arkProvider.getInfo();
             // Bound the expiry before confirming, so a rejected round is never
@@ -118,7 +118,7 @@ export function createArkadeBatchHandler(
                 }),
             );
 
-            await arkProvider.confirmRegistration(intentId);
+            await arkProvider.confirmRegistration(registrationId);
 
             batchId = event.id;
 
@@ -156,10 +156,10 @@ export function createArkadeBatchHandler(
             if (recipients && recipients.length > 0) {
                 validateBatchRecipients(commitmentTx, vtxoTree.leaves(), recipients, network);
             } else {
-                validateBatchAgainstIntent(
+                validateBatchAgainstProof(
                     commitmentTx,
                     vtxoTree.leaves(),
-                    declaredIntentOutputs(signedProof, message.onchain_output_indexes),
+                    declaredProofOutputs(signedProof, message.onchain_output_indexes),
                 );
             }
 
@@ -219,9 +219,9 @@ export function createArkadeBatchHandler(
                 if (recipients && recipients.length > 0) {
                     validateBatchRecipientsWithoutTree(commitmentPsbt, recipients, network);
                 } else {
-                    validateBatchAgainstIntentWithoutTree(
+                    validateBatchAgainstProofWithoutTree(
                         commitmentPsbt,
-                        declaredIntentOutputs(signedProof, message.onchain_output_indexes),
+                        declaredProofOutputs(signedProof, message.onchain_output_indexes),
                     );
                 }
             }
@@ -314,7 +314,7 @@ export function createArkadeBatchHandler(
             }
 
             // Sign boarding inputs on the commitment tx
-            // The emulator already knows the arkade scripts from the intent proof,
+            // The emulator already knows the arkade scripts from the proof,
             // so we don't modify the commitment tx outputs (which would change the txid).
             if (boardingIndices.length > 0) {
                 commitmentPsbt = await signer.sign(commitmentPsbt, boardingIndices);

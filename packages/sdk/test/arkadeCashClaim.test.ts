@@ -40,7 +40,7 @@ const info = {
     checkpointTapscript: CHECKPOINT_TAPSCRIPT,
     deprecatedSigners: [],
     digest: "d",
-    fees: { intentFee: {}, txFeeRate: "0" },
+    fees: { batchFee: {}, txFeeRate: "0" },
     serviceStatus: {},
     sessionDuration: 3600n,
     utxoMaxAmount: -1n,
@@ -834,7 +834,7 @@ describe("claimCash import-for-recovery", () => {
         expect(await cm.getContracts({ script: cashPkScript })).toHaveLength(1);
     });
 
-    it("settles an imported contract in its own intent, then purges it", async () => {
+    it("settles an imported contract in its own registration, then purges it", async () => {
         const cash = makeCash();
         const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
         kick.mockRestore();
@@ -857,13 +857,13 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
-    it("settles net of intent fees", async () => {
+    it("settles net of batch fees", async () => {
         const cash = makeCash();
         const { wallet, manager, kick } = await claimSwept(cash);
         kick.mockRestore();
         vi.mocked(wallet.arkProvider.getInfo).mockResolvedValue({
             ...info,
-            fees: { intentFee: { offchainInput: "100.0", offchainOutput: "50.0" }, txFeeRate: "0" },
+            fees: { batchFee: { offchainInput: "100.0", offchainOutput: "50.0" }, txFeeRate: "0" },
         } as never);
 
         const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
@@ -882,7 +882,7 @@ describe("claimCash import-for-recovery", () => {
         kick.mockRestore();
         vi.mocked(wallet.arkProvider.getInfo).mockResolvedValue({
             ...info,
-            fees: { intentFee: { offchainInput: `${CASH_VALUE}.0` }, txFeeRate: "0" },
+            fees: { batchFee: { offchainInput: `${CASH_VALUE}.0` }, txFeeRate: "0" },
         } as never);
 
         const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");

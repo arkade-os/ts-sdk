@@ -56,7 +56,7 @@ export function isGatedVtxo(vtxo: Pick<ExcludableVtxo, "script">, gated: GatedCo
 
 /**
  * Why generic spending skips a VTXO, or `undefined` when it does not; phrased to follow the
- * outpoint in a log line. One shape for all exclusions (contract gate, pending recovery, intent
+ * outpoint in a log line. One shape for all exclusions (contract gate, pending recovery, registration
  * locks) so none can drop a coin silently while another logs.
  */
 export type VtxoExclusion = (vtxo: ExcludableVtxo) => string | undefined;
@@ -78,7 +78,7 @@ export function gateExclusion(gated: GatedContracts): VtxoExclusion {
     };
 }
 
-/** Outpoints excluded for a shared reason, e.g. an intent-lock set. */
+/** Outpoints excluded for a shared reason, e.g. a registration lock set. */
 export function outpointExclusion(outpoints: ReadonlySet<string>, reason: string): VtxoExclusion {
     return (vtxo) => (outpoints.has(`${vtxo.txid}:${vtxo.vout}`) ? reason : undefined);
 }

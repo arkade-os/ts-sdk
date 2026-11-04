@@ -1,34 +1,34 @@
 import { Environment, ParseResult } from "@marcbachmann/cel-js";
-import { IntentOffchainInputEnv, IntentOnchainInputEnv, IntentOutputEnv } from "./celenv.js";
-import { IntentFeeConfig, OffchainInput, OnchainInput, FeeOutput, FeeAmount } from "./types.js";
+import { BatchOffchainInputEnv, BatchOnchainInputEnv, BatchOutputEnv } from "./celenv.js";
+import { BatchFeeConfig, OffchainInput, OnchainInput, FeeOutput, FeeAmount } from "./types.js";
 
 /**
- * Estimator evaluates CEL expressions to calculate fees for Arkade intents
+ * Estimator evaluates CEL expressions to calculate batch fees
  */
 export class Estimator {
-    private intentOffchainInput?: ParseResult;
-    private intentOnchainInput?: ParseResult;
-    private intentOffchainOutput?: ParseResult;
-    private intentOnchainOutput?: ParseResult;
+    private batchOffchainInput?: ParseResult;
+    private batchOnchainInput?: ParseResult;
+    private batchOffchainOutput?: ParseResult;
+    private batchOnchainOutput?: ParseResult;
 
     /**
      * Creates a new Estimator with the given config
      * @param config - Configuration containing CEL programs for fee calculation
      */
-    constructor(readonly config: IntentFeeConfig) {
-        this.intentOffchainInput = config.offchainInput
-            ? parseProgram(config.offchainInput, IntentOffchainInputEnv)
+    constructor(readonly config: BatchFeeConfig) {
+        this.batchOffchainInput = config.offchainInput
+            ? parseProgram(config.offchainInput, BatchOffchainInputEnv)
             : undefined;
 
-        this.intentOnchainInput = config.onchainInput
-            ? parseProgram(config.onchainInput, IntentOnchainInputEnv)
+        this.batchOnchainInput = config.onchainInput
+            ? parseProgram(config.onchainInput, BatchOnchainInputEnv)
             : undefined;
 
-        this.intentOffchainOutput = config.offchainOutput
-            ? parseProgram(config.offchainOutput, IntentOutputEnv)
+        this.batchOffchainOutput = config.offchainOutput
+            ? parseProgram(config.offchainOutput, BatchOutputEnv)
             : undefined;
-        this.intentOnchainOutput = config.onchainOutput
-            ? parseProgram(config.onchainOutput, IntentOutputEnv)
+        this.batchOnchainOutput = config.onchainOutput
+            ? parseProgram(config.onchainOutput, BatchOutputEnv)
             : undefined;
     }
 
@@ -38,7 +38,7 @@ export class Estimator {
      * @returns The fee amount for this input
      */
     evalOffchainInput(input: OffchainInput): FeeAmount {
-        return evalProgram(this.intentOffchainInput, () => inputToArgs(input));
+        return evalProgram(this.batchOffchainInput, () => inputToArgs(input));
     }
 
     /**
@@ -47,7 +47,7 @@ export class Estimator {
      * @returns The fee amount for this input
      */
     evalOnchainInput(input: OnchainInput): FeeAmount {
-        return evalProgram(this.intentOnchainInput, () => ({ amount: Number(input.amount) }));
+        return evalProgram(this.batchOnchainInput, () => ({ amount: Number(input.amount) }));
     }
 
     /**
@@ -56,7 +56,7 @@ export class Estimator {
      * @returns The fee amount for this output
      */
     evalOffchainOutput(output: FeeOutput): FeeAmount {
-        return evalProgram(this.intentOffchainOutput, () => outputToArgs(output));
+        return evalProgram(this.batchOffchainOutput, () => outputToArgs(output));
     }
 
     /**
@@ -65,7 +65,7 @@ export class Estimator {
      * @returns The fee amount for this output
      */
     evalOnchainOutput(output: FeeOutput): FeeAmount {
-        return evalProgram(this.intentOnchainOutput, () => outputToArgs(output));
+        return evalProgram(this.batchOnchainOutput, () => outputToArgs(output));
     }
 
     /**

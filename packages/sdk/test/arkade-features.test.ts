@@ -157,7 +157,7 @@ function providers(
             captured.via = "emulator";
             return { signedArkTx: arkTx, signedCheckpointTxs: cps };
         }),
-        async submitIntent() {
+        async submitProof() {
             throw new Error("x");
         },
         async submitFinalization() {

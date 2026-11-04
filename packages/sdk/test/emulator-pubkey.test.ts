@@ -43,7 +43,7 @@ function stubProviders(emulatorSignerPubkey: string) {
         async submitTx() {
             throw new Error("not used");
         },
-        async submitIntent() {
+        async submitProof() {
             throw new Error("not used");
         },
         async submitFinalization() {

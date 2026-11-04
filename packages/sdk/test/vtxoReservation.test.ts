@@ -108,7 +108,7 @@ describe("reserveVtxos", () => {
 });
 
 describe("computeOffchainBalance reserved bucket", () => {
-    it("counts a coin once, gated before intent-locked before reserved", () => {
+    it("counts a coin once, gated before registration-locked before reserved", () => {
         const coin = (fill: string, value: number) =>
             ({
                 txid: fill.repeat(32),

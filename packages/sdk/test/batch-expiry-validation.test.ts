@@ -16,7 +16,7 @@ import type { SignerSession } from "../src/tree/signingSession";
 import type { ArkProvider, BatchStartedEvent } from "../src/providers/ark";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
-import type { Intent } from "../src/intent";
+import type { Proof } from "../src/proof";
 
 const INTENT_ID = "intent-123";
 const SIGNER_XONLY = "11".repeat(32);
@@ -159,7 +159,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
             [],
             {} as unknown as Identity,
             "signed-proof",
-            {} as unknown as Intent.RegisterMessage,
+            {} as unknown as Proof.RegisterMessage,
             session,
             arkProvider,
             {} as unknown as EmulatorProvider,
@@ -170,7 +170,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
     const batchStarted = (batchExpiry: bigint) =>
         ({
             id: "batch-1",
-            intentIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
+            registrationIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
             batchExpiry,
         }) as unknown as BatchStartedEvent;
 
@@ -196,13 +196,13 @@ describe("createArkadeBatchHandler batch expiry", () => {
         expect(arkProvider.confirmRegistration).toHaveBeenCalledWith(INTENT_ID);
     });
 
-    it("does not validate or confirm when the intent is not ours", async () => {
+    it("does not validate or confirm when the registration is not ours", async () => {
         const arkProvider = makeArkProvider();
 
         await expect(
             makeHandler(arkProvider, makeSession()).onBatchStarted({
                 id: "batch-1",
-                intentIdHashes: ["ff".repeat(32)],
+                registrationIdHashes: ["ff".repeat(32)],
                 batchExpiry: 1n,
             } as unknown as BatchStartedEvent),
         ).resolves.toEqual({ skip: true });

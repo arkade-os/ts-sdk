@@ -1979,7 +1979,10 @@ export class WalletMessageHandler
         const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
-                await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
+                await spendableVtxosExcludingLocked(
+                    allVtxos,
+                    this.readonlyWallet?.batchRegistrationRepository,
+                )
             ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
         );
 
@@ -2425,7 +2428,7 @@ export class WalletMessageHandler
      *
      * Recovery-only contracts (imported by `claimCash` for server-swept
      * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
-     * they are settled in their own isolated intent and must stay out of the
+     * they are settled in their own isolated batch registration and must stay out of the
      * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
      * The transaction-history caller opts back in via `includeRecoveryOnly` to
      * match the non-worker `getTransactionHistory`, which reads contracts

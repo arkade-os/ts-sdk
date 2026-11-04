@@ -40,7 +40,7 @@ const arkInfo = (offchainInput: string): ArkadeInfo => ({
     deprecatedSigners: [],
     digest: "d",
     dust: 100n,
-    fees: { intentFee: { offchainInput }, txFeeRate: "0" },
+    fees: { batchFee: { offchainInput }, intentFee: { offchainInput }, txFeeRate: "0" },
     forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
     forfeitPubkey: TEST_SERVER_PUB_KEY_HEX,
     network: "mutinynet",
@@ -154,7 +154,7 @@ describe("periodic settle boarding fee rounding", () => {
             onchainProvider: { getChainTip: vi.fn() },
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({
-                    fees: { intentFee: { onchainInput: "amount * 0.9" } },
+                    fees: { batchFee: { onchainInput: "amount * 0.9" } },
                     vtxoMaxAmount: -1n,
                 }),
             },

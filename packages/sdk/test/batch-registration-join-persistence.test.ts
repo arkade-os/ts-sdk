@@ -1,15 +1,15 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/batchRegistrationRepository";
 import { describe, it, expect } from "vitest";
 import { Batch } from "../src/wallet/batch";
-import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { wrapHandlerWithRegistrationPersistence } from "../src/wallet/batchRegistrationPersistenceHandler";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/batchRegistrationRepository";
+import type { BatchRegistration } from "../src/repositories/batchRegistrationRepository";
 import { SettlementEventType, type SettlementEvent } from "../src/providers/ark";
 
 // Batch.join drives persistence from the awaited handler hooks, so the outcome
 // is recorded regardless of what the observational eventCallback does.
 
-const intentTxId = "i1";
+const proofTxId = "i1";
 
 async function* streamOf(...events: SettlementEvent[]): AsyncIterableIterator<SettlementEvent> {
     yield* events;
@@ -18,6 +18,7 @@ async function* streamOf(...events: SettlementEvent[]): AsyncIterableIterator<Se
 const started: SettlementEvent = {
     type: SettlementEventType.BatchStarted,
     id: "batch-1",
+    registrationIdHashes: [],
     intentIdHashes: [],
     batchExpiry: 0n,
 };
@@ -37,10 +38,10 @@ const failed: SettlementEvent = {
     reason: "boom",
 };
 
-function seededRepo(): InMemoryIntentRepository {
-    const repo = new InMemoryIntentRepository();
-    const intent: ArkIntent = {
-        intentTxId,
+function seededRepo(): InMemoryBatchRegistrationRepository {
+    const repo = new InMemoryBatchRegistrationRepository();
+    const intent: BatchRegistration = {
+        proofTxId,
         state: "waiting_for_batch",
         createdAt: 1,
         updatedAt: 1,
@@ -49,27 +50,27 @@ function seededRepo(): InMemoryIntentRepository {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        intentVtxos: [{ txid: "v", vout: 0 }],
+        inputs: [{ txid: "v", vout: 0 }],
     };
-    void repo.saveIntent(intent);
+    void repo.saveRegistration(intent);
     return repo;
 }
 
-const wrappedHandler = (repo: InMemoryIntentRepository) =>
-    wrapHandlerWithIntentPersistence(
+const wrappedHandler = (repo: InMemoryBatchRegistrationRepository) =>
+    wrapHandlerWithRegistrationPersistence(
         {
             onBatchStarted: async () => ({ skip: false }),
             onTreeSigningStarted: async () => ({ skip: true }),
             onTreeNonces: async () => ({ fullySigned: true }),
             onBatchFinalization: async () => {},
         },
-        { intentRepository: repo, intentTxId },
+        { batchRegistrationRepository: repo, proofTxId },
     );
 
-const stateOf = (repo: InMemoryIntentRepository) =>
-    collectIntents(repo, { intentTxIds: [intentTxId] }).then((r) => r[0].state);
+const stateOf = (repo: InMemoryBatchRegistrationRepository) =>
+    collectBatchRegistrations(repo, { proofTxIds: [proofTxId] }).then((r) => r[0].state);
 
-describe("Batch.join intent persistence", () => {
+describe("Batch.join registration persistence", () => {
     it("persists batch_succeeded when the eventCallback throws", async () => {
         const repo = seededRepo();
         const txid = await Batch.join(

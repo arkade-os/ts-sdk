@@ -16,19 +16,19 @@ const nowFunction = {
 };
 
 /**
- * IntentOutputEnv is the CEL environment for output fee calculation
+ * BatchOutputEnv is the CEL environment for output fee calculation
  * Variables: amount, script
  */
-export const IntentOutputEnv = new Environment()
+export const BatchOutputEnv = new Environment()
     .registerVariable(AmountVariableName, "double")
     .registerVariable(OutputScriptVariableName, "string")
     .registerFunction(nowFunction.signature, nowFunction.implementation);
 
 /**
- * IntentOffchainInputEnv is the CEL environment for offchain input fee calculation
+ * BatchOffchainInputEnv is the CEL environment for offchain input fee calculation
  * Variables: amount, expiry, birth, weight, inputType
  */
-export const IntentOffchainInputEnv = new Environment()
+export const BatchOffchainInputEnv = new Environment()
     .registerVariable(AmountVariableName, "double")
     .registerVariable(ExpiryVariableName, "double")
     .registerVariable(BirthVariableName, "double")
@@ -37,9 +37,9 @@ export const IntentOffchainInputEnv = new Environment()
     .registerFunction(nowFunction.signature, nowFunction.implementation);
 
 /**
- * IntentOnchainInputEnv is the CEL environment for onchain input fee calculation
+ * BatchOnchainInputEnv is the CEL environment for onchain input fee calculation
  * Variables: amount
  */
-export const IntentOnchainInputEnv = new Environment()
+export const BatchOnchainInputEnv = new Environment()
     .registerVariable(AmountVariableName, "double")
     .registerFunction(nowFunction.signature, nowFunction.implementation);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
-import { ArkAddress, InMemoryIntentRepository } from "../src";
+import { ArkAddress, InMemoryBatchRegistrationRepository } from "../src";
 import { Wallet } from "../src/wallet/wallet";
 import { markSdkPicked } from "../src/wallet/utils";
 import { BTC_ADDR, fundedWallet, parkSettle, stallSubmits } from "./concurrentSpendingFixture";
@@ -45,7 +45,7 @@ describe("send without concurrentSpending", () => {
             inputs: [coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 9_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.registerProof).toHaveBeenCalled());
         // Queued behind the settle; picks only once it holds the lock.
         const sending = wallet.send({ address: await wallet.getAddress(), amount: 15_000 });
         // Picks unlocked, then queues its submit behind the send.
@@ -110,7 +110,7 @@ describe("concurrentSpending", () => {
             inputs: [coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 9_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.registerProof).toHaveBeenCalled());
         const sending = wallet.send({ address: await wallet.getAddress(), amount: 2_000 });
         await vi.waitFor(() => expect(submits).toHaveLength(1));
         expect(submits[0].inputs).toEqual([outpoints[1]]);
@@ -132,7 +132,7 @@ describe("concurrentSpending", () => {
             inputs: [coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 9_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.registerProof).toHaveBeenCalled());
         const sending = wallet.send({ address: await wallet.getAddress(), amount: 2_000 });
         await new Promise((r) => setTimeout(r, 50));
         expect(submits).toHaveLength(0);
@@ -170,12 +170,12 @@ describe("concurrentSpending", () => {
         await wallet.dispose();
     });
 
-    it("refuses a settle naming an in-flight coin before persisting an intent", async () => {
+    it("refuses a settle naming an in-flight coin before persisting a registration", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
-        const intentRepository = new InMemoryIntentRepository();
+        const batchRegistrationRepository = new InMemoryBatchRegistrationRepository();
         const { wallet, coins } = await fundedWallet({
             concurrentSpending: true,
-            intentRepository,
+            batchRegistrationRepository,
         });
         const submits = stallSubmits(wallet);
         const first = wallet.send({ address: await wallet.getAddress(), amount: 2_000 });
@@ -184,7 +184,7 @@ describe("concurrentSpending", () => {
         await expect(
             wallet.settle({ inputs: [coins[0]], outputs: [{ address: BTC_ADDR, amount: 9_000n }] }),
         ).rejects.toMatchObject({ name: "VtxoReservedError", holder: "in-flight" });
-        expect(await intentRepository.getLockedVtxoOutpoints()).toEqual([]);
+        expect(await batchRegistrationRepository.getLockedVtxoOutpoints()).toEqual([]);
 
         submits[0].finish();
         await first;
@@ -224,7 +224,7 @@ describe("concurrentSpending", () => {
             inputs: [boarding, coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 14_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.registerProof).toHaveBeenCalled());
 
         await expect(
             wallet.settle({ inputs: [boarding], outputs: [{ address: BTC_ADDR, amount: 4_000n }] }),
@@ -233,14 +233,14 @@ describe("concurrentSpending", () => {
             holder: "in-flight",
             outpoints: [`${boarding.txid}:0`],
         });
-        expect(arkProvider.registerIntent).toHaveBeenCalledTimes(1);
+        expect(arkProvider.registerProof).toHaveBeenCalledTimes(1);
 
         batch.open();
         await settling.catch(() => undefined);
         await wallet.dispose();
     });
 
-    it("lists boarding UTXOs a settle is spending or an intent locks, but keeps them out of picks", async () => {
+    it("lists boarding UTXOs a settle is spending or an registration locks, but keeps them out of picks", async () => {
         const [spending, locked, free] = [
             boardingUtxo("dd"),
             boardingUtxo("cc"),
@@ -250,7 +250,7 @@ describe("concurrentSpending", () => {
             boardingTapscript: { options: { serverPubKey: new Uint8Array(32).fill(2) } },
             getBoardingUtxosForSigners: async () => [{ coins: [spending, locked, free] }],
             _pendingSpendOutpoints: new Set([`${spending.txid}:0`]),
-            intentRepository: {
+            batchRegistrationRepository: {
                 getLockedVtxoOutpoints: async () => [{ txid: locked.txid, vout: 0 }],
             },
             getBoardingUtxos: () => (Wallet.prototype as any).getBoardingUtxos.call(thisArg),
@@ -301,12 +301,10 @@ describe("a hold placed while the SDK is picking", () => {
         parkSettle(wallet, arkProvider);
         let open!: () => void;
         const signing = new Promise<void>((resolve) => (open = resolve));
-        const sign = vi
-            .spyOn(wallet as any, "makeRegisterIntentSignature")
-            .mockImplementation(async () => {
-                await signing;
-                return { proof: "", message: {} };
-            });
+        const sign = vi.spyOn(wallet as any, "makeRegisterProof").mockImplementation(async () => {
+            await signing;
+            return { proof: "", message: {} };
+        });
 
         const settling = wallet.settle();
         await vi.waitFor(() => expect(sign).toHaveBeenCalled());
@@ -314,29 +312,27 @@ describe("a hold placed while the SDK is picking", () => {
         open();
 
         await expect(settling).rejects.toMatchObject({ name: "VtxoReservedError", holder: "held" });
-        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        expect(arkProvider.registerProof).not.toHaveBeenCalled();
         hold.release();
         await wallet.dispose();
     });
 
     it("a bare settle that loses a VTXO to a hold never blocks the holder spending it", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
-        const intentRepository = new InMemoryIntentRepository();
+        const batchRegistrationRepository = new InMemoryBatchRegistrationRepository();
         const { wallet, arkProvider, coins, outpoints } = await fundedWallet({
             concurrentSpending: true,
-            intentRepository,
+            batchRegistrationRepository,
         });
         parkSettle(wallet, arkProvider);
         const submits = stallSubmits(wallet);
         let open!: () => void;
         const signing = new Promise<void>((resolve) => (open = resolve));
-        const sign = vi
-            .spyOn(wallet as any, "makeRegisterIntentSignature")
-            .mockImplementation(async () => {
-                await signing;
-                return { proof: "", message: {} };
-            });
-        arkProvider.deleteIntent.mockImplementation(() => new Promise<undefined>(() => {}));
+        const sign = vi.spyOn(wallet as any, "makeRegisterProof").mockImplementation(async () => {
+            await signing;
+            return { proof: "", message: {} };
+        });
+        arkProvider.deleteRegistration.mockImplementation(() => new Promise<undefined>(() => {}));
 
         const settled = wallet.settle().catch((error) => error);
         await vi.waitFor(() => expect(sign).toHaveBeenCalled());
@@ -354,8 +350,8 @@ describe("a hold placed while the SDK is picking", () => {
         submits[0].finish();
         expect(await sent).toBe("1".repeat(64));
         expect(await settled).toMatchObject({ name: "VtxoReservedError", holder: "held" });
-        expect(arkProvider.deleteIntent).not.toHaveBeenCalled();
-        expect(await intentRepository.getLockedVtxoOutpoints()).toEqual([]);
+        expect(arkProvider.deleteRegistration).not.toHaveBeenCalled();
+        expect(await batchRegistrationRepository.getLockedVtxoOutpoints()).toEqual([]);
         hold.release();
         await wallet.dispose();
     });
@@ -373,9 +369,9 @@ describe("a hold placed while the SDK is picking", () => {
         await expect(wallet.settle(markSdkPicked(exitOf()))).rejects.toMatchObject({
             holder: "held",
         });
-        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        expect(arkProvider.registerProof).not.toHaveBeenCalled();
         const named = wallet.settle(exitOf());
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(arkProvider.registerProof).toHaveBeenCalledTimes(1));
 
         batch.open();
         await named.catch(() => undefined);

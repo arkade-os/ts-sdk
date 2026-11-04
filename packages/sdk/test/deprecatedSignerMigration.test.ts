@@ -72,7 +72,7 @@ function makeInfo(
     // `0n` sentinel arkd advertises (non-nullable field), which classifies
     // DUE_NOW. Mirrors `RestArkProvider.getInfo`'s `BigInt(cutoffDate ?? 0)`.
     deprecatedSigners: { pubkey: string; cutoffDate?: bigint }[] = [],
-    intentFee: Record<string, string> = {},
+    batchFee: Record<string, string> = {},
     vtxoMaxAmount: bigint = -1n, // -1 = no per-output ceiling
 ): ArkadeInfo {
     const normalized: DeprecatedSigner[] = deprecatedSigners.map((s) => ({
@@ -82,7 +82,7 @@ function makeInfo(
     return {
         signerPubkey,
         deprecatedSigners: normalized,
-        fees: { intentFee, txFeeRate: "" },
+        fees: { batchFee, txFeeRate: "" },
         vtxoMaxAmount,
     } as unknown as ArkadeInfo;
 }

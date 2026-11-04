@@ -254,7 +254,7 @@ Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through a
 
 If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
 
-> **Note:** the interface requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or intent proof carries, and a boarding or commitment parent has no off-chain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
+> **Note:** the interface requires `getRawTransaction(txid): Promise<Uint8Array>`, the raw wire bytes of a transaction. Emulator v0.0.7+ demands the previous transaction of every input a covenant spend or proof carries, and a boarding or commitment parent has no offchain source. Both shipped providers implement it; a custom `OnchainProvider` has to add it.
 
 #### Default URLs
 
@@ -412,7 +412,7 @@ const balance = await wallet.getBalance()
 | `preconfirmed` | Owned offchain funds not yet finalized in a batch. |
 | `available` | What `send` and every other automatic coin selection can spend now. |
 | `contractLocked` | Held by a contract that generic spending refuses (chiefly swap escrow); only that contract can spend it ([Contract Management](#contract-management)). |
-| `pendingSettlement` | Committed to an in-flight settlement intent; back in `available` when the intent ends. Always `0` without `storage.intentRepository`. |
+| `pendingSettlement` | Committed to an in-flight batch registration; back in `available` when the registration ends. Always `0` without `storage.batchRegistrationRepository`. |
 | `reserved` | Held by [`reserveVtxos`](#holding-vtxos-for-your-own-use) until released. |
 | `recoverable` | Swept or subdust virtual outputs that [`recoverVtxos`](#recovery-reclaim-swept-vtxos) can reclaim; `getRecoverableBalance()` gives what a batch would return today. |
 | `deprecatedSignerLocked` | Under a server signer past its cutoff, which the operator no longer co-signs; recovers once swept and re-settled. |
@@ -1135,7 +1135,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
-  IndexedDBIntentRepository,
+  IndexedDBBatchRegistrationRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -1144,11 +1144,11 @@ const contractRepo = new IndexedDBContractRepository()
 const bus = new MessageBus(walletRepo, contractRepo, {
   messageHandlers: [new WalletMessageHandler()],
   tickIntervalMs: 10_000, // default 10s
-  // Optional, same opt-in as `storage.intentRepository` on a main-thread
-  // wallet. Omit it and the worker persists no settlement intent, reconciles
-  // none on restart, and counts intent-locked VTXOs as available
+  // Optional, same opt-in as `storage.batchRegistrationRepository` on a
+  // main-thread wallet. Omit it and the worker persists no batch registration,
+  // reconciles none on restart, and counts locked virtual outputs as available
   // (`pendingSettlement` stays 0).
-  intentRepository: new IndexedDBIntentRepository(),
+  batchRegistrationRepository: new IndexedDBBatchRegistrationRepository(),
 })
 
 bus.start()
@@ -1228,15 +1228,15 @@ SDK uses IndexedDB repositories with the default database name.
 #### Paged repository reads
 
 Collection repositories expose `getVtxosPage`, `getVtxosForScriptPage`, `getUtxosPage`,
-`getTransactionHistoryPage`, `getContractsPage`, and `getIntentsPage`.
+`getTransactionHistoryPage`, `getContractsPage`, and `getRegistrationsPage`.
 Each accepts `{ limit, after? }` and returns
 `{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
 Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;
-`since` is inclusive Unix milliseconds. Contract and intent pages are ordered
-by their script and intent transaction ID. Filters must stay the same across
+`since` is inclusive Unix milliseconds. Contract and batch registration pages are
+ordered by their script and proof transaction ID. Filters must stay the same across
 pages. Repository collection reads use pages directly; `collectVtxos`,
 `collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
-`collectIntents` traverse all pages when a complete snapshot is required.
+`collectBatchRegistrations` traverse all pages when a complete snapshot is required.
 Wallet spending paths consume every VTXO or UTXO page before coin selection.
 In `@arkade-os/swap`, RFQ page `since` values use Unix seconds instead.
 
@@ -1254,7 +1254,7 @@ do {
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, `IntentRepository`,
+`WalletRepository`, `ContractRepository`, `BatchRegistrationRepository`,
 `VirtualTxRepository`, and `AssetSwapRepository` (in `@arkade-os/swap`) each
 declare a `readonly version` field with a literal type. All built-in
 implementations set this to the current version. If you maintain a custom

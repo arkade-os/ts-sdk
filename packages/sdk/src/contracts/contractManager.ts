@@ -44,8 +44,11 @@ import {
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
 import { UnsupportedProgramVersionError } from "../arkade/program";
-import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
-import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
+import { ContractFilter, ContractRepository, BatchRegistrationRepository } from "../repositories";
+import {
+    reconcileRegistrations,
+    type RegistrationReconciliationDeps,
+} from "../wallet/batchRegistrationReconciliation";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -349,7 +352,7 @@ export interface IContractManager extends Disposable {
     whenBooted?(): Promise<void>;
 
     /**
-     * Stamp raw virtual outputs with their contract's tapscripts (forfeit, intent, tap tree).
+     * Stamp raw virtual outputs with their contract's tapscripts (forfeit, proof, tap tree).
      * Throws when a vtxo's script has no registered contract, so the wallet never silently stamps
      * the default tapscript onto a non-default vtxo.
      */
@@ -563,13 +566,19 @@ export interface ContractManagerConfig {
     walletRepository: WalletRepository;
 
     /**
-     * When present, the online sync reconciles persisted non-terminal settlement intents against
-     * indexer state (crash recovery) on boot and reconnect; see {@link reconcileIntents}.
+     * When present, the online sync reconciles persisted non-terminal batch registrations against
+     * indexer state (crash recovery) on boot and reconnect; see {@link reconcileRegistrations}.
      */
-    intentRepository?: IntentRepository;
+    batchRegistrationRepository?: BatchRegistrationRepository;
 
-    /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
-    intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
+    /** @deprecated Use {@link batchRegistrationRepository}. */
+    intentRepository?: BatchRegistrationRepository;
+
+    /** Lets the reconciliation release stale registrations from the operator; see {@link RegistrationReconciliationDeps}. */
+    registrationReconciliation?: Pick<
+        RegistrationReconciliationDeps,
+        "deleteRegistration" | "isOutpointInFlight"
+    >;
 
     /**
      * Exit-data capture hook, fired best-effort after VTXOs are persisted so a
@@ -1015,24 +1024,25 @@ export class ContractManager implements IContractManager {
         if (watched.length > 0) {
             await this.reconcilePendingFrontier(watched);
         }
-        await this.reconcileStaleIntents();
+        await this.reconcileStaleRegistrations();
     }
 
     /**
-     * Crash-recovery for settlement intents left non-terminal by a mid-settle crash (see
-     * {@link reconcileIntents}). Online sync path only, never from a read API. Best-effort: not a
-     * sync invariant, so failures are logged.
+     * Crash-recovery for batch registrations left non-terminal by a mid-settle crash (see
+     * {@link reconcileRegistrations}). Online sync path only, never from a read API. Best-effort:
+     * not a sync invariant, so failures are logged.
      */
-    private async reconcileStaleIntents(): Promise<void> {
-        if (!this.config.intentRepository) return;
+    private async reconcileStaleRegistrations(): Promise<void> {
+        const repository = this.config.batchRegistrationRepository ?? this.config.intentRepository;
+        if (!repository) return;
         try {
-            await reconcileIntents({
-                ...this.config.intentReconciliation,
-                intentRepository: this.config.intentRepository,
+            await reconcileRegistrations({
+                ...this.config.registrationReconciliation,
+                batchRegistrationRepository: repository,
                 indexerProvider: this.config.indexerProvider,
             });
         } catch (e) {
-            console.error("ContractManager: intent reconciliation failed", e);
+            console.error("ContractManager: batch registration reconciliation failed", e);
         }
     }
 

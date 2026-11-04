@@ -131,6 +131,9 @@ function stubProviders() {
         async submitIntent(): Promise<never> {
             throw new Error("x");
         },
+        async submitProof(): Promise<never> {
+            throw new Error("x");
+        },
         async submitFinalization(): Promise<never> {
             throw new Error("x");
         },

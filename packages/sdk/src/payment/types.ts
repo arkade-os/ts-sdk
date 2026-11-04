@@ -31,7 +31,7 @@ export interface PaymentHandle {
  * (collaborative exit) gross the amount up; a rail that can't (it doesn't choose the fee) flags
  * it via `claimFeeDeductedFromPayout`.
  *
- * `fee` is an estimate where cost is fixed later: the collaborative exit omits per-input intent
+ * `fee` is an estimate where cost is fixed later: the collaborative exit omits per-input registration
  * fees unless {@link PaymentRequest.selectedVtxos} is named. A display/ranking figure, not a
  * guarantee.
  */

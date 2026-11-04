@@ -36,7 +36,7 @@ describe("default delegation schedule", () => {
         } as unknown as DelegateProvider;
         const info = {
             dust: 100n,
-            fees: { intentFee: {}, txFeeRate: "0" },
+            fees: { batchFee: {}, txFeeRate: "0" },
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             forfeitPubkey: TEST_SERVER_PUB_KEY_HEX,
             network: "mutinynet",

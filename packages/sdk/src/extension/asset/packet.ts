@@ -45,9 +45,9 @@ export class Packet implements ExtensionPacket {
         return Packet.PACKET_TYPE;
     }
 
-    /** Convert the packet into the batch-leaf form for a specific intent transaction id. */
-    leafTxPacket(intentTxid: Uint8Array): Packet {
-        const leafGroups = this.groups.map((group) => group.toBatchLeafAssetGroup(intentTxid));
+    /** Convert the packet into the batch-leaf form for a specific proof transaction id. */
+    leafTxPacket(proofTxid: Uint8Array): Packet {
+        const leafGroups = this.groups.map((group) => group.toBatchLeafAssetGroup(proofTxid));
         return new Packet(leafGroups);
     }
 

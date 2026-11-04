@@ -152,7 +152,7 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
      * **It carries a CLTV**: a settlement on it is rejected until `refundLocktime` matures, and
      * the per-contract annotation knows no clock, so `recoverVtxos` filters on
      * {@link assertSpendableNow}. **Role-blind**: a receiver's row gets the same leaf, satisfiable
-     * only by the `sender` key holder; anyone else fails at intent registration.
+     * only by the `sender` key holder; anyone else fails at proof registration.
      */
     deriveTapscripts(script: VHTLC.Script): DerivedContractTapscripts {
         return deriveVhtlcTapscripts(script);

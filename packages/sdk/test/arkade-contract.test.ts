@@ -129,6 +129,9 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array, indexerVtxos
         async submitIntent() {
             throw new Error("x");
         },
+        async submitProof() {
+            throw new Error("x");
+        },
         async submitFinalization() {
             throw new Error("x");
         },

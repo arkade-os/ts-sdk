@@ -1,8 +1,8 @@
-import { collectIntents } from "../src/repositories/intentRepository";
+import { collectBatchRegistrations } from "../src/repositories/batchRegistrationRepository";
 import { describe, it, expect, vi } from "vitest";
-import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import { wrapHandlerWithRegistrationPersistence } from "../src/wallet/batchRegistrationPersistenceHandler";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/batchRegistrationRepository";
+import type { BatchRegistration } from "../src/repositories/batchRegistrationRepository";
 import { Batch } from "../src/wallet/batch";
 import {
     SettlementEventType,
@@ -14,6 +14,7 @@ import {
 const started: BatchStartedEvent = {
     type: SettlementEventType.BatchStarted,
     id: "batch-1",
+    registrationIdHashes: [],
     intentIdHashes: [],
     batchExpiry: 0n,
 };
@@ -28,12 +29,12 @@ const failed: BatchFailedEvent = {
     reason: "boom",
 };
 
-const intentTxId = "i1";
+const proofTxId = "i1";
 
-function seededRepo(): InMemoryIntentRepository {
-    const repo = new InMemoryIntentRepository();
-    const intent: ArkIntent = {
-        intentTxId,
+function seededRepo(): InMemoryBatchRegistrationRepository {
+    const repo = new InMemoryBatchRegistrationRepository();
+    const intent: BatchRegistration = {
+        proofTxId,
         state: "waiting_for_batch",
         createdAt: 1,
         updatedAt: 1,
@@ -42,9 +43,9 @@ function seededRepo(): InMemoryIntentRepository {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        intentVtxos: [{ txid: "v", vout: 0 }],
+        inputs: [{ txid: "v", vout: 0 }],
     };
-    void repo.saveIntent(intent);
+    void repo.saveRegistration(intent);
     return repo;
 }
 
@@ -58,8 +59,8 @@ function baseHandler(overrides: Partial<Batch.Handler> = {}): Batch.Handler {
     };
 }
 
-const stateOf = (repo: InMemoryIntentRepository) =>
-    collectIntents(repo, { intentTxIds: [intentTxId] }).then((r) => r[0]);
+const stateOf = (repo: InMemoryBatchRegistrationRepository) =>
+    collectBatchRegistrations(repo, { proofTxIds: [proofTxId] }).then((r) => r[0]);
 
 describe("wrapHandlerWithIntentPersistence", () => {
     it("advances to batch_in_progress on a started (non-skipped) batch", async () => {
@@ -67,9 +68,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
         const base = baseHandler();
         const spy = vi.spyOn(base, "onBatchStarted");
 
-        const result = await wrapHandlerWithIntentPersistence(base, {
-            intentRepository: repo,
-            intentTxId,
+        const result = await wrapHandlerWithRegistrationPersistence(base, {
+            batchRegistrationRepository: repo,
+            proofTxId,
         }).onBatchStarted(started);
 
         expect(result).toEqual({ skip: false });
@@ -81,9 +82,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("leaves state untouched when the base handler skips the batch", async () => {
         const repo = seededRepo();
-        const wrapped = wrapHandlerWithIntentPersistence(
+        const wrapped = wrapHandlerWithRegistrationPersistence(
             baseHandler({ onBatchStarted: async () => ({ skip: true }) }),
-            { intentRepository: repo, intentTxId },
+            { batchRegistrationRepository: repo, proofTxId },
         );
 
         expect(await wrapped.onBatchStarted(started)).toEqual({ skip: true });
@@ -94,9 +95,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
         const repo = seededRepo();
         const base = baseHandler({ onBatchFinalized: vi.fn(async () => {}) });
 
-        await wrapHandlerWithIntentPersistence(base, {
-            intentRepository: repo,
-            intentTxId,
+        await wrapHandlerWithRegistrationPersistence(base, {
+            batchRegistrationRepository: repo,
+            proofTxId,
         }).onBatchFinalized!(finalized);
 
         expect(base.onBatchFinalized).toHaveBeenCalledOnce();
@@ -107,9 +108,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("records batch_failed and throws the reason when the base has no onBatchFailed", async () => {
         const repo = seededRepo();
-        const wrapped = wrapHandlerWithIntentPersistence(baseHandler(), {
-            intentRepository: repo,
-            intentTxId,
+        const wrapped = wrapHandlerWithRegistrationPersistence(baseHandler(), {
+            batchRegistrationRepository: repo,
+            proofTxId,
         });
 
         await expect(wrapped.onBatchFailed!(failed)).rejects.toThrow("boom");
@@ -121,9 +122,9 @@ describe("wrapHandlerWithIntentPersistence", () => {
     it("records batch_failed but preserves a base onBatchFailed's handle-and-continue", async () => {
         const repo = seededRepo();
         const base = baseHandler({ onBatchFailed: vi.fn(async () => {}) });
-        const wrapped = wrapHandlerWithIntentPersistence(base, {
-            intentRepository: repo,
-            intentTxId,
+        const wrapped = wrapHandlerWithRegistrationPersistence(base, {
+            batchRegistrationRepository: repo,
+            proofTxId,
         });
 
         await expect(wrapped.onBatchFailed!(failed)).resolves.toBeUndefined();
@@ -133,14 +134,16 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("swallows a repo write failure on finalized (money flow unaffected)", async () => {
         const repo = {
-            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
-            saveIntent: async () => {
+            getRegistrationsPage: async () => ({
+                items: [{ state: "waiting_for_batch" } as BatchRegistration],
+            }),
+            saveRegistration: async () => {
                 throw new Error("db down");
             },
         };
-        const wrapped = wrapHandlerWithIntentPersistence(baseHandler(), {
-            intentRepository: repo,
-            intentTxId,
+        const wrapped = wrapHandlerWithRegistrationPersistence(baseHandler(), {
+            batchRegistrationRepository: repo,
+            proofTxId,
         });
 
         await expect(wrapped.onBatchFinalized!(finalized)).resolves.toBeUndefined();
@@ -148,14 +151,16 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("still re-propagates the reason on failed when the repo write fails", async () => {
         const repo = {
-            getIntentsPage: async () => ({ items: [{ state: "waiting_for_batch" } as ArkIntent] }),
-            saveIntent: async () => {
+            getRegistrationsPage: async () => ({
+                items: [{ state: "waiting_for_batch" } as BatchRegistration],
+            }),
+            saveRegistration: async () => {
                 throw new Error("db down");
             },
         };
-        const wrapped = wrapHandlerWithIntentPersistence(baseHandler(), {
-            intentRepository: repo,
-            intentTxId,
+        const wrapped = wrapHandlerWithRegistrationPersistence(baseHandler(), {
+            batchRegistrationRepository: repo,
+            proofTxId,
         });
 
         await expect(wrapped.onBatchFailed!(failed)).rejects.toThrow("boom");
@@ -163,7 +168,7 @@ describe("wrapHandlerWithIntentPersistence", () => {
 
     it("delegates without persisting when no repository is configured", async () => {
         const base = baseHandler({ onBatchFinalized: vi.fn(async () => {}) });
-        const wrapped = wrapHandlerWithIntentPersistence(base, { intentTxId });
+        const wrapped = wrapHandlerWithRegistrationPersistence(base, { proofTxId });
 
         await expect(wrapped.onBatchFinalized!(finalized)).resolves.toBeUndefined();
         expect(base.onBatchFinalized).toHaveBeenCalledOnce();

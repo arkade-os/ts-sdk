@@ -10,7 +10,7 @@ import {
     Identity,
     OnchainWallet,
     EsploraProvider,
-    IntentFeeConfig,
+    BatchFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkadeInfo,
@@ -365,7 +365,7 @@ export async function beforeEachFaucet(): Promise<void> {
     }
 }
 
-export function setFees(fees: IntentFeeConfig): void {
+export function setFees(fees: BatchFeeConfig): void {
     let cmd = `${arkdExec} arkd fees intent`;
     if (fees.offchainInput) {
         cmd += ` --offchain-input "${fees.offchainInput}"`;

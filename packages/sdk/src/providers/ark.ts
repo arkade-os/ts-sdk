@@ -17,8 +17,8 @@ import {
     throwIfHttpUnavailable,
     toProviderUnavailable,
 } from "./errors";
-import type { IntentFeeConfig } from "../arkfee";
-import { Intent } from "../intent";
+import type { BatchFeeConfig } from "../arkfee";
+import { Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
@@ -96,6 +96,8 @@ export type TreeNoncesEvent = {
 export type BatchStartedEvent = {
     type: SettlementEventType.BatchStarted;
     id: string;
+    registrationIdHashes: string[];
+    /** @deprecated Use {@link registrationIdHashes}. It holds the same value. */
     intentIdHashes: string[];
     batchExpiry: bigint;
 };
@@ -142,8 +144,21 @@ export interface ScheduledSession {
 }
 
 export interface FeeInfo {
-    intentFee: IntentFeeConfig;
+    /** Fee programs for joining a batch: boarding, offboarding, renewal and recovery. */
+    batchFee: BatchFeeConfig;
+    /** @deprecated Use {@link batchFee}. It holds the same value. */
+    intentFee: BatchFeeConfig;
     txFeeRate: string;
+}
+
+/** {@link FeeInfo} as a caller supplies it: either batch fee key is accepted. */
+export type FeeInfoInput = Pick<FeeInfo, "txFeeRate"> &
+    Partial<Pick<FeeInfo, "batchFee" | "intentFee">>;
+
+/** The operator's API names the batch fee `intentFee`. */
+function toFeeInfo(fees?: { intentFee?: BatchFeeConfig; txFeeRate?: string }): FeeInfo {
+    const batchFee = fees?.intentFee ?? {};
+    return { batchFee, intentFee: batchFee, txFeeRate: fees?.txFeeRate ?? "" };
 }
 
 export interface PendingTx {
@@ -238,14 +253,17 @@ export interface ArkadeInfo {
     vtxoMinAmount: bigint;
 }
 
-/** Signed intent payload sent to the Arkade server. */
-export interface SignedIntent<T extends Intent.Message> {
+/** A signed {@link Proof} and its message, as sent to the operator. */
+export interface SignedProof<T extends Proof.Message> {
     /** Base64-encoded signed proof transaction. */
     proof: string;
 
-    /** Intent message payload associated with the proof. */
+    /** Message the proof commits to. */
     message: T;
 }
+
+/** @deprecated Use {@link SignedProof}. */
+export type SignedIntent<T extends Proof.Message> = SignedProof<T>;
 
 /** Transaction notification emitted by the Arkade server stream. */
 export interface TxNotification {
@@ -306,14 +324,20 @@ export interface ArkProvider {
     /** Finalize a previously submitted Arkade transaction. */
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 
-    /** Register a signed intent with the Arkade server. */
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string>;
+    /** Register a signed proof with the operator, returning its registration id. */
+    registerProof(signedProof: SignedProof<Proof.RegisterMessage>): Promise<string>;
 
-    /** Delete a previously registered intent. */
-    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
+    /** @deprecated Use {@link registerProof}. */
+    registerIntent(signedProof: SignedProof<Proof.RegisterMessage>): Promise<string>;
 
-    /** Confirm an already registered intent id. */
-    confirmRegistration(intentId: string): Promise<void>;
+    /** Delete a batch registration, authorized by a signed delete proof. */
+    deleteRegistration(signedProof: SignedProof<Proof.DeleteMessage>): Promise<void>;
+
+    /** @deprecated Use {@link deleteRegistration}. */
+    deleteIntent(signedProof: SignedProof<Proof.DeleteMessage>): Promise<void>;
+
+    /** Confirm a batch registration by its id. */
+    confirmRegistration(registrationId: string): Promise<void>;
 
     /** Submit musig2 tree nonces for a batch signing session. */
     submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces): Promise<void>;
@@ -334,8 +358,8 @@ export interface ArkProvider {
     /** Stream transaction notifications emitted by the Arkade server. */
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
-    /** Fetch pending transactions for a signed get-pending-tx intent. */
-    getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
+    /** Fetch pending transactions, authorized by a signed get-pending-tx proof. */
+    getPendingTxs(signedProof: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]>;
 }
 
 /**
@@ -556,10 +580,7 @@ export class RestArkProvider implements ArkProvider {
                 })) ?? [],
             digest: fromServer.digest ?? "",
             dust: BigInt(fromServer.dust ?? 0),
-            fees: {
-                intentFee: fromServer.fees?.intentFee ?? {},
-                txFeeRate: fromServer?.fees?.txFeeRate ?? "",
-            },
+            fees: toFeeInfo(fromServer.fees),
             forfeitAddress: fromServer.forfeitAddress ?? "",
             forfeitPubkey: fromServer.forfeitPubkey ?? "",
             network: fromServer.network ?? "",
@@ -570,7 +591,7 @@ export class RestArkProvider implements ArkProvider {
                           nextStartTime: BigInt(fromServer.scheduledSession.nextStartTime ?? 0),
                           nextEndTime: BigInt(fromServer.scheduledSession.nextEndTime ?? 0),
                           period: BigInt(fromServer.scheduledSession.period ?? 0),
-                          fees: fromServer.scheduledSession.fees ?? {},
+                          fees: toFeeInfo(fromServer.scheduledSession.fees),
                       }
                     : undefined,
             serviceStatus: fromServer.serviceStatus ?? {},
@@ -645,43 +666,53 @@ export class RestArkProvider implements ArkProvider {
         );
     }
 
-    async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
+    async registerProof(signedProof: SignedProof<Proof.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await this.postJson(
             url,
             {
                 intent: {
-                    proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    proof: signedProof.proof,
+                    message: Proof.encodeMessage(signedProof.message),
                 },
             },
-            (errorText) => `Failed to register intent: ${errorText}`,
+            (errorText) => `Failed to register proof: ${errorText}`,
         );
 
         const data = await response.json();
         return data.intentId;
     }
 
-    async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
+    /** @deprecated Use {@link registerProof}. */
+    registerIntent(signedProof: SignedProof<Proof.RegisterMessage>): Promise<string> {
+        return this.registerProof(signedProof);
+    }
+
+    async deleteRegistration(signedProof: SignedProof<Proof.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         await this.postJson(
             url,
             {
                 intent: {
-                    proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    proof: signedProof.proof,
+                    message: Proof.encodeMessage(signedProof.message),
                 },
             },
-            (errorText) => `Failed to delete intent: ${errorText}`,
+            (errorText) => `Failed to delete registration: ${errorText}`,
         );
     }
 
-    async confirmRegistration(intentId: string): Promise<void> {
+    /** @deprecated Use {@link deleteRegistration}. */
+    deleteIntent(signedProof: SignedProof<Proof.DeleteMessage>): Promise<void> {
+        return this.deleteRegistration(signedProof);
+    }
+
+    async confirmRegistration(registrationId: string): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/ack`;
         await this.postJson(
             url,
             {
-                intentId,
+                intentId: registrationId,
             },
             (errorText) => `Failed to confirm registration: ${errorText}`,
         );
@@ -900,14 +931,14 @@ export class RestArkProvider implements ArkProvider {
         return gen;
     }
 
-    async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
+    async getPendingTxs(signedProof: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await this.postJson(
             url,
             {
                 intent: {
-                    proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    proof: signedProof.proof,
+                    message: Proof.encodeMessage(signedProof.message),
                 },
             },
             (errorText) => `Failed to get pending transactions: ${errorText}`,
@@ -925,6 +956,7 @@ export class RestArkProvider implements ArkProvider {
             return {
                 type: SettlementEventType.BatchStarted,
                 id: data.batchStarted.id,
+                registrationIdHashes: data.batchStarted.intentIdHashes,
                 intentIdHashes: data.batchStarted.intentIdHashes,
                 batchExpiry: BigInt(data.batchStarted.batchExpiry),
             };

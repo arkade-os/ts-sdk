@@ -31,13 +31,13 @@ export const ErrUnvalidatedOffchainOutput = (address: string) =>
     new ServerResponseMismatchError(
         `offchain output ${address} cannot be validated: virtual output tree signing did not run`,
     );
-export const ErrIntentOutputNotFound = (index: number, kind: "onchain" | "offchain") =>
+export const ErrProofOutputNotFound = (index: number, kind: "onchain" | "offchain") =>
     new ServerResponseMismatchError(
-        `${kind} output ${index} of the intent proof is not present in what the server built`,
+        `${kind} output ${index} of the proof is not present in what the server built`,
     );
-export const ErrUnvalidatedIntentOutput = (index: number) =>
+export const ErrUnvalidatedProofOutput = (index: number) =>
     new ServerResponseMismatchError(
-        `offchain output ${index} of the intent proof cannot be validated: virtual output tree signing did not run`,
+        `offchain output ${index} of the proof cannot be validated: virtual output tree signing did not run`,
     );
 
 // Malformed recipient list from the caller, not a server response: plain
@@ -79,7 +79,7 @@ export function assertFinalCommitmentMatchesValidated(
  * Onchain recipients are validated against the round transaction outputs (amounts and scripts)
  * via validateOnchainRecipient.
  *
- * Presence only: the commitment tx and the tree are shared with every other intent in the batch,
+ * Presence only: the commitment tx and the tree are shared with every other registration in the batch,
  * so outputs paying someone else are legitimate and cannot be rejected. What this asserts is that
  * a settlement cannot consume our inputs and pay us nothing.
  *
@@ -144,7 +144,7 @@ export function validateBatchRecipientsWithoutTree(
     }
 }
 
-/** An output the user signed into the intent proof. */
+/** An output the user signed into the proof. */
 export interface DeclaredOutput {
     index: number;
     script: Bytes;
@@ -153,10 +153,10 @@ export interface DeclaredOutput {
 }
 
 /**
- * The paying outputs a signed intent proof commits to. Zero-amount outputs are
+ * The paying outputs a signed proof commits to. Zero-amount outputs are
  * the proof's own placeholder and any extension packet, neither of which pays.
  */
-export function declaredIntentOutputs(
+export function declaredProofOutputs(
     signedProof: string,
     onchainOutputIndexes: number[],
 ): DeclaredOutput[] {
@@ -178,10 +178,10 @@ export function declaredIntentOutputs(
 
 /**
  * {@link validateBatchRecipients} against the outputs the user already signed
- * into the intent proof. Assets are not covered: a packet carries no amount, so
- * an intent whose asset assignment matters wants the explicit list.
+ * into the proof. Assets are not covered: a packet carries no amount, so
+ * a registration whose asset assignment matters wants the explicit list.
  */
-export function validateBatchAgainstIntent(
+export function validateBatchAgainstProof(
     commitmentTx: Transaction,
     vtxoTreeLeaves: Transaction[],
     declared: DeclaredOutput[],
@@ -191,30 +191,30 @@ export function validateBatchAgainstIntent(
     for (const output of declared) {
         if (output.onchain) {
             if (!takeOnchainOutput(commitmentTx, output, usedOnchain)) {
-                throw ErrIntentOutputNotFound(output.index, "onchain");
+                throw ErrProofOutputNotFound(output.index, "onchain");
             }
             continue;
         }
         if (!takeLeafOutput(vtxoTreeLeaves, output, usedLeaf)) {
-            throw ErrIntentOutputNotFound(output.index, "offchain");
+            throw ErrProofOutputNotFound(output.index, "offchain");
         }
     }
 }
 
-/** {@link validateBatchAgainstIntent} for a batch whose tree was never
+/** {@link validateBatchAgainstProof} for a batch whose tree was never
  * validated; offchain outputs are refused rather than checked, as in
  * {@link validateBatchRecipientsWithoutTree}. */
-export function validateBatchAgainstIntentWithoutTree(
+export function validateBatchAgainstProofWithoutTree(
     commitmentTx: Transaction,
     declared: DeclaredOutput[],
 ): void {
     const usedOnchain = new Set<number>();
     for (const output of declared) {
         if (!output.onchain) {
-            throw ErrUnvalidatedIntentOutput(output.index);
+            throw ErrUnvalidatedProofOutput(output.index);
         }
         if (!takeOnchainOutput(commitmentTx, output, usedOnchain)) {
-            throw ErrIntentOutputNotFound(output.index, "onchain");
+            throw ErrProofOutputNotFound(output.index, "onchain");
         }
     }
 }

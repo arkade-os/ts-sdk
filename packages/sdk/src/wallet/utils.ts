@@ -29,7 +29,7 @@ export function getDustAmount(wallet: IReadonlyWallet | undefined): bigint {
 }
 
 /**
- * Annotate an on-chain boarding {@link Coin} with the forfeit/intent leaves
+ * Annotate an on-chain boarding {@link Coin} with the forfeit/proof leaves
  * and tap tree of a *specific* boarding tapscript — the one the UTXO actually
  * sits on, resolved by scriptPubKey.
  *
@@ -147,7 +147,7 @@ function extendVtxoFromContract<T extends VirtualCoin>(
  * Throws when no contract can be resolved — there is intentionally no
  * default-tapscript fallback. When the wallet owns multiple contracts
  * (default + delegate, several active vHTLCs, etc.) a default-tapscript path
- * silently stamps every VTXO with the same forfeit/intent data, overwriting
+ * silently stamps every VTXO with the same forfeit/proof data, overwriting
  * the correct data for any VTXO locked to a non-default contract. Callers
  * must feed a Contract or a populated script→Contract map; otherwise the
  * caller (typically `ContractManager.annotateVtxos`) should fetch the owning

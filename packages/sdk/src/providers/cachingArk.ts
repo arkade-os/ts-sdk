@@ -1,12 +1,12 @@
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
-import { Intent } from "../intent";
+import { Proof } from "../proof";
 import { assertNonNegativeMs } from "../utils/time";
 import {
     ArkadeInfo,
     ArkProvider,
     PendingTx,
     SettlementEvent,
-    SignedIntent,
+    SignedProof,
     TxNotificationEvent,
 } from "./ark";
 
@@ -84,16 +84,26 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.finalizeTx(arkTxid, finalCheckpointTxs);
     }
 
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>) {
-        return this.inner.registerIntent(intent);
+    registerProof(signedProof: SignedProof<Proof.RegisterMessage>) {
+        return this.inner.registerProof(signedProof);
     }
 
-    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>) {
-        return this.inner.deleteIntent(intent);
+    deleteRegistration(signedProof: SignedProof<Proof.DeleteMessage>) {
+        return this.inner.deleteRegistration(signedProof);
     }
 
-    confirmRegistration(intentId: string) {
-        return this.inner.confirmRegistration(intentId);
+    /** @deprecated Use {@link registerProof}. */
+    registerIntent(signedProof: SignedProof<Proof.RegisterMessage>) {
+        return this.registerProof(signedProof);
+    }
+
+    /** @deprecated Use {@link deleteRegistration}. */
+    deleteIntent(signedProof: SignedProof<Proof.DeleteMessage>) {
+        return this.deleteRegistration(signedProof);
+    }
+
+    confirmRegistration(registrationId: string) {
+        return this.inner.confirmRegistration(registrationId);
     }
 
     submitTreeNonces(batchId: string, pubkey: string, nonces: TreeNonces) {
@@ -116,8 +126,8 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.getTransactionsStream(signal);
     }
 
-    getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
-        return this.inner.getPendingTxs(intent);
+    getPendingTxs(signedProof: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]> {
+        return this.inner.getPendingTxs(signedProof);
     }
 
     onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {

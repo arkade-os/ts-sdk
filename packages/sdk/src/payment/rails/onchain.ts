@@ -4,8 +4,8 @@ import { assertNoAssets, assetsOf, resolveSendAmount, selectionOf } from "../amo
 import { makeHandle } from "../handle";
 import { Ramps, changeAfterOutputFee, offboardDestinationScript } from "../../wallet/ramps";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "../../wallet/vtxo";
-import { Estimator } from "../../arkfee";
-import type { FeeInfo } from "../../providers/ark";
+import { batchFeeConfig, Estimator } from "../../arkfee";
+import type { FeeInfo, FeeInfoInput } from "../../providers/ark";
 import type { Wallet } from "../../index";
 import { ArkAddress } from "../../script/address";
 import { hex } from "@scure/base";
@@ -17,8 +17,11 @@ export const walletFeeSource = (wallet: Wallet) => async (): Promise<FeeInfo> =>
     (await wallet.arkProvider.getInfo()).fees;
 
 /** What spending each named input costs, priced with the program `offboard` settles on. */
-function offchainInputFees(vtxos: readonly NormalizedExtendedVirtualCoin[], fees: FeeInfo): number {
-    const estimator = new Estimator(fees?.intentFee ?? {});
+function offchainInputFees(
+    vtxos: readonly NormalizedExtendedVirtualCoin[],
+    fees: FeeInfoInput,
+): number {
+    const estimator = new Estimator(batchFeeConfig(fees));
     return vtxos.reduce(
         (total, vtxo) =>
             total + estimator.evalOffchainInput(toOffchainInputFeeParams(vtxo)).satoshis,
@@ -31,9 +34,9 @@ async function changeOutputFee(
     wallet: RouterContext["wallet"],
     inputs: readonly NormalizedExtendedVirtualCoin[],
     needed: bigint,
-    fees: FeeInfo,
+    fees: FeeInfoInput,
 ): Promise<bigint> {
-    const estimator = new Estimator(fees?.intentFee ?? {});
+    const estimator = new Estimator(batchFeeConfig(fees));
     const net = inputs.reduce(
         (total, vtxo) =>
             total +
@@ -60,7 +63,7 @@ async function changeOutputFee(
  *
  * A request naming `selectedVtxos` offboards exactly those — so the exit need not
  * sweep the whole off-chain balance into one change output — and only then does
- * the quote carry the per-input intent fees: unselected, the coins are chosen
+ * the quote carry the per-input batch fees: unselected, the coins are chosen
  * later at settlement and there is nothing here to price.
  *
  * An explicit amount is mandatory. To sweep the full balance, call
@@ -70,7 +73,7 @@ async function changeOutputFee(
  * that cannot price an offboard must not be constructible — a silently dropped
  * rail on the money path is worse than a wiring error at startup.
  */
-export function onchainRail(deps: { feeInfo: () => Promise<FeeInfo> }): PaymentRail {
+export function onchainRail(deps: { feeInfo: () => Promise<FeeInfoInput> }): PaymentRail {
     // Types do not bind JavaScript callers, and the router does not re-rank after
     // a quote() throws — so refuse at wiring time rather than mid-payment.
     if (typeof deps?.feeInfo !== "function") {
@@ -93,7 +96,7 @@ export function onchainRail(deps: { feeInfo: () => Promise<FeeInfo> }): PaymentR
             const script = hex.encode(offboardDestinationScript(address));
             // The output arkd charges for, not what is sourced to pay for it.
             const exitFee = Number(
-                new Estimator(fees?.intentFee ?? {}).evalOnchainOutput({
+                new Estimator(batchFeeConfig(fees)).evalOnchainOutput({
                     amount: BigInt(amt),
                     script,
                 }).satoshis,

@@ -146,7 +146,7 @@ describe("AssetInput", () => {
                 it(v.name, () => {
                     let input: AssetInput;
                     if (v.type === "intent") {
-                        input = AssetInput.createIntent(v.txid!, v.vin, v.amount);
+                        input = AssetInput.createProof(v.txid!, v.vin, v.amount);
                     } else {
                         input = AssetInput.create(v.vin, v.amount);
                     }
@@ -171,7 +171,7 @@ describe("AssetInput", () => {
                 it(v.name, () => {
                     const inputs: AssetInput[] = v.inputs.map((inp) => {
                         if (inp.type === "intent") {
-                            return AssetInput.createIntent(
+                            return AssetInput.createProof(
                                 (inp as { txid?: string }).txid!,
                                 inp.vin,
                                 inp.amount,
@@ -199,7 +199,7 @@ describe("AssetInput", () => {
         describe("newInput", () => {
             assetInputFixtures.invalid.newInput.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => AssetInput.createIntent(v.txid, v.vin, v.amount ?? 0)).toThrow();
+                    expect(() => AssetInput.createProof(v.txid, v.vin, v.amount ?? 0)).toThrow();
                 });
             });
         });
@@ -396,7 +396,7 @@ function parseAssetInput(f: AssetInputFixture): AssetInput {
     if (f.type === "local") {
         return AssetInput.create(f.vin, f.amount);
     }
-    return AssetInput.createIntent(f.txid!, f.vin, f.amount);
+    return AssetInput.createProof(f.txid!, f.vin, f.amount);
 }
 
 function parseAssetOutput(f: AssetOutputFixture): AssetOutput {
@@ -551,12 +551,12 @@ describe("Packet", () => {
         describe("leafTxPacket", () => {
             packetFixtures.valid.leafTxPacket.forEach((v) => {
                 it(v.name, () => {
-                    const intentTxid = hex.decode(v.intentTxid);
+                    const proofTxid = hex.decode(v.intentTxid);
                     const packet = Packet.fromString(v.script);
 
                     expect(packet).toBeDefined();
 
-                    const leafTxPacket = packet.leafTxPacket(intentTxid);
+                    const leafTxPacket = packet.leafTxPacket(proofTxid);
                     expect(leafTxPacket).toBeDefined();
                     expect(leafTxPacket.toString()).toBe(v.expectedLeafTxPacket);
                 });

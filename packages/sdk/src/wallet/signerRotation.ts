@@ -114,7 +114,7 @@ export function classifyContractSigner(
     return classifyAgainstSignerSet(contractServerPubKeyHex, signerSetFromInfo(info), nowSeconds);
 }
 
-/** Whether a `settle()` migration intent should be built for VTXOs under this signer status. */
+/** Whether a `settle()` migration registration should be built for VTXOs under this signer status. */
 export function isCooperativelyMigratable(status: SignerStatus): boolean {
     return status === "MIGRATABLE" || status === "DUE_NOW";
 }

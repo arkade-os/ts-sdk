@@ -11,7 +11,7 @@
  * global `fetch` with their transport-error type unchanged.
  */
 
-import { Intent } from "../intent";
+import { Proof } from "../proof";
 import { baseFetch } from "../utils/fetch";
 
 export interface EmulatorInfo {
@@ -27,11 +27,13 @@ export interface EmulatorProvider {
         signedArkTx: string;
         signedCheckpointTxs: string[];
     }>;
-    submitIntent(intent: { proof: string; message: Intent.RegisterMessage }): Promise<string>;
+    submitProof(signedProof: { proof: string; message: Proof.RegisterMessage }): Promise<string>;
+    /** @deprecated Use {@link submitProof}. */
+    submitIntent(signedProof: { proof: string; message: Proof.RegisterMessage }): Promise<string>;
     submitFinalization(
-        intent: {
+        signedProof: {
             proof: string;
-            message: Intent.RegisterMessage;
+            message: Proof.RegisterMessage;
         },
         forfeits: string[],
         connectorTree: ConnectorTreeNode[] | null,
@@ -119,9 +121,9 @@ export class RestEmulatorProvider implements EmulatorProvider {
         };
     }
 
-    async submitIntent(intent: {
+    async submitProof(signedProof: {
         proof: string;
-        message: Intent.RegisterMessage;
+        message: Proof.RegisterMessage;
     }): Promise<string> {
         const url = `${this.serverUrl}/v1/intent`;
         const response = await fetch(url, {
@@ -129,28 +131,33 @@ export class RestEmulatorProvider implements EmulatorProvider {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 intent: {
-                    proof: intent.proof,
-                    message: JSON.stringify(intent.message),
+                    proof: signedProof.proof,
+                    message: JSON.stringify(signedProof.message),
                 },
             }),
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit intent to emulator: ${errorText}`);
+            throw new Error(`Failed to submit proof to emulator: ${errorText}`);
         }
 
         const data = await response.json();
         if (typeof data.signedProof !== "string" || !data.signedProof) {
-            throw new Error("Invalid emulator submitIntent response: missing signedProof");
+            throw new Error("Invalid emulator submitProof response: missing signedProof");
         }
         return data.signedProof;
     }
 
+    /** @deprecated Use {@link submitProof}. */
+    submitIntent(signedProof: { proof: string; message: Proof.RegisterMessage }): Promise<string> {
+        return this.submitProof(signedProof);
+    }
+
     async submitFinalization(
-        intent: {
+        signedProof: {
             proof: string;
-            message: Intent.RegisterMessage;
+            message: Proof.RegisterMessage;
         },
         forfeits: string[],
         connectorTree: ConnectorTreeNode[] | null,
@@ -164,11 +171,11 @@ export class RestEmulatorProvider implements EmulatorProvider {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             // Uses "signedIntent" (not "intent") because the proof was already
-            // co-signed by the emulator via submitIntent in a prior step.
+            // cosigned by the emulator via submitProof in a prior step.
             body: JSON.stringify({
                 signedIntent: {
-                    proof: intent.proof,
-                    message: JSON.stringify(intent.message),
+                    proof: signedProof.proof,
+                    message: JSON.stringify(signedProof.message),
                 },
                 forfeits,
                 connectorTree,
