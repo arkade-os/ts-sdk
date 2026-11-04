@@ -2,10 +2,13 @@
  * Where the SDK gets its `EventSource`. Node exposes the global only behind
  * `--experimental-eventsource` (24.x), so it must be injectable.
  *
- * Resolution order, per call: per-provider factory, then {@link configureEventSource}, then the
- * global. When none answers, {@link resolveEventSource} throws {@link EventSourceUnavailableError}
- * so callers can tell "no SSE in this environment" (don't reconnect) from "connection dropped".
+ * Resolution order, per call: per-provider factory, then {@link configureEventSource}, then
+ * {@link FetchEventSource} where `fetch` can stream, then the global. When none answers,
+ * {@link resolveEventSource} throws {@link EventSourceUnavailableError} so callers can tell
+ * "no SSE in this environment" (don't reconnect) from "connection dropped".
  */
+
+import { baseFetch } from "../utils/fetch";
 
 /**
  * The slice of `EventSource` this SDK actually uses. Structural rather than the DOM type because
@@ -24,7 +27,7 @@ export interface EventSourceLike {
 }
 
 /** Opens an SSE connection to `url`. `new EventSource(url)`, as a value. */
-export type EventSourceFactory = (url: string) => EventSourceLike;
+export type EventSourceFactory = (url: string, headers?: Record<string, string>) => EventSourceLike;
 
 /** Options shared by every provider that opens an SSE stream. */
 export interface EventSourceCapable {
@@ -66,7 +69,7 @@ let configured: EventSourceFactory | undefined;
 
 /**
  * Set the `EventSource` every provider uses by default. Call once at startup,
- * before opening a wallet; pass `undefined` to go back to the global.
+ * before opening a wallet; pass `undefined` to go back to the default.
  *
  * @example
  * ```typescript
@@ -91,7 +94,68 @@ export function resolveEventSource(override?: EventSourceFactory): EventSourceFa
     const factory =
         override ??
         configured ??
+        (typeof globalThis.fetch === "function" && typeof ReadableStream !== "undefined"
+            ? (url: string, headers?: Record<string, string>) => new FetchEventSource(url, headers)
+            : undefined) ??
         (typeof EventSource === "undefined" ? undefined : (url: string) => new EventSource(url));
     if (!factory) throw new EventSourceUnavailableError();
     return factory;
+}
+
+export class FetchEventSource implements EventSourceLike {
+    private readonly events = new EventTarget();
+    private readonly controller = new AbortController();
+
+    constructor(url: string, headers: Record<string, string> = {}) {
+        this.read(url, headers).catch(() => {
+            if (!this.controller.signal.aborted) this.events.dispatchEvent(new Event("error"));
+        });
+    }
+
+    addEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void {
+        this.events.addEventListener(type, listener as EventListener);
+    }
+
+    removeEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void {
+        this.events.removeEventListener(type, listener as EventListener);
+    }
+
+    close(): void {
+        this.controller.abort();
+    }
+
+    private async read(url: string, headers: Record<string, string>): Promise<void> {
+        const response = await baseFetch(url, {
+            headers: { Accept: "text/event-stream", ...headers },
+            signal: this.controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`SSE status ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) throw new Error("SSE stream ended");
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split("\n\n");
+            buffer = blocks.pop() ?? "";
+            for (const block of blocks) {
+                let type = "message";
+                const data: string[] = [];
+                for (const line of block.split("\n")) {
+                    if (line.startsWith("event:")) type = line.slice(6).trim();
+                    else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+                }
+                if (data.length > 0) {
+                    this.events.dispatchEvent(new MessageEvent(type, { data: data.join("\n") }));
+                }
+            }
+        }
+    }
 }
