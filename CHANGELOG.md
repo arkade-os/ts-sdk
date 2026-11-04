@@ -1112,6 +1112,13 @@ style and have not been backfilled.
   None of these share a result, and a step that writes what the next step
   reads is unchanged.
 
+### Internal
+
+- **Internal code uses Arkade-native names.** Internal symbols, test fixtures,
+  internal module files and comment prose now follow the Arkade vocabulary. No
+  exported symbol, option or field changes, and stored and wire strings keep their
+  exact values.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes
