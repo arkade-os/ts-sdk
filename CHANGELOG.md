@@ -233,6 +233,10 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **IndexedDB wallet-state read failures no longer look like an empty wallet.**
+  Read errors propagate before updates can replace persisted pending-submit, cursor
+  or unrelated settings. Genuine absence still returns null.
+
 - **Service-worker balances normalize renamed buckets from older workers.**
   When a worker response omits `contractLocked` or `deprecatedSignerLocked`,
   the client now reads the corresponding deprecated `gated` or
