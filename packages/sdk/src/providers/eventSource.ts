@@ -139,10 +139,15 @@ export class FetchEventSource implements EventSourceLike {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let pendingCR = false;
         for (;;) {
             const { done, value } = await reader.read();
             if (done) throw new Error("SSE stream ended");
-            buffer += decoder.decode(value, { stream: true });
+            const text = decoder.decode(value, { stream: true });
+            if (!text) continue;
+            const skipLF = pendingCR && text.startsWith("\n");
+            pendingCR = text.endsWith("\r");
+            buffer += (skipLF ? text.slice(1) : text).replace(/\r\n?/g, "\n");
             const blocks = buffer.split("\n\n");
             buffer = blocks.pop() ?? "";
             for (const block of blocks) {
