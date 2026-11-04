@@ -135,7 +135,15 @@ export class FetchEventSource implements EventSourceLike {
             headers: { Accept: "text/event-stream", ...headers },
             signal: this.controller.signal,
         });
-        if (!response.ok || !response.body) throw new Error(`SSE status ${response.status}`);
+        const type = response.headers.get("Content-Type") ?? "";
+        if (
+            response.status !== 200 ||
+            !response.body ||
+            !/^text\/event-stream\s*(;|$)/i.test(type)
+        ) {
+            await response.body?.cancel();
+            throw new Error(`SSE response ${response.status} ${type}`);
+        }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";

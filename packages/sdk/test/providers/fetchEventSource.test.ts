@@ -7,7 +7,15 @@ const sseResponse = (
         open = false,
         status = 200,
         signal,
-    }: { open?: boolean; status?: number; signal?: AbortSignal } = {},
+        type = "text/event-stream",
+        onCancel,
+    }: {
+        open?: boolean;
+        status?: number;
+        signal?: AbortSignal;
+        type?: string;
+        onCancel?: () => void;
+    } = {},
 ) => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
@@ -18,8 +26,9 @@ const sseResponse = (
                 controller.error(new DOMException("aborted", "AbortError")),
             );
         },
+        cancel: onCancel,
     });
-    return new Response(body, { status, headers: { "Content-Type": "text/event-stream" } });
+    return new Response(body, { status, headers: { "Content-Type": type } });
 };
 
 const stubFetch = (respond: (signal?: AbortSignal) => Response) => {
@@ -104,6 +113,49 @@ describe("FetchEventSource", () => {
 
         await settle();
         expect(errors).toHaveLength(1);
+    });
+
+    it.each([
+        ["a Content-Type other than text/event-stream", { status: 200, type: "text/html" }],
+        ["a status other than 200", { status: 201, type: "text/event-stream" }],
+    ])("fires one error and cancels the body for %s", async (_, { status, type }) => {
+        let cancelled = false;
+        stubFetch((signal) =>
+            sseResponse(["data: a\n\n"], {
+                open: true,
+                status,
+                signal,
+                type,
+                onCancel: () => {
+                    cancelled = true;
+                },
+            }),
+        );
+        const source = new FetchEventSource("http://ark/v1/txs");
+        const messages = collect(source, "message");
+        const errors = collect(source, "error");
+
+        await settle();
+        expect(messages).toEqual([]);
+        expect(errors).toHaveLength(1);
+        expect(cancelled).toBe(true);
+        source.close();
+    });
+
+    it("accepts a text/event-stream Content-Type with parameters", async () => {
+        stubFetch((signal) =>
+            sseResponse(["data: a\n\n"], {
+                open: true,
+                signal,
+                type: "text/event-stream; charset=utf-8",
+            }),
+        );
+        const source = new FetchEventSource("http://ark/v1/txs");
+        const messages = collect(source, "message");
+
+        await settle();
+        expect(messages.map((event) => event.data)).toEqual(["a"]);
+        source.close();
     });
 
     it("fires one error when the stream ends", async () => {

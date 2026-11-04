@@ -259,9 +259,10 @@ style and have not been backfilled.
   `configureEventSource` or the `eventSource` option still wins.
   `EventSourceFactory` takes the headers as an optional second argument; a
   factory that ignores it keeps working but sends no headers. Indexer
-  subscriptions send none, because the indexer can be another origin. The
-  `fetch` transport accepts LF, CR and CRLF line endings, like the native
-  `EventSource`, and does not reconnect by itself, as the callers already do.
+  subscriptions send none, because the indexer can be another origin. Like
+  the native `EventSource`, the `fetch` transport accepts LF, CR and CRLF line
+  endings and fails a response that is not a 200 `text/event-stream`. It does
+  not reconnect by itself, as the callers already do.
   In Node, streams no longer need the `eventsource` package or
   `--experimental-eventsource`.
 
