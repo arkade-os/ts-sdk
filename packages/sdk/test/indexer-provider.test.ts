@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider } from "../src";
+import { ProviderUnavailableError, RestIndexerProvider } from "../src";
+import { rateGate } from "../src/providers/rateGate";
 import { isEventSourceError } from "../src/providers/utils";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
@@ -23,7 +24,11 @@ describe("RestIndexerProvider", () => {
     });
 
     describe("bounded observation reads", () => {
-        afterEach(() => vi.restoreAllMocks());
+        afterEach(() => {
+            vi.restoreAllMocks();
+            vi.useRealTimers();
+            rateGate.reset();
+        });
         const options = { pageIndex: 0, pageSize: 2, maxResponseBytes: 64 };
         const read = (provider: RestIndexerProvider, field: "vtxos" | "txs", limit = options) =>
             field === "vtxos"
@@ -46,6 +51,117 @@ describe("RestIndexerProvider", () => {
             );
             return { response, cancel };
         };
+
+        const failedBody = (
+            field: string,
+            status: number,
+            failure: "stream" | "oversized" | "unsupported",
+        ) => {
+            const error = new Error("response stream failed");
+            const headers = { "retry-after": "1" };
+            const value =
+                failure === "oversized"
+                    ? streamed(field, headers, status)
+                    : {
+                          response: new Response(
+                              new ReadableStream({
+                                  start(controller) {
+                                      controller.error(error);
+                                  },
+                              }),
+                              { status, headers },
+                          ),
+                          cancel: vi.fn(),
+                      };
+            if (failure === "unsupported")
+                Object.defineProperty(value.response, "body", { value: undefined });
+            const unbounded = ["json", "text", "clone"] as const;
+            return {
+                ...value,
+                error,
+                spies: unbounded.map((method) => vi.spyOn(value.response, method)),
+            };
+        };
+
+        it.each(
+            (["vtxos", "txs"] as const).flatMap((field) =>
+                [429, 503].flatMap((status) =>
+                    (["stream", "oversized", "unsupported"] as const).map((failure) => ({
+                        field,
+                        status,
+                        failure,
+                    })),
+                ),
+            ),
+        )(
+            "retains $status availability retries for bounded $field $failure errors",
+            async ({ field, status, failure }) => {
+                vi.useFakeTimers();
+                rateGate.reset();
+                const replies: ReturnType<typeof failedBody>[] = [];
+                mockFetch.mockImplementation(async () => {
+                    const reply = failedBody(field, status, failure);
+                    replies.push(reply);
+                    return reply.response;
+                });
+                const outcome = read(new RestIndexerProvider("http://localhost:7070"), field).catch(
+                    (error) => error,
+                );
+                await vi.advanceTimersByTimeAsync(0);
+                expect(mockFetch).toHaveBeenCalledOnce();
+                if (status === 429) {
+                    await vi.advanceTimersByTimeAsync(999);
+                    expect(mockFetch).toHaveBeenCalledOnce();
+                }
+                await vi.runAllTimersAsync();
+                const error = await outcome;
+                expect(error).toBeInstanceOf(ProviderUnavailableError);
+                expect(error.message).toContain(`indexer unavailable: ${status}`);
+                expect(mockFetch).toHaveBeenCalledTimes(3);
+                for (const reply of replies) {
+                    for (const spy of reply.spies) expect(spy).not.toHaveBeenCalled();
+                    if (failure === "oversized") expect(reply.cancel).toHaveBeenCalledOnce();
+                }
+            },
+        );
+
+        it.each(
+            (["vtxos", "txs"] as const).flatMap((field) =>
+                (["stream", "unsupported"] as const).map((failure) => ({ field, failure })),
+            ),
+        )(
+            "keeps bounded $field $failure errors terminal on HTTP400",
+            async ({ field, failure }) => {
+                const reply = failedBody(field, 400, failure);
+                mockFetch.mockResolvedValueOnce(reply.response);
+                const error = await read(
+                    new RestIndexerProvider("http://localhost:7070"),
+                    field,
+                ).catch((caught) => caught);
+                expect(error).not.toBeInstanceOf(ProviderUnavailableError);
+                if (failure === "stream") expect(error).toBe(reply.error);
+                else expect(error.message).toContain("streaming response body");
+                expect(mockFetch).toHaveBeenCalledOnce();
+                for (const spy of reply.spies) expect(spy).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(["vtxos", "txs"] as const)(
+            "keeps a bounded structured HTTP500 terminal for %s",
+            async (field) => {
+                const body = JSON.stringify({
+                    message: "INTERNAL_ERROR (0): input already registered",
+                });
+                mockFetch.mockResolvedValueOnce(new Response(body, { status: 500 }));
+                const error = await read(new RestIndexerProvider("http://localhost:7070"), field, {
+                    ...options,
+                    maxResponseBytes: 1024,
+                }).catch((caught) => caught);
+                expect(error).not.toBeInstanceOf(ProviderUnavailableError);
+                expect(error.message).toMatch(/Failed to fetch/);
+                expect(mockFetch).toHaveBeenCalledOnce();
+            },
+        );
 
         it.each(["vtxos", "txs"] as const)(
             "rejects invalid caps before fetching %s",

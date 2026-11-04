@@ -363,6 +363,76 @@ describe("NativeExecutionJournal observation", () => {
     it.each(
         (["observe", "reconcile"] as const).flatMap((method) =>
             (["vtxos", "txs"] as const).flatMap((field) =>
+                [0, 1].map((next) => ({ method, field, next })),
+            ),
+        ),
+    )(
+        "accepts a complete $field page with next:$next through $method",
+        async ({ method, field, next }) => {
+            const f = await observationFixture();
+            const page = { current: 1, next, total: 1 };
+            const indexer = {
+                getVtxos: async () => ({ vtxos: f.coins, ...(field === "vtxos" ? { page } : {}) }),
+                getVirtualTxs: async () => ({ txs: f.txs, ...(field === "txs" ? { page } : {}) }),
+            };
+            expect((await f.journal[method](source, indexer))?.state).toBe("reconciled");
+            if (method === "reconcile") expect(await f.journal.getReceipt(source)).toBeDefined();
+            else expect(await f.journal.getReceipt(source)).toBeUndefined();
+            expect(await f.journal.get(source)).toEqual(f.record);
+            await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
+        },
+    );
+
+    it.each(
+        (["observe", "reconcile"] as const).flatMap((method) =>
+            (["vtxos", "txs"] as const).map((field) => ({ method, field })),
+        ),
+    )(
+        "keeps malformed or incomplete $field cursors unknown through $method",
+        async ({ method, field }) => {
+            const f = await observationFixture();
+            const invalid = [
+                ...[
+                    undefined,
+                    -1,
+                    0.5,
+                    Number.NaN,
+                    Number.POSITIVE_INFINITY,
+                    "1",
+                    null,
+                    true,
+                    2,
+                ].map((next) => ({
+                    current: 1,
+                    total: 1,
+                    ...(next === undefined ? {} : { next }),
+                })),
+                { current: 0, next: 1, total: 1 },
+                { current: 99, next: 0, total: 1 },
+                { current: 1, next: 2, total: 2 },
+            ];
+            for (const page of invalid) {
+                const indexer = {
+                    getVtxos: async () => ({
+                        vtxos: f.coins,
+                        ...(field === "vtxos" ? { page } : {}),
+                    }),
+                    getVirtualTxs: async () => ({
+                        txs: f.txs,
+                        ...(field === "txs" ? { page } : {}),
+                    }),
+                };
+                expect((await f.journal[method](source, indexer as never))?.state).toBe("unknown");
+                expect(await f.journal.getReceipt(source)).toBeUndefined();
+                expect(await f.journal.get(source)).toEqual(f.record);
+            }
+            await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
+        },
+    );
+
+    it.each(
+        (["observe", "reconcile"] as const).flatMap((method) =>
+            (["vtxos", "txs"] as const).flatMap((field) =>
                 [
                     { current: 99, next: 0, total: 1 },
                     { current: 1, next: 0, total: 0 },

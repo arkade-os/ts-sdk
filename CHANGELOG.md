@@ -253,6 +253,12 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Native recovery accepts the indexer's final-page cursor.** A complete single
+  page may repeat its final index in `next`; malformed or nonterminal cursors still
+  leave the journal unresolved. Unreadable bounded error bodies retain status-only
+  availability retries for 429/5xx, while terminal status errors keep the bounded
+  read failure. Response byte limits and legacy defaults are unchanged.
+
 - **Native journal observation bounds REST bodies before parsing.** Observation
   requests one explicit two-item page with an opt-in 4 MiB wire-byte cap, including
   error bodies. Oversized or unstreamable replies remain unknown; legacy indexer

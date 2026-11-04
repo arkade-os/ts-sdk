@@ -247,7 +247,10 @@ function assertCompleteReply(reply: unknown, field: "vtxos" | "txs"): void {
             !Number.isInteger(page.current) ||
             page.current < 0 ||
             page.current > page.total ||
-            page.next !== 0 ||
+            !Number.isInteger(page.next) ||
+            page.next < 0 ||
+            page.next > page.total ||
+            (page.next !== 0 && page.current < page.total) ||
             !Number.isInteger(page.total) ||
             page.total < 0 ||
             page.total > 1)
