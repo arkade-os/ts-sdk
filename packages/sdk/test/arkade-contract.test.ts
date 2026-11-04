@@ -504,11 +504,18 @@ describe("arkade.Arkade / ArkadeContract", () => {
                 },
             ],
         });
+        expect(() => ark.contract(program, { digest: new Uint8Array(31) })).toThrow(/32-byte/);
         const contract = ark.contract(program, { digest: new Uint8Array(32) });
         const covenantBytes = new Uint8Array(32).fill(1),
             condition = new Uint8Array(32).fill(2);
         const covenant = type === "bytes32" ? covenantBytes : { value: covenantBytes };
         const call = contract.functions.claim;
+        expect(() => call(covenant, 2n, condition)).toThrow(/boolean/);
+        expect(() => call(covenant, Number.MAX_SAFE_INTEGER + 1, condition)).toThrow(
+            /safe integer/,
+        );
+        expect(() => call(covenant, 1n, 3n)).toThrow(/bytes/);
+        expect(() => call(covenant, 1n, new Uint8Array(31))).toThrow(/32-byte/);
         const { arkTx, checkpoints } = await call(covenant, 1n, condition)
             .from(COIN)
             .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
