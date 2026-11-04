@@ -377,7 +377,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             return result?.data ?? null;
         } catch (error) {
             console.error("Failed to get wallet state:", error);
-            return null;
+            throw error;
         }
     }
 
