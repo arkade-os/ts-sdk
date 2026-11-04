@@ -290,10 +290,6 @@ style and have not been backfilled.
   their own transaction. Initialization, record writes, scan tracking and clearing
   therefore complete when consumers pass `getSerializedExecutor(db)`.
 
-- **IndexedDB wallet-state read failures no longer look like an empty wallet.**
-  Read errors propagate before updates can replace persisted pending-submit, cursor
-  or unrelated settings. Genuine absence still returns null.
-
 - **`@arkade-os/swap` no longer ends a settled Lightning send as `refunded`
   on a misread.** A `returned` lockup read before `refundLocktime` was final,
   so an indexer read missing the solver's preimage ended a paid send as
