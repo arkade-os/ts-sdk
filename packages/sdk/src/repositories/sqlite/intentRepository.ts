@@ -9,7 +9,7 @@ import {
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
-import { runInTransaction } from "./transaction";
+import { getSerializedExecutor, runInTransaction } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
 
 interface IntentRow {
@@ -34,14 +34,13 @@ interface IntentRow {
 
 export class SQLiteIntentRepository implements IntentRepository {
     readonly version = 1 as const;
+    private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly t: string;
 
-    constructor(
-        private readonly db: SQLExecutor,
-        options?: { prefix?: string },
-    ) {
+    constructor(db: SQLExecutor, options?: { prefix?: string }) {
+        this.db = getSerializedExecutor(db);
         this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.t = `${this.prefix}intents`;
     }
@@ -83,20 +82,20 @@ export class SQLiteIntentRepository implements IntentRepository {
         await this.ensureInit();
         // Route through the same serialized write chain as saveIntent so a
         // clear can't interleave with an in-flight transaction on this executor.
-        await runInTransaction(this.db, async () => {
-            await this.db.run(`DELETE FROM ${this.t}`);
+        await runInTransaction(this.db, async (tx) => {
+            await tx.run(`DELETE FROM ${this.t}`);
         });
     }
 
     async saveIntent(intent: ArkIntent): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
-        await runInTransaction(this.db, async () => {
+        await runInTransaction(this.db, async (tx) => {
             // Upsert by the primary key only. INSERT OR REPLACE would also fire
             // on the intent_id unique index, silently deleting the *other* row
             // that holds it; ON CONFLICT(intent_tx_id) updates in place and lets
             // an intent_id collision surface as a constraint error instead.
-            await this.db.run(
+            await tx.run(
                 `INSERT INTO ${this.t}
                  (intent_tx_id, intent_id, state, valid_from, valid_until,
                   created_at, updated_at, register_proof, register_proof_message,

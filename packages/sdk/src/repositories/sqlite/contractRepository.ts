@@ -6,6 +6,7 @@ import {
 } from "../contractRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
+import { getSerializedExecutor } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
 
 /** A row stored before the `watch` column existed holds NULL and counts as "watched".
@@ -29,14 +30,13 @@ interface SQLiteContractRepositoryOptions {
  */
 export class SQLiteContractRepository implements ContractRepository {
     readonly version = 3 as const;
+    private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly table: string;
 
-    constructor(
-        private readonly db: SQLExecutor,
-        options?: SQLiteContractRepositoryOptions,
-    ) {
+    constructor(db: SQLExecutor, options?: SQLiteContractRepositoryOptions) {
+        this.db = getSerializedExecutor(db);
         this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.table = `${this.prefix}contracts`;
     }

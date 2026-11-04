@@ -7,7 +7,11 @@ import type { AtomicDecimal } from "../src/client/amount";
 import type { CorridorSwapRecord } from "../src/client/record";
 import { AssetSwapRepository, InMemoryAssetSwapRepository } from "../src/repository";
 import { IndexedDbAssetSwapRepository } from "../src/indexedDbRepository";
-import { runInTransaction, type SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
+import {
+    getSerializedExecutor,
+    runInTransaction,
+    type SQLExecutor,
+} from "@arkade-os/sdk/repositories/sqlite";
 import { SQLiteAssetSwapRepository } from "../src/repositories/sqlite";
 import { RealmAssetSwapRepository } from "../src/repositories/realm";
 import { createNodeSQLExecutor } from "../../../config/test-helpers/nodeSqlExecutor";
@@ -256,6 +260,40 @@ const recording = (db: SQLExecutor, log: string[]): SQLExecutor => ({
 });
 
 describe("SQLiteAssetSwapRepository", () => {
+    it("initializes and persists every store through the SDK's serialized executor", async () => {
+        const db = getSerializedExecutor(createNodeSQLExecutor());
+        await using repository = new SQLiteAssetSwapRepository(db);
+        await repository.saveSwap(swap("legacy"));
+        await repository.saveRfqSwap(rfqRecord("rfq"));
+        await repository.saveSwapRecord(swapRecord("record"));
+        const txids = Array.from({ length: 501 }, (_, i) => `tx-${i}`);
+        await repository.markTxidsScanned([...txids, txids[0]]);
+        const markets = { markets: [btcUsd], fetchedAt: 1700 };
+        await repository.saveCachedMarkets("regtest", REGISTRY, markets);
+
+        await using reopened = new SQLiteAssetSwapRepository(db);
+        expect(await collectAssetSwaps(reopened)).toEqual([swap("legacy")]);
+        expect(await reopened.getRfqSwap("rfq")).toEqual(rfqRecord("rfq"));
+        expect(await collectRfqSwaps(reopened)).toEqual([rfqRecord("rfq")]);
+        expect(await reopened.getSwapRecord("record")).toEqual(swapRecord("record"));
+        expect(await collectSwapRecords(reopened)).toEqual([swapRecord("record")]);
+        expect(await reopened.getScannedTxids()).toEqual(new Set(txids));
+        expect(await reopened.getCachedMarkets("regtest", REGISTRY)).toEqual(markets);
+
+        await reopened.removeRfqSwap("rfq");
+        await reopened.removeSwapRecord("record");
+        expect(await repository.getRfqSwap("rfq")).toBeUndefined();
+        expect(await repository.getSwapRecord("record")).toBeUndefined();
+        await repository.saveRfqSwap(rfqRecord("retained-rfq"));
+        await repository.saveSwapRecord(swapRecord("retained-record"));
+        await reopened.clear();
+        expect(await collectAssetSwaps(repository)).toEqual([]);
+        expect(await collectRfqSwaps(repository)).toEqual([]);
+        expect(await collectSwapRecords(repository)).toEqual([]);
+        expect(await repository.getScannedTxids()).toEqual(new Set());
+        expect(await repository.getCachedMarkets("regtest", REGISTRY)).toBeUndefined();
+    });
+
     // Pins the every-write-goes-through-the-chain rule, by construction rather
     // than by racing: the gate resolves inside runInTransaction's callback,
     // which it invokes only after BEGIN IMMEDIATE.

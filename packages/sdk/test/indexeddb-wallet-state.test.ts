@@ -30,9 +30,14 @@ describe("IndexedDB wallet-state read failures", () => {
         expect(await repo.getWalletState()).toEqual({ settings: { hasPendingTx: true } });
     });
 
-    it.each(["open", "request"] as const)(
-        "preserves existing state when the %s fails and permits a healthy retry",
-        async (fault) => {
+    it.each([
+        ["open", false],
+        ["request", false],
+        ["open", true],
+        ["request", true],
+    ] as const)(
+        "preserves existing state when the %s fails and permits a healthy retry (atomic=%s)",
+        async (fault, atomic) => {
             const original: WalletState = {
                 lastSyncTime: 12345,
                 settings: { hasPendingTx: true, vtxoCursorMigrated: true, unrelated: { keep: 7 } },
@@ -40,6 +45,7 @@ describe("IndexedDB wallet-state read failures", () => {
             await repo.saveWalletState(original);
             await repo[Symbol.asyncDispose]();
             repo = new IndexedDBWalletRepository(name);
+            if (!atomic) Object.defineProperty(repo, "atomicWalletState", { value: undefined });
             let readError: DOMException | null = null;
             if (fault === "open") {
                 const open = indexedDB.open;
@@ -81,7 +87,7 @@ describe("IndexedDB wallet-state read failures", () => {
 
             await updateWalletState(repo, updater);
             expect(updater).toHaveBeenCalledOnce();
-            expect(save).toHaveBeenCalledOnce();
+            expect(save).toHaveBeenCalledTimes(atomic ? 0 : 1);
             await repo[Symbol.asyncDispose]();
             repo = new IndexedDBWalletRepository(name);
             expect(await repo.getWalletState()).toEqual({

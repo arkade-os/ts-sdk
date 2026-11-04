@@ -465,6 +465,7 @@ import type {
 import { ChainedTxType } from "./repositories/virtualTxRepository";
 import type {
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
@@ -1138,6 +1139,7 @@ export type {
     // Repositories
     ManagedConnection,
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
