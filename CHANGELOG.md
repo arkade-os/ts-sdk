@@ -583,6 +583,12 @@ style and have not been backfilled.
   reads keep their existing defaults. Pagination whose current page exceeds its
   total cannot acknowledge a receipt or release the occupied prepared slot.
 
+- **Native recovery accepts the indexer's final-page cursor.** A complete single
+  page may repeat its final index in `next`; malformed or nonterminal cursors still
+  leave the journal unresolved. Unreadable bounded error bodies retain status-only
+  availability retries for 429/5xx, while terminal status errors keep the bounded
+  read failure. Response byte limits and legacy defaults are unchanged.
+
 - **Native execution preserves its imported payout and delegation binding.**
   Mutating a handle's destination no longer changes its spend. Remote watches
   must match the captured template, artifact and variables; restored handles

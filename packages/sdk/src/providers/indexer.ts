@@ -74,14 +74,14 @@ async function indexerFetch(
         // misclassified as a retryable availability failure. If the body can't be
         // read, fall back to status-only classification.
         let body: string | undefined;
-        if (maxResponseBytes !== undefined) {
-            body = await readBoundedText(res, maxResponseBytes);
-        } else {
-            try {
-                body = await res.clone().text();
-            } catch {
-                body = undefined;
-            }
+        let bodyReadFailure: { error: unknown } | undefined;
+        try {
+            body =
+                maxResponseBytes === undefined
+                    ? await res.clone().text()
+                    : await readBoundedText(res, maxResponseBytes);
+        } catch (error) {
+            if (maxResponseBytes !== undefined) bodyReadFailure = { error };
         }
 
         try {
@@ -96,6 +96,7 @@ async function indexerFetch(
         }
 
         // Terminal non-2xx: hand it back for the caller's descriptive error.
+        if (bodyReadFailure) throw bodyReadFailure.error;
         return res;
     }
 }
