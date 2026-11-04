@@ -2,7 +2,7 @@ import { ArkTransaction, Asset, BuiltinTxTag, TxKey, TxType, VirtualCoin } from 
 import { normalizeVtxo, type NormalizedVirtualCoin } from "../wallet/vtxo";
 import { isGatedVtxo, type GatedContracts } from "../contracts/spendability";
 
-type ExtendedArkTransaction = ArkTransaction & {
+type ExtendedArkadeTransaction = ArkTransaction & {
     tag: BuiltinTxTag;
 };
 
@@ -101,13 +101,13 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
 }
 
 /**
- * Ark txids the main loop needs a `createdAt` for: spent virtual outputs whose
+ * Arkade txids the main loop needs a `createdAt` for: spent virtual outputs whose
  * spending transaction left the wallet no output to read the time off. Exactly
  * the loop's fetch set, and exactly the complement of {@link localCreatedAtByTxid}
  * — which is why gating history costs no extra indexer call, even though it
  * moves a swap deposit's only local output out of the loop's own set.
  */
-function collectArkTxidsNeedingCreatedAt(
+function collectArkadeTxidsNeedingCreatedAt(
     vtxos: readonly NormalizedVirtualCoin[],
     localCreatedAt: ReadonlyMap<string, number>,
 ): string[] {
@@ -140,7 +140,7 @@ function collectArkTxidsNeedingCreatedAt(
  * histories with no contract rows to judge, the unit suite's included, stay
  * source-compatible. Every SDK read path passes it; a new one that means to
  * report a wallet's own money must too.
- * @return {ExtendedArkTransaction[]} A sorted array of extended Arkade transactions, representing the transaction history.
+ * @return {ExtendedArkadeTransaction[]} A sorted array of extended Arkade transactions, representing the transaction history.
  */
 export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
@@ -148,7 +148,7 @@ export async function buildTransactionHistory(
     commitmentsToIgnore: Set<string>,
     resolveTxCreatedAt?: (txids: string[]) => Promise<Map<string, number>>,
     gatedScripts: GatedContracts = new Map(),
-): Promise<ExtendedArkTransaction[]> {
+): Promise<ExtendedArkadeTransaction[]> {
     const normalized = vtxos
         .map(normalizeVtxo)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
@@ -173,7 +173,7 @@ export async function buildTransactionHistory(
     const { paidIn: paidIntoGated, paidOut: paidOutOfGated } = gatedTouchpoints(gatedVtxos);
 
     const txidsNeedingCreatedAt = resolveTxCreatedAt
-        ? collectArkTxidsNeedingCreatedAt(ownVtxos, localCreatedAt)
+        ? collectArkadeTxidsNeedingCreatedAt(ownVtxos, localCreatedAt)
         : [];
     const resolvedCreatedAt =
         resolveTxCreatedAt && txidsNeedingCreatedAt.length > 0
@@ -183,8 +183,8 @@ export async function buildTransactionHistory(
         .filter(isSettledBoardingReceive)
         .sort((a, b) => a.createdAt - b.createdAt);
 
-    const sent: ExtendedArkTransaction[] = [];
-    let received: ExtendedArkTransaction[] = [];
+    const sent: ExtendedArkadeTransaction[] = [];
+    let received: ExtendedArkadeTransaction[] = [];
 
     for (const vtxo of ownVtxos) {
         if (vtxo.status.isLeaf) {
@@ -358,5 +358,5 @@ export async function buildTransactionHistory(
 
     const sorted = [...boardingTx, ...sent, ...received].sort((a, b) => b.createdAt - a.createdAt);
 
-    return sorted as ExtendedArkTransaction[];
+    return sorted as ExtendedArkadeTransaction[];
 }

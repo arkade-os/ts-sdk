@@ -9,7 +9,7 @@
 import { BIP21, btcTarget } from "@arkade-os/sdk";
 import * as btc from "@scure/btc-signer";
 import { L1_NETWORKS } from "../../onchainHtlc";
-import { l1NetworkFromArk } from "../../rfq";
+import { l1NetworkFromArkade } from "../../rfq";
 import type { CorridorDrive, CorridorFactory, CorridorModule } from "./contract";
 import type { OnchainCorridorDeps } from "./deps";
 
@@ -43,7 +43,7 @@ export const ONCHAIN_DRIVE = {
 
 export const onchainCorridor: CorridorFactory<OnchainCorridorDeps> = Object.assign(
     (deps: OnchainCorridorDeps): CorridorModule<OnchainCorridorDeps> => {
-        const l1 = l1NetworkFromArk(deps.networkName);
+        const l1 = l1NetworkFromArkade(deps.networkName);
         return {
             corridor: "onchain",
             deps,

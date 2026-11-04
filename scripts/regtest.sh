@@ -102,9 +102,9 @@ cmd_test() {
   case "$PKG" in
     sdk)
       if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run "${TEST_FILES[@]}"
+        ARKADE_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run "${TEST_FILES[@]}"
       else
-        ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" run test:integration
+        ARKADE_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" run test:integration
       fi
       ;;
     swap)
@@ -153,7 +153,7 @@ cmd_groups() {
     fi
     # $files is a deliberate word-split file list.
     # shellcheck disable=SC2086
-    if ARK_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run $files; then
+    if ARKADE_ENV=docker pnpm -C "$ROOT_DIR/packages/sdk" exec vitest run $files; then
       echo "=== group $name: PASS ==="
     else
       echo "=== group $name: FAIL ===" >&2

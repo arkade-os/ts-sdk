@@ -16,7 +16,7 @@ import {
     type IContractManager,
     type Identity,
 } from "../src";
-import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
+import { getVirtualTxs, mintCoin } from "./helpers/prevArkadeTx";
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
@@ -668,7 +668,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             functions: { exit: { tapscript: { signers: ["$server"] } } },
         } satisfies arkade.Program;
 
-        function arkProviderReporting(serverKey: Uint8Array, network?: string) {
+        function arkadeProviderReporting(serverKey: Uint8Array, network?: string) {
             const checkpointTapscript = hex.encode(
                 CSVMultisigTapscript.encode({
                     timelock: { type: "blocks", value: 10n },
@@ -692,7 +692,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
         it("uses the server's network when none is passed", async () => {
             const ark = await arkade.Arkade.connect({
-                arkade: arkProviderReporting(server, "signet"),
+                arkade: arkadeProviderReporting(server, "signet"),
             });
             expect(ark.network.name).toBe("signet");
             expect(ark.contract(program).address.startsWith("tark1")).toBe(true);
@@ -700,7 +700,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
         it("lets an explicit network override the server's", async () => {
             const ark = await arkade.Arkade.connect({
-                arkade: arkProviderReporting(server, "bitcoin"),
+                arkade: arkadeProviderReporting(server, "bitcoin"),
                 network: networks.regtest,
             });
             expect(ark.contract(program).address.startsWith("tark1")).toBe(true);
@@ -708,14 +708,14 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
         it("keeps the SDK default when the server names no network", async () => {
             const ark = await arkade.Arkade.connect({
-                arkade: arkProviderReporting(server, ""),
+                arkade: arkadeProviderReporting(server, ""),
             });
             expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
         });
 
         it("treats an inherited property name as no network", async () => {
             const ark = await arkade.Arkade.connect({
-                arkade: arkProviderReporting(server, "constructor"),
+                arkade: arkadeProviderReporting(server, "constructor"),
             });
             expect(ark.contract(program).address.startsWith("ark1")).toBe(true);
         });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { RestArkProvider } from "../src/providers/ark";
+import { RestArkProvider } from "../src/providers/arkade";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
 

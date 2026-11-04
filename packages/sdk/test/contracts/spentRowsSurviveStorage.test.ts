@@ -18,7 +18,7 @@ import { createMockSQLExecutor } from "../helpers/mockSqlExecutor";
 import { TEST_DEFAULT_SCRIPT } from "./helpers";
 
 const CHECKPOINT = "cc".repeat(32);
-const ARK_TX = "dd".repeat(32);
+const ARKADE_TX = "dd".repeat(32);
 const COMMITMENT = "ee".repeat(32);
 
 const contract: Pick<Contract, "script" | "address"> = {
@@ -41,7 +41,7 @@ const spentDeposit = (): ExtendedVirtualCoin => ({
     isUnrolled: false,
     isSpent: true,
     spentBy: CHECKPOINT,
-    arkTxId: ARK_TX,
+    arkTxId: ARKADE_TX,
     script: TEST_DEFAULT_SCRIPT,
     forfeitTapLeafScript: tapLeaf(),
     intentTapLeafScript: tapLeaf(),
@@ -99,7 +99,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
             vout: 0,
             isSpent: true,
             spentBy: CHECKPOINT,
-            arkTxId: ARK_TX,
+            arkTxId: ARKADE_TX,
         });
     });
 
@@ -119,7 +119,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         expect(vtxos[0]).toMatchObject({
             isSpent: true,
             spentBy: CHECKPOINT,
-            arkTxId: ARK_TX,
+            arkTxId: ARKADE_TX,
         });
     });
 
@@ -153,7 +153,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
 
         const vtxos = await getVtxosForContract(repository, contract);
         expect(vtxos).toHaveLength(1);
-        expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy: CHECKPOINT, arkTxId: ARK_TX });
+        expect(vtxos[0]).toMatchObject({ isSpent: true, spentBy: CHECKPOINT, arkTxId: ARKADE_TX });
     });
 
     it("fills missing provenance when the indexer confirms the spend", async () => {
@@ -176,7 +176,7 @@ describe.each(backends)("spent rows survive $name", ({ make }) => {
         expect(vtxos.find((v) => v.txid === "ab".repeat(32))).toMatchObject({
             isSpent: true,
             spentBy: CHECKPOINT,
-            arkTxId: ARK_TX,
+            arkTxId: ARKADE_TX,
         });
         expect(vtxos.find((v) => v.txid === "ef".repeat(32))?.isSpent).toBe(false);
     });

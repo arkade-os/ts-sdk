@@ -4,7 +4,7 @@ import { Batch } from "../src/wallet/batch";
 import { wrapHandlerWithIntentPersistence } from "../src/wallet/intentPersistenceHandler";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import type { ArkIntent } from "../src/repositories/intentRepository";
-import { SettlementEventType, type SettlementEvent } from "../src/providers/ark";
+import { SettlementEventType, type SettlementEvent } from "../src/providers/arkade";
 
 // Batch.join drives persistence from the awaited handler hooks, so the outcome
 // is recorded regardless of what the observational eventCallback does.

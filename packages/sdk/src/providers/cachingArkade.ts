@@ -8,7 +8,7 @@ import {
     SettlementEvent,
     SignedIntent,
     TxNotificationEvent,
-} from "./ark";
+} from "./arkade";
 
 const DEFAULT_TTL_MS = 60_000;
 

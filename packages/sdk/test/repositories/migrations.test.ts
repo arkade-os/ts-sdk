@@ -20,13 +20,17 @@ import { legacyVtxoFacts } from "../../src/repositories/legacyVtxoFacts";
 import type { SQLExecutor } from "../../src/repositories/sqlite/types";
 import { createMockVtxo } from "./helpers";
 
-// Deterministic Ark address to exercise the real bech32m decode path in
+// Deterministic Arkade address to exercise the real bech32m decode path in
 // the backfill helper — using "test-address-123" everywhere else is fine
 // because the mock VTXOs already carry a `script`, but migrations derive
 // the script from the address so they need a real one.
 const TEST_SERVER_PUBKEY = new Uint8Array(32).fill(7);
 const TEST_VTXO_TAPROOT_KEY = new Uint8Array(32).fill(9);
-const TEST_ARK_ADDRESS = new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").encode();
+const TEST_ARKADE_ADDRESS = new ArkAddress(
+    TEST_SERVER_PUBKEY,
+    TEST_VTXO_TAPROOT_KEY,
+    "ark",
+).encode();
 const EXPECTED_PK_SCRIPT_HEX = hex.encode(
     new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").pkScript,
 );
@@ -51,12 +55,12 @@ describe("Realm migration: runArkRealmMigrations", () => {
         // Realm's migration API provides parallel old/new arrays in the same
         // order, so mutating new[i] is what persists.
         const oldVtxos = [
-            { address: TEST_ARK_ADDRESS, script: null },
-            { address: TEST_ARK_ADDRESS, script: "5120abcd" },
+            { address: TEST_ARKADE_ADDRESS, script: null },
+            { address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
         const newVtxos = [
-            { address: TEST_ARK_ADDRESS, script: null },
-            { address: TEST_ARK_ADDRESS, script: "5120abcd" },
+            { address: TEST_ARKADE_ADDRESS, script: null },
+            { address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
 
         runArkRealmMigrations(makeRealm(1, oldVtxos), makeRealm(2, newVtxos));
@@ -68,7 +72,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
     });
 
     it("is a no-op when every row already has a script", () => {
-        const newVtxos = [{ address: TEST_ARK_ADDRESS, script: "5120abcd" }];
+        const newVtxos = [{ address: TEST_ARKADE_ADDRESS, script: "5120abcd" }];
 
         runArkRealmMigrations(makeRealm(2, newVtxos), makeRealm(2, newVtxos));
 
@@ -81,7 +85,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
         // and ours. An app that was already at version 10 when it adopted
         // Arkade must still get its legacy ArkVtxo rows backfilled — the
         // migration gates on per-row `script` presence, not on our constant.
-        const newVtxos = [{ address: TEST_ARK_ADDRESS, script: null }];
+        const newVtxos = [{ address: TEST_ARKADE_ADDRESS, script: null }];
 
         runArkRealmMigrations(makeRealm(10, newVtxos), makeRealm(11, newVtxos));
 
@@ -94,7 +98,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
         const oldVtxos = [
             {
                 pk: "swept:0",
-                address: TEST_ARK_ADDRESS,
+                address: TEST_ARKADE_ADDRESS,
                 script: "5120abcd",
                 virtualStatusJson: JSON.stringify({
                     state: "swept",
@@ -104,15 +108,15 @@ describe("Realm migration: runArkRealmMigrations", () => {
             },
             {
                 pk: "height:0",
-                address: TEST_ARK_ADDRESS,
+                address: TEST_ARKADE_ADDRESS,
                 script: "5120abcd",
                 // Below EXPIRY_MIN_PLAUSIBLE_MS: the blob's one scalar was a block height ×1000.
                 virtualStatusJson: JSON.stringify({ state: "settled", batchExpiry: 850_000_000 }),
             },
         ];
         const newVtxos: Record<string, unknown>[] = [
-            { pk: "swept:0", address: TEST_ARK_ADDRESS, script: "5120abcd" },
-            { pk: "height:0", address: TEST_ARK_ADDRESS, script: "5120abcd" },
+            { pk: "swept:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
+            { pk: "height:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
 
         runArkRealmMigrations(makeRealm(4, oldVtxos), makeRealm(5, newVtxos));
@@ -134,20 +138,20 @@ describe("Realm migration: runArkRealmMigrations", () => {
         const oldVtxos = [
             {
                 pk: "b:0",
-                address: TEST_ARK_ADDRESS,
+                address: TEST_ARKADE_ADDRESS,
                 script: "5120abcd",
                 virtualStatusJson: JSON.stringify({ state: "swept" }),
             },
             {
                 pk: "a:0",
-                address: TEST_ARK_ADDRESS,
+                address: TEST_ARKADE_ADDRESS,
                 script: "5120abcd",
                 virtualStatusJson: JSON.stringify({ state: "settled" }),
             },
         ];
         const newVtxos: Record<string, unknown>[] = [
-            { pk: "a:0", address: TEST_ARK_ADDRESS, script: "5120abcd" },
-            { pk: "b:0", address: TEST_ARK_ADDRESS, script: "5120abcd", isSwept: false },
+            { pk: "a:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
+            { pk: "b:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd", isSwept: false },
         ];
 
         runArkRealmMigrations(makeRealm(4, oldVtxos), makeRealm(5, newVtxos));
@@ -159,7 +163,7 @@ describe("Realm migration: runArkRealmMigrations", () => {
 
     it("leaves rows alone when the old realm carries no legacy blob", () => {
         const newVtxos: Record<string, unknown>[] = [
-            { pk: "a:0", address: TEST_ARK_ADDRESS, script: "5120abcd" },
+            { pk: "a:0", address: TEST_ARKADE_ADDRESS, script: "5120abcd" },
         ];
 
         runArkRealmMigrations(makeRealm(5, [{ pk: "a:0" }]), makeRealm(5, newVtxos));
@@ -252,16 +256,16 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             const tx = oldDb.transaction([STORE_VTXOS], "readwrite");
             const store = tx.objectStore(STORE_VTXOS);
             const script = version === 3 ? { script: EXPECTED_PK_SCRIPT_HEX } : {};
-            store.put({ address: TEST_ARK_ADDRESS, txid: "live", vout: 0, ...script });
+            store.put({ address: TEST_ARKADE_ADDRESS, txid: "live", vout: 0, ...script });
             store.put({
-                address: TEST_ARK_ADDRESS,
+                address: TEST_ARKADE_ADDRESS,
                 txid: "spent",
                 vout: 0,
                 ...script,
                 isSpent: true,
             });
             store.put({
-                address: TEST_ARK_ADDRESS,
+                address: TEST_ARKADE_ADDRESS,
                 txid: "legacy-spent",
                 vout: 0,
                 ...script,
@@ -305,7 +309,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                 // One live row per 1000-row page.
                 for (let i = 0; i < 2500; i++) {
                     store.put({
-                        address: TEST_ARK_ADDRESS,
+                        address: TEST_ARKADE_ADDRESS,
                         txid: `tx-${String(i).padStart(4, "0")}`,
                         vout: 0,
                         script: EXPECTED_PK_SCRIPT_HEX,
@@ -345,7 +349,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 tx.objectStore(STORE_VTXOS).put({
-                    address: TEST_ARK_ADDRESS,
+                    address: TEST_ARKADE_ADDRESS,
                     txid: "legacy-tx",
                     vout: 0,
                     value: 1000,
@@ -367,7 +371,9 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             const backfilled = await new Promise<{ script?: string } | undefined>(
                 (resolve, reject) => {
                     const tx = db.transaction([STORE_VTXOS], "readonly");
-                    const req = tx.objectStore(STORE_VTXOS).get([TEST_ARK_ADDRESS, "legacy-tx", 0]);
+                    const req = tx
+                        .objectStore(STORE_VTXOS)
+                        .get([TEST_ARKADE_ADDRESS, "legacy-tx", 0]);
                     req.onsuccess = () => resolve(req.result);
                     req.onerror = () => reject(req.error);
                 },
@@ -388,7 +394,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 tx.objectStore(STORE_VTXOS).put({
-                    address: TEST_ARK_ADDRESS,
+                    address: TEST_ARKADE_ADDRESS,
                     txid: "preset-tx",
                     vout: 0,
                     value: 1000,
@@ -407,7 +413,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
 
             const row = await new Promise<{ script?: string } | undefined>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readonly");
-                const req = tx.objectStore(STORE_VTXOS).get([TEST_ARK_ADDRESS, "preset-tx", 0]);
+                const req = tx.objectStore(STORE_VTXOS).get([TEST_ARKADE_ADDRESS, "preset-tx", 0]);
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => reject(req.error);
             });
@@ -428,7 +434,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             // Seed the real repo's DB with a full vtxo, then poke the raw
             // row to drop `script` — simulates a legacy record that escaped
             // the upgrade-path backfill.
-            await repo.saveVtxos(TEST_ARK_ADDRESS, [
+            await repo.saveVtxos(TEST_ARKADE_ADDRESS, [
                 {
                     txid: "read-backfill-tx",
                     vout: 0,
@@ -452,7 +458,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 const store = tx.objectStore(STORE_VTXOS);
-                const getReq = store.get([TEST_ARK_ADDRESS, "read-backfill-tx", 0]);
+                const getReq = store.get([TEST_ARKADE_ADDRESS, "read-backfill-tx", 0]);
                 getReq.onsuccess = () => {
                     const row = getReq.result as Record<string, unknown>;
                     delete row.script;
@@ -465,7 +471,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             // Release the extra ref we took via openDatabase.
             await closeDatabase(dbName);
 
-            const [retrieved] = await collectVtxos(repo, TEST_ARK_ADDRESS);
+            const [retrieved] = await collectVtxos(repo, TEST_ARKADE_ADDRESS);
             expect(retrieved.script).toBe(EXPECTED_PK_SCRIPT_HEX);
         } finally {
             await repo[Symbol.asyncDispose]();
@@ -478,7 +484,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
         const dbName = getUniqueDbName();
         const repo = new IndexedDBWalletRepository(dbName);
         try {
-            await repo.saveVtxos(TEST_ARK_ADDRESS, [
+            await repo.saveVtxos(TEST_ARKADE_ADDRESS, [
                 {
                     txid: "legacy-swept",
                     vout: 0,
@@ -498,7 +504,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                 } as unknown as ExtendedVirtualCoin,
             ]);
 
-            const [retrieved] = await collectVtxos(repo, TEST_ARK_ADDRESS);
+            const [retrieved] = await collectVtxos(repo, TEST_ARKADE_ADDRESS);
             expect(retrieved.isSwept).toBe(true);
             expect(retrieved.isSpent).toBe(false);
             expect(retrieved.commitmentTxIds).toEqual(["c1"]);
@@ -512,7 +518,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
         const dbName = getUniqueDbName();
         const repo = new IndexedDBWalletRepository(dbName);
         try {
-            await repo.saveVtxos(TEST_ARK_ADDRESS, [
+            await repo.saveVtxos(TEST_ARKADE_ADDRESS, [
                 {
                     txid: "modern",
                     vout: 0,
@@ -532,7 +538,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
                 } as unknown as ExtendedVirtualCoin,
             ]);
 
-            const [retrieved] = await collectVtxos(repo, TEST_ARK_ADDRESS);
+            const [retrieved] = await collectVtxos(repo, TEST_ARKADE_ADDRESS);
             expect(retrieved.isSwept).toBe(false);
             expect(retrieved.isPreconfirmed).toBe(true);
         } finally {
@@ -558,7 +564,7 @@ describe("IndexedDB migration: backfillVtxoIndexFields", () => {
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 tx.objectStore(STORE_VTXOS).put({
-                    address: TEST_ARK_ADDRESS,
+                    address: TEST_ARKADE_ADDRESS,
                     txid: "indexed-backfill-tx",
                     vout: 0,
                     value: 1000,
@@ -738,8 +744,8 @@ describe("SQLite migration: migrateVtxosTable", () => {
 
     it("adds the script column, backfills from address, and rebuilds NOT NULL (v0 → v1)", async () => {
         db.exec(LEGACY_V0_SCHEMA);
-        insertV0Row(db, "legacy-1", TEST_ARK_ADDRESS);
-        insertV0Row(db, "legacy-2", TEST_ARK_ADDRESS);
+        insertV0Row(db, "legacy-1", TEST_ARKADE_ADDRESS);
+        insertV0Row(db, "legacy-2", TEST_ARKADE_ADDRESS);
 
         // Trigger ensureInit via a repo method that doesn't deserialize
         // rows — the seed data has placeholder binary for tap_tree/leaf
@@ -761,8 +767,8 @@ describe("SQLite migration: migrateVtxosTable", () => {
 
     it("backfills NULL scripts but preserves existing ones (v0b → v1)", async () => {
         db.exec(LEGACY_V0B_SCHEMA);
-        insertV0bRow(db, "legacy-null", TEST_ARK_ADDRESS, null);
-        insertV0bRow(db, "legacy-preset", TEST_ARK_ADDRESS, "5120cafe");
+        insertV0bRow(db, "legacy-null", TEST_ARKADE_ADDRESS, null);
+        insertV0bRow(db, "legacy-preset", TEST_ARKADE_ADDRESS, "5120cafe");
 
         await repo.getWalletState();
 
@@ -785,7 +791,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
     it("is a no-op when the script column is already NOT NULL", async () => {
         // First migration: v0 → v1.
         db.exec(LEGACY_V0_SCHEMA);
-        insertV0Row(db, "already-migrated", TEST_ARK_ADDRESS);
+        insertV0Row(db, "already-migrated", TEST_ARKADE_ADDRESS);
         await repo.getWalletState();
 
         // Second pass via a fresh repo instance: the early-return path
@@ -811,9 +817,9 @@ describe("SQLite migration: migrateVtxosTable", () => {
     it("rebuilds away the legacy blob so saveVtxos works (0.4.x → v1)", async () => {
         db.exec(LEGACY_V04_SCHEMA);
         const blob = { state: "swept", commitmentTxIds: ["c1"], batchExpiry: 1_800_000_000_000 };
-        insertV04Row(db, "legacy-swept", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, blob);
+        insertV04Row(db, "legacy-swept", TEST_ARKADE_ADDRESS, EXPECTED_PK_SCRIPT_HEX, blob);
 
-        await repo.saveVtxos(TEST_ARK_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
+        await repo.saveVtxos(TEST_ARKADE_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
 
         expect(vtxosCols(db).some((c) => c.name === "virtual_status_json")).toBe(false);
         expect(db.prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`).all()).toEqual([
@@ -844,7 +850,9 @@ describe("SQLite migration: migrateVtxosTable", () => {
 
     it("leaves an already-rebuilt 0.4.x table untouched on the next open", async () => {
         db.exec(LEGACY_V04_SCHEMA);
-        insertV04Row(db, "legacy-1", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, { state: "swept" });
+        insertV04Row(db, "legacy-1", TEST_ARKADE_ADDRESS, EXPECTED_PK_SCRIPT_HEX, {
+            state: "swept",
+        });
         await repo.getWalletState();
 
         const before = db.prepare(`SELECT rowid, * FROM ark_vtxos`).get();
@@ -867,7 +875,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
         ]) {
             db.exec(`ALTER TABLE ark_vtxos ADD COLUMN ${name} ${type}`);
         }
-        insertV04Row(db, "synced-1", TEST_ARK_ADDRESS, EXPECTED_PK_SCRIPT_HEX, {
+        insertV04Row(db, "synced-1", TEST_ARKADE_ADDRESS, EXPECTED_PK_SCRIPT_HEX, {
             state: "swept",
             commitmentTxIds: ["stale"],
             batchExpiry: 1_800_000_000_000,
@@ -879,7 +887,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
              WHERE txid = 'synced-1'`,
         ).run();
 
-        await repo.saveVtxos(TEST_ARK_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
+        await repo.saveVtxos(TEST_ARKADE_ADDRESS, [createMockVtxo("fresh-1", 0, 2000)]);
 
         expect(vtxosCols(db).some((c) => c.name === "virtual_status_json")).toBe(false);
         expect(
@@ -904,12 +912,12 @@ describe("SQLite migration: migrateVtxosTable", () => {
         // blob column — so it is still there to read. Without the copy a swept row reads
         // `isSwept: false` and coin selection hands it to a send the server must reject.
         db.exec(LEGACY_V0_SCHEMA);
-        insertV0Row(db, "swept-1", TEST_ARK_ADDRESS, {
+        insertV0Row(db, "swept-1", TEST_ARKADE_ADDRESS, {
             state: "swept",
             commitmentTxIds: ["c1"],
             batchExpiry: 1_800_000_000_000,
         });
-        insertV0Row(db, "height-1", TEST_ARK_ADDRESS, {
+        insertV0Row(db, "height-1", TEST_ARKADE_ADDRESS, {
             state: "settled",
             batchExpiry: 850_000_000,
         });
@@ -920,7 +928,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
                 forfeit_cb, forfeit_s, intent_cb, intent_s,
                 status_json, virtual_status_json, created_at
             ) VALUES ('corrupt-1', 0, 1000, ?, '', '', '', '', '', '{}', 'not json', '2024-01-01')`,
-        ).run(TEST_ARK_ADDRESS);
+        ).run(TEST_ARKADE_ADDRESS);
 
         await repo.getWalletState();
 
@@ -958,7 +966,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
                 forfeit_cb, forfeit_s, intent_cb, intent_s,
                 status_json, virtual_status_json, created_at, script
             ) VALUES ('swept-1', 0, 1000, ?, '', '', '', '', '', '{}', ?, '2024-01-01', '5120ab')`,
-        ).run(TEST_ARK_ADDRESS, JSON.stringify({ state: "swept" }));
+        ).run(TEST_ARKADE_ADDRESS, JSON.stringify({ state: "swept" }));
 
         await repo.getWalletState();
         expect(
@@ -985,10 +993,10 @@ describe("SQLite migration: migrateVtxosTable", () => {
         // inconsistent state; the BEGIN/ROLLBACK wrap preserves the
         // original table intact.
         db.exec(LEGACY_V0_SCHEMA);
-        insertV0Row(db, "valid", TEST_ARK_ADDRESS);
+        insertV0Row(db, "valid", TEST_ARKADE_ADDRESS);
         insertV0Row(db, "bad", "not-a-real-address");
 
-        await expect(collectVtxos(repo, TEST_ARK_ADDRESS)).rejects.toThrow();
+        await expect(collectVtxos(repo, TEST_ARKADE_ADDRESS)).rejects.toThrow();
 
         // Original rows intact, schema unchanged, no orphan tmp table.
         const rows = db.prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`).all() as Array<{
@@ -1005,7 +1013,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
         // transaction wrap this silently orphaned every row; with it, the
         // ROLLBACK restores the original table.
         db.exec(LEGACY_V0_SCHEMA);
-        insertV0Row(db, "keep-me", TEST_ARK_ADDRESS);
+        insertV0Row(db, "keep-me", TEST_ARKADE_ADDRESS);
 
         const crashingExecutor: SQLExecutor = {
             async run(sql, params) {
@@ -1019,7 +1027,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
         };
         const crashingRepo = new SQLiteWalletRepository(crashingExecutor);
 
-        await expect(crashingRepo.getVtxosPage(TEST_ARK_ADDRESS, { limit: 1 })).rejects.toThrow(
+        await expect(crashingRepo.getVtxosPage(TEST_ARKADE_ADDRESS, { limit: 1 })).rejects.toThrow(
             /simulated crash/,
         );
 
@@ -1028,7 +1036,7 @@ describe("SQLite migration: migrateVtxosTable", () => {
             txid: string;
             address: string;
         }>;
-        expect(rows).toEqual([{ txid: "keep-me", address: TEST_ARK_ADDRESS }]);
+        expect(rows).toEqual([{ txid: "keep-me", address: TEST_ARKADE_ADDRESS }]);
         expect(vtxosCols(db).some((c) => c.name === "script")).toBe(false);
         expect(tempTableExists(db)).toBe(false);
     });

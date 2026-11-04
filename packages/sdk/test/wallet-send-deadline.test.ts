@@ -22,7 +22,7 @@ vi.mock("../src/utils/fetch", async (importOriginal) => ({
     baseFetch: mockFetch,
 }));
 
-const ARK_INFO = {
+const ARKADE_INFO = {
     signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
     forfeitPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
     batchExpiry: 144n,
@@ -92,9 +92,9 @@ function sendParams(
 function mockSubmission(wallet: Wallet, beforeResponse?: () => void) {
     const submit = vi
         .spyOn(wallet.arkProvider, "submitTx")
-        .mockImplementation(async (arkTxBase64, checkpointBase64s) => {
+        .mockImplementation(async (arkadeTxBase64, checkpointBase64s) => {
             beforeResponse?.();
-            const arkTx = Transaction.fromPSBT(base64.decode(arkTxBase64));
+            const arkTx = Transaction.fromPSBT(base64.decode(arkadeTxBase64));
             const finalArkTx = await serverIdentity.sign(arkTx);
             const signedCheckpointTxs = await Promise.all(
                 checkpointBase64s.map(async (encoded) => {
@@ -347,7 +347,7 @@ describe("Wallet.send validUntil", () => {
         vi.stubGlobal("EventSource", MockEventSource);
         mockFetch.mockReset();
         mockFetch.mockImplementation((url: string) => {
-            if (url.includes("/info")) return Promise.resolve(jsonResponse(ARK_INFO));
+            if (url.includes("/info")) return Promise.resolve(jsonResponse(ARKADE_INFO));
             if (url.includes("subscribe") || url.includes("subscriptions")) {
                 return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
             }

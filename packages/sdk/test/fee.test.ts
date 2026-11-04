@@ -12,8 +12,8 @@ import {
 } from "../src";
 
 // Load test data
-const testDataPath = join(__dirname, "fixtures", "arkfee-valid.json");
-const invalidTestDataPath = join(__dirname, "fixtures", "arkfee-invalid.json");
+const testDataPath = join(__dirname, "fixtures", "arkade-fee-valid.json");
+const invalidTestDataPath = join(__dirname, "fixtures", "arkade-fee-invalid.json");
 
 const testData = JSON.parse(readFileSync(testDataPath, "utf-8"));
 const invalidTestData = JSON.parse(readFileSync(invalidTestDataPath, "utf-8"));

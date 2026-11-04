@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import * as arkTransaction from "../src/utils/arkTransaction";
+import * as arkTransaction from "../src/utils/arkadeTransaction";
 import { fundedWallet } from "./concurrentSpendingFixture";
 
-vi.mock("../src/utils/arkTransaction", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../src/utils/arkTransaction")>()),
+vi.mock("../src/utils/arkadeTransaction", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../src/utils/arkadeTransaction")>()),
     buildOffchainTx: vi.fn(() => ({ arkTx: {}, checkpoints: [] })),
     submitOffchainTx: vi.fn(),
 }));

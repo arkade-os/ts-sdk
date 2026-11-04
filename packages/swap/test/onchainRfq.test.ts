@@ -305,7 +305,7 @@ describe("deriveOnchainSend", () => {
         expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(/binding field/);
     });
 
-    it("hands back the L1 network, which the ark network name does not give", () => {
+    it("hands back the L1 network, which the Arkade network name does not give", () => {
         // The mapping from `info.network` is private and lossy — signet,
         // mutinynet and testnet4 all land on `"testnet"` — so a caller
         // reconstructing this from context is re-deriving something it cannot

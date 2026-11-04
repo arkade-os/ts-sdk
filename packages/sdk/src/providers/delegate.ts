@@ -1,5 +1,5 @@
 import { Intent } from "../intent";
-import { SignedIntent } from "./ark";
+import { SignedIntent } from "./arkade";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 

@@ -4,7 +4,7 @@ import { DelegateManagerImpl, findDestinationOutputIndex } from "../../src/walle
 import type { ArkadeInfo, Identity } from "../../src";
 import type { DelegateProvider } from "../../src/providers/delegate";
 import {
-    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DEFAULT_ARKADE_ADDRESS,
     TEST_DELEGATE_PUB_KEY,
     TEST_SERVER_PUB_KEY_HEX,
     createMockContractVtxo,
@@ -30,7 +30,7 @@ describe("default delegation schedule", () => {
             getDelegateInfo: async () => ({
                 pubkey: hex.encode(TEST_DELEGATE_PUB_KEY),
                 fee: "0",
-                delegateAddress: TEST_DEFAULT_ARK_ADDRESS,
+                delegateAddress: TEST_DEFAULT_ARKADE_ADDRESS,
             }),
             delegate,
         } as unknown as DelegateProvider;
@@ -53,7 +53,7 @@ describe("default delegation schedule", () => {
         });
 
         const manager = new DelegateManagerImpl(provider, { getInfo: async () => info }, identity);
-        const { failed } = await manager.delegate([coin], TEST_DEFAULT_ARK_ADDRESS);
+        const { failed } = await manager.delegate([coin], TEST_DEFAULT_ARKADE_ADDRESS);
 
         expect(failed).toEqual([]);
         return delegate.mock.calls[0][0].message.valid_at;

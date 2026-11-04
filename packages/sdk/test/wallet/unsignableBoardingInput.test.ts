@@ -13,7 +13,7 @@ const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-const mockArkInfo = {
+const mockArkadeInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
     forfeitPubkey: SERVER_PUBKEY_HEX,
     batchExpiry: BigInt(144),
@@ -46,7 +46,7 @@ beforeEach(() => {
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
         const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
-        if (url.includes("/info")) return reply(mockArkInfo);
+        if (url.includes("/info")) return reply(mockArkadeInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         if (url.includes("vtxo") || url.includes("scripts")) return reply({ vtxos: [] });

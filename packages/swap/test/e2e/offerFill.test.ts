@@ -163,7 +163,7 @@ describe("filling an offer (regtest)", () => {
         //
         // BOTH txids, via `classifyDepositSpend`. A spend is two linked
         // transactions and only the CHECKPOINT takes the deposit outpoint; hand
-        // it the ark tx alone and every real spend reads `indeterminate`.
+        // it the Arkade transaction alone and every real spend reads `indeterminate`.
         const { vtxos } = await indexer.getVtxos({ scripts: [script] });
         const deposit = vtxos.find((v) => v.txid === fundingTxid)!;
         const candidates = spendTxidsOf(deposit);

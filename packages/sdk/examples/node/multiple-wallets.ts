@@ -122,7 +122,7 @@ async function main() {
     }
     console.log("[Alice]\tBoarding UTXOs found:", utxos.length);
 
-    // Settle (onboard) into the Ark protocol
+    // Settle (onboard) into the Arkade
     console.log("[Alice]\tOnboarding into Ark...");
     const info = await aliceWallet.arkProvider.getInfo();
     const ramps = new Ramps(aliceWallet);

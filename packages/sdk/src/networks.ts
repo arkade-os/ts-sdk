@@ -32,11 +32,11 @@ export const networkFromArkadeInfo = (info: { network: string }): Network =>
     getNetwork(info.network as NetworkName);
 
 export const networks = {
-    bitcoin: withArkPrefix(NETWORK, "ark", "bitcoin"),
-    testnet: withArkPrefix(TEST_NETWORK, "tark", "testnet"),
-    signet: withArkPrefix(TEST_NETWORK, "tark", "signet"),
-    mutinynet: withArkPrefix(TEST_NETWORK, "tark", "mutinynet"),
-    regtest: withArkPrefix(
+    bitcoin: withArkadePrefix(NETWORK, "ark", "bitcoin"),
+    testnet: withArkadePrefix(TEST_NETWORK, "tark", "testnet"),
+    signet: withArkadePrefix(TEST_NETWORK, "tark", "signet"),
+    mutinynet: withArkadePrefix(TEST_NETWORK, "tark", "mutinynet"),
+    regtest: withArkadePrefix(
         {
             ...TEST_NETWORK,
             bech32: "bcrt",
@@ -48,7 +48,7 @@ export const networks = {
     ),
 };
 
-function withArkPrefix(
+function withArkadePrefix(
     network: Omit<Network, "hrp" | "name">,
     prefix: string,
     name: NetworkName,

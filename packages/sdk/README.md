@@ -220,7 +220,7 @@ await wallet.send({ address: 'ark1q...', amount: 1000 })
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
 
-### Ark Provider Caching
+### Arkade provider Caching
 
 `RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
 with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
@@ -236,7 +236,7 @@ const arkProvider = new CachingArkProvider(
 const wallet = await Wallet.create({ identity, arkProvider })
 ```
 
-Only `getInfo()` is cached; all other Ark provider methods pass through. The cache expires
+Only `getInfo()` is cached; all other Arkade provider methods pass through. The cache expires
 after the TTL and updates when the inner provider reports server-info changes, including
 signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
 can still derive the default indexer URL. Expired refresh failures propagate;
@@ -1103,7 +1103,7 @@ const wallet = await Wallet.create({
     virtualTxRepository: new InMemoryVirtualTxRepository(),
     // Optional. `mode` defaults to "lite" (structure only, cheap — most VTXOs
     // never exit). Use "full" to also store the pre-signed PSBTs, so an exit
-    // needs no Ark indexer (only an Esplora endpoint to broadcast).
+    // needs no Arkade indexer (only an Esplora endpoint to broadcast).
     exitDataCapture: { mode: 'full' },
   },
 })

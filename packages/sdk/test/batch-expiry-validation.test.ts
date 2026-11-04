@@ -13,7 +13,7 @@ import { createArkadeBatchHandler } from "../src/arkade/batch";
 import { ServerResponseMismatchError } from "../src/providers/errors";
 import { networks } from "../src/networks";
 import type { SignerSession } from "../src/tree/signingSession";
-import type { ArkProvider, BatchStartedEvent } from "../src/providers/ark";
+import type { ArkProvider, BatchStartedEvent } from "../src/providers/arkade";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
 import type { Intent } from "../src/intent";
@@ -133,7 +133,7 @@ describe("assertValidBatchExpiry", () => {
 });
 
 describe("createArkadeBatchHandler batch expiry", () => {
-    function makeArkProvider() {
+    function makeArkadeProvider() {
         return {
             confirmRegistration: vi.fn(async () => {}),
             getInfo: vi.fn(async () => ({
@@ -175,7 +175,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
         }) as unknown as BatchStartedEvent;
 
     it("rejects an out-of-policy expiry without confirming or initializing signing", async () => {
-        const arkProvider = makeArkProvider();
+        const arkProvider = makeArkadeProvider();
         const session = makeSession();
 
         await expect(
@@ -187,7 +187,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
     });
 
     it("confirms and proceeds on an in-policy expiry", async () => {
-        const arkProvider = makeArkProvider();
+        const arkProvider = makeArkadeProvider();
 
         await expect(
             makeHandler(arkProvider, makeSession()).onBatchStarted(batchStarted(604_672n)),
@@ -197,7 +197,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
     });
 
     it("does not validate or confirm when the intent is not ours", async () => {
-        const arkProvider = makeArkProvider();
+        const arkProvider = makeArkadeProvider();
 
         await expect(
             makeHandler(arkProvider, makeSession()).onBatchStarted({

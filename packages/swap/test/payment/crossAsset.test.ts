@@ -14,7 +14,7 @@ import {
     type CrossAssetSwap,
 } from "../../src/payment/crossAsset";
 
-const ARK_ADDR =
+const ARKADE_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 // 34 bytes of hex; `AssetId.fromString` rejects anything else.
 const USDX_ID = "aa".repeat(34);
@@ -78,7 +78,7 @@ let offerStub: (...args: unknown[]) => Promise<unknown> = async () => offer;
 describe("crossAssetRail.match", () => {
     it("matches an Arkade address, like every rail that pays one", () => {
         const rail = crossAssetRail(depsWith());
-        expect(rail.match({ raw: ARK_ADDR, assets: [USDX] }, ctxWith())).toBe(true);
+        expect(rail.match({ raw: ARKADE_ADDR, assets: [USDX] }, ctxWith())).toBe(true);
         expect(rail.match({ raw: "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080" }, ctxWith())).toBe(
             false,
         );
@@ -86,7 +86,7 @@ describe("crossAssetRail.match", () => {
 });
 
 describe("crossAssetRail.available", () => {
-    const req = { raw: ARK_ADDR, assets: [USDX] };
+    const req = { raw: ARKADE_ADDR, assets: [USDX] };
 
     it("is available when a market swaps BTC into the asset and the balance covers it", async () => {
         expect(await crossAssetRail(depsWith()).available?.(req, ctxWith())).toBe(true);
@@ -135,7 +135,7 @@ describe("crossAssetRail.available", () => {
         const discover = vi.fn(async () => [market()]);
         expect(
             await crossAssetRail(depsWith({ discover })).available?.(
-                { raw: ARK_ADDR, assets: [{ assetId: "btc", amount: 500n }] },
+                { raw: ARKADE_ADDR, assets: [{ assetId: "btc", amount: 500n }] },
                 ctxWith(),
             ),
         ).toBe(false);
@@ -145,8 +145,8 @@ describe("crossAssetRail.available", () => {
     it("does not route a request naming no asset, or more than one, without a lookup", async () => {
         const discover = vi.fn(async () => [market()]);
         const rail = crossAssetRail(depsWith({ discover }));
-        expect(await rail.available?.({ raw: ARK_ADDR, amount: 1000 }, ctxWith())).toBe(false);
-        expect(await rail.available?.({ raw: ARK_ADDR, assets: [USDX, USDX] }, ctxWith())).toBe(
+        expect(await rail.available?.({ raw: ARKADE_ADDR, amount: 1000 }, ctxWith())).toBe(false);
+        expect(await rail.available?.({ raw: ARKADE_ADDR, assets: [USDX, USDX] }, ctxWith())).toBe(
             false,
         );
         expect(discover).not.toHaveBeenCalled();
@@ -157,7 +157,7 @@ describe("crossAssetRail.available", () => {
         const rail = crossAssetRail(depsWith({ discover }));
         expect(
             await rail.available?.(
-                { raw: ARK_ADDR, assets: [{ assetId: "aa".repeat(32), amount: 500n }] },
+                { raw: ARKADE_ADDR, assets: [{ assetId: "aa".repeat(32), amount: 500n }] },
                 ctxWith(),
             ),
         ).toBe(false);
@@ -167,11 +167,17 @@ describe("crossAssetRail.available", () => {
     it("does not route a non-positive or non-bigint quantity", async () => {
         const rail = crossAssetRail(depsWith());
         expect(
-            await rail.available?.({ raw: ARK_ADDR, assets: [{ ...USDX, amount: 0n }] }, ctxWith()),
+            await rail.available?.(
+                { raw: ARKADE_ADDR, assets: [{ ...USDX, amount: 0n }] },
+                ctxWith(),
+            ),
         ).toBe(false);
         expect(
             await rail.available?.(
-                { raw: ARK_ADDR, assets: [{ assetId: USDX_ID, amount: 500 as unknown as bigint }] },
+                {
+                    raw: ARKADE_ADDR,
+                    assets: [{ assetId: USDX_ID, amount: 500 as unknown as bigint }],
+                },
                 ctxWith(),
             ),
         ).toBe(false);
@@ -197,7 +203,7 @@ describe("crossAssetRail.available", () => {
 });
 
 describe("crossAssetRail.quote", () => {
-    const req = { raw: ARK_ADDR, assets: [USDX] };
+    const req = { raw: ARKADE_ADDR, assets: [USDX] };
 
     it("names two different assets: BTC spent, the asset delivered", async () => {
         const quote = await crossAssetRail(depsWith()).quote(req, ctxWith());
@@ -247,7 +253,7 @@ describe("crossAssetRail.quote", () => {
 });
 
 describe("crossAssetRail.send", () => {
-    const req = { raw: ARK_ADDR, assets: [USDX] };
+    const req = { raw: ARKADE_ADDR, assets: [USDX] };
 
     it("funds the offer, waits for the fill, then pays the recipient — in that order", async () => {
         const order: string[] = [];
@@ -331,7 +337,7 @@ describe("crossAssetRail.send", () => {
         const result = await (await quote.send()).settled();
 
         expect(send.mock.calls[1][0]).toEqual({
-            address: ARK_ADDR,
+            address: ARKADE_ADDR,
             amount: 546,
             assets: [USDX],
         });
@@ -378,7 +384,7 @@ describe("crossAssetRail.send", () => {
         expect(persisted[0]).toMatchObject({
             offerHex: offer.offerHex,
             depositSats: 100_000,
-            payTo: ARK_ADDR,
+            payTo: ARKADE_ADDR,
             asset: USDX,
         });
     });
@@ -426,7 +432,7 @@ describe("no BTC-only rail silently drops an asset", () => {
 });
 
 describe("the record says which side of the fill the route is on", () => {
-    const req = { raw: ARK_ADDR, assets: [USDX] };
+    const req = { raw: ARKADE_ADDR, assets: [USDX] };
 
     const runWith = async (send: ReturnType<typeof vi.fn>) => {
         offerStub = async () => offer;

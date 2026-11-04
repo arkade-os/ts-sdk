@@ -9,10 +9,10 @@
  * ObjectSchema shape.
  */
 
-import { scriptFromArkAddress } from "../scriptFromAddress";
+import { scriptFromArkadeAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 
-export const ArkVtxoSchema = {
+export const ArkadeVtxoSchema = {
     name: "ArkVtxo",
     primaryKey: "pk",
     properties: {
@@ -48,7 +48,7 @@ export const ArkVtxoSchema = {
     },
 } as const;
 
-export const ArkUtxoSchema = {
+export const ArkadeUtxoSchema = {
     name: "ArkUtxo",
     primaryKey: "pk",
     properties: {
@@ -67,7 +67,7 @@ export const ArkUtxoSchema = {
     },
 } as const;
 
-export const ArkTransactionSchema = {
+export const ArkadeTransactionSchema = {
     name: "ArkTransaction",
     primaryKey: "pk",
     properties: {
@@ -84,7 +84,7 @@ export const ArkTransactionSchema = {
     },
 } as const;
 
-export const ArkWalletStateSchema = {
+export const ArkadeWalletStateSchema = {
     name: "ArkWalletState",
     primaryKey: "key",
     properties: {
@@ -94,7 +94,7 @@ export const ArkWalletStateSchema = {
     },
 } as const;
 
-export const ArkContractSchema = {
+export const ArkadeContractSchema = {
     name: "ArkContract",
     primaryKey: "script",
     properties: {
@@ -111,7 +111,7 @@ export const ArkContractSchema = {
     },
 } as const;
 
-export const ArkIntentSchema = {
+export const ArkadeIntentSchema = {
     name: "ArkIntent",
     primaryKey: "intentTxId",
     properties: {
@@ -135,7 +135,7 @@ export const ArkIntentSchema = {
     },
 } as const;
 
-export const ArkVirtualTxSchema = {
+export const ArkadeVirtualTxSchema = {
     name: "ArkVirtualTx",
     primaryKey: "txid",
     properties: {
@@ -146,7 +146,7 @@ export const ArkVirtualTxSchema = {
     },
 } as const;
 
-export const ArkVtxoBranchSchema = {
+export const ArkadeVtxoBranchSchema = {
     name: "ArkVtxoBranch",
     primaryKey: "pk",
     properties: {
@@ -164,11 +164,11 @@ export const ArkVtxoBranchSchema = {
  * Pass this array to your Realm configuration's `schema` property.
  */
 export const ArkRealmSchemas = [
-    ArkVtxoSchema,
-    ArkUtxoSchema,
-    ArkTransactionSchema,
-    ArkWalletStateSchema,
-    ArkContractSchema,
+    ArkadeVtxoSchema,
+    ArkadeUtxoSchema,
+    ArkadeTransactionSchema,
+    ArkadeWalletStateSchema,
+    ArkadeContractSchema,
 ];
 
 /**
@@ -185,9 +185,9 @@ export const ArkRealmSchemas = [
  * ```
  */
 export const ArkExperimentalRealmSchemas = [
-    ArkIntentSchema,
-    ArkVirtualTxSchema,
-    ArkVtxoBranchSchema,
+    ArkadeIntentSchema,
+    ArkadeVirtualTxSchema,
+    ArkadeVtxoBranchSchema,
 ];
 
 /**
@@ -210,7 +210,7 @@ export const ArkExperimentalRealmSchemas = [
  * History:
  *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
  *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
- *     the owning Ark address during migration.
+ *     the owning Arkade address during migration.
  *   - v3: ArkContract.watch added (nullable). No data migration: a row
  *     without one reads as `watched`, which is the coverage every
  *     existing contract has today.
@@ -254,7 +254,7 @@ export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
     for (let i = 0; i < newVtxos.length; i++) {
         const newVtxo = newVtxos[i];
         if (!newVtxo.script) {
-            newVtxo.script = scriptFromArkAddress(newVtxo.address);
+            newVtxo.script = scriptFromArkadeAddress(newVtxo.address);
         }
 
         const facts = legacyVtxoFacts(legacyByPk.get(newVtxo.pk));

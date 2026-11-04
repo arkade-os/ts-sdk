@@ -56,10 +56,10 @@ import {
     RestIndexerProvider,
     RestEmulatorProvider,
 } from "../../src";
-import { beforeEachFaucet, createTestArkWallet, faucetOffchain, randomP2TR } from "./utils";
+import { beforeEachFaucet, createTestArkadeWallet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const ARKADE_OPERATOR_URL = "http://localhost:7070";
 
 const PREIMAGE = new Uint8Array(32).fill(0x42);
 // RIPEMD160(SHA256(PREIMAGE)) — same constant the sibling non-interactive test uses.
@@ -236,15 +236,15 @@ const scriptV2Shaped = {
 
 describe("asset-denominated non-interactive covenant", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
     const receiverPkScript = randomP2TR();
 
     beforeEach(beforeEachFaucet, 20000);
 
     it("the emulator executes the asset covenant", { timeout: 180000 }, async () => {
         // A wallet that mints, then funds the contract with the asset.
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
         faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 6);
         await waitFor(async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS));
@@ -433,7 +433,7 @@ describe("asset-denominated non-interactive covenant", () => {
         // by the test above, so waiting on it returns THAT spend's vtxo and
         // the txid assertion below compares two unrelated transactions.
         const payee = randomP2TR();
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
         faucetOffchain(aliceAddress!, Number(CARRIER_SATS) * 6);
         await waitFor(async () => (await alice.wallet.getBalance()).total >= Number(CARRIER_SATS));

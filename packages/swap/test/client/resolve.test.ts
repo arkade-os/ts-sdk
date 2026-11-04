@@ -21,7 +21,7 @@ import {
 import { InMemoryAssetSwapRepository } from "../../src/repository";
 import type { QuoteInput } from "../../src/client/quote";
 import {
-    ARK_INFO,
+    ARKADE_INFO,
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
     USD_ASSET_ID,
@@ -350,7 +350,7 @@ describe("the deferred init", () => {
             getArkadeInfo: async () => {
                 reads += 1;
                 if (offline) throw new Error("operator unreachable");
-                return ARK_INFO;
+                return ARKADE_INFO;
             },
         });
         const { client } = await clientWith({ wallet, snapshot: [lightningCard] });

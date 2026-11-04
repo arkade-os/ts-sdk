@@ -1,11 +1,11 @@
 import { execSync } from "child_process";
 import {
     printSetupBanner,
-    waitForArkServer,
+    waitForOperator,
     waitForEmulator,
 } from "../../../scripts/regtest-wait.mjs";
 
-function initArkCli() {
+function initArkadeCli() {
     console.log("Initializing ark CLI client...");
     try {
         execSync(
@@ -24,8 +24,8 @@ function initArkCli() {
 
 async function setup() {
     try {
-        await waitForArkServer();
-        initArkCli();
+        await waitForOperator();
+        initArkadeCli();
         await waitForEmulator();
         printSetupBanner();
     } catch (error) {

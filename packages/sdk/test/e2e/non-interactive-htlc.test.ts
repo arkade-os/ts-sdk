@@ -10,7 +10,7 @@ import {
 import { beforeEachFaucet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const ARKADE_OPERATOR_URL = "http://localhost:7070";
 const HTLC_PREIMAGE = new Uint8Array(32).fill(0x42);
 const HTLC_PREIMAGE_HASH = hex.decode("8739f40ec4dbf569dcb38134c6e7310908566981"); // RIPEMD160(SHA256(HTLC_PREIMAGE))
 const CONTRACT_AMOUNT = 10_000n;
@@ -74,8 +74,8 @@ const nonInteractiveHTLC = {
 
 describe("non-interactive vHTLC", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
     const receiverPkScript = randomP2TR();
     const funderPkScript = randomP2TR();
 

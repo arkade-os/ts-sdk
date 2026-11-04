@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { RestArkProvider, DigestMismatchError } from "../src/providers/ark";
+import { RestArkProvider, DigestMismatchError } from "../src/providers/arkade";
 import { jsonResponse } from "./helpers/response";
 
 const SIGNER = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";

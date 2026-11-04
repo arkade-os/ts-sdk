@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ReadonlyWalletConfig, WalletConfig } from "../src/wallet";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/arkade";
 import { ReadonlyWallet, Wallet } from "../src/wallet/wallet";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";

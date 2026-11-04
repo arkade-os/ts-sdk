@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Ramps, DustChangeError, OversizedChangeError } from "../src/wallet/ramps";
 
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const ARK_ADDR =
+const ARKADE_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 
 const fees = { intentFee: {}, txFeeRate: "1" } as any;
@@ -18,7 +18,7 @@ const wallet = (over: Record<string, unknown> = {}) =>
     ({
         dustAmount: 330n,
         getSpendableVtxos: vi.fn().mockResolvedValue([vtxo("11", 10_000), vtxo("22", 20_000)]),
-        getAddress: vi.fn().mockResolvedValue(ARK_ADDR),
+        getAddress: vi.fn().mockResolvedValue(ARKADE_ADDR),
         settle: vi.fn().mockResolvedValue("txSETTLE"),
         logUngatedInputs: vi.fn().mockResolvedValue(undefined),
         ...over,
@@ -37,7 +37,7 @@ describe("Ramps.offboard with a named input set", () => {
                 inputs: chosen,
                 outputs: [
                     { address: BTC_ADDR, amount: 5_000n },
-                    { address: ARK_ADDR, amount: 45_000n },
+                    { address: ARKADE_ADDR, amount: 45_000n },
                 ],
             },
             undefined,
@@ -144,7 +144,7 @@ describe("Ramps.offboard pays for the change it creates", () => {
         const { inputs, outputs } = w.settle.mock.calls[0]![0];
         expect(outputs).toEqual([
             { address: BTC_ADDR, amount: 49_900n },
-            { address: ARK_ADDR, amount: 49_943n },
+            { address: ARKADE_ADDR, amount: 49_943n },
         ]);
         const spent: bigint = inputs.reduce(
             (s: bigint, i: { value: number }) => s + BigInt(i.value),
@@ -225,7 +225,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
             { address: BTC_ADDR, amount: 50_000n },
-            { address: ARK_ADDR, amount: 49_900n },
+            { address: ARKADE_ADDR, amount: 49_900n },
         ]);
     });
 
@@ -239,7 +239,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
             { address: BTC_ADDR, amount: 50_000n },
-            { address: ARK_ADDR, amount: 49_500n },
+            { address: ARKADE_ADDR, amount: 49_500n },
         ]);
     });
 
@@ -258,7 +258,7 @@ describe("Ramps.offboardExact pays the destination exactly", () => {
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
             { address: BTC_ADDR, amount: 50_000n },
-            { address: ARK_ADDR, amount: 49_443n },
+            { address: ARKADE_ADDR, amount: 49_443n },
         ]);
     });
 
@@ -299,7 +299,7 @@ describe("both exits keep the change under the server's per-output ceiling", () 
         await exactExit(bounded, priced, 30_000n);
         expect(bounded.settle.mock.calls[0]![0].outputs).toEqual([
             { address: BTC_ADDR, amount: 30_000n },
-            { address: ARK_ADDR, amount: 69_900n },
+            { address: ARKADE_ADDR, amount: 69_900n },
         ]);
     });
 

@@ -4,8 +4,8 @@ import { assertNoAssets, assetsOf, resolveSendAmount, selectionOf } from "../amo
 import { makeHandle } from "../handle";
 import { Ramps, changeAfterOutputFee, offboardDestinationScript } from "../../wallet/ramps";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "../../wallet/vtxo";
-import { Estimator } from "../../arkfee";
-import type { FeeInfo } from "../../providers/ark";
+import { Estimator } from "../../arkadeFee";
+import type { FeeInfo } from "../../providers/arkade";
 import type { Wallet } from "../../index";
 import { ArkAddress } from "../../script/address";
 import { hex } from "@scure/base";

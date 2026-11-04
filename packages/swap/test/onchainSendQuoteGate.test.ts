@@ -31,7 +31,7 @@ const WALLET_KEY = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207
 /** The server info the entrypoint reads off the wallet's own connection —
  * one object, so the covenant derived in-flow and the one the transport stub
  * builds from SERVER cannot drift. */
-const ARK_INFO = {
+const ARKADE_INFO = {
     signerPubkey: hex.encode(SERVER),
     unilateralExitDelay: 4096,
     network: "regtest",
@@ -46,7 +46,7 @@ const wallet = (): IWallet =>
     ({
         identity: SingleKey.fromHex(WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getArkadeInfo: async () => ARKADE_INFO,
         getContractManager: async () => ({ createContract: async () => ({}) }),
     }) as unknown as IWallet;
 
@@ -145,7 +145,7 @@ describe("requestOnchainSend prices the trade that was asked for", () => {
         const registering = {
             identity: SingleKey.fromHex(WALLET_KEY),
             getAddress: async () => REFUND_ADDRESS,
-            getArkadeInfo: async () => ARK_INFO,
+            getArkadeInfo: async () => ARKADE_INFO,
             getContractManager: async () => ({
                 createContract: async (row: unknown) => {
                     rows.push(row);

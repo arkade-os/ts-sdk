@@ -1238,7 +1238,7 @@ export async function requestLightningSend(
         );
     }
 
-    const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
+    const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "operator signer key");
     const network = networkFromArkadeInfo(info);
     const derived = deriveLightningSend({
         quote,
@@ -1442,7 +1442,7 @@ export async function requestArkadeSwap(
                   receiveAddress,
                   ownPkScript,
                   networkFromArkadeInfo(info).hrp,
-                  toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+                  toXOnly(hex.decode(info.signerPubkey), "operator signer key"),
               );
     const pair = rfqPair(
         params.offerAsset ? arkadeAssetLeg(params.offerAsset) : ARKADE_BTC,
@@ -1526,14 +1526,14 @@ export async function requestArkadeSwap(
  * Three-valued where {@link NetworkName} is five: `signet` and `mutinynet` carry testnet address
  * parameters, so they fold into `testnet`.
  */
-export const l1NetworkFromArk = (network: string): OnchainNetwork =>
+export const l1NetworkFromArkade = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
 /** The covenant terms the trader's OWN live server info supplies. */
 const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
     const network = networkFromArkadeInfo(info);
     return {
-        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
+        operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "operator signer key"),
         emulatorPubkey: toXOnly(
             hex.decode(resolveEmulatorPubkey(network, emulatorPubkey)),
             "emulator signer key",
@@ -1794,7 +1794,7 @@ export async function requestOnchainSend(
      * after a restart; nothing else gives them back. Prefer `onchainSendProfile(result)` to
      * mapping them by hand. */
     htlcParams: OnchainHtlcParams;
-    /** Which bitcoin network the L1 HTLC was derived for. NOT the ark network name: signet,
+    /** Which bitcoin network the L1 HTLC was derived for. NOT the Arkade network name: signet,
      * mutinynet and testnet4 all become `"testnet"`. */
     l1Network: OnchainNetwork;
     /** `profile.min_confirmations`; gates when the L1 fill becomes claimable,
@@ -1846,7 +1846,7 @@ export async function requestOnchainSend(
         paymentHash,
         payoutPubkey: params.payoutPubkey,
         ...serverTerms(info, params.emulatorPubkey),
-        l1Network: l1NetworkFromArk(info.network),
+        l1Network: l1NetworkFromArkade(info.network),
         refundAddress,
         senderPubkey,
     });
@@ -2488,7 +2488,7 @@ export async function requestOnchainReceive(
         payoutAddress,
         refundPubkey: params.refundPubkey,
         ...serverTerms(info, params.emulatorPubkey),
-        l1Network: l1NetworkFromArk(info.network),
+        l1Network: l1NetworkFromArkade(info.network),
     });
     assertFundable({
         quote,

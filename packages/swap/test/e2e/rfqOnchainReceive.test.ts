@@ -33,7 +33,7 @@ import {
     type RfqTransport,
 } from "../../src/protocol";
 
-const ARK_URL = "http://localhost:7070";
+const ARKADE_URL = "http://localhost:7070";
 const ESPLORA_API_URL = "http://localhost:3000/api";
 const arkdExec = "docker exec -t arkd";
 const bccli = "docker exec -t bitcoin bitcoin-cli -regtest -rpcuser=admin1 -rpcpassword=123";
@@ -152,7 +152,7 @@ const stubTransport = (): RfqTransport => ({
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(ARKADE_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

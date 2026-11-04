@@ -260,8 +260,8 @@ import {
     TreeSignatureEvent,
     ScheduledSession,
     FeeInfo,
-} from "./providers/ark";
-import { CachingArkProvider } from "./providers/cachingArk";
+} from "./providers/arkade";
+import { CachingArkProvider } from "./providers/cachingArkade";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -294,7 +294,7 @@ import {
     VerifyServerSignatures,
     combineTapscriptSigs,
     isValidArkAddress,
-} from "./utils/arkTransaction";
+} from "./utils/arkadeTransaction";
 import { getRandomId, assertRecipientArkadeAddress } from "./wallet/utils";
 import type { RecipientArkadeAddressContext } from "./wallet/utils";
 import {
@@ -322,7 +322,7 @@ import {
 } from "./utils/prevoutTx";
 import { Intent, type IntentCoin } from "./intent";
 import { BIP322 } from "./bip322";
-import { ArkNote } from "./arknote";
+import { ArkNote } from "./arkadeNote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
@@ -423,7 +423,7 @@ import {
     assertSendDeadline,
     captureSendDeadline,
 } from "./wallet/sendDeadline";
-import type { ServerInfoSource } from "./wallet/arkInfoSnapshot";
+import type { ServerInfoSource } from "./wallet/arkadeInfoSnapshot";
 import type { ProviderConnectionState } from "./wallet/wallet";
 import type { ContractSyncState } from "./contracts/contractManager";
 import { validateVtxoTxGraph, validateConnectorsTxGraph } from "./tree/validation";
@@ -475,7 +475,7 @@ import type {
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 
-export * from "./arkfee";
+export * from "./arkadeFee";
 export {
     MAX_PAGE_SIZE,
     assertPageRequest,
@@ -542,8 +542,8 @@ import {
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
-} from "./contracts/arkcontract";
-import type { ParsedArkContract } from "./contracts/arkcontract";
+} from "./contracts/arkadeContract";
+import type { ParsedArkContract } from "./contracts/arkadeContract";
 import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
 import {
     isContractGenericallySpendable,

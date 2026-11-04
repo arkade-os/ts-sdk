@@ -19,7 +19,7 @@ export type BoardingContractParams = DefaultContractParams;
  * the CSV differs (`boardingExitDelay` vs `unilateralExitDelay`).
  *
  * {@link Discoverable.discoverAt} probes the **on-chain** UTXO set at the P2TR address, not the
- * Ark indexer, and no-ops when `deps.boardingTimelock` / `deps.onchainNetwork` are absent.
+ * Arkade indexer, and no-ops when `deps.boardingTimelock` / `deps.onchainNetwork` are absent.
  *
  * Default/boarding collision: a script owns exactly one repository row. A sound server keeps
  * boardingExitDelay > unilateralExitDelay (equal delays expose it to a double-spend); if they
@@ -108,7 +108,7 @@ export const BoardingContractHandler: ContractHandler<BoardingContractParams, De
                     csvTimelock: deps.boardingTimelock,
                 }),
                 script: scriptHex,
-                // The Ark address, not the P2TR: must match the row registered at init so the
+                // The Arkade address, not the P2TR: must match the row registered at init so the
                 // watcher monitors the same L2 script and the VTXO repository bucket lines up.
                 address: script.address(deps.network.hrp, deps.serverPubKey).encode(),
                 // Tag rotated rows (index > 0) for boot resolution and per-index signing.

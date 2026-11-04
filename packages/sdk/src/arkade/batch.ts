@@ -14,7 +14,7 @@ import { SigHash, OutScript, Address } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 
 import type { Identity } from "../identity";
-import type { ArkProvider } from "../providers/ark";
+import type { ArkProvider } from "../providers/arkade";
 import type { EmulatorProvider, ConnectorTreeNode } from "../providers/emulator";
 import type { Network } from "../networks";
 import type { ExtendedCoin, Recipient } from "../wallet";
@@ -24,7 +24,7 @@ import type {
     TreeSigningStartedEvent,
     TreeNoncesEvent,
     BatchFinalizationEvent,
-} from "../providers/ark";
+} from "../providers/arkade";
 
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";

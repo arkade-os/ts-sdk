@@ -14,7 +14,7 @@ import { Transaction } from "../src/utils/transaction";
 import { SingleKey } from "../src/identity/singleKey";
 import { VtxoScript } from "../src/script/base";
 import { CSVMultisigTapscript, MultisigTapscript } from "../src/script/tapscript";
-import { signAndSubmitOffchainTx, type ArkTxInput } from "../src/utils/arkTransaction";
+import { signAndSubmitOffchainTx, type ArkTxInput } from "../src/utils/arkadeTransaction";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -58,14 +58,16 @@ const cosignOtherLeaf = async (psbt: string): Promise<string> => {
 
 const provider = (
     over: {
-        cosignArkTx?: (psbt: string) => Promise<string>;
+        cosignArkadeTx?: (psbt: string) => Promise<string>;
         cosignCheckpoint?: (psbt: string) => Promise<string>;
-        dropFinalArkTx?: boolean;
+        dropFinalArkadeTx?: boolean;
     } = {},
 ) => ({
     submitTx: vi.fn(async (arkTx: string, checkpoints: string[]) => ({
         arkTxid: Transaction.fromPSBT(base64.decode(arkTx)).id,
-        finalArkTx: over.dropFinalArkTx ? undefined : await (over.cosignArkTx ?? cosign)(arkTx),
+        finalArkTx: over.dropFinalArkadeTx
+            ? undefined
+            : await (over.cosignArkadeTx ?? cosign)(arkTx),
         signedCheckpointTxs: await Promise.all(checkpoints.map(over.cosignCheckpoint ?? cosign)),
     })),
     finalizeTx: vi.fn(async () => {}),
@@ -110,12 +112,12 @@ const cosignRetired = async (psbt: string): Promise<string> =>
     base64.encode((await RETIRED.sign(Transaction.fromPSBT(base64.decode(psbt)))).toPSBT());
 
 describe("signAndSubmitOffchainTx server-signature verification", () => {
-    it("finalizes when the server signed the ark tx and every checkpoint", async () => {
+    it("finalizes when the server signed the Arkade transaction and every checkpoint", async () => {
         const p = provider();
         const arkTxid = await submit(p, { serverPubkey: SERVER_PUBKEY });
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
-        const submittedArkTx = p.submitTx.mock.calls[0][0];
-        expect(arkTxid).toBe(Transaction.fromPSBT(base64.decode(submittedArkTx)).id);
+        const submittedArkadeTx = p.submitTx.mock.calls[0][0];
+        expect(arkTxid).toBe(Transaction.fromPSBT(base64.decode(submittedArkadeTx)).id);
     });
 
     it("accepts a compressed server key, not only an x-only one", async () => {
@@ -125,7 +127,7 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
     });
 
     it("accepts a leaf signed by a retired signer the server still advertises", async () => {
-        const p = provider({ cosignArkTx: cosignRetired, cosignCheckpoint: cosignRetired });
+        const p = provider({ cosignArkadeTx: cosignRetired, cosignCheckpoint: cosignRetired });
         await submit(
             p,
             { serverPubkey: SERVER_PUBKEY, deprecatedServerPubkeys: [RETIRED_PUBKEY] },
@@ -135,7 +137,7 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
     });
 
     it("rejects a leaf naming a signer the server does not advertise", async () => {
-        const p = provider({ cosignArkTx: cosignRetired, cosignCheckpoint: cosignRetired });
+        const p = provider({ cosignArkadeTx: cosignRetired, cosignCheckpoint: cosignRetired });
         await expect(submit(p, { serverPubkey: SERVER_PUBKEY }, retiredInputs())).rejects.toThrow(
             /names no signer key the server advertises/,
         );
@@ -143,9 +145,9 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
     });
 
     it("rejects a response the server never signed, before finalizing", async () => {
-        const p = provider({ cosignArkTx: async (psbt) => psbt });
+        const p = provider({ cosignArkadeTx: async (psbt) => psbt });
         await expect(submit(p, { serverPubkey: SERVER_PUBKEY })).rejects.toThrow(
-            /ark tx: input 0 is not signed by the server/,
+            /Arkade transaction: input 0 is not signed by the server/,
         );
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -161,19 +163,22 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
 
-    it("fails closed when the response carries no final ark tx — but only when asked to verify", async () => {
+    it("fails closed when the response carries no final Arkade transaction — but only when asked to verify", async () => {
         await expect(
-            submit(provider({ dropFinalArkTx: true }), { serverPubkey: SERVER_PUBKEY }),
-        ).rejects.toThrow(/no final ark tx to verify/);
+            submit(provider({ dropFinalArkadeTx: true }), { serverPubkey: SERVER_PUBKEY }),
+        ).rejects.toThrow(/no final Arkade transaction to verify/);
 
         // The same response with verification omitted is the pre-existing path.
-        const p = provider({ dropFinalArkTx: true });
+        const p = provider({ dropFinalArkadeTx: true });
         await submit(p);
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
     });
 
     it("leaves an unsigned-by-the-server response untouched when verification is omitted", async () => {
-        const p = provider({ cosignArkTx: async (psbt) => psbt, cosignCheckpoint: async (c) => c });
+        const p = provider({
+            cosignArkadeTx: async (psbt) => psbt,
+            cosignCheckpoint: async (c) => c,
+        });
         await submit(p);
         expect(p.finalizeTx).toHaveBeenCalledTimes(1);
     });

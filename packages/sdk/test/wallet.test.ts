@@ -709,7 +709,7 @@ describe("Wallet", () => {
             mockFetch.mockReset();
         });
 
-        const mockArkInfo = {
+        const mockArkadeInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -731,7 +731,7 @@ describe("Wallet", () => {
         };
 
         it("should return intentFee config as strings", async () => {
-            mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+            mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
 
             const provider = new RestArkProvider("http://localhost:7070");
             const info = await provider.getInfo();
@@ -742,7 +742,7 @@ describe("Wallet", () => {
     });
 
     describe("toReadonly", () => {
-        const mockArkInfo = {
+        const mockArkadeInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -762,7 +762,7 @@ describe("Wallet", () => {
 
         it("should convert Wallet to ReadonlyWallet", async () => {
             mockFetch
-                .mockResolvedValueOnce(jsonResponse(mockArkInfo))
+                .mockResolvedValueOnce(jsonResponse(mockArkadeInfo))
                 .mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const wallet = await Wallet.create({
@@ -789,7 +789,7 @@ describe("Wallet", () => {
 
         it("should not have sendBitcoin method on ReadonlyWallet type", async () => {
             mockFetch
-                .mockResolvedValueOnce(jsonResponse(mockArkInfo))
+                .mockResolvedValueOnce(jsonResponse(mockArkadeInfo))
                 .mockResolvedValueOnce(jsonResponse({ vtxos: [] }));
 
             const wallet = await Wallet.create({
@@ -829,7 +829,7 @@ describe("Wallet", () => {
             // and the background VtxoManager init doesn't matter.
             mockFetch.mockImplementation((url: string) => {
                 if (url.includes("/v1/info")) {
-                    return Promise.resolve(jsonResponse(mockArkInfo));
+                    return Promise.resolve(jsonResponse(mockArkadeInfo));
                 }
                 if (url.includes("/script/subscribe")) {
                     return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
@@ -857,7 +857,7 @@ describe("Wallet", () => {
     });
 
     describe("delta-sync reconciliation", () => {
-        const mockArkInfo = {
+        const mockArkadeInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -881,7 +881,7 @@ describe("Wallet", () => {
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                    getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: {
                     getVtxos,
@@ -1080,7 +1080,7 @@ describe("Wallet", () => {
     });
 
     describe("clear", () => {
-        const mockArkInfo = {
+        const mockArkadeInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -1131,7 +1131,7 @@ describe("Wallet", () => {
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                    getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: {
                     getVtxos,
@@ -1237,7 +1237,7 @@ describe("Wallet", () => {
     });
 
     describe("notifyIncomingFunds — single SSE stream", () => {
-        const mockArkInfo = {
+        const mockArkadeInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -1267,7 +1267,7 @@ describe("Wallet", () => {
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                    getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: {
                     getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
@@ -1311,7 +1311,7 @@ describe("Wallet", () => {
     });
 
     describe("pending-spend filtering", () => {
-        const mockArkInfo = {
+        const mockArkadeInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -1365,7 +1365,7 @@ describe("Wallet", () => {
             const wallet = await ReadonlyWallet.create({
                 identity: readonlyIdentity,
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                    getInfo: vi.fn().mockResolvedValue(mockArkadeInfo),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: {
                     getVtxos,
@@ -1459,7 +1459,7 @@ describe("Wallet", () => {
         const MUTINYNET_DELAY = 144n;
         const DELEGATE_PUBKEY = mockServerKeyHex;
 
-        const mockArkInfo = (network: "bitcoin" | "mutinynet", unilateralExitDelay: bigint) => ({
+        const mockArkadeInfo = (network: "bitcoin" | "mutinynet", unilateralExitDelay: bigint) => ({
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
@@ -1544,7 +1544,7 @@ describe("Wallet", () => {
                     getInfo: vi
                         .fn()
                         .mockResolvedValue(
-                            mockArkInfo(
+                            mockArkadeInfo(
                                 network,
                                 config?.unilateralExitDelay ??
                                     (network === "bitcoin" ? ARKD_DELAY : MUTINYNET_DELAY),
@@ -1576,7 +1576,7 @@ describe("Wallet", () => {
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
+                    getInfo: vi.fn().mockResolvedValue(mockArkadeInfo("bitcoin", ARKD_DELAY)),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: createIndexerProvider(),
                 onchainProvider: createOnchainProvider(),
@@ -1798,7 +1798,7 @@ describe("ReadonlyWallet", () => {
 
     const mockServerKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-    const mockArkInfo = {
+    const mockArkadeInfo = {
         signerPubkey: mockServerKeyHex,
         forfeitPubkey: mockServerKeyHex,
         batchExpiry: BigInt(144),
@@ -1821,7 +1821,7 @@ describe("ReadonlyWallet", () => {
         const compressedPubKey = await key.compressedPublicKey();
         const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
@@ -1866,7 +1866,7 @@ describe("ReadonlyWallet", () => {
         // Route by URL to keep ordering assumptions out of the test.
         mockFetch.mockImplementation((url: string) => {
             if (url.includes("/v1/info")) {
-                return Promise.resolve(jsonResponse(mockArkInfo));
+                return Promise.resolve(jsonResponse(mockArkadeInfo));
             }
             if (url.includes("/script/subscribe")) {
                 return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
@@ -1897,7 +1897,7 @@ describe("ReadonlyWallet", () => {
         const compressedPubKey = await key.compressedPublicKey();
         const readonlyIdentity = ReadonlySingleKey.fromPublicKey(compressedPubKey);
 
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,

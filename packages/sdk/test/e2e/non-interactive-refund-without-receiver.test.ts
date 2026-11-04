@@ -73,7 +73,7 @@ import {
 import { beforeEachFaucet, execCommand, faucetOffchain, mineBlocks, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const ARKADE_OPERATOR_URL = "http://localhost:7070";
 const CONTRACT_AMOUNT = 10_000n;
 /** How far past the chain's current median-time-past the locktime sits at construction time — must be > 0 so the leaf is immature the moment it is built. */
 const CLTV_OFFSET_SECONDS = 8n;
@@ -150,8 +150,8 @@ async function matureAbsoluteLocktime(targetUnix: bigint): Promise<void> {
 
 describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
 

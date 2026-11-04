@@ -14,7 +14,7 @@
  * value after normalization should copy first.
  *
  * @param key - 32-byte x-only or 33-byte compressed public key
- * @param label - Name used in the error, e.g. `"ark signer key"`
+ * @param label - Name used in the error, e.g. `"operator signer key"`
  * @see toXOnlySignerHex for the hex-in, hex-out signer-rotation equivalent
  */
 export function toXOnly(key: Uint8Array, label = "public key"): Uint8Array {

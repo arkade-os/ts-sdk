@@ -10,7 +10,7 @@ import {
     DEFAULT_ARKADE_SERVER_URL,
     type NetworkName,
 } from "../networks";
-import { type ArkadeInfo, type ArkProvider, RestArkProvider } from "../providers/ark";
+import { type ArkadeInfo, type ArkProvider, RestArkProvider } from "../providers/arkade";
 import { type EmulatorProvider, RestEmulatorProvider } from "../providers/emulator";
 import { type IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers/onchain";

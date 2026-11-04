@@ -21,7 +21,7 @@ import type { TaskProcessor } from "../../worker/expo/taskRunner";
 import type { TaskItem } from "../../worker/expo/taskQueue";
 import { runTasks, createTaskDependencies } from "../../worker/expo/taskRunner";
 import { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "../../worker/expo/processors";
-import { ExpoArkProvider } from "../../providers/expoArk";
+import { ExpoArkProvider } from "../../providers/expoArkade";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
 import { getRandomId } from "../utils";
 

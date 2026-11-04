@@ -27,26 +27,26 @@ describe("joint graph commitment", () => {
         const signer = SingleKey.fromPrivateKey(new Uint8Array(32).fill(0x7a));
         const ark = Transaction.fromPSBT(base64.decode(fixture.arkTx));
         const checkpoint = Transaction.fromPSBT(base64.decode(fixture.checkpoints[1]));
-        const signedArk = await signer.sign(ark.clone(), [1]);
+        const signedArkade = await signer.sign(ark.clone(), [1]);
         const signedCheckpoint = await signer.sign(checkpoint.clone(), [0]);
-        const arkBefore = signedArk.toPSBT();
+        const arkadeBefore = signedArkade.toPSBT();
         const checkpointBefore = signedCheckpoint.toPSBT();
         const signed: JointGraph = {
             ...fixture,
-            arkTx: base64.encode(signedArk.toPSBT()),
+            arkTx: base64.encode(signedArkade.toPSBT()),
             checkpoints: [
                 fixture.checkpoints[0],
                 base64.encode(signedCheckpoint.toPSBT()),
                 fixture.checkpoints[2],
             ],
         };
-        expect(signedArk.getInput(1).tapScriptSig).toHaveLength(1);
+        expect(signedArkade.getInput(1).tapScriptSig).toHaveLength(1);
         expect(signedCheckpoint.getInput(0).tapScriptSig).toHaveLength(1);
-        expect(unsignedPsbtBytes(signedArk)).toEqual(ark.toPSBT());
+        expect(unsignedPsbtBytes(signedArkade)).toEqual(ark.toPSBT());
         expect(unsignedPsbtBytes(signedCheckpoint)).toEqual(checkpoint.toPSBT());
         expect(digest(signed)).toBe(fixture.graphId);
         expect(verifyOfferFillPlan(signed)).toBe(true);
-        expect(signedArk.toPSBT()).toEqual(arkBefore);
+        expect(signedArkade.toPSBT()).toEqual(arkadeBefore);
         expect(signedCheckpoint.toPSBT()).toEqual(checkpointBefore);
     });
 

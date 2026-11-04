@@ -27,8 +27,8 @@ import {
     arkdExec,
     beforeEachFaucet,
     clearFees,
-    createTestArkWallet,
-    createTestArkWalletWithDelegate,
+    createTestArkadeWallet,
+    createTestArkadeWalletWithDelegate,
     createTestIdentity,
     createTestOnchainWallet,
     execCommand,
@@ -43,9 +43,9 @@ describe("Common", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     for (const { name, factory } of [
-        { name: "Wallet", factory: createTestArkWallet },
-        // { name: "With Delegate", factory: createTestArkWalletWithDelegate },
-        // { name: "With Mnemonic", factory: createTestArkWalletWithMnemonic },
+        { name: "Wallet", factory: createTestArkadeWallet },
+        // { name: "With Delegate", factory: createTestArkadeWalletWithDelegate },
+        // { name: "With Mnemonic", factory: createTestArkadeWalletWithMnemonic },
     ]) {
         describe(name, () => {
             it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
@@ -975,9 +975,9 @@ describe("Common", () => {
                 } catch (error: any) {
                     expect(error).toBeDefined();
                     expect(error).toBeInstanceOf(ArkError);
-                    expect(error.message).toContain("INVALID_ARK_PSBT (1)");
+                    expect(error.message).toContain("INVALID_ARKADE_PSBT (1)");
                     expect(error.code).toBe(1);
-                    expect(error.name).toBe("INVALID_ARK_PSBT");
+                    expect(error.name).toBe("INVALID_ARKADE_PSBT");
                     expect(error.metadata).toStrictEqual({ tx: "invalid" });
                 }
             });
@@ -1174,7 +1174,7 @@ describe("Delegate", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     it("should delegate renewal of vtxos", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWalletWithDelegate();
+        const alice = await createTestArkadeWalletWithDelegate();
         const boardingAddress = await alice.wallet.getBoardingAddress();
         execCommand(`node regtest/regtest.mjs faucet ${boardingAddress} 0.001 --confirm`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -1271,7 +1271,7 @@ describe("Delegate Lifecycle", () => {
         expect(vtxos2.length).toBeGreaterThanOrEqual(2);
 
         // Create a bob wallet to receive funds
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
 
         // Capture delegate VTXOs before sending
@@ -1450,7 +1450,7 @@ describe("Cross-contract spending", () => {
         expect(delegateVtxosBefore.length).toBeGreaterThan(0);
 
         // Step 3 — Spend 1500: exceeds any single VTXO, forces both pools
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
 
         const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
@@ -1574,7 +1574,7 @@ describe("Cross-contract spending", () => {
         expect(delegateVtxosBefore.length).toBeGreaterThan(0);
 
         // Step 3 — Spend 1500: exceeds any single VTXO, forces both pools
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
 
         const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));

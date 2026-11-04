@@ -34,7 +34,7 @@ export enum BIP21Error {
  * One destination classifying differently bare than as an `ark=` param is the
  * defect; this is the only place the two forms are told apart.
  */
-const ARK_HRP = /^(?:t?ark|T?ARK)/;
+const ARKADE_HRP = /^(?:t?ark|T?ARK)/;
 
 /** BIP21 grammar has no exponent, and `String(1e-7)` is "1e-7". */
 const formatAmount = (btc: number): string => btc.toFixed(8).replace(/\.?0+$/, "");
@@ -66,7 +66,7 @@ export class BIP21 {
                 queryParams[key] = formatAmount(amount);
             } else if (key === "ark") {
                 // Validate Arkade address format
-                if (typeof value === "string" && ARK_HRP.test(value)) {
+                if (typeof value === "string" && ARKADE_HRP.test(value)) {
                     queryParams[key] = value;
                 } else {
                     console.warn("Invalid ARK address format");
@@ -160,7 +160,7 @@ export class BIP21 {
                     params[key] = amount;
                 } else if (key === "ark") {
                     // Validate Arkade address format
-                    if (ARK_HRP.test(value)) {
+                    if (ARKADE_HRP.test(value)) {
                         params[key] = value;
                     } else {
                         console.warn("Invalid ARK address format");

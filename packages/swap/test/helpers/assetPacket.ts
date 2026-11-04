@@ -1,7 +1,7 @@
 import { base64 } from "@scure/base";
 import { Extension, Transaction } from "@arkade-os/sdk";
 
-/** Every asset group in a submitted ark tx's packet, as `[vin|vout, amount]` pairs. */
+/** Every asset group in a submitted Arkade transaction's packet, as `[vin|vout, amount]` pairs. */
 export const assetFlows = (psbt: string) => {
     const packet = Extension.fromTx(Transaction.fromPSBT(base64.decode(psbt))).getAssetPacket();
     if (!packet) throw new Error("the extension output carries no asset packet");

@@ -196,14 +196,14 @@ function toJointGraph(
         }
     }
 
-    const arkTxPsbt = base64.encode(arkTx.toPSBT());
+    const arkadeTxPsbt = base64.encode(arkTx.toPSBT());
     const checkpointPsbts = checkpoints.map((c) => base64.encode(c.toPSBT()));
     const inputOwners = layout.inputs.map((input) => input.owner);
     const graph: JointGraph = {
-        arkTx: arkTxPsbt,
+        arkTx: arkadeTxPsbt,
         checkpoints: checkpointPsbts,
         graphId: digestJointGraph(
-            { arkTx: arkTxPsbt, checkpoints: checkpointPsbts, inputOwners },
+            { arkTx: arkadeTxPsbt, checkpoints: checkpointPsbts, inputOwners },
             OFFER_FILL_TEMPLATE,
         ),
         inputOwners,

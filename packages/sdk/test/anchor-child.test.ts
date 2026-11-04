@@ -6,7 +6,7 @@ import { getNetwork } from "../src/networks";
 import { DefaultVtxo } from "../src/script/default";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { buildAnchorChild, ANCHOR_PKSCRIPT, P2A } from "../src/utils/anchor";
-import { buildOffchainTx } from "../src/utils/arkTransaction";
+import { buildOffchainTx } from "../src/utils/arkadeTransaction";
 import { Transaction } from "../src/utils/transaction";
 
 const network = getNetwork("regtest");
@@ -54,7 +54,7 @@ describe("buildOffchainTx anchor", () => {
             serverUnrollScript,
         );
 
-    it("puts the fee in the P2A output so the ark tx itself pays none", () => {
+    it("puts the fee in the P2A output so the Arkade transaction itself pays none", () => {
         const { arkTx, checkpoints } = build(890n);
         const anchor = arkTx.getOutput(1);
         expect(anchor.script).toEqual(ANCHOR_PKSCRIPT);

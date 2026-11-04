@@ -37,7 +37,7 @@ import {
 const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const ARK_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
+const ARKADE_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
 const INVOICE = invoiceFor(PAYMENT_HASH, CLOCK);
 
 /** BTC on the leg every corridor quote denominates its fee on. */
@@ -113,27 +113,27 @@ describe("pay", () => {
     describe("to a plain Arkade address", () => {
         it("sends through the wallet and manufactures no swap", async () => {
             const { client, repository, wallet } = await harness();
-            const result = await client.pay(ARK_ADDRESS, { amount: 1_000n });
+            const result = await client.pay(ARKADE_ADDRESS, { amount: 1_000n });
 
             expect(result).toEqual({ kind: "payment", txid: expect.any(String) });
-            expect(wallet.sent).toEqual([{ address: ARK_ADDRESS, amount: 1_000 }]);
+            expect(wallet.sent).toEqual([{ address: ARKADE_ADDRESS, amount: 1_000 }]);
             // Same asset, same rail, rate 1: there is nothing to record.
             expect(await collectSwapRecords(repository)).toEqual([]);
         });
 
         it("reads the address out of a unified BIP21 URI too", async () => {
             const { client, wallet } = await harness();
-            const uri = `bitcoin:${BCRT1}?ark=${ARK_ADDRESS}&amount=0.00001`;
+            const uri = `bitcoin:${BCRT1}?ark=${ARKADE_ADDRESS}&amount=0.00001`;
             const result = await client.pay(uri);
 
             expect(result.kind).toBe("payment");
             // Core's own amount law: the URI's `amount=` is what it resolves to.
-            expect(wallet.sent).toEqual([{ address: ARK_ADDRESS, amount: 1_000 }]);
+            expect(wallet.sent).toEqual([{ address: ARKADE_ADDRESS, amount: 1_000 }]);
         });
 
         it("refuses an amountless send in core's own words", async () => {
             const { client } = await harness();
-            await expect(client.pay(ARK_ADDRESS)).rejects.toThrow(/an amount is required/);
+            await expect(client.pay(ARKADE_ADDRESS)).rejects.toThrow(/an amount is required/);
         });
     });
 });

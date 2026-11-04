@@ -20,7 +20,7 @@ import {
     waitFor,
 } from "./utils";
 
-const arkUrl = "http://localhost:7070";
+const arkadeUrl = "http://localhost:7070";
 
 /**
  * Real, fixture-driven server-signer rotation coverage for the deprecated-signer
@@ -100,7 +100,7 @@ describe("deprecated-signer migration (real rotation)", () => {
      * suite's own teardown leaves it on `A`).
      */
     const resetToBaselineSigner = async (): Promise<void> => {
-        const info = await getServerInfo(arkUrl);
+        const info = await getServerInfo(arkadeUrl);
         const onA = norm(info.signerPubkey) === (await xonly(A_SEC));
         if (onA && info.deprecatedSigners.length === 0) return;
         await rotateArkdSigner({ activeSignerPriv: A_SEC, deprecatedSigners: [] });
@@ -109,7 +109,7 @@ describe("deprecated-signer migration (real rotation)", () => {
     const makeWallet = async (useMnemonic = false): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(useMnemonic),
-            arkProvider: new RestArkProvider(arkUrl),
+            arkProvider: new RestArkProvider(arkadeUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -178,7 +178,7 @@ describe("deprecated-signer migration (real rotation)", () => {
     // If a run lands a non-rotation arkd-wallet image, `rotateArkdSigner` times
     // out here with a clear message instead of letting the rest fail obscurely.
     it("observes a real signer rotation via getInfo", { timeout: 180_000 }, async () => {
-        const before = await getServerInfo(arkUrl);
+        const before = await getServerInfo(arkadeUrl);
         expect(norm(before.signerPubkey)).toBe(await xonly(A_SEC));
 
         const after = await rotateArkdSigner({
@@ -231,7 +231,7 @@ describe("deprecated-signer migration (real rotation)", () => {
                 // Wallet re-derived onto the active (B) signer; nothing left under A.
                 expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
                 // The migration's spend reaches the repository via a fresh
-                // indexer sync that lags the just-submitted ark tx (the sync
+                // indexer sync that lags the just-submitted Arkade transaction (the sync
                 // re-writes VTXO rows indexer-wins), so poll until no
                 // spendable VTXO remains under the deprecated signer.
                 const postStatus = await poll(async () => {
@@ -311,7 +311,7 @@ describe("deprecated-signer migration (real rotation)", () => {
 
                 expect(hex.encode(wallet.arkServerPublicKey)).toBe(toX);
                 // The migration's spend reaches the repository via a fresh
-                // indexer sync that lags the just-submitted ark tx (the sync
+                // indexer sync that lags the just-submitted Arkade transaction (the sync
                 // re-writes VTXO rows indexer-wins), so poll until no
                 // spendable VTXO remains under the deprecated signer.
                 const postStatus = await poll(async () => {

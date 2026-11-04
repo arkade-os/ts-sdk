@@ -12,7 +12,7 @@ import { networks } from "../src/networks";
 import { ProviderUnavailableError } from "../src/providers/errors";
 import type { TapLeafScript } from "../src/script/base";
 import type { ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
-import type { BatchFinalizationEvent } from "../src/providers/ark";
+import type { BatchFinalizationEvent } from "../src/providers/arkade";
 
 const NETWORK = networks.regtest;
 
@@ -30,7 +30,7 @@ const ONCHAIN_ADDRESS = Address(NETWORK).encode({
     type: "tr",
     pubkey: hex.decode("33".repeat(32)),
 });
-const ARK_ADDRESS =
+const ARKADE_ADDRESS =
     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
 
 const pkScript = (address: string) => OutScript.encode(Address(NETWORK).decode(address));
@@ -158,7 +158,7 @@ describe("delegation forfeits a VTXO past expiry that is not swept", () => {
             getDelegateInfo: vi.fn(async () => ({
                 pubkey: hex.encode(DELEGATE_PUBKEY),
                 fee: 0,
-                delegateAddress: ARK_ADDRESS,
+                delegateAddress: ARKADE_ADDRESS,
             })),
             delegate: vi.fn(async (_intent: unknown, _forfeits: string[]) => {}),
         };
@@ -184,7 +184,7 @@ describe("delegation forfeits a VTXO past expiry that is not swept", () => {
     async function delegateForfeits(input: ExtendedVirtualCoin): Promise<string[]> {
         const { manager, delegateProvider } = harness();
 
-        const result = await manager.delegate([input as any], ARK_ADDRESS, DELEGATE_AT);
+        const result = await manager.delegate([input as any], ARKADE_ADDRESS, DELEGATE_AT);
 
         // Surfaces a harness failure, which `delegate` otherwise swallows into `failed`.
         expect(result.failed.map((f) => String(f.error))).toEqual([]);
@@ -225,7 +225,7 @@ describe("settle refreshes the swept state of expired inputs", () => {
         const thisArg: any = {
             network: NETWORK,
             onchainProvider: { getChainTip },
-            getAddress: vi.fn(async () => ARK_ADDRESS),
+            getAddress: vi.fn(async () => ARKADE_ADDRESS),
             getContractManager: vi.fn(async () => ({ refreshOutpoints })),
             getVtxos: vi.fn(async () => opts.fresh ?? []),
             logUngatedInputs: vi.fn(async () => {}),

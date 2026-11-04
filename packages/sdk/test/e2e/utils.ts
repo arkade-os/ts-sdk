@@ -43,7 +43,7 @@ export const arkdExec = "docker exec -t arkd";
 export const ESPLORA_API_URL = "http://localhost:3000/api";
 
 /** Regtest arkd. Wallets take it as a provider — the URL is not wallet config. */
-export const ARK_URL = "http://localhost:7070";
+export const ARKADE_URL = "http://localhost:7070";
 
 /**
  * Default budget for a shell-out. Every `execSync` here MUST carry one:
@@ -82,10 +82,10 @@ const ROTATE_POLL_TIMEOUT_MS = 90_000;
 export const ROTATE_SIGNER_HOOK_TIMEOUT_MS =
     ROTATE_EXEC_TIMEOUT_MS + ROTATE_POLL_TIMEOUT_MS + 30_000;
 
-let arkCliInitialized = false;
+let arkadeCliInitialized = false;
 
-function ensureArkCliInitialized(): void {
-    if (arkCliInitialized) return;
+function ensureArkadeCliInitialized(): void {
+    if (arkadeCliInitialized) return;
     try {
         execSync(
             `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://mempool_web/api`,
@@ -99,14 +99,14 @@ function ensureArkCliInitialized(): void {
         // CLI call reports them with far better context than this one can.
         if ((err as { code?: string }).code === "ETIMEDOUT") {
             throw new Error(
-                `ensureArkCliInitialized: 'ark init' timed out after ${EXEC_TIMEOUT_MS}ms — arkd is unreachable or wedged`,
+                `ensureArkadeCliInitialized: 'ark init' timed out after ${EXEC_TIMEOUT_MS}ms — arkd is unreachable or wedged`,
             );
         }
     }
-    arkCliInitialized = true;
+    arkadeCliInitialized = true;
 }
 
-export interface TestArkWallet {
+export interface TestArkadeWallet {
     wallet: Wallet;
     identity: Identity;
 }
@@ -149,19 +149,19 @@ export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {
     };
 }
 
-export async function createTestArkWallet(opts?: {
+export async function createTestArkadeWallet(opts?: {
     virtualTxRepository?: VirtualTxRepository;
     exitDataCapture?: {
         mode?: ExitCaptureMode;
         minExitWorthSats?: number;
         sources?: ExitDataSource[];
     };
-}): Promise<TestArkWallet> {
+}): Promise<TestArkadeWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(ARKADE_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -181,12 +181,12 @@ export async function createTestArkWallet(opts?: {
     };
 }
 
-export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> {
+export async function createTestArkadeWalletWithDelegate(): Promise<TestArkadeWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(ARKADE_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -205,7 +205,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
     };
 }
 
-export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> {
+export async function createTestArkadeWalletWithMnemonic(): Promise<TestArkadeWallet> {
     const mnemonic = generateMnemonic(wordlist);
     const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
         isMainnet: false,
@@ -213,7 +213,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(ARKADE_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -234,7 +234,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 /**
  * Build a Wallet from a given mnemonic and optional repositories.
  *
- * This is the counterpart to `createTestArkWalletWithMnemonic` that lets the
+ * This is the counterpart to `createTestArkadeWalletWithMnemonic` that lets the
  * caller supply both the seed and the storage layer, making it possible to
  * construct a second wallet on the same mnemonic with *fresh* (separate)
  * repositories — the pattern needed by restore tests.
@@ -245,12 +245,12 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
  * `'hd'` so the receive address rotates off the index-0 baseline — the
  * only scenario where `restore()` is actually load-bearing.
  */
-export async function createTestArkWalletFromMnemonic(
+export async function createTestArkadeWalletFromMnemonic(
     mnemonic: string,
     repos?: SharedRepos,
     walletMode?: WalletMode,
     lookAheadWindow?: number,
-): Promise<TestArkWallet> {
+): Promise<TestArkadeWallet> {
     const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
         isMainnet: false,
     });
@@ -260,7 +260,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(ARKADE_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -307,7 +307,7 @@ export function coreBlockCount(): number {
     return Number(execCommand(`node regtest/regtest.mjs rpc getblockcount`));
 }
 
-export async function createVtxo(alice: TestArkWallet, amount: number): Promise<string> {
+export async function createVtxo(alice: TestArkadeWallet, amount: number): Promise<string> {
     const address = await alice.wallet.getAddress();
     if (!address) throw new Error("Offchain address not defined.");
 
@@ -347,7 +347,7 @@ export async function createVtxo(alice: TestArkWallet, amount: number): Promise<
 // After rounds, existing VTXOs can become stale (balance shows them but
 // ark send can't spend them), so we always redeem a fresh note.
 export async function beforeEachFaucet(): Promise<void> {
-    ensureArkCliInitialized();
+    ensureArkadeCliInitialized();
     for (let attempt = 1; attempt <= FAUCET_ATTEMPTS; attempt++) {
         // A fresh note per attempt: the abandoned one is only a credit voucher,
         // and reusing it would race whatever the dropped round did with it.
@@ -416,7 +416,7 @@ export async function waitForUnrolledVtxos(wallet: {
  * server-config changes (e.g. `unilateralExitDelay`) between wallet loads
  * without actually restarting arkd.
  */
-export function createOverrideInfoArkProvider(
+export function createOverrideInfoArkadeProvider(
     real: ArkProvider,
     overrides: Partial<ArkadeInfo>,
 ): ArkProvider {
@@ -449,8 +449,8 @@ export interface ServerSignerInfo {
 }
 
 /** Read the current active + deprecated signer set from `GET /v1/info`. */
-export async function getServerInfo(arkUrl: string = ARK_URL): Promise<ServerSignerInfo> {
-    const res = await fetch(`${arkUrl}/v1/info`);
+export async function getServerInfo(arkadeUrl: string = ARKADE_URL): Promise<ServerSignerInfo> {
+    const res = await fetch(`${arkadeUrl}/v1/info`);
     if (!res.ok) {
         throw new Error(`getServerInfo: ${res.status} ${res.statusText}`);
     }
@@ -493,9 +493,9 @@ export type DeprecatedSignerSpec = string | { priv: string; cutoffDate?: number 
 export async function rotateArkdSigner(params: {
     activeSignerPriv: string;
     deprecatedSigners?: DeprecatedSignerSpec[];
-    arkUrl?: string;
+    arkadeUrl?: string;
 }): Promise<ServerSignerInfo> {
-    const { activeSignerPriv, arkUrl = ARK_URL } = params;
+    const { activeSignerPriv, arkadeUrl = ARKADE_URL } = params;
     const deprecated = (params.deprecatedSigners ?? []).map((d) =>
         typeof d === "string" ? { priv: d, cutoffDate: undefined as number | undefined } : d,
     );
@@ -541,7 +541,7 @@ export async function rotateArkdSigner(params: {
     let lastInfo: ServerSignerInfo | undefined;
     while (Date.now() < deadline) {
         try {
-            lastInfo = await getServerInfo(arkUrl);
+            lastInfo = await getServerInfo(arkadeUrl);
             const activeOk = toXOnly(lastInfo.signerPubkey) === expectedActive;
             const advertised = new Set(lastInfo.deprecatedSigners.map((s) => toXOnly(s.pubkey)));
             // Set equality, not containment: `every` is vacuously true for an
@@ -587,9 +587,9 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     identity: Identity;
     repos: SharedRepos;
     unilateralExitDelay: bigint;
-}): Promise<TestArkWallet> {
-    const realProvider = new RestArkProvider(ARK_URL);
-    const arkProvider = createOverrideInfoArkProvider(realProvider, {
+}): Promise<TestArkadeWallet> {
+    const realProvider = new RestArkProvider(ARKADE_URL);
+    const arkProvider = createOverrideInfoArkadeProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a
         // clean (no-deprecated) signer set so a deprecated signer left advertised
@@ -660,7 +660,7 @@ export function enforcePayTo(pkScript: Uint8Array, amount: bigint): Uint8Array {
 
 /**
  * Builds an arkade script that enforces:
- *   tx.version == 2  (intent-proof gate, blocks off-chain Ark txs at v=3)
+ *   tx.version == 2  (intent-proof gate, blocks off-chain Arkade transactions at v=3)
  *   output[0].scriptPubKey == input[self].scriptPubKey
  *   output[0].value        == input[self].value
  *

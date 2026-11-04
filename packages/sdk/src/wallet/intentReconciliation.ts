@@ -2,7 +2,7 @@ import { collectIntents } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
 import { ArkErrorName, isArkError } from "../providers/errors";
 import type { Intent } from "../intent";
-import type { SignedIntent } from "../providers/ark";
+import type { SignedIntent } from "../providers/arkade";
 import {
     ALL_INTENT_STATES,
     ArkIntent,

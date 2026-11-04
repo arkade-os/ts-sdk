@@ -29,7 +29,7 @@ import {
     arkdExec,
     beforeEachFaucet,
     coreBlockCount,
-    createTestArkWallet,
+    createTestArkadeWallet,
     createTestIdentity,
     execCommand,
     faucetOffchain,
@@ -317,7 +317,7 @@ describe("vhtlc", () => {
     });
 
     it("should unilaterally claim", { timeout: 300_000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const amount = 5000;
         faucetOffchain(await alice.wallet.getAddress(), amount);
 

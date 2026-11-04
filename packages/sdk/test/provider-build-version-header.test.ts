@@ -41,7 +41,7 @@ describe("non-ark providers omit arkd-only headers (CORS)", () => {
     });
 });
 
-// The Ark server is the one origin that accepts (and reads) these headers.
+// the operator is the one origin that accepts (and reads) these headers.
 describe("RestArkProvider sends arkd compatibility headers", () => {
     it("sends X-SDK-VERSION carrying the package version", async () => {
         const seen = captureHeaders(async () => ({}));

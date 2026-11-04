@@ -19,7 +19,7 @@ import type { ExtensionPacket } from "../../src/extension";
 import { beforeEachFaucet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const ARKADE_OPERATOR_URL = "http://localhost:7070";
 const CONTRACT_AMOUNT = 10_000;
 const ASSET_AMOUNT = 1_000n;
 
@@ -82,8 +82,8 @@ const liquidationProgram = {
 
 describe("liquidation (oracle-signed asset burn)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
 
@@ -129,7 +129,7 @@ describe("liquidation (oracle-signed asset burn)", () => {
             ark.checkpoint,
         );
 
-        // Emulator v0.0.7+ needs the previous ark tx of every input; the builder
+        // Emulator v0.0.7+ needs the previous Arkade transaction of every input; the builder
         // does this itself, a hand-rolled buildOffchainTx has to ask for it.
         await attachPrevArkTxs(mintTx, [mintCoin.txid], indexerProvider);
 

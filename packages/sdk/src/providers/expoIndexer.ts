@@ -4,7 +4,7 @@ import {
     SubscriptionHeartbeat,
     toSubscriptionMessage,
 } from "./indexer";
-import { isFetchTimeoutError } from "./ark";
+import { isFetchTimeoutError } from "./arkade";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 import { streamFailureError } from "./utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";

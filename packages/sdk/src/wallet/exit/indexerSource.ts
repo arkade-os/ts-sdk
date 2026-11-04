@@ -6,7 +6,7 @@ import { Outpoint } from "../index";
 import { ExitDataSource } from "./resolver";
 
 /**
- * Exit-data source backed by the Ark indexer. Behavior-preserving vs. the
+ * Exit-data source backed by the Arkade indexer. Behavior-preserving vs. the
  * pre-resolver code: the same paginated getVtxoChain / getVirtualTxs walks.
  */
 export class IndexerExitDataSource implements ExitDataSource {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { InMemoryVirtualTxRepository } from "../../src/repositories/inMemory/virtualTxRepository";
 import { createExitChainResolver } from "../../src/wallet/exit/resolver";
-import { beforeEachFaucet, createTestArkWallet, createVtxo, mineBlocks, waitFor } from "./utils";
+import { beforeEachFaucet, createTestArkadeWallet, createVtxo, mineBlocks, waitFor } from "./utils";
 
 describe("exit-data capture (e2e)", () => {
     beforeEach(beforeEachFaucet, 20000);
@@ -10,7 +10,7 @@ describe("exit-data capture (e2e)", () => {
         timeout: 180_000,
     }, async () => {
         const repo = new InMemoryVirtualTxRepository();
-        const alice = await createTestArkWallet({
+        const alice = await createTestArkadeWallet({
             virtualTxRepository: repo,
             exitDataCapture: { mode: "full" },
         });

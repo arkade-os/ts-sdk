@@ -6,7 +6,7 @@ import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository } from "../../src/repository";
 import type { QuoteInput } from "../../src/client/quote";
 import {
-    ARK_INFO,
+    ARKADE_INFO,
     OPERATOR_PUBKEY,
     NETWORK,
     key,
@@ -29,7 +29,7 @@ const setup = async (answer?: SolverAnswer) => {
     const fixture = await acceptWallet();
     const wallet = {
         ...fixture.wallet,
-        getArkadeInfo: async () => ({ ...ARK_INFO, dust: 330n }),
+        getArkadeInfo: async () => ({ ...ARKADE_INFO, dust: 330n }),
     } as unknown as IWallet;
     const repository = new InMemoryAssetSwapRepository();
     const transport = solverTransport(

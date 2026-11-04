@@ -4,7 +4,7 @@
  *
  * The assertions that matter: the spend really uses the `claim` leaf (not
  * some other leaf that happens to be spendable), the preimage is attached
- * AFTER signing on both the ark transaction and every checkpoint (the order
+ * AFTER signing on both the Arkade transaction and every checkpoint (the order
  * the server enforces), and a preimage that does not open the script is
  * caught before anything is signed.
  */
@@ -120,7 +120,7 @@ const fakeOperator = (
     } as unknown as FakeOperator;
 };
 
-/** The leaf script the ark tx's single input actually spends. */
+/** The leaf script the Arkade transaction's single input actually spends. */
 const spentLeafOf = (psbt: string): string => {
     const tx = Transaction.fromPSBT(base64.decode(psbt));
     const leaf = tx.getInput(0).tapLeafScript![0][1];
@@ -540,7 +540,7 @@ describe("pushClaim", () => {
         expect(operator.finalized).toHaveLength(0);
     });
 
-    it("fails closed when the server returns no final ark tx to check", async () => {
+    it("fails closed when the server returns no final Arkade transaction to check", async () => {
         const operator = fakeOperator({ finalTx: () => undefined });
         await expect(
             pushClaim(operator, {
@@ -551,7 +551,7 @@ describe("pushClaim", () => {
                 destinationPkScript: DESTINATION_PK_SCRIPT,
                 expectedAmount: EXPECTED_AMOUNT,
             }),
-        ).rejects.toThrow(/no final ark tx to verify/);
+        ).rejects.toThrow(/no final Arkade transaction to verify/);
         expect(operator.finalized).toHaveLength(0);
     });
 

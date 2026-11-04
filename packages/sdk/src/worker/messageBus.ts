@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
-import { ArkProvider, RestArkProvider } from "../providers/ark";
+import { ArkProvider, RestArkProvider } from "../providers/arkade";
 import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";

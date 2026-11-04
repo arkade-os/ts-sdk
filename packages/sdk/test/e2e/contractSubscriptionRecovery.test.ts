@@ -11,7 +11,7 @@ import {
     Wallet,
     networks,
 } from "../../src";
-import { ARK_URL, ESPLORA_API_URL, beforeEachFaucet, faucetOffchain } from "./utils";
+import { ARKADE_URL, ESPLORA_API_URL, beforeEachFaucet, faucetOffchain } from "./utils";
 
 describe("contract subscription recovery", () => {
     beforeEach(beforeEachFaucet, 120_000);
@@ -19,12 +19,12 @@ describe("contract subscription recovery", () => {
     it.each(["reject", "stall"])(
         "discovers a deposit when subscription POSTs %s without reconnecting",
         async (failure) => {
-            const indexer = new RestIndexerProvider(ARK_URL);
+            const indexer = new RestIndexerProvider(ARKADE_URL);
             const stream = vi.spyOn(indexer, "getSubscription");
             const repository = new InMemoryWalletRepository();
             const wallet = await Wallet.create({
                 identity: SingleKey.fromRandomBytes(),
-                arkProvider: new RestArkProvider(ARK_URL),
+                arkProvider: new RestArkProvider(ARKADE_URL),
                 indexerProvider: indexer,
                 onchainProvider: new EsploraProvider(ESPLORA_API_URL),
                 storage: {

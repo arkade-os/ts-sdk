@@ -9,7 +9,7 @@ import {
     type BatchStartedEvent,
     type BatchFinalizedEvent,
     type BatchFailedEvent,
-} from "../src/providers/ark";
+} from "../src/providers/arkade";
 
 const started: BatchStartedEvent = {
     type: SettlementEventType.BatchStarted,

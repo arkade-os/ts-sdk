@@ -16,7 +16,7 @@ import { encodeOffer, fillOffer, offerContract, type Offer } from "../src/offer"
  * `fill.test.ts` mocks `ArkadeContract`, so the real builder is never
  * constructed — which is how `fillOffer` shipped unable to submit anything.
  * Here only the three REST providers are stubbed, and the assertions read the
- * ark tx the emulator was actually handed.
+ * Arkade transaction the emulator was actually handed.
  */
 const state = vi.hoisted(() => ({
     vtxos: [] as unknown[],
@@ -87,7 +87,7 @@ const offer: Omit<Offer, "swapPkScript"> = {
 const script = offerContract(offer, SERVER_KEY);
 const offerHex = hex.encode(encodeOffer({ ...offer, swapPkScript: script.pkScript }));
 
-/** A coin whose txid is the real id of a prev ark tx the stub indexer serves —
+/** A coin whose txid is the real id of a prev Arkade transaction the stub indexer serves —
  * the covenant path resolves one per input and keys them by computed id. */
 let minted = 0;
 const mintCoin = (value: number) => {

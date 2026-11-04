@@ -8,7 +8,7 @@ import {
     type OffchainTx,
     type OffchainTxSigner,
     type OffchainTxSubmitProvider,
-} from "../src/utils/arkTransaction";
+} from "../src/utils/arkadeTransaction";
 import { ConditionWitness, getArkPsbtFields, setArkPsbtField } from "../src/utils/unknownFields";
 
 const P2TR = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(0xab)]);
@@ -62,12 +62,12 @@ function signer(userSignedCheckpoints?: Transaction[]): OffchainTxSigner & {
     signCheckpoint: ReturnType<typeof vi.fn>;
 } {
     return {
-        signArkTx: async (arkTx) => ({ arkTx, userSignedCheckpoints }),
+        signArkadeTx: async (arkTx) => ({ arkTx, userSignedCheckpoints }),
         signCheckpoint: vi.fn(async (checkpoint: Transaction) => userSigned(checkpoint, 99)),
     };
 }
 
-// Echoes the submitted ark tx's id (and optionally overrides it or attaches a
+// Echoes the submitted Arkade transaction's id (and optionally overrides it or attaches a
 // finalArkTx) so the arkTxid reconciliation guard passes unless a test says
 // otherwise.
 function provider(
@@ -78,8 +78,8 @@ function provider(
     finalizeTx: ReturnType<typeof vi.fn>;
 } {
     return {
-        submitTx: vi.fn(async (arkTxB64: string) => ({
-            arkTxid: overrides?.arkTxid ?? Transaction.fromPSBT(base64.decode(arkTxB64)).id,
+        submitTx: vi.fn(async (arkadeTxB64: string) => ({
+            arkTxid: overrides?.arkTxid ?? Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
             finalArkTx: overrides?.finalArkTx,
             signedCheckpointTxs,
         })),
@@ -165,14 +165,14 @@ describe("submitOffchainTx checkpoint count guards", () => {
     });
 });
 
-describe("submitOffchainTx ark txid reconciliation", () => {
+describe("submitOffchainTx Arkade txid reconciliation", () => {
     it("rejects a response whose arkTxid is not the submitted tx", async () => {
         const p = provider(encode([checkpoint(1)]), { arkTxid: "ff".repeat(32) });
         const s = signer();
 
         await expect(
             submitOffchainTx(p, offchainTx([checkpoint(1)]), s, undefined, { oneShot: false }),
-        ).rejects.toThrow(/submitTx returned ark txid/);
+        ).rejects.toThrow(/submitTx returned Arkade txid/);
         expect(s.signCheckpoint).not.toHaveBeenCalled();
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -186,7 +186,7 @@ describe("submitOffchainTx ark txid reconciliation", () => {
         });
 
         await expect(submitOffchainTx(p, offchainTx([checkpoint(1)]), signer())).rejects.toThrow(
-            new RegExp(`submitTx returned final ark tx ${foreign.id}`),
+            new RegExp(`submitTx returned final Arkade transaction ${foreign.id}`),
         );
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -448,7 +448,7 @@ describe("submitOffchainTx one-shot", () => {
         ["opted out", false],
         ["one-shot", true],
     ] as const)(
-        "submits checkpoints with the condition witness of the ark tx input spending them (%s)",
+        "submits checkpoints with the condition witness of the Arkade transaction input spending them (%s)",
         async (_, oneShot) => {
             const cps = local();
             const preimage = new Uint8Array(32).fill(0x42);

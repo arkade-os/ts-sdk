@@ -5,7 +5,7 @@ import {
     installRestoreHarness,
     teardownRestoreHarness,
     makeStaticWalletForTest,
-    mockArkInfo,
+    mockArkadeInfo,
     awaitWalletBooted,
 } from "./helpers/restoreWallet";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
@@ -26,7 +26,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
 
             await wallet.rotateServerSigner(
                 hex.decode(NEW_SERVER),
-                mockArkInfo.checkpointTapscript,
+                mockArkadeInfo.checkpointTapscript,
             );
 
             // Server key + both tapscripts now commit to the new signer.
@@ -61,7 +61,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
 
             await wallet.rotateServerSigner(
                 hex.decode(NEW_SERVER),
-                mockArkInfo.checkpointTapscript,
+                mockArkadeInfo.checkpointTapscript,
             );
 
             const all = await collectContracts(contractRepository, {});
@@ -79,12 +79,12 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const before = await wallet.getAddress();
             await wallet.rotateServerSigner(
                 wallet.arkServerPublicKey,
-                mockArkInfo.checkpointTapscript,
+                mockArkadeInfo.checkpointTapscript,
             );
             expect(await wallet.getAddress()).toBe(before);
             // A 33-byte compressed form of the same key is also a no-op.
             const compressed = hex.decode("02" + hex.encode(wallet.arkServerPublicKey));
-            await wallet.rotateServerSigner(compressed, mockArkInfo.checkpointTapscript);
+            await wallet.rotateServerSigner(compressed, mockArkadeInfo.checkpointTapscript);
             expect(await wallet.getAddress()).toBe(before);
         } finally {
             await wallet.dispose();
@@ -104,7 +104,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
             const newCheckpoint = hex.encode(
                 CSVMultisigTapscript.encode({
                     // BIP-68 seconds granularity is 512s; 512*200 = 102400 (~28.4h,
-                    // above the 24h floor and distinct from mockArkInfo's 604672).
+                    // above the 24h floor and distinct from mockArkadeInfo's 604672).
                     timelock: { type: "seconds", value: 512n * 200n },
                     pubkeys: [wallet.forfeitPubkey],
                 }).script,
@@ -253,7 +253,7 @@ describe("Boarding watch path across server-signer rotation", () => {
                 const reply = (b: unknown) => Promise.resolve(jsonResponse(b));
                 if (url.includes("/info"))
                     return reply({
-                        ...mockArkInfo,
+                        ...mockArkadeInfo,
                         deprecatedSigners: [{ pubkey: PREV_SERVER, cutoffDate: 9_999_999_999 }],
                     });
                 if (url.includes("subscribe") || url.includes("subscriptions"))
@@ -331,7 +331,7 @@ describe("Boarding watch path across server-signer rotation", () => {
                 }
             ).handleServerInfoChanged({
                 signerPubkey: NEW,
-                checkpointTapscript: mockArkInfo.checkpointTapscript,
+                checkpointTapscript: mockArkadeInfo.checkpointTapscript,
                 deprecatedSigners: [{ pubkey: oldSigner }],
             });
 
@@ -364,8 +364,8 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
                 const reply = (b: unknown) => Promise.resolve(jsonResponse(b));
                 if (url.includes("/info"))
                     return reply({
-                        ...mockArkInfo,
-                        // Distinct from unilateralExitDelay (mockArkInfo: 144) so the
+                        ...mockArkadeInfo,
+                        // Distinct from unilateralExitDelay (mockArkadeInfo: 144) so the
                         // boarding baseline is a SEPARATE contract, not a first-wins
                         // script collision with the default baseline. Production keeps
                         // these delays distinct; the shared mock happens to equate them.
@@ -409,7 +409,7 @@ describe("Offchain baseline matrix across server-signer rotation", () => {
                     jsonResponse(
                         url.includes("/info")
                             ? {
-                                  ...mockArkInfo,
+                                  ...mockArkadeInfo,
                                   boardingExitDelay: 288,
                                   deprecatedSigners: [
                                       { pubkey: PREV_SERVER, cutoffDate: 9_999_999_999 },

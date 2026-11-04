@@ -267,7 +267,7 @@ describe("ElectrumOnchainProvider", () => {
             // serialization differs from the legacy one. broadcast_package
             // doesn't return a txid; we must derive the *txid* (legacy
             // hash) — emitting the wtxid would silently break downstream
-            // tracking on every Ark transaction.
+            // tracking on every Arkade transaction.
             const { txHex: childHex, expectedTxid, expectedWtxid } = buildSegwitTxWithWitness();
             // Sanity check: the test fixture must actually exercise the
             // bug path (id != hash means witness data is present).

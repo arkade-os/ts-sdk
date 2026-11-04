@@ -21,7 +21,7 @@ const bytes = (hexString: string): Uint8Array =>
     Uint8Array.from(hexString.match(/../g)?.map((byte) => parseInt(byte, 16)) ?? []);
 
 /** An Arkade address under `signer`, on `network`'s hrp. */
-export const arkAddressFor = (network: NetworkName, signer = OPERATOR_SIGNER): string =>
+export const arkadeAddressFor = (network: NetworkName, signer = OPERATOR_SIGNER): string =>
     new ArkAddress(bytes(signer), bytes(VTXO_KEY), getNetwork(network).hrp).encode();
 
 export const corridorBaseFor = (

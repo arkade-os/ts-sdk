@@ -30,7 +30,7 @@ const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f
 const FOREIGN_SERVER_PUBKEY_HEX =
     "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b";
 
-const mockArkInfo = {
+const mockArkadeInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
     forfeitPubkey: SERVER_PUBKEY_HEX,
     batchExpiry: BigInt(144),
@@ -65,7 +65,7 @@ beforeEach(() => {
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
         const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
-        if (url.includes("/info")) return reply(mockArkInfo);
+        if (url.includes("/info")) return reply(mockArkadeInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         if (url.includes("vtxo") || url.includes("scripts")) return reply({ vtxos: [] });

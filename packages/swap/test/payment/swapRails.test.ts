@@ -32,7 +32,7 @@ const NOW = 1_700_000_000;
 const CLOCK = clockAt(NOW);
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 const INVOICE = invoiceFor(PAYMENT_HASH, CLOCK);
-const ARK_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
+const ARKADE_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), NETWORK.hrp).encode();
 
 /** 1 sat/vB, so the claim estimate is the vsize itself. */
 const CLAIM_RATE = 1;
@@ -115,7 +115,7 @@ describe("rail conformance", () => {
             expect(rail.match({ raw: mine }, ctx)).toBe(true);
             expect(rail.match({ raw: mine, amount: 1 }, ctx)).toBe(true);
             expect(rail.match({ raw: theirs }, ctx)).toBe(false);
-            expect(rail.match({ raw: ARK_ADDRESS }, ctx)).toBe(false);
+            expect(rail.match({ raw: ARKADE_ADDRESS }, ctx)).toBe(false);
             expect(() => rail.match({ raw: "nonsense" }, ctx)).not.toThrow();
         }
     });
@@ -301,7 +301,7 @@ describe("ranking against core's rails", () => {
     });
 
     it("leaves a plain Arkade address to core's ark rail alone", async () => {
-        const options = await router(double()).options({ raw: ARK_ADDRESS, amount: 1_000 });
+        const options = await router(double()).options({ raw: ARKADE_ADDRESS, amount: 1_000 });
         expect(options.map((o) => o.railId)).toEqual(["ark"]);
     });
 
@@ -309,7 +309,7 @@ describe("ranking against core's rails", () => {
         const built = createSwapPaymentRouter(ctxWallet, double(), {
             claimFeeRateSatVb: CLAIM_RATE,
         });
-        const uri = `bitcoin:${BCRT1}?ark=${ARK_ADDRESS}&lightning=${INVOICE}&amount=0.001`;
+        const uri = `bitcoin:${BCRT1}?ark=${ARKADE_ADDRESS}&lightning=${INVOICE}&amount=0.001`;
         const options = await built.options({ raw: uri });
         expect(options.map((o) => o.railId)).toEqual([...SWAP_ROUTER_PRIORITY]);
     });

@@ -5,12 +5,12 @@ import { Ramps } from "../../src/wallet/ramps";
 import type { RouterContext } from "../../src/payment/types";
 
 const btcAddr = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
+const arkadeAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
 
 const fees = { intentFee: {}, txFeeRate: "1" };
 
 const ctx = (wallet: Partial<Record<string, any>> = {}): RouterContext => ({
-    wallet: { getAddress: async () => arkAddr, ...wallet } as any,
+    wallet: { getAddress: async () => arkadeAddr, ...wallet } as any,
     prefs: {},
 });
 
@@ -30,12 +30,12 @@ describe("onchainRail (collaborative exit)", () => {
     it("matches a bare BTC address and the on-chain part of a BIP21 URI", () => {
         const r = rail();
         expect(r.match({ raw: btcAddr }, ctx({}))).toBe(true);
-        expect(r.match({ raw: `bitcoin:${btcAddr}?ark=${arkAddr}` }, ctx({}))).toBe(true);
+        expect(r.match({ raw: `bitcoin:${btcAddr}?ark=${arkadeAddr}` }, ctx({}))).toBe(true);
     });
 
     it("does not match an ark address or a bolt11 invoice", () => {
         const r = rail();
-        expect(r.match({ raw: arkAddr }, ctx({}))).toBe(false);
+        expect(r.match({ raw: arkadeAddr }, ctx({}))).toBe(false);
         expect(r.match({ raw: "lnbc10n1pjexample" }, ctx({}))).toBe(false);
     });
 

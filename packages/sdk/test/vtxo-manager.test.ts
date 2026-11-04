@@ -13,7 +13,7 @@ import {
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { NormalizedExtendedVirtualCoin } from "../src/wallet/vtxo";
-import type { IntentFeeConfig } from "../src/arkfee";
+import type { IntentFeeConfig } from "../src/arkadeFee";
 import { filterSnapshotVtxos, Wallet } from "../src/wallet/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { hex } from "@scure/base";

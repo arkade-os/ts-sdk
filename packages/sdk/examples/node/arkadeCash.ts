@@ -31,7 +31,7 @@ const {
 
 type WalletInstance = Awaited<ReturnType<typeof Wallet.create>>;
 
-const ARK_SERVER_URL = "http://localhost:7070";
+const ARKADE_OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_URL = "http://localhost:3000/api";
 const CASH_AMOUNT_SATS = 5000;
 
@@ -59,7 +59,7 @@ async function waitFor(
 async function createWallet(name: string): Promise<WalletInstance> {
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_SERVER_URL),
+        arkProvider: new RestArkProvider(ARKADE_OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),

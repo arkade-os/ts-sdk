@@ -47,7 +47,7 @@ let descriptorAt: (index: number) => string;
  * `IWallet` has is irrelevant here and left off.
  */
 /**
- * A dummy server pubkey used to mint valid-looking ArkAddresses in tests.
+ * A dummy server pubkey used to mint valid-looking ArkadeAddresses in tests.
  * The address exists only to give provisionRefundKey a decodable pkScript —
  * tests do not actually send to it.
  */

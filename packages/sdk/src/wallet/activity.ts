@@ -91,7 +91,7 @@ export interface Activity {
  *
  * - Untagged rows bucket by natural tx key, so send/change pairs stay together.
  * - Memberships are unioned across resolvers and bucketed by `groupId`; a tx may join
- *   several groups (Ark batching). Same-group memberships (across resolvers) merge:
+ *   several groups (Arkade batching). Same-group memberships (across resolvers) merge:
  *   `label`/`kind` first-defined-wins (resolver order), `metadata` shallow-merged.
  * - Contributions are signed by tx direction; same-key received rows paired with
  *   a sent row are treated as change and excluded from the activity amount.

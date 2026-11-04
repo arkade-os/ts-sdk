@@ -11,17 +11,17 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { boardingResolver, TxType, type ActivityResolver, type ArkTransaction } from "../../src";
 import {
     beforeEachFaucet,
-    createTestArkWallet,
+    createTestArkadeWallet,
     execCommand,
     waitFor,
-    type TestArkWallet,
+    type TestArkadeWallet,
 } from "./utils";
 
 const BOARDING_SATS = 10_000;
 const SEND_SATS = 2_000;
 
-let alice: TestArkWallet;
-let bob: TestArkWallet;
+let alice: TestArkadeWallet;
+let bob: TestArkadeWallet;
 let boardingTxid: string;
 let sendTxid: string;
 
@@ -37,8 +37,8 @@ const activitiesWith = async (...extra: ActivityResolver[]) => {
 
 beforeAll(async () => {
     await beforeEachFaucet();
-    alice = await createTestArkWallet();
-    bob = await createTestArkWallet();
+    alice = await createTestArkadeWallet();
+    bob = await createTestArkadeWallet();
 
     const boardingAddress = await alice.wallet.getBoardingAddress();
     execCommand(

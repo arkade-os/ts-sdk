@@ -36,7 +36,7 @@ const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-const mockArkInfo = {
+const mockArkadeInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
     forfeitPubkey: SERVER_PUBKEY_HEX,
     batchExpiry: BigInt(144),
@@ -73,7 +73,7 @@ beforeEach(() => {
     // Route by URL so test ordering doesn't depend on exact fetch counts.
     mockFetch.mockImplementation((url: string) => {
         const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
-        if (url.includes("/info")) return reply(mockArkInfo);
+        if (url.includes("/info")) return reply(mockArkadeInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         // Indexer: anything asking for vtxos — default to empty.
@@ -110,12 +110,12 @@ function makeHdWallet(
 
 // The server key these fixtures configure their wallets with. A mocked
 // `submitTx` has to co-sign what it hands back, or the wallet rejects it.
-const ARK_SERVER_KEY = SingleKey.fromHex(
+const OPERATOR_PUBKEY = SingleKey.fromHex(
     "0000000000000000000000000000000000000000000000000000000000000001",
 );
 
-async function serverSignArkTx(arkTxB64: string): Promise<string> {
-    const signed = await ARK_SERVER_KEY.sign(Transaction.fromPSBT(base64.decode(arkTxB64)));
+async function serverSignArkadeTx(arkadeTxB64: string): Promise<string> {
+    const signed = await OPERATOR_PUBKEY.sign(Transaction.fromPSBT(base64.decode(arkadeTxB64)));
     return base64.encode(signed.toPSBT());
 }
 
@@ -123,7 +123,9 @@ function serverSignCheckpoints(checkpointsB64: string[]): Promise<string[]> {
     return Promise.all(
         checkpointsB64.map(async (b64) =>
             base64.encode(
-                (await ARK_SERVER_KEY.sign(Transaction.fromPSBT(base64.decode(b64)), [0])).toPSBT(),
+                (
+                    await OPERATOR_PUBKEY.sign(Transaction.fromPSBT(base64.decode(b64)), [0])
+                ).toPSBT(),
             ),
         ),
     );
@@ -942,7 +944,7 @@ describe("Wallet HD rotation", () => {
      *     (auto-renewal)
      */
     describe("signing after rotation", () => {
-        // mockArkInfo.signerPubkey is the compressed form (0x02 prefix).
+        // mockArkadeInfo.signerPubkey is the compressed form (0x02 prefix).
         // Strip the byte to match how `Wallet.create` materializes
         // x-only pubkeys for DefaultVtxo.Script construction.
         const SERVER_PUBKEY = hex.decode(SERVER_PUBKEY_HEX).slice(1);
@@ -1250,7 +1252,7 @@ describe("Wallet HD rotation", () => {
 
         it("buildAndSubmitOffchainTx after rotation: arkTx submitted to the server carries a tapScriptSig keyed to the rotated pubkey", async () => {
             // Direct regression for `INVALID_PSBT_INPUT (5): missing
-            // tapscript spend sig in ark tx input 0`. arkTx inputs
+            // tapscript spend sig in Arkade transaction input 0`. arkTx inputs
             // spend checkpoint outputs whose `witnessUtxo.script` is
             // the checkpoint pkScript (server-unroll + collaborative-
             // closure combo) — *not* the source VTXO's contract
@@ -1270,14 +1272,14 @@ describe("Wallet HD rotation", () => {
             // checkpoints back out unchanged so the per-checkpoint
             // re-sign path inside buildAndSubmitOffchainTx still has
             // valid PSBTs to rehydrate.
-            let submittedArkTxB64: string | undefined;
+            let submittedArkadeTxB64: string | undefined;
             const submitSpy = vi
                 .spyOn(wallet.arkProvider, "submitTx")
-                .mockImplementation(async (arkTxB64, checkpointsB64) => {
-                    submittedArkTxB64 = arkTxB64;
+                .mockImplementation(async (arkadeTxB64, checkpointsB64) => {
+                    submittedArkadeTxB64 = arkadeTxB64;
                     return {
-                        arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                        finalArkTx: await serverSignArkTx(arkTxB64),
+                        arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                        finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                         signedCheckpointTxs: await serverSignCheckpoints(checkpointsB64),
                     };
                 });
@@ -1299,9 +1301,9 @@ describe("Wallet HD rotation", () => {
 
             expect(submitSpy).toHaveBeenCalledTimes(1);
             expect(finalizeSpy).not.toHaveBeenCalled();
-            expect(submittedArkTxB64).toBeDefined();
+            expect(submittedArkadeTxB64).toBeDefined();
 
-            const arkTx = Transaction.fromPSBT(base64.decode(submittedArkTxB64!));
+            const arkTx = Transaction.fromPSBT(base64.decode(submittedArkadeTxB64!));
             expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(rotated.params.pubKey);
 
             submitSpy.mockRestore();
@@ -1324,14 +1326,14 @@ describe("Wallet HD rotation", () => {
             const baselinePubKeyHex = baseline.params.pubKey;
             const coin = makeVtxoForContract(baseline);
 
-            let submittedArkTxB64: string | undefined;
+            let submittedArkadeTxB64: string | undefined;
             const submitSpy = vi
                 .spyOn(wallet.arkProvider, "submitTx")
-                .mockImplementation(async (arkTxB64, checkpointsB64) => {
-                    submittedArkTxB64 = arkTxB64;
+                .mockImplementation(async (arkadeTxB64, checkpointsB64) => {
+                    submittedArkadeTxB64 = arkadeTxB64;
                     return {
-                        arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                        finalArkTx: await serverSignArkTx(arkTxB64),
+                        arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                        finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                         signedCheckpointTxs: await serverSignCheckpoints(checkpointsB64),
                     };
                 });
@@ -1349,7 +1351,7 @@ describe("Wallet HD rotation", () => {
                 ],
             );
 
-            const arkTx = Transaction.fromPSBT(base64.decode(submittedArkTxB64!));
+            const arkTx = Transaction.fromPSBT(base64.decode(submittedArkadeTxB64!));
             expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(baselinePubKeyHex);
 
             submitSpy.mockRestore();
@@ -1391,7 +1393,7 @@ describe("Wallet HD rotation", () => {
 
 describe("Wallet batch signing (BatchSignableIdentity)", () => {
     // The well-known generator-point key: privkey = 1, whose x-only pubkey
-    // is exactly `mockArkInfo.signerPubkey` (SERVER_PUBKEY_HEX). Lets the
+    // is exactly `mockArkadeInfo.signerPubkey` (SERVER_PUBKEY_HEX). Lets the
     // tests produce a REAL server `tapScriptSig` on a checkpoint's
     // collaborative leaf, so the merge / recovery paths run against genuine
     // signatures rather than fabricated ones.
@@ -1550,9 +1552,9 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const coin = makeBaselineCoin(wallet);
 
         vi.spyOn(wallet.arkProvider, "submitTx").mockImplementation(
-            async (arkTxB64, checkpointsB64) => ({
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: await serverSignArkTx(arkTxB64),
+            async (arkadeTxB64, checkpointsB64) => ({
+                arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                 signedCheckpointTxs: await serverSignCheckpoints(checkpointsB64),
             }),
         );
@@ -1588,9 +1590,9 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
 
         const submitSpy = vi
             .spyOn(wallet.arkProvider, "submitTx")
-            .mockImplementation(async (arkTxB64, checkpointsB64) => ({
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: await serverSignArkTx(arkTxB64),
+            .mockImplementation(async (arkadeTxB64, checkpointsB64) => ({
+                arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                 // A pre-one-shot arkd rebuilds the checkpoints unsigned and adds its share.
                 signedCheckpointTxs: await Promise.all(
                     checkpointsB64.map((c) => {
@@ -1604,7 +1606,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         let finalizedCheckpoints: string[] | undefined;
         const finalizeSpy = vi
             .spyOn(wallet.arkProvider, "finalizeTx")
-            .mockImplementation(async (_arkTxid, checkpoints) => {
+            .mockImplementation(async (_arkadeTxid, checkpoints) => {
                 finalizedCheckpoints = checkpoints;
             });
 
@@ -1634,9 +1636,9 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const coin = makeBaselineCoin(wallet);
         const submitSpy = vi
             .spyOn(wallet.arkProvider, "submitTx")
-            .mockImplementation(async (arkTxB64, checkpointsB64) => ({
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: await serverSignArkTx(arkTxB64),
+            .mockImplementation(async (arkadeTxB64, checkpointsB64) => ({
+                arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                 signedCheckpointTxs: await Promise.all(checkpointsB64.map(serverSignCheckpoint)),
             }));
         const finalizeSpy = vi.spyOn(wallet.arkProvider, "finalizeTx").mockResolvedValue(undefined);
@@ -1664,13 +1666,13 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
 
         const submitSpy = vi
             .spyOn(wallet.arkProvider, "submitTx")
-            .mockImplementation(async (arkTxB64, checkpointsB64) => {
+            .mockImplementation(async (arkadeTxB64, checkpointsB64) => {
                 const signed = await Promise.all(
                     checkpointsB64.map((c) => serverSignCheckpoint(c)),
                 );
                 return {
-                    arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                    finalArkTx: await serverSignArkTx(arkTxB64),
+                    arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                    finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                     // One more checkpoint than the user signed → mismatch.
                     signedCheckpointTxs: [...signed, signed[0]],
                 };
@@ -1728,7 +1730,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         let finalizedCheckpoints: string[] | undefined;
         const finalizeSpy = vi
             .spyOn(wallet.arkProvider, "finalizeTx")
-            .mockImplementation(async (_arkTxid, checkpoints) => {
+            .mockImplementation(async (_arkadeTxid, checkpoints) => {
                 finalizedCheckpoints = checkpoints;
             });
 
@@ -1866,7 +1868,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             pubkeys: [deprecated],
         });
         vi.spyOn(wallet.arkProvider, "getInfo").mockResolvedValue({
-            ...mockArkInfo,
+            ...mockArkadeInfo,
             deprecatedSigners: [{ pubkey: hex.encode(deprecated), cutoffDate: 0n }],
         } as never);
 
@@ -1907,9 +1909,9 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
     ) {
         const submitSpy = vi
             .spyOn(wallet.arkProvider, "submitTx")
-            .mockImplementation(async (arkTxB64, checkpointsB64) => ({
-                arkTxid: Transaction.fromPSBT(base64.decode(arkTxB64)).id,
-                finalArkTx: await serverSignArkTx(arkTxB64),
+            .mockImplementation(async (arkadeTxB64, checkpointsB64) => ({
+                arkTxid: Transaction.fromPSBT(base64.decode(arkadeTxB64)).id,
+                finalArkTx: await serverSignArkadeTx(arkadeTxB64),
                 signedCheckpointTxs: reorder(
                     await Promise.all(checkpointsB64.map((c) => serverSignCheckpoint(c))),
                 ),

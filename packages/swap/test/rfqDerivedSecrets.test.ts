@@ -55,7 +55,7 @@ const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode()
 /** What both wallets below answer for the server they are connected to —
  * one object, so the covenant derived in-flow and the one the transport stubs
  * build from OPERATOR_PUBKEY cannot drift. */
-const ARK_INFO = {
+const ARKADE_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096,
     network: "regtest",
@@ -74,7 +74,7 @@ const hdWallet = async (): Promise<IWallet & HDWalletCapable> => {
     return {
         identity,
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getArkadeInfo: async () => ARKADE_INFO,
         // Both entrypoints register the lockup before returning an address to
         // fund; what they write is `rfqRegister.test.ts`'s subject.
         getContractManager: async () => ({ createContract: async () => ({}) }),
@@ -95,7 +95,7 @@ const staticWallet = (rows: { params: Record<string, string> }[] = []): IWallet 
     ({
         identity: SingleKey.fromHex(STATIC_WALLET_KEY),
         getAddress: async () => REFUND_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getArkadeInfo: async () => ARKADE_INFO,
         // Both entrypoints register the lockup before returning an address to
         // fund.
         getContractManager: async () => ({

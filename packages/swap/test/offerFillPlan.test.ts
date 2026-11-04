@@ -662,12 +662,12 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
                 changeScript: TAXI_CHANGE_SCRIPT,
             },
         });
-        const fareArk = Transaction.fromPSBT(base64.decode(plan.arkTx));
-        expect(fareArk.outputsLength).toBe(6);
+        const fareArkade = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(fareArkade.outputsLength).toBe(6);
         const farePayment = (vout: number) => ({
-            script: hex.encode(fareArk.getOutput(vout).script!),
-            sats: fareArk.getOutput(vout).amount!.toString(),
-            assets: assetsAt(fareArk, vout),
+            script: hex.encode(fareArkade.getOutput(vout).script!),
+            sats: fareArkade.getOutput(vout).amount!.toString(),
+            assets: assetsAt(fareArkade, vout),
         });
         expect(farePayment(0)).toEqual({
             script: MAKER_PK_SCRIPT,
@@ -713,12 +713,12 @@ describe("buildOfferFillPlan (taxi-sponsored, unsigned)", () => {
         });
 
         expect(plan.inputOwners).toEqual([null, "solver", "sponsor"]);
-        const btcArk = Transaction.fromPSBT(base64.decode(plan.arkTx));
-        expect(btcArk.outputsLength).toBe(6);
+        const btcArkade = Transaction.fromPSBT(base64.decode(plan.arkTx));
+        expect(btcArkade.outputsLength).toBe(6);
         const btcPayment = (vout: number) => ({
-            script: hex.encode(btcArk.getOutput(vout).script!),
-            sats: btcArk.getOutput(vout).amount!.toString(),
-            assets: assetsAt(btcArk, vout),
+            script: hex.encode(btcArkade.getOutput(vout).script!),
+            sats: btcArkade.getOutput(vout).amount!.toString(),
+            assets: assetsAt(btcArkade, vout),
         });
         expect(btcPayment(0)).toEqual({ script: MAKER_PK_SCRIPT, sats: "50000", assets: [] });
         expect(btcPayment(1)).toEqual({

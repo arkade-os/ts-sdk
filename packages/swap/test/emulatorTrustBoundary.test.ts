@@ -66,7 +66,7 @@ const REFUND_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode()
  * registers the covenant with the contract manager, and `Arkade.connect`
  * decodes `checkpointTapscript` — derived from the same OPERATOR_PUBKEY key the quotes
  * below are built with, so the two cannot drift. */
-const ARK_INFO = {
+const ARKADE_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096n,
     network: "regtest",
@@ -95,7 +95,7 @@ const wallet = {
     // The server info every entrypoint here used to fetch from `arkServerUrl`
     // is now the wallet's own answer — one object, so a covenant derived
     // in-flow and one derived by the transport stub agree by construction.
-    getArkadeInfo: async () => ARK_INFO,
+    getArkadeInfo: async () => ARKADE_INFO,
     // Every maker entrypoint here registers its covenant with the contract
     // manager before handing back an address — `createOffer` via
     // `registerOfferContract`, the two request* paths via

@@ -7,14 +7,14 @@ const {
     unregisterTaskAsyncMock,
     runTasksMock,
     expoIndexerProviderCtorMock,
-    expoArkProviderCtorMock,
+    expoArkadeProviderCtorMock,
 } = vi.hoisted(() => ({
     defineTaskMock: vi.fn(),
     registerTaskAsyncMock: vi.fn(),
     unregisterTaskAsyncMock: vi.fn(),
     runTasksMock: vi.fn(),
     expoIndexerProviderCtorMock: vi.fn(),
-    expoArkProviderCtorMock: vi.fn(),
+    expoArkadeProviderCtorMock: vi.fn(),
 }));
 
 vi.mock("expo-task-manager", () => ({
@@ -42,9 +42,9 @@ vi.mock("../../../src/providers/expoIndexer", () => ({
     },
 }));
 
-vi.mock("../../../src/providers/expoArk", () => ({
+vi.mock("../../../src/providers/expoArkade", () => ({
     ExpoArkProvider: function (this: any, serverUrl: string) {
-        expoArkProviderCtorMock(serverUrl);
+        expoArkadeProviderCtorMock(serverUrl);
         this.serverUrl = serverUrl;
     },
 }));
@@ -90,7 +90,7 @@ describe("expo background task helpers", () => {
         const result = await executor();
 
         expect(expoIndexerProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
-        expect(expoArkProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
+        expect(expoArkadeProviderCtorMock).toHaveBeenCalledWith("https://ark.example");
         expect(runTasksMock).toHaveBeenCalledTimes(1);
         expect(runTasksMock).toHaveBeenCalledWith(
             taskQueue,

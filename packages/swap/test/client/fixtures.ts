@@ -81,7 +81,7 @@ export const CHECKPOINT_TAPSCRIPT = hex.encode(
 );
 
 /** What the wallet answers `getArkadeInfo()` with. */
-export const ARK_INFO = {
+export const ARKADE_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096n,
     network: "regtest",
@@ -109,7 +109,7 @@ export const hdWallet = async (
         identity,
         getAddress: async () => WALLET_ADDRESS,
         getBoardingAddress: async () => BOARDING_ADDRESS,
-        getArkadeInfo: over.getArkadeInfo ?? (async () => over.info ?? ARK_INFO),
+        getArkadeInfo: over.getArkadeInfo ?? (async () => over.info ?? ARKADE_INFO),
         getContractManager:
             over.getContractManager ??
             (async () => {
@@ -574,7 +574,7 @@ export const arkadeAssetAnswer = (
             makerPkScript: hex.decode(profile.maker_pk_script as string),
             makerPublicKey: hex.decode(profile.maker_public_key as string),
             emulatorPubkey: EMULATOR_PUBKEY,
-            exitDelay: { type: "seconds", value: ARK_INFO.unilateralExitDelay },
+            exitDelay: { type: "seconds", value: ARKADE_INFO.unilateralExitDelay },
         },
         OPERATOR_PUBKEY,
     );

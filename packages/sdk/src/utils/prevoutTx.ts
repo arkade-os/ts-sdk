@@ -36,7 +36,7 @@ export class PrevTxUnavailableError extends Error {
 /**
  * Resolve raw wire-format bytes for each txid, batched and de-duplicated.
  *
- * Emulator v0.0.7+ requires the raw tx behind every input of a submitted ark tx
+ * Emulator v0.0.7+ requires the raw tx behind every input of a submitted Arkade transaction
  * or intent proof (`PrevArkTxField`) and of an onchain tx (`PrevoutTxField`).
  * The value is a serialized `wire.MsgTx`, *not* a PSBT — `Transaction.toBytes()`
  * with the default `(withScriptSig=false, withWitness=false)` is exactly the
@@ -129,7 +129,7 @@ export async function attachPrevArkTxs(
 
 /**
  * Attach `PrevoutTxField` to every input of an onchain PSBT, reading each
- * input's own outpoint — unlike an ark tx, an onchain tx spends its prevout
+ * input's own outpoint — unlike an Arkade transaction, an onchain tx spends its prevout
  * directly, so the txid is in the PSBT already.
  */
 export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Promise<void> {

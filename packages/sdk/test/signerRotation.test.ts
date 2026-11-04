@@ -6,8 +6,8 @@ import {
     isCooperativelyMigratable,
     toXOnlySignerHex,
 } from "../src/wallet/signerRotation";
-import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/ark";
-import { RestArkProvider } from "../src/providers/ark";
+import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/arkade";
+import { RestArkProvider } from "../src/providers/arkade";
 import { jsonResponse } from "./helpers/response";
 
 const ACTIVE = "aa".repeat(32);

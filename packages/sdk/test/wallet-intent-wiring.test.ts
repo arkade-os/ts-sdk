@@ -2,7 +2,7 @@ import { collectIntents } from "../src/repositories/intentRepository";
 import { describe, it, expect } from "vitest";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import { applySettlementEventToIntent } from "../src/wallet/intentStateReducer";
-import { SettlementEventType } from "../src/providers/ark";
+import { SettlementEventType } from "../src/providers/arkade";
 import type { ArkIntent } from "../src/repositories/intentRepository";
 
 // Exercises the persist + event-reduce contract the settle() path relies on:

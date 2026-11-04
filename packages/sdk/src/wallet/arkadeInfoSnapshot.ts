@@ -1,4 +1,4 @@
-import type { ArkadeInfo, ArkProvider, FeeInfo } from "../providers/ark";
+import type { ArkadeInfo, ArkProvider, FeeInfo } from "../providers/arkade";
 import { isRetryableProviderError } from "../providers/availability";
 import { ProviderUnavailableError } from "../providers/errors";
 import type { WalletRepository } from "../repositories/walletRepository";
@@ -13,7 +13,7 @@ import { updateWalletState } from "../utils/syncCursors";
  * `Arkade*` must leave this value alone — changing it orphans every cached
  * snapshot already on disk and silently forces a live-only boot.
  */
-export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
+export const ARKADE_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
 
 /**
  * A JSON-safe, versioned cache of the operator's {@link ArkadeInfo} metadata,
@@ -29,7 +29,7 @@ export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
  * deliberately not cached (it is live operator-health state, not static
  * construction metadata) and is rehydrated as `{}`.
  */
-export type StoredArkInfoSnapshot = {
+export type StoredArkadeInfoSnapshot = {
     version: 1;
     savedAt: number;
     source: "arkade.getInfo";
@@ -73,17 +73,20 @@ export type StoredArkInfoSnapshot = {
  * failure: a corrupt cache must fail the same way malformed live server-info
  * does, never silently fall through as if no cache were present.
  */
-export class MalformedArkInfoSnapshotError extends Error {
+export class MalformedArkadeInfoSnapshotError extends Error {
     constructor(message: string, options?: { cause?: unknown }) {
         super(message, { cause: options?.cause });
-        this.name = "MalformedArkInfoSnapshotError";
+        this.name = "MalformedArkadeInfoSnapshotError";
     }
 }
 
 const CURRENT_VERSION = 1 as const;
 
 /** Convert a live {@link ArkadeInfo} into its JSON-safe snapshot form. */
-export function serializeArkInfoSnapshot(info: ArkadeInfo, savedAt: number): StoredArkInfoSnapshot {
+export function serializeArkadeInfoSnapshot(
+    info: ArkadeInfo,
+    savedAt: number,
+): StoredArkadeInfoSnapshot {
     return {
         version: CURRENT_VERSION,
         savedAt,
@@ -128,9 +131,9 @@ export function serializeArkInfoSnapshot(info: ArkadeInfo, savedAt: number): Sto
 /**
  * Rehydrate an {@link ArkadeInfo} from a validated snapshot. Decimal strings
  * become `bigint`; `serviceStatus` is reset to `{}` (never cached — see
- * {@link StoredArkInfoSnapshot}).
+ * {@link StoredArkadeInfoSnapshot}).
  */
-export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): ArkadeInfo {
+export function hydrateArkadeInfo(snapshot: StoredArkadeInfoSnapshot): ArkadeInfo {
     const a = snapshot.arkInfo;
     return {
         boardingExitDelay: BigInt(a.boardingExitDelay),
@@ -174,50 +177,50 @@ const DECIMAL_STRING = /^-?\d+$/;
 
 function assertString(value: unknown, path: string): asserts value is string {
     if (typeof value !== "string") {
-        throw new MalformedArkInfoSnapshotError(`${path} must be a string`);
+        throw new MalformedArkadeInfoSnapshotError(`${path} must be a string`);
     }
 }
 
 function assertDecimalString(value: unknown, path: string): asserts value is string {
     assertString(value, path);
     if (!DECIMAL_STRING.test(value)) {
-        throw new MalformedArkInfoSnapshotError(`${path} must be a decimal integer string`);
+        throw new MalformedArkadeInfoSnapshotError(`${path} must be a decimal integer string`);
     }
 }
 
 function assertFeeInfo(value: unknown, path: string): asserts value is FeeInfo {
     if (typeof value !== "object" || value === null) {
-        throw new MalformedArkInfoSnapshotError(`${path} must be an object`);
+        throw new MalformedArkadeInfoSnapshotError(`${path} must be an object`);
     }
     const fees = value as Record<string, unknown>;
     assertString(fees.txFeeRate, `${path}.txFeeRate`);
     if (typeof fees.intentFee !== "object" || fees.intentFee === null) {
-        throw new MalformedArkInfoSnapshotError(`${path}.intentFee must be an object`);
+        throw new MalformedArkadeInfoSnapshotError(`${path}.intentFee must be an object`);
     }
 }
 
 /**
- * Validate an untrusted stored value into a {@link StoredArkInfoSnapshot},
- * throwing {@link MalformedArkInfoSnapshotError} on any structural problem.
+ * Validate an untrusted stored value into a {@link StoredArkadeInfoSnapshot},
+ * throwing {@link MalformedArkadeInfoSnapshotError} on any structural problem.
  */
-export function parseStoredArkInfoSnapshot(raw: unknown): StoredArkInfoSnapshot {
+export function parseStoredArkadeInfoSnapshot(raw: unknown): StoredArkadeInfoSnapshot {
     if (typeof raw !== "object" || raw === null) {
-        throw new MalformedArkInfoSnapshotError("snapshot must be an object");
+        throw new MalformedArkadeInfoSnapshotError("snapshot must be an object");
     }
     const snap = raw as Record<string, unknown>;
     if (snap.version !== CURRENT_VERSION) {
-        throw new MalformedArkInfoSnapshotError(
+        throw new MalformedArkadeInfoSnapshotError(
             `unsupported snapshot version: ${String(snap.version)}`,
         );
     }
     if (typeof snap.savedAt !== "number") {
-        throw new MalformedArkInfoSnapshotError("savedAt must be a number");
+        throw new MalformedArkadeInfoSnapshotError("savedAt must be a number");
     }
     if (snap.source !== "arkade.getInfo") {
-        throw new MalformedArkInfoSnapshotError(`unexpected source: ${String(snap.source)}`);
+        throw new MalformedArkadeInfoSnapshotError(`unexpected source: ${String(snap.source)}`);
     }
     if (typeof snap.arkInfo !== "object" || snap.arkInfo === null) {
-        throw new MalformedArkInfoSnapshotError("arkInfo must be an object");
+        throw new MalformedArkadeInfoSnapshotError("arkInfo must be an object");
     }
     const a = snap.arkInfo as Record<string, unknown>;
 
@@ -252,11 +255,11 @@ export function parseStoredArkInfoSnapshot(raw: unknown): StoredArkInfoSnapshot 
     assertFeeInfo(a.fees, "arkInfo.fees");
 
     if (!Array.isArray(a.deprecatedSigners)) {
-        throw new MalformedArkInfoSnapshotError("arkInfo.deprecatedSigners must be an array");
+        throw new MalformedArkadeInfoSnapshotError("arkInfo.deprecatedSigners must be an array");
     }
     a.deprecatedSigners.forEach((s: unknown, i: number) => {
         if (typeof s !== "object" || s === null) {
-            throw new MalformedArkInfoSnapshotError(
+            throw new MalformedArkadeInfoSnapshotError(
                 `arkInfo.deprecatedSigners[${i}] must be an object`,
             );
         }
@@ -267,7 +270,9 @@ export function parseStoredArkInfoSnapshot(raw: unknown): StoredArkInfoSnapshot 
 
     if (a.scheduledSession !== undefined) {
         if (typeof a.scheduledSession !== "object" || a.scheduledSession === null) {
-            throw new MalformedArkInfoSnapshotError("arkInfo.scheduledSession must be an object");
+            throw new MalformedArkadeInfoSnapshotError(
+                "arkInfo.scheduledSession must be an object",
+            );
         }
         const s = a.scheduledSession as Record<string, unknown>;
         for (const field of ["duration", "nextEndTime", "nextStartTime", "period"]) {
@@ -276,21 +281,21 @@ export function parseStoredArkInfoSnapshot(raw: unknown): StoredArkInfoSnapshot 
         assertFeeInfo(s.fees, "arkInfo.scheduledSession.fees");
     }
 
-    return raw as StoredArkInfoSnapshot;
+    return raw as StoredArkadeInfoSnapshot;
 }
 
 /**
  * Read and validate the cached snapshot from the wallet repository.
  * Returns `null` when no snapshot has been persisted; throws
- * {@link MalformedArkInfoSnapshotError} when a stored snapshot is corrupt.
+ * {@link MalformedArkadeInfoSnapshotError} when a stored snapshot is corrupt.
  */
-export async function loadArkInfoSnapshot(
+export async function loadArkadeInfoSnapshot(
     repo: WalletRepository,
-): Promise<StoredArkInfoSnapshot | null> {
+): Promise<StoredArkadeInfoSnapshot | null> {
     const state = await repo.getWalletState();
-    const raw = state?.settings?.[ARK_INFO_SNAPSHOT_KEY];
+    const raw = state?.settings?.[ARKADE_INFO_SNAPSHOT_KEY];
     if (raw === undefined || raw === null) return null;
-    return parseStoredArkInfoSnapshot(raw);
+    return parseStoredArkadeInfoSnapshot(raw);
 }
 
 /**
@@ -299,17 +304,17 @@ export async function loadArkInfoSnapshot(
  * {@link updateWalletState} mutex so it can't lose-update a concurrent
  * settings write.
  */
-export async function saveArkInfoSnapshot(
+export async function saveArkadeInfoSnapshot(
     repo: WalletRepository,
     info: ArkadeInfo,
     savedAt: number,
 ): Promise<void> {
-    const snapshot = serializeArkInfoSnapshot(info, savedAt);
+    const snapshot = serializeArkadeInfoSnapshot(info, savedAt);
     await updateWalletState(repo, (state) => ({
         ...state,
         settings: {
             ...(state.settings ?? {}),
-            [ARK_INFO_SNAPSHOT_KEY]: snapshot,
+            [ARKADE_INFO_SNAPSHOT_KEY]: snapshot,
         },
     }));
 }
@@ -317,7 +322,7 @@ export async function saveArkInfoSnapshot(
 /** Where the {@link ArkadeInfo} used to construct a wallet came from. */
 export type ServerInfoSource = "live" | "cache";
 
-export interface ResolvedArkInfo {
+export interface ResolvedArkadeInfo {
     info: ArkadeInfo;
     /** `live` when fetched from the operator, `cache` when hydrated offline. */
     source: ServerInfoSource;
@@ -332,7 +337,7 @@ export interface ResolvedArkInfo {
 /**
  * Resolve the server-info needed to construct a wallet, with cache fallback.
  * **This never writes the cache** — persistence is deferred to
- * {@link saveValidatedArkInfoSnapshot}, called only once construction has
+ * {@link saveValidatedArkadeInfoSnapshot}, called only once construction has
  * validated the response, so a terminal live response can't poison the cache.
  *
  *  - Live `getInfo` succeeds → return it as `source: "live"`. **Live wins.**
@@ -346,11 +351,11 @@ export interface ResolvedArkInfo {
  * source, so a cached snapshot for the wrong network fails the same way a live
  * wrong-network response does.
  */
-export async function resolveArkInfo(
+export async function resolveArkadeInfo(
     arkProvider: Pick<ArkProvider, "getInfo">,
     walletRepository: WalletRepository,
     opts?: { requireLive?: boolean },
-): Promise<ResolvedArkInfo> {
+): Promise<ResolvedArkadeInfo> {
     let info: ArkadeInfo;
     try {
         info = await arkProvider.getInfo();
@@ -360,15 +365,19 @@ export async function resolveArkInfo(
         // second resolution path, so every wallet resolves identically.
         if (opts?.requireLive || !isRetryableProviderError(err)) throw err;
         // Retryable: fall back to cache. A malformed stored snapshot throws
-        // (terminal) out of loadArkInfoSnapshot rather than being swallowed.
-        const snapshot = await loadArkInfoSnapshot(walletRepository);
+        // (terminal) out of loadArkadeInfoSnapshot rather than being swallowed.
+        const snapshot = await loadArkadeInfoSnapshot(walletRepository);
         if (!snapshot) {
             throw new ProviderUnavailableError(
                 "Arkade server info is unavailable and no cached snapshot exists",
                 { cause: err },
             );
         }
-        return { info: hydrateArkInfo(snapshot), source: "cache", lastOnlineAt: snapshot.savedAt };
+        return {
+            info: hydrateArkadeInfo(snapshot),
+            source: "cache",
+            lastOnlineAt: snapshot.savedAt,
+        };
     }
     return { info, source: "live" };
 }
@@ -380,14 +389,14 @@ export async function resolveArkInfo(
  * never overwrite a good cache before failing. Best-effort: a storage hiccup
  * must not fail an otherwise-online construction.
  */
-export async function saveValidatedArkInfoSnapshot(
+export async function saveValidatedArkadeInfoSnapshot(
     repo: WalletRepository,
     info: ArkadeInfo,
     savedAt: number,
 ): Promise<void> {
     try {
-        await saveArkInfoSnapshot(repo, info, savedAt);
+        await saveArkadeInfoSnapshot(repo, info, savedAt);
     } catch (err) {
-        console.warn("Failed to persist Ark info snapshot", err);
+        console.warn("Failed to persist Arkade info snapshot", err);
     }
 }

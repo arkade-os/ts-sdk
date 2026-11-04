@@ -464,7 +464,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
     });
 
     it("keeps a worker-side typed error reachable as `cause`", async () => {
-        // The worker's resolveArkInfo distinguishes offline (retry) from a
+        // The worker's resolveArkadeInfo distinguishes offline (retry) from a
         // corrupt cache (re-onboard). The REAL clone algorithm normalizes a
         // custom Error name to "Error" — this test certified the opposite
         // until review caught the harness copying `name` verbatim — so the

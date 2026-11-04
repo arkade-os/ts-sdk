@@ -7,16 +7,16 @@ import {
     isLnurl,
 } from "../../src/payment/predicates";
 
-const arkAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
+const arkadeAddr = new ArkAddress(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)).encode();
 
 describe("payment predicates", () => {
     it("isValidArkAddress decodes ark addresses, rejects others", () => {
-        expect(isValidArkAddress(arkAddr)).toBe(true);
+        expect(isValidArkAddress(arkadeAddr)).toBe(true);
         expect(isValidArkAddress("bcrt1qexample")).toBe(false);
     });
     it("isBtcAddress matches segwit/legacy, rejects ark", () => {
         expect(isBtcAddress("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080")).toBe(true);
-        expect(isBtcAddress(arkAddr)).toBe(false);
+        expect(isBtcAddress(arkadeAddr)).toBe(false);
     });
     it.each([
         ["1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", true],

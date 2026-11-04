@@ -260,7 +260,7 @@ describe("BoardingContractHandler.discoverAt", () => {
         expect(out).toEqual([]);
     });
 
-    it("hits at index 0 (baseline): untagged boarding row, Ark-address bucket, boarding CSV", async () => {
+    it("hits at index 0 (baseline): untagged boarding row, Arkade address bucket, boarding CSV", async () => {
         const script = boardingScript();
         const funded = new Set([script.onchainAddress(onchainNetwork)]);
         const out = await BoardingContractHandler.discoverAt(0, descriptor, deps(funded));

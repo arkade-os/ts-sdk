@@ -1,7 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { DefaultContractHandler, SingleKey, networks } from "../../src";
-import { beforeEachFaucet, createTestArkWallet, faucetOffchain, waitFor } from "./utils";
+import { beforeEachFaucet, createTestArkadeWallet, faucetOffchain, waitFor } from "./utils";
 
 /**
  * `awaiting-funds` against a live operator: a one-shot destination is covered
@@ -20,7 +20,7 @@ describe("contract watch state", () => {
         timeout: 120000,
     }, async () => {
         const AMOUNT = 2000;
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const manager = await alice.wallet.getContractManager();
 
         // A second `default` script the wallet owns nothing else at:

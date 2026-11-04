@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SettlementEventType } from "../src/providers/ark";
+import { SettlementEventType } from "../src/providers/arkade";
 import { reduceIntentState } from "../src/wallet/intentStateReducer";
 
 describe("reduceIntentState", () => {

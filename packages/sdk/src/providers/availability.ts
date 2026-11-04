@@ -1,5 +1,5 @@
 import { FetchError } from "../utils/fetch";
-import { isFetchTimeoutError } from "./ark";
+import { isFetchTimeoutError } from "./arkade";
 import { ProviderUnavailableError } from "./errors";
 
 /**

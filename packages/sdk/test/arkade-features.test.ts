@@ -20,7 +20,7 @@ import {
     type EmulatorInfo,
     type EmulatorProvider,
 } from "../src";
-import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
+import { getVirtualTxs, mintCoin } from "./helpers/prevArkadeTx";
 
 function xOnly(): Uint8Array {
     return schnorr.getPublicKey(schnorr.utils.randomSecretKey());
@@ -440,7 +440,7 @@ describe("ArkadeContract — extended features", () => {
         );
     });
 
-    it("rejects an emulator reply carrying another ark tx", async () => {
+    it("rejects an emulator reply carrying another Arkade transaction", async () => {
         const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
         vi.mocked(emulator.submitTx).mockResolvedValueOnce({
             signedArkTx: foreignCheckpoint(),
@@ -490,7 +490,7 @@ describe("ArkadeContract — extended features", () => {
             .change(p2tr())
             .build();
 
-        // Ark tx input i spends checkpoint i, which spends the coin — so the tx
+        // Arkade transaction input i spends checkpoint i, which spends the coin — so the tx
         // carried by input i must hash to that coin's txid, not the checkpoint's.
         for (const [i, coin] of [COIN, funding].entries()) {
             const fields = getArkPsbtFields(arkTx, i, PrevArkTxField);

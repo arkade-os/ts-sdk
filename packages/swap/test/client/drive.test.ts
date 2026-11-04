@@ -420,7 +420,7 @@ describe("the v1 read-through", () => {
 });
 
 describe("v1 corridor adoption", () => {
-    /** A v1 row as 0.0.24 stored it: txids under their `…ArkTxid` names, and a display amount. */
+    /** A v1 row as 0.0.24 stored it: txids under their `…ArkadeTxid` names, and a display amount. */
     const v1Row = (
         over: Partial<CorridorSwapRecord> = {},
         stored: Record<string, unknown> = {},

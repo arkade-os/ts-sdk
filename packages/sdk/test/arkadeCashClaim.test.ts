@@ -13,7 +13,7 @@ import { SingleKey } from "../src/identity/singleKey";
 import { ArkadeCash } from "../src/arkadeCash";
 import { ArkAddress } from "../src/script/address";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
-import { buildOffchainTx } from "../src/utils/arkTransaction";
+import { buildOffchainTx } from "../src/utils/arkadeTransaction";
 import { timelockToSequence } from "../src/utils/timelock";
 import type { VirtualCoin } from "../src/wallet";
 

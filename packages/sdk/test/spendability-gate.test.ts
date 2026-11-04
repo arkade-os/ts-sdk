@@ -22,7 +22,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/arkade";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import {
     DEFAULT_MESSAGE_TAG,
@@ -34,7 +34,7 @@ import { VtxoManager } from "../src/wallet/vtxo-manager";
 import {
     createMockExtendedVtxo,
     createDefaultContractParams,
-    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DEFAULT_ARKADE_ADDRESS,
 } from "./contracts/helpers";
 
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -786,7 +786,7 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
-            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARKADE_ADDRESS),
             makeRegisterIntentSignature: registerInputs,
             makeDeleteIntentSignature: vi.fn().mockResolvedValue({
                 proof: "delete-proof",

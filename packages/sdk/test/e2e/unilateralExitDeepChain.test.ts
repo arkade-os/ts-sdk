@@ -3,7 +3,7 @@ import { ExitPackage, OnchainWallet, UnilateralExit } from "../../src";
 import {
     arkdExec,
     beforeEachFaucet,
-    createTestArkWallet,
+    createTestArkadeWallet,
     createTestOnchainWallet,
     createVtxo,
     execCommand,
@@ -34,7 +34,7 @@ describe("unilateral exit — deep chain ordering", () => {
     it("prepare() emits a deep offchain send chain in physical-input topological order", {
         timeout: 300_000,
     }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const address = await alice.wallet.getAddress();
 
         // Settle → on-chain-anchored vtxo (the unroll chain's confirmed root),

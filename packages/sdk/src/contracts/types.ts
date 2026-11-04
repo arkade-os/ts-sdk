@@ -283,7 +283,7 @@ export interface DiscoveredContract {
 export interface DiscoveryDeps {
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
-    /** Ark-address network data; `{ hrp }` is all L2 (`default`/`delegate`) discovery needs. */
+    /** Arkade address network data; `{ hrp }` is all L2 (`default`/`delegate`) discovery needs. */
     network: { hrp: string };
     /**
      * Full Bitcoin network for on-chain (P2TR) addresses, needed by boarding discovery (`{ hrp }`

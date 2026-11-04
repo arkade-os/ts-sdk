@@ -628,9 +628,9 @@ describe("Settlement - VtxoManager concurrent operations", () => {
                     // preconfirmed VTXO first. That still leaves the wallet in the
                     // expected settled state for the remainder of the test.
                     expect(error).toBeInstanceOf(ArkError);
-                    const arkError = error as ArkError;
-                    expect(arkError.code).toBe(6);
-                    expect(arkError.message).toContain("VTXO_ALREADY_SPENT");
+                    const arkadeError = error as ArkError;
+                    expect(arkadeError.code).toBe(6);
+                    expect(arkadeError.message).toContain("VTXO_ALREADY_SPENT");
                 }
 
                 const sendAmount = 5000;

@@ -4,13 +4,13 @@ export * from "./targets";
 export * from "./amount";
 export * from "./handle";
 export { PaymentRouter, AmbiguousRouteError } from "./router";
-export { arkRail } from "./rails/ark";
-export { arkAssetRail, ASSET_CARRIER_SATS } from "./rails/arkAsset";
+export { arkRail } from "./rails/arkade";
+export { arkAssetRail, ASSET_CARRIER_SATS } from "./rails/arkadeAsset";
 export { onchainRail, walletFeeSource } from "./rails/onchain";
 
 import { PaymentRouter } from "./router";
-import { arkRail } from "./rails/ark";
-import { arkAssetRail } from "./rails/arkAsset";
+import { arkRail } from "./rails/arkade";
+import { arkAssetRail } from "./rails/arkadeAsset";
 import { onchainRail, walletFeeSource } from "./rails/onchain";
 import type { Wallet } from "../index";
 

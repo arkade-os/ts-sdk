@@ -115,7 +115,7 @@ export type OnchainNetwork = "bitcoin" | "testnet" | "regtest";
  * The `@scure/btc-signer` parameters each L1 network is addressed under.
  *
  * Three members, not five: `signet` and `mutinynet` are indistinguishable from `testnet` at the
- * address level, which is why {@link l1NetworkFromArk} folds them together.
+ * address level, which is why {@link l1NetworkFromArkade} folds them together.
  */
 export const L1_NETWORKS: Record<OnchainNetwork, typeof btc.NETWORK> = {
     bitcoin: btc.NETWORK,

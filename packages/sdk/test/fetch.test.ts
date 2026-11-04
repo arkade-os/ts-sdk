@@ -85,7 +85,7 @@ describe("baseFetch", () => {
     });
 });
 
-describe("Ark-server fetch wrapper", () => {
+describe("operator fetch wrapper", () => {
     it("surfaces the wrapped FetchError on transport failure (delegates to baseFetch)", async () => {
         const cause = new TypeError("Failed to fetch");
         vi.stubGlobal(

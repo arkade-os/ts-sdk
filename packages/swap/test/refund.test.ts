@@ -86,7 +86,7 @@ const dustOutputs = (count: number): LockupVtxo[] =>
     }));
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
- * does, plus its own signature) and reports the ark txid it was submitted.
+ * does, plus its own signature) and reports the Arkade txid it was submitted.
  * Typed against the production contract so a change to ArkProvider
  * breaks the fake at compile time. */
 type FakeOperator = ArkProvider & {
@@ -206,7 +206,7 @@ const fakeTransport = (states: (string | null)[]): RfqTransport & { calls: numbe
     return transport as unknown as RfqTransport & { calls: number };
 };
 
-/** The leaf script the ark tx's single input actually spends. */
+/** The leaf script the Arkade transaction's single input actually spends. */
 const spentLeafOf = (psbt: string): string => {
     const tx = Transaction.fromPSBT(base64.decode(psbt));
     const leaf = tx.getInput(0).tapLeafScript![0][1];
@@ -767,7 +767,7 @@ describe("readLockupFate", () => {
         expect(await read(indexer)).toEqual({ fate: "unknown" });
     });
 
-    it("names every checkpoint that spent a multi-output lockup, and the ark tx each rode", async () => {
+    it("names every checkpoint that spent a multi-output lockup, and the Arkade transaction each rode", async () => {
         const first = spendOf(OUT_A);
         const second = spendOf(OUT_B);
         const fate = await read(
@@ -789,7 +789,7 @@ describe("readLockupFate", () => {
         });
     });
 
-    it("keeps each output's own ark tx when only one of them has it", async () => {
+    it("keeps each output's own Arkade transaction when only one of them has it", async () => {
         // The shape a single hoisted `txid` would get wrong: two outputs,
         // one named, one not.
         const first = spendOf(OUT_A);
@@ -813,7 +813,7 @@ describe("readLockupFate", () => {
         });
     });
 
-    it("still names the checkpoint when the indexer omitted the ark tx", async () => {
+    it("still names the checkpoint when the indexer omitted the Arkade transaction", async () => {
         const spend = spendOf(OUT_A);
         const fate = await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]));
         expect(fate).toEqual({

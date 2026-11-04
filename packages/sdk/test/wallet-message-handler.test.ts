@@ -12,7 +12,7 @@ import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRep
 import {
     createMockExtendedVtxo,
     createMockIndexerProvider,
-    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DEFAULT_ARKADE_ADDRESS,
     TEST_DEFAULT_SCRIPT,
     TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
@@ -435,7 +435,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).walletRepository = repo;
         (updater as any).readonlyWallet = {
             getContractManager: async () => ({ getContracts: async () => [normal, recovery] }),
-            getAddress: async () => TEST_DEFAULT_ARK_ADDRESS,
+            getAddress: async () => TEST_DEFAULT_ARKADE_ADDRESS,
         };
 
         // Default (balance / VTXOS / coin selection): recovery-only excluded.
@@ -829,7 +829,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("read operations work with readonly wallet only", async () => {
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARKADE_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
@@ -857,7 +857,7 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
         expect(addrRes).toMatchObject({
             type: "ADDRESS",
-            payload: { address: TEST_DEFAULT_ARK_ADDRESS },
+            payload: { address: TEST_DEFAULT_ARKADE_ADDRESS },
         });
 
         const boardingRes = await updater.handleMessage({
@@ -1609,7 +1609,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("does not start VtxoManager for readonly wallets", async () => {
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARKADE_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["bc1-boarding"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
@@ -1754,7 +1754,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         walletRepo = new InMemoryWalletRepository();
 
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARKADE_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
             getBoardingAddresses: vi.fn().mockResolvedValue(["boarding-address"]),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
@@ -1792,7 +1792,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "aa".repeat(32),
             value: 50000,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [vtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1826,15 +1826,15 @@ describe("WalletMessageHandler repo-backed reads", () => {
         const readPage = vi
             .spyOn(walletRepo, "getVtxosForScriptPage")
             .mockResolvedValueOnce({
-                items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: first }],
+                items: [{ address: TEST_DEFAULT_ARKADE_ADDRESS, vtxo: first }],
                 nextCursor: {
-                    address: TEST_DEFAULT_ARK_ADDRESS,
+                    address: TEST_DEFAULT_ARKADE_ADDRESS,
                     txid: first.txid,
                     vout: first.vout,
                 },
             })
             .mockResolvedValueOnce({
-                items: [{ address: TEST_DEFAULT_ARK_ADDRESS, vtxo: second }],
+                items: [{ address: TEST_DEFAULT_ARKADE_ADDRESS, vtxo: second }],
             });
 
         const response = await updater.handleMessage({
@@ -1891,7 +1891,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             isSpent: true,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [
             live,
             swept,
             expired,
@@ -1943,7 +1943,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             spentBy: "ee".repeat(32),
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [live, spent, exited]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [live, spent, exited]);
         const reads = vi.spyOn(walletRepo, "getVtxosForScriptPage");
         const send = (id: string, type: string, payload?: unknown) =>
             updater.handleMessage({ ...baseMessage(id), type, payload } as any);
@@ -1980,7 +1980,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             isSpent: true,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [
             exitedSwept,
             exitedExpired,
             exitedSpent,
@@ -2017,7 +2017,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             isPreconfirmed: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, preconfirmed]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [settled, preconfirmed]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2047,7 +2047,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             isSpent: false,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, unrolled]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [settled, unrolled]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2082,7 +2082,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSwept]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [settled, exitedSwept]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2116,7 +2116,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             isSpent: true,
             isUnrolled: true,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, exitedSpent]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [settled, exitedSpent]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2147,7 +2147,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "cc".repeat(32),
             value: 70000,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [settled, pendingExpired]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [settled, pendingExpired]);
 
         // The wallet reports the past-cutoff (EXPIRED) VTXO as pending recovery.
         (updater as any).readonlyWallet.pendingRecoveryOutpointsIn = vi
@@ -2209,7 +2209,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
     it("GET_BALANCE derives pending recovery without the syncing accessor", async () => {
         setupHandler();
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [
             createMockExtendedVtxo({
                 txid: "aa".repeat(32),
                 value: 100000,
@@ -2233,7 +2233,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             createdAt: new Date(),
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [vtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2430,7 +2430,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {
-        const contracts = [{ address: TEST_DEFAULT_ARK_ADDRESS, script: TEST_DEFAULT_SCRIPT }];
+        const contracts = [{ address: TEST_DEFAULT_ARKADE_ADDRESS, script: TEST_DEFAULT_SCRIPT }];
         setupHandler(contracts);
 
         const vtxo = createMockExtendedVtxo({
@@ -2438,7 +2438,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
         });
         // Save same VTXO under both keys (contract address = wallet address)
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [vtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2473,7 +2473,12 @@ describe("WalletMessageHandler repo-backed reads", () => {
             isSpent: true,
             spentBy: "ee".repeat(32),
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [preconfirmed, settled, swept, spent]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [
+            preconfirmed,
+            settled,
+            swept,
+            spent,
+        ]);
 
         const finalizeSpy = vi.fn().mockResolvedValue({ pending: [], finalized: [] });
         (updater as any).wallet = {
@@ -2749,14 +2754,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "aa".repeat(32),
             value: 10000,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [initial]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [initial]);
 
         // Simulate subscription update by saving new VTXOs
         const newVtxo = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 20000,
         });
-        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [newVtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARKADE_ADDRESS, [newVtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -2817,7 +2822,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
     it("GET_VTXOS fails fast when the wallet's primary address can't be decoded", async () => {
         setupHandler();
         // Override the readonly wallet to return a malformed address that
-        // scriptFromArkAddress cannot decode. Before the fix this silently
+        // scriptFromArkadeAddress cannot decode. Before the fix this silently
         // dropped the wallet's primary bucket and zeroed the visible balance.
         (updater as any).readonlyWallet.getAddress = vi
             .fn()
@@ -2842,7 +2847,7 @@ describe("WalletMessageHandler event-push generations", () => {
     };
 
     const makeWallet = (overrides: Record<string, any> = {}) => ({
-        getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+        getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARKADE_ADDRESS),
         getContractManager: vi.fn().mockResolvedValue({
             onContractEvent: vi.fn(() => vi.fn()),
             getContracts: vi.fn().mockResolvedValue([]),

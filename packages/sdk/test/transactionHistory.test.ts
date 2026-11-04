@@ -1144,7 +1144,7 @@ describe("buildTransactionHistory", () => {
      * produce no row at all, and an asset-side swap — whose whole movement is
      * asset units on a dust carrier — disappears completely.
      *
-     * Assertions key on the ark txid of the leg under test rather than on the
+     * Assertions key on the Arkade txid of the leg under test rather than on the
      * whole array. Each fixture starts from a coin the wallet already held, and
      * the transaction that created *that* is outside the fixture, so the builder
      * reports it as an earlier receive — correctly, and irrelevantly here.
@@ -1158,7 +1158,7 @@ describe("buildTransactionHistory", () => {
         const covenantScript = "swap-covenant-script";
 
         /**
-         * A spend is a checkpoint per input plus the ark tx that spends the
+         * A spend is a checkpoint per input plus the Arkade transaction that spends the
          * checkpoints, so `spentBy` and `arkTxId` are never the same value. The
          * builder keys on `arkTxId`; `spentBy` is here so the fixtures are the
          * shape `convertVtxo` actually produces.
@@ -1559,7 +1559,7 @@ describe("buildTransactionHistory", () => {
                 expect(rowsFor(txs, arkTxId)).toHaveLength(0);
             });
 
-            // [name, ark txid, units spent, units in change, the row's asset amount]
+            // [name, Arkade txid, units spent, units in change, the row's asset amount]
             it.each([
                 ["issuance", "gated-issuance", 0n, 500n, 500n],
                 ["reissuance", "gated-reissuance", 500n, 900n, 400n],

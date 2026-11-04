@@ -115,7 +115,7 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
 };
 
 /**
- * PrevArkTxField carries the serialized raw bitcoin tx of the previous Ark tx
+ * PrevArkTxField carries the serialized raw bitcoin tx of the previous Arkade transaction
  * spent by an input. Used by OP_INSPECTINPUTSCRIPTPUBKEY on intent proofs and
  * other contexts where the prevout pkScript must be looked up off-chain.
  *
@@ -140,7 +140,7 @@ export const PrevArkTxField: ArkPsbtFieldCoder<Uint8Array> = {
 /**
  * PrevoutTxField carries the serialized raw bitcoin tx that produced the
  * previous output spent by an input. Used by OP_INSPECTINPUTSCRIPTPUBKEY in
- * the SubmitOnchainTx flow, where there is no Ark tx but a plain Bitcoin
+ * the SubmitOnchainTx flow, where there is no Arkade transaction but a plain Bitcoin
  * funding tx whose pkScript must be resolvable.
  *
  * Key: [0xde] || "prevouttx". Value: serialized wire.MsgTx (NOT a PSBT).
@@ -232,11 +232,11 @@ const nullIfCatch = <T>(fn: () => T): T | null => {
 
 function checkKeyMatch(
     key: { type: number; key: Uint8Array },
-    arkPsbtFieldKey: ArkPsbtFieldKey,
+    arkadePsbtFieldKey: ArkPsbtFieldKey,
     prefixOnly: boolean = false,
 ): boolean {
     if (key.type !== ArkPsbtFieldKeyType) return false;
-    const expected = encodedPsbtFieldKey[arkPsbtFieldKey];
+    const expected = encodedPsbtFieldKey[arkadePsbtFieldKey];
     if (key.key.length < expected.length) return false;
     if (!prefixOnly && key.key.length !== expected.length) return false;
     for (let i = 0; i < expected.length; i++) {

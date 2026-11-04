@@ -23,7 +23,7 @@ vi.mock("../src/utils/fetch", async (original) => ({
     fetch: mockFetch,
     baseFetch: mockFetch,
 }));
-const ARK_INFO = {
+const ARKADE_INFO = {
     signerPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
     forfeitPubkey: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
     batchExpiry: 144n,
@@ -127,7 +127,7 @@ beforeEach(() => {
     vi.stubGlobal("EventSource", MockEventSource);
     mockFetch.mockReset();
     mockFetch.mockImplementation((url: string) => {
-        if (url.includes("/info")) return Promise.resolve(jsonResponse(ARK_INFO));
+        if (url.includes("/info")) return Promise.resolve(jsonResponse(ARKADE_INFO));
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return Promise.resolve(jsonResponse({ subscriptionId: "sub-1" }));
         if (url.includes("vtxo") || url.includes("scripts"))

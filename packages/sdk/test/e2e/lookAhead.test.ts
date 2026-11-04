@@ -70,7 +70,7 @@ describe("HD look-ahead band", () => {
             const before = (await wallet.getBalance()).total;
 
             // The external issuer (NArk role): same seed, signer and exit
-            // delay, but the plain `default` shape `ArkPaymentContract` emits.
+            // delay, but the plain `default` shape `ArkadePaymentContract` emits.
             const provider = await HDDescriptorProvider.create(
                 identity as unknown as HDCapableIdentity,
                 createSharedRepos().walletRepository,

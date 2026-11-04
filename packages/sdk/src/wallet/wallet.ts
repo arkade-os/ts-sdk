@@ -26,7 +26,7 @@ import {
     SignedIntent,
     TreeNoncesEvent,
     TreeSigningStartedEvent,
-} from "../providers/ark";
+} from "../providers/arkade";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
@@ -102,7 +102,7 @@ import {
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
-} from "../utils/arkTransaction";
+} from "../utils/arkadeTransaction";
 import { toXOnly } from "../utils/keys";
 import { Transaction } from "../utils/transaction";
 import {
@@ -114,7 +114,7 @@ import {
     VtxoManager,
     selectPendingRecoveryOutpoints,
 } from "./vtxo-manager";
-import { ArkNote } from "../arknote";
+import { ArkNote } from "../arkadeNote";
 import { ArkadeCash } from "../arkadeCash";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -145,12 +145,12 @@ import { createExitChainResolver, ExitDataSource } from "./exit/resolver";
 import { ArkError, ProviderUnavailableError, type ProviderKind } from "../providers/errors";
 import { isRetryableProviderError } from "../providers/availability";
 import {
-    resolveArkInfo,
-    saveValidatedArkInfoSnapshot,
+    resolveArkadeInfo,
+    saveValidatedArkadeInfoSnapshot,
     type ServerInfoSource,
-} from "./arkInfoSnapshot";
+} from "./arkadeInfoSnapshot";
 import { Batch } from "./batch";
-import { Estimator } from "../arkfee";
+import { Estimator } from "../arkadeFee";
 import { DelegateProvider } from "../providers/delegate";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "./activity";
@@ -252,7 +252,7 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
 
 // Built-in and decorated ArkProvider implementations may expose `serverUrl`.
 // The interface does not require it, so custom providers can return undefined.
-export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
+export function extractArkadeProviderUrl(provider: ArkProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
@@ -951,7 +951,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @see ArkadeInfo
      */
     async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        const { info, source, lastOnlineAt } = await resolveArkInfo(
+        const { info, source, lastOnlineAt } = await resolveArkadeInfo(
             this.arkProvider,
             this.walletRepository,
             opts,
@@ -1028,8 +1028,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
         if (!indexerProvider && !config.service) {
-            const derived = extractArkProviderUrl(arkProvider);
-            // Refuse to pair a caller's own ark provider with the public default: the wallet would
+            const derived = extractArkadeProviderUrl(arkProvider);
+            // Refuse to pair a caller's own Arkade provider with the public default: the wallet would
             // read its VTXOs from a server that has never seen them, and report phantom coins and
             // missed receipts rather than an error.
             if (!derived && config.arkProvider) {
@@ -1055,12 +1055,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             .catch(() => undefined);
 
         // The cache is NOT written here but after construction validates the response
-        // (saveValidatedArkInfoSnapshot in create()), so a bad live response can't poison it.
+        // (saveValidatedArkadeInfoSnapshot in create()), so a bad live response can't poison it.
         const {
             info,
             source: serverInfoSource,
             lastOnlineAt: serverInfoLastOnlineAt,
-        } = await resolveArkInfo(arkProvider, walletRepository);
+        } = await resolveArkadeInfo(arkProvider, walletRepository);
 
         // `info` reused, so `getInfo` is fetched once and the network gate also applies to a cached
         // snapshot (the same server's last answer). The emulator it resolves is unused here.
@@ -1132,7 +1132,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const boardingTimelock: RelativeTimelock =
             config.boardingTimelock ?? toTimelock(info.boardingExitDelay);
 
-        const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
+        const serverPubKey = toXOnly(hex.decode(info.signerPubkey), "operator signer key");
 
         const delegatePubKey = await delegatePubKeyPromise;
 
@@ -1218,7 +1218,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // params); only now is it safe to refresh the cached snapshot.
         if (setup.serverInfoSource === "live") {
             const now = Date.now();
-            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            await saveValidatedArkadeInfoSnapshot(setup.walletRepository, setup.info, now);
             wallet._serverInfoLastOnlineAt = now;
         } else {
             wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
@@ -2935,7 +2935,7 @@ export class Wallet
      * the stable public API.
      */
     async rotateServerSigner(newServerPubKey: Bytes, checkpointTapscript: string): Promise<void> {
-        const xonly = toXOnly(newServerPubKey, "ark signer key");
+        const xonly = toXOnly(newServerPubKey, "operator signer key");
 
         // Validate the server-controlled checkpoint script FIRST (the provider defaults it to ""
         // when omitted), as `Wallet.create` does, so a bad rotation is side-effect-free and the
@@ -3222,7 +3222,10 @@ export class Wallet
 
         // Current and deprecated signers from one fresh snapshot so they're mutually consistent
         // (NArk parity), rather than mixing a stale instance signer with fresh history.
-        const currentSignerPubKey = toXOnly(hex.decode(arkInfo.signerPubkey), "ark signer key");
+        const currentSignerPubKey = toXOnly(
+            hex.decode(arkInfo.signerPubkey),
+            "operator signer key",
+        );
         const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
             toXOnly(hex.decode(s.pubkey), "deprecated signer key"),
         );
@@ -3576,7 +3579,7 @@ export class Wallet
         // Construction validated the response, so it is now safe to refresh the cached snapshot.
         if (setup.serverInfoSource === "live") {
             const now = Date.now();
-            await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
+            await saveValidatedArkadeInfoSnapshot(setup.walletRepository, setup.info, now);
             wallet._serverInfoLastOnlineAt = now;
         } else {
             wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
@@ -4679,7 +4682,7 @@ export class Wallet
             tapLeafScript: vtxo.forfeitTapLeafScript,
         }));
 
-        // Track seen arkTxids so parallel batches don't finalize the same tx twice
+        // Track seen arkadeTxids so parallel batches don't finalize the same tx twice
         const seen = new Set<string>();
 
         const results = await Promise.all(
@@ -5317,7 +5320,7 @@ export class Wallet
                 const paidToMe = this.arkTxAmountPaidTo(pendingTx.finalArkTx, myPkScriptHex);
                 if (paidToMe === 0) continue;
 
-                // The ark tx spends the checkpoints; the cash VTXOs are the checkpoints' inputs.
+                // The Arkade transaction spends the checkpoints; the cash VTXOs are the checkpoints' inputs.
                 result.swept += paidToMe;
                 for (const checkpoint of checkpointTxs) {
                     for (let i = 0; i < checkpoint.inputsLength; i++) {
@@ -5337,9 +5340,9 @@ export class Wallet
         return result;
     }
 
-    /** Sum the outputs of an ark tx PSBT that pay the given scriptPubKey. */
-    private arkTxAmountPaidTo(arkTxPsbt: string, pkScriptHex: string): number {
-        const arkTx = Transaction.fromPSBT(base64.decode(arkTxPsbt));
+    /** Sum the outputs of an Arkade transaction PSBT that pay the given scriptPubKey. */
+    private arkTxAmountPaidTo(arkadeTxPsbt: string, pkScriptHex: string): number {
+        const arkTx = Transaction.fromPSBT(base64.decode(arkadeTxPsbt));
         let total = 0;
         for (let i = 0; i < arkTx.outputsLength; i++) {
             const output = arkTx.getOutput(i);
@@ -5832,7 +5835,7 @@ export class Wallet
 
     /**
      * @internal Migration primitive for {@link VtxoManager}: spend the wallet's own
-     * deprecated-signer VTXOs into one full-value output on the *active* signer, via the Ark send
+     * deprecated-signer VTXOs into one full-value output on the *active* signer, via the Arkade send
      * path (not `settle`) so arkd builds checkpoints against the active epoch. No boarding inputs.
      * The caller must already be on the active signer and have sized the batch. Preserves all
      * input assets; records no `TxSent` history.
@@ -5967,13 +5970,13 @@ export class Wallet
 
         // arkTx inputs spend checkpoint outputs, so their `witnessUtxo.script` is the checkpoint
         // pkScript; route by the source VTXO scripts instead (positionally aligned to `inputs`).
-        const arkTxJobs = inputs.map((input, index) => ({
+        const arkadeTxJobs = inputs.map((input, index) => ({
             index,
             lookupScript: VtxoScript.decode(input.tapTree).pkScript,
         }));
         const identity = this.identity;
         const signer: OffchainTxSigner = {
-            signArkTx: async (arkTx, checkpoints) => {
+            signArkadeTx: async (arkTx, checkpoints) => {
                 const checkpointJobs = checkpoints.map((c) =>
                     this.inputSigningJobsFromWitnessUtxos(c),
                 );
@@ -5982,14 +5985,14 @@ export class Wallet
                 // checkpoints are returned for `submitOffchainTx` to merge onto the server's.
                 const batchEligible =
                     isBatchSignable(identity) &&
-                    (await this._signerRouter.canBatch(arkTxJobs, ...checkpointJobs));
+                    (await this._signerRouter.canBatch(arkadeTxJobs, ...checkpointJobs));
 
                 if (batchEligible) {
                     // Clone so a misbehaving provider can't mutate the originals before submitTx.
                     const requests = [
                         {
                             tx: arkTx.clone(),
-                            inputIndexes: arkTxJobs.map((j) => j.index),
+                            inputIndexes: arkadeTxJobs.map((j) => j.index),
                         },
                         ...checkpoints.map((c, i) => ({
                             tx: c.clone(),
@@ -6006,7 +6009,7 @@ export class Wallet
                     return { arkTx: firstSignedTx, userSignedCheckpoints: signedCheckpoints };
                 }
 
-                return { arkTx: await this._signerRouter.sign(arkTx, arkTxJobs) };
+                return { arkTx: await this._signerRouter.sign(arkTx, arkadeTxJobs) };
             },
             signCheckpoint: (checkpoint) =>
                 this._signerRouter.sign(
@@ -6242,7 +6245,7 @@ export class Wallet
     ): Promise<void> {
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
-            const inputArkTxIds = new Set<string>();
+            const inputArkadeTxIds = new Set<string>();
             // Grouped by the address each UTXO sits on, which after rotation may not be the
             // current boarding address.
             const boardingRemovalsByAddress = new Map<string, Set<string>>();
@@ -6261,7 +6264,7 @@ export class Wallet
                         throw new Error(`missing annotation for virtual coin ${outpoint}`);
                     }
                     if (vtxo.arkTxId) {
-                        inputArkTxIds.add(vtxo.arkTxId);
+                        inputArkadeTxIds.add(vtxo.arkTxId);
                     }
                     const settledFacts = { ...vtxo, isSpent: true };
                     spentVtxos.push({

@@ -24,7 +24,7 @@ import { chainSourceFrom } from "../../chainSource";
 import type { ChainSource } from "../../onchainHtlc";
 import { L1_NETWORKS, ONCHAIN_CLAIM_VSIZE } from "../../onchainHtlc";
 import type { RfqSwapManagerCallbacks } from "../../swapManager";
-import { l1NetworkFromArk, type InvoiceFacts } from "../../rfq";
+import { l1NetworkFromArkade, type InvoiceFacts } from "../../rfq";
 import type { SwapOperator } from "../../refund";
 import type { AssetSwapRepository } from "../../repository";
 import type { Corridor } from "../corridor";
@@ -281,7 +281,7 @@ export function resolveCorridorDeps(
             const claimVsize =
                 refusedIfMalformed(overrides?.onchain?.claimVsize, "L1 claim vsize") ??
                 ONCHAIN_CLAIM_VSIZE;
-            const l1Network = l1NetworkFromArk(base.networkName);
+            const l1Network = l1NetworkFromArkade(base.networkName);
             return {
                 networkName: base.networkName,
                 chain:

@@ -209,7 +209,7 @@ under the new names — the golden `ArkAddress` test pins that.
 
 All five are now on `@arkade-os/swap/protocol` rather than the root; see the section above.
 
-### Removed exports — `ClaimArkProvider`, `RefundArkProvider`
+### Removed exports — `ClaimArkadeProvider`, `RefundArkadeProvider`
 
 Gone rather than renamed. Both were `Pick<RestArkProvider, "getInfo" | "submitTx" |
 "finalizeTx">`; `pushClaim`, `claimReceiveLockup`, `pushRefundWithoutReceiver` and

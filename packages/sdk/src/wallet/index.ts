@@ -1,5 +1,5 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/arkade";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -281,7 +281,7 @@ export type StorageConfig = {
     /**
      * Optional exit-data capture settings (only in effect when
      * `virtualTxRepository` is set). `mode` "lite" (default) stores structure
-     * only; "full" stores PSBTs so a unilateral exit needs no Ark indexer.
+     * only; "full" stores PSBTs so a unilateral exit needs no Arkade indexer.
      * `minExitWorthSats` (default 1000) skips dust. `sources` are extra
      * `ExitDataSource`s (e.g. a wallet-provider) tried before the indexer for
      * both capture and exit reads.

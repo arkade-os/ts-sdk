@@ -9,6 +9,6 @@ import { ArkAddress } from "../index";
  * domain type, so backfill must produce the same value the indexer would
  * have returned — which is the hex of the address's `pkScript`.
  */
-export function scriptFromArkAddress(address: string): string {
+export function scriptFromArkadeAddress(address: string): string {
     return hex.encode(ArkAddress.decode(address).pkScript);
 }

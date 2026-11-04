@@ -3,7 +3,7 @@ import { DustChangeError, Ramps } from "../src/wallet/ramps";
 import { isSdkPicked } from "../src/wallet/utils";
 
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const ARK_ADDR =
+const ARKADE_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 const fees = { intentFee: {}, txFeeRate: "1" } as any;
 const HOUR = 3_600_000;
@@ -22,7 +22,7 @@ const wallet = (coins: ReturnType<typeof coin>[], over: Record<string, unknown> 
         concurrentSpending: true,
         dustAmount: 330n,
         getSpendableVtxos: vi.fn().mockResolvedValue(coins),
-        getAddress: vi.fn().mockResolvedValue(ARK_ADDR),
+        getAddress: vi.fn().mockResolvedValue(ARKADE_ADDR),
         settle: vi.fn().mockResolvedValue("txSETTLE"),
         logUngatedInputs: vi.fn().mockResolvedValue(undefined),
         ...over,
@@ -42,7 +42,7 @@ describe("Ramps exits with concurrentSpending", () => {
         expect(inputsOf(w)).toEqual(["bb"]);
         expect(w.settle.mock.calls[0][0].outputs).toEqual([
             { address: BTC_ADDR, amount: 30_000n },
-            { address: ARK_ADDR, amount: 20_000n },
+            { address: ARKADE_ADDR, amount: 20_000n },
         ]);
     });
 

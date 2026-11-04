@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
 import {
     faucetOffchain,
-    createTestArkWallet,
+    createTestArkadeWallet,
     createVtxo,
     beforeEachFaucet,
     waitFor,
@@ -24,7 +24,7 @@ describe("Indexer provider", () => {
 
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
@@ -61,7 +61,7 @@ describe("Indexer provider", () => {
     });
 
     it("filters vtxos by renewableOnly", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
@@ -95,7 +95,7 @@ describe("Indexer provider", () => {
 
     it("should inspect a commitment tx", { timeout: 120_000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
@@ -185,12 +185,12 @@ describe("Indexer provider", () => {
         let abortController = new AbortController();
 
         // Create fresh wallet instance for this test
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
         const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
 
         // Create fresh wallet instance for this test
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
         const bobScript = ArkAddress.decode(bobAddress!).pkScript;
 
@@ -298,7 +298,7 @@ describe("Indexer provider", () => {
     });
 
     it("should get vtxo chain", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
 
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
@@ -345,7 +345,7 @@ describe("Indexer provider", () => {
             amount: fundAmount,
         });
 
-        // wait for the ark tx to be processed by the ark server
+        // wait for the Arkade transaction to be processed by the ark server
         await waitFor(
             async () => {
                 const vtxos = await alice.wallet.getVtxos();
@@ -356,18 +356,18 @@ describe("Indexer provider", () => {
             { timeout: 15_000, interval: 250 },
         );
 
-        const aliceVtxosAfterArkTx = await alice.wallet.getVtxos();
-        expect(aliceVtxosAfterArkTx).toBeDefined();
-        expect(aliceVtxosAfterArkTx).toHaveLength(1);
+        const aliceVtxosAfterArkadeTx = await alice.wallet.getVtxos();
+        expect(aliceVtxosAfterArkadeTx).toBeDefined();
+        expect(aliceVtxosAfterArkadeTx).toHaveLength(1);
 
         // should get the offchain tx in the chain
         const chainResponseAfterOffchain = await indexerProvider.getVtxoChain(
-            aliceVtxosAfterArkTx[0],
+            aliceVtxosAfterArkadeTx[0],
         );
         expect(chainResponseAfterOffchain.chain).toBeDefined();
         expect(chainResponseAfterOffchain.chain.length).toBeGreaterThan(chainResponse.chain.length);
 
-        // verify that the new chain is composed by the previous chain + the checkpoint + the ark tx
+        // verify that the new chain is composed by the previous chain + the checkpoint + the Arkade transaction
         expect(chainResponseAfterOffchain.chain.length).toBe(chainResponse.chain.length + 2);
 
         // every tx of the initial chain should be in the new chain
@@ -375,7 +375,7 @@ describe("Indexer provider", () => {
             expect(chainResponseAfterOffchain.chain.some((t) => t.txid === tx.txid)).toBe(true);
         }
 
-        // the ark tx should be the first tx in the chain
+        // the Arkade transaction should be the first tx in the chain
         const firstTx = chainResponseAfterOffchain.chain[0];
         expect(firstTx.type).toBe(ChainTxType.ARK);
         expect(firstTx.txid).toBe(arkTxId);
@@ -389,7 +389,7 @@ describe("Indexer provider", () => {
     });
 
     it("should get vtxo tree txs", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
 
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
@@ -440,7 +440,7 @@ describe("Indexer provider", () => {
     });
 
     it("should get connectors from commitment tx", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
 
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 

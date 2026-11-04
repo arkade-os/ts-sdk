@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { convertVtxo } from "../wallet/vtxo";
-import { isFetchTimeoutError } from "./ark";
+import { isFetchTimeoutError } from "./arkade";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import {
     isEventSourceUnavailableError,

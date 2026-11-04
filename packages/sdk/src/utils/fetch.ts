@@ -78,7 +78,7 @@ function readDeadline(input: RequestInfo | URL, init?: RequestInit): AbortSignal
 
 /**
  * Guarded passthrough to the platform `fetch` with no Arkade-specific headers. Use for any
- * service that is NOT the Ark server (delegate, Esplora, …): those origins reject unknown request
+ * service that is NOT the operator (delegate, Esplora, …): those origins reject unknown request
  * headers such as `X-Build-Version` in the CORS preflight. Transport-level rejections are
  * re-thrown as a {@link FetchError}; reads without a caller signal are bounded by
  * {@link READ_TIMEOUT_MS}.
@@ -99,7 +99,7 @@ export function baseFetch(input: RequestInfo | URL, init?: RequestInit): Promise
 }
 
 /**
- * `fetch` for the Ark server only: adds {@link ARKADE_VERSION_HEADERS}. Do NOT use it for other
+ * `fetch` for the operator only: adds {@link ARKADE_VERSION_HEADERS}. Do NOT use it for other
  * origins — they reject these custom headers in CORS preflight.
  */
 export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

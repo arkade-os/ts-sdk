@@ -5,7 +5,7 @@ import { VtxoReservedError } from "../src/wallet/wallet";
 import { isSdkPicked } from "../src/wallet/utils";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 
-const ARK_ADDR =
+const ARKADE_ADDR =
     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
 const flush = async () => {
     for (let i = 0; i < 48; i++) await Promise.resolve();
@@ -37,7 +37,7 @@ describe("VtxoManager and a concurrent spend", () => {
         const wallet = {
             getVtxos: vi.fn().mockResolvedValue([vtxo]),
             getSpendableVtxos: vi.fn().mockResolvedValue([vtxo]),
-            getAddress: vi.fn().mockResolvedValue(ARK_ADDR),
+            getAddress: vi.fn().mockResolvedValue(ARKADE_ADDR),
             getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue({
                 onContractEvent: vi.fn((handler) => {
@@ -81,7 +81,7 @@ describe("VtxoManager and a concurrent spend", () => {
         const wallet = {
             getVtxos: vi.fn().mockResolvedValue([]),
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
-            getAddress: vi.fn().mockResolvedValue(ARK_ADDR),
+            getAddress: vi.fn().mockResolvedValue(ARKADE_ADDR),
             getDelegateManager: vi.fn().mockResolvedValue(undefined),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue({

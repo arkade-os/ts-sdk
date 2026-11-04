@@ -79,7 +79,7 @@ const PAYOUT_ADDRESS = new ArkAddress(OPERATOR_PUBKEY, key(21), "tark").encode()
 
 /** What every wallet below answers `getArkadeInfo()` with: the server info the
  * receive flows used to fetch over the wire, now sourced off the wallet. */
-const ARK_INFO = {
+const ARKADE_INFO = {
     signerPubkey: hex.encode(OPERATOR_PUBKEY),
     unilateralExitDelay: 4096,
     network: "regtest",
@@ -738,7 +738,7 @@ const hdWallet = async (
     return {
         identity,
         getAddress: async () => PAYOUT_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getArkadeInfo: async () => ARKADE_INFO,
         getContractManager: async () => ({ createContract }),
         getCurrentSigningDescriptor: () => provider.getCurrentSigningDescriptor(),
         getNextSigningDescriptor: () => provider.getNextSigningDescriptor(),
@@ -763,7 +763,7 @@ const staticWallet = (createContract: () => Promise<unknown> = async () => ({}))
             "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
         ),
         getAddress: async () => PAYOUT_ADDRESS,
-        getArkadeInfo: async () => ARK_INFO,
+        getArkadeInfo: async () => ARKADE_INFO,
         getContractManager: async () => ({ createContract }),
     }) as unknown as IWallet;
 

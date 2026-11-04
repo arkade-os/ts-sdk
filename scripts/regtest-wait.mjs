@@ -8,7 +8,7 @@ export const sleep = promisify(setTimeout);
  * Poll the ark server until `signerPubkey` is set, then return the parsed
  * `/v1/info` response. Throws after `maxRetries` failed attempts.
  */
-export async function waitForArkServer({
+export async function waitForOperator({
     url = "http://localhost:7070/v1/info",
     maxRetries = 30,
     retryDelay = 2000,

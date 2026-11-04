@@ -35,7 +35,7 @@ const SINGLEKEY_HEX = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60
 
 const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-export const mockArkInfo = {
+export const mockArkadeInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
     forfeitPubkey: SERVER_PUBKEY_HEX,
     batchExpiry: BigInt(144),
@@ -51,7 +51,7 @@ export const mockArkInfo = {
 
 /**
  * Install the shared `fetch` / `EventSource` stubs used by every wallet
- * built through this harness. The ark provider still resolves its
+ * built through this harness. The Arkade provider still resolves its
  * `/info` over `fetch`; the indexer and onchain providers are injected
  * objects, so `fetch` only ever needs to answer `/info` + subscribe.
  *
@@ -61,7 +61,7 @@ export const mockArkInfo = {
 export function installRestoreHarness(): void {
     const mockFetch = vi.fn().mockImplementation((url: string) => {
         const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
-        if (url.includes("/info")) return reply(mockArkInfo);
+        if (url.includes("/info")) return reply(mockArkadeInfo);
         if (url.includes("subscribe") || url.includes("subscriptions"))
             return reply({ subscriptionId: "sub-1" });
         return reply([]);

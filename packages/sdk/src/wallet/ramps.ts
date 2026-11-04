@@ -1,7 +1,7 @@
 import { ExtendedCoin, IWallet } from ".";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "./vtxo";
-import { ArkadeInfo, FeeInfo, SettlementEvent } from "../providers/ark";
-import { Estimator } from "../arkfee";
+import { ArkadeInfo, FeeInfo, SettlementEvent } from "../providers/arkade";
+import { Estimator } from "../arkadeFee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";

@@ -13,7 +13,7 @@ import { Transaction } from "../src/utils/transaction";
 import { networks } from "../src/networks";
 import { VtxoScript } from "../src/script/base";
 import type { ExtendedCoin, Recipient } from "../src/wallet";
-import type { BatchFinalizationEvent } from "../src/providers/ark";
+import type { BatchFinalizationEvent } from "../src/providers/arkade";
 
 const NETWORK = networks.regtest;
 

@@ -9,7 +9,7 @@ import {
 } from "../../src";
 import {
     beforeEachFaucet,
-    createTestArkWallet,
+    createTestArkadeWallet,
     createTestIdentity,
     execCommand,
     faucetOffchain,
@@ -20,7 +20,7 @@ describe("Asset integration tests", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     it("collaborative exit", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 20_000;
@@ -90,7 +90,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should issue an asset without control asset", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         // fund alice offchain
@@ -124,7 +124,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should issue an asset with existing control asset", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 10_000;
@@ -175,7 +175,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should issue an asset with metadata", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 10_000;
@@ -215,7 +215,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should reissue an asset", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 20_000;
@@ -282,7 +282,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should burn an asset partially", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 20_000;
@@ -332,7 +332,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should burn an asset completely", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 20_000;
@@ -378,8 +378,8 @@ describe("Asset integration tests", () => {
     });
 
     it("should send an asset to another wallet", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
-        const bob = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
+        const bob = await createTestArkadeWallet();
 
         const aliceAddress = await alice.wallet.getAddress();
         const bobAddress = await bob.wallet.getAddress();
@@ -443,8 +443,8 @@ describe("Asset integration tests", () => {
     });
 
     it("should send all units of an asset", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
-        const bob = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
+        const bob = await createTestArkadeWallet();
 
         const aliceAddress = await alice.wallet.getAddress();
         const bobAddress = await bob.wallet.getAddress();
@@ -508,7 +508,7 @@ describe("Asset integration tests", () => {
     });
 
     it("should settle VTXOs with assets", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const aliceAddress = await alice.wallet.getAddress();
 
         const fundAmount = 20_000;
@@ -641,7 +641,7 @@ describe("Asset integration tests", () => {
         );
 
         // Send assets to bob, forcing both VTXO pools to be consumed
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
 
         const allVtxos2 = await wallet2.getVtxos();
@@ -826,7 +826,7 @@ describe("Asset integration tests", () => {
         await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
 
         // Step 3 — Send requiring both pools, including the asset
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
 
         const allVtxos = await wallet2.getVtxos();
@@ -957,7 +957,7 @@ describe("Asset integration tests", () => {
         await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
 
         // Step 3 — Send requiring both pools, including the asset
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
         const bobAddress = await bob.wallet.getAddress();
 
         const allVtxos = await wallet2.getVtxos();

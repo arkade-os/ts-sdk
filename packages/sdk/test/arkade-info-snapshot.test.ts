@@ -13,27 +13,27 @@ import {
     type OnchainProvider,
     type ReadonlyWalletConfig,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/arkade";
 import { FetchError } from "../src/utils/fetch";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { SingleKey } from "../src/identity/singleKey";
 import {
-    ARK_INFO_SNAPSHOT_KEY,
-    MalformedArkInfoSnapshotError,
-    hydrateArkInfo,
-    loadArkInfoSnapshot,
-    parseStoredArkInfoSnapshot,
-    resolveArkInfo,
-    saveArkInfoSnapshot,
-    saveValidatedArkInfoSnapshot,
-    serializeArkInfoSnapshot,
-} from "../src/wallet/arkInfoSnapshot";
+    ARKADE_INFO_SNAPSHOT_KEY,
+    MalformedArkadeInfoSnapshotError,
+    hydrateArkadeInfo,
+    loadArkadeInfoSnapshot,
+    parseStoredArkadeInfoSnapshot,
+    resolveArkadeInfo,
+    saveArkadeInfoSnapshot,
+    saveValidatedArkadeInfoSnapshot,
+    serializeArkadeInfoSnapshot,
+} from "../src/wallet/arkadeInfoSnapshot";
 
 // 33-byte compressed key (setupWalletConfig slices the parity byte off).
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
-function makeArkInfo(overrides: Partial<ArkadeInfo> = {}): ArkadeInfo {
+function makeArkadeInfo(overrides: Partial<ArkadeInfo> = {}): ArkadeInfo {
     return {
         boardingExitDelay: 144n,
         checkpointTapscript:
@@ -65,16 +65,16 @@ function makeArkInfo(overrides: Partial<ArkadeInfo> = {}): ArkadeInfo {
     };
 }
 
-describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
+describe("serializeArkadeInfoSnapshot / hydrateArkadeInfo", () => {
     it("round-trips every field except serviceStatus (reset to {})", () => {
-        const info = makeArkInfo();
-        const snapshot = serializeArkInfoSnapshot(info, 111);
-        const hydrated = hydrateArkInfo(snapshot);
+        const info = makeArkadeInfo();
+        const snapshot = serializeArkadeInfoSnapshot(info, 111);
+        const hydrated = hydrateArkadeInfo(snapshot);
         expect(hydrated).toEqual({ ...info, serviceStatus: {} });
     });
 
     it("produces a JSON-safe snapshot (no bigints survive)", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 111);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 111);
         expect(() => JSON.stringify(snapshot)).not.toThrow();
         // bigints are stringified
         expect(snapshot.arkInfo.unilateralExitDelay).toBe("144");
@@ -87,69 +87,73 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
     });
 
     it("round-trips when scheduledSession is absent", () => {
-        const info = makeArkInfo({ scheduledSession: undefined });
-        const hydrated = hydrateArkInfo(serializeArkInfoSnapshot(info, 1));
+        const info = makeArkadeInfo({ scheduledSession: undefined });
+        const hydrated = hydrateArkadeInfo(serializeArkadeInfoSnapshot(info, 1));
         expect(hydrated.scheduledSession).toBeUndefined();
         expect(hydrated).toEqual({ ...info, serviceStatus: {} });
     });
 
     it("round-trips vtxoTreeExpiry when advertised", () => {
-        const info = makeArkInfo({ vtxoTreeExpiry: 604_672n });
-        const snapshot = serializeArkInfoSnapshot(info, 1);
+        const info = makeArkadeInfo({ vtxoTreeExpiry: 604_672n });
+        const snapshot = serializeArkadeInfoSnapshot(info, 1);
         expect(snapshot.arkInfo.vtxoTreeExpiry).toBe("604672");
-        expect(hydrateArkInfo(snapshot).vtxoTreeExpiry).toBe(604_672n);
+        expect(hydrateArkadeInfo(snapshot).vtxoTreeExpiry).toBe(604_672n);
     });
 
     it("keeps vtxoTreeExpiry undefined when not advertised — never 0n", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
         expect(snapshot.arkInfo.vtxoTreeExpiry).toBeUndefined();
-        expect(hydrateArkInfo(snapshot).vtxoTreeExpiry).toBeUndefined();
+        expect(hydrateArkadeInfo(snapshot).vtxoTreeExpiry).toBeUndefined();
     });
 
     it("accepts a v1 snapshot written before vtxoTreeExpiry existed", () => {
-        const raw = JSON.parse(JSON.stringify(serializeArkInfoSnapshot(makeArkInfo(), 1)));
+        const raw = JSON.parse(JSON.stringify(serializeArkadeInfoSnapshot(makeArkadeInfo(), 1)));
         delete raw.arkInfo.vtxoTreeExpiry;
-        expect(() => parseStoredArkInfoSnapshot(raw)).not.toThrow();
-        expect(hydrateArkInfo(parseStoredArkInfoSnapshot(raw)).vtxoTreeExpiry).toBeUndefined();
+        expect(() => parseStoredArkadeInfoSnapshot(raw)).not.toThrow();
+        expect(
+            hydrateArkadeInfo(parseStoredArkadeInfoSnapshot(raw)).vtxoTreeExpiry,
+        ).toBeUndefined();
     });
 
     it("round-trips the transaction limits when advertised", () => {
-        const info = makeArkInfo({ maxTxWeight: 40_000n, maxOpReturnOutputs: 3n });
-        const snapshot = serializeArkInfoSnapshot(info, 1);
+        const info = makeArkadeInfo({ maxTxWeight: 40_000n, maxOpReturnOutputs: 3n });
+        const snapshot = serializeArkadeInfoSnapshot(info, 1);
         expect(snapshot.arkInfo.maxTxWeight).toBe("40000");
         expect(snapshot.arkInfo.maxOpReturnOutputs).toBe("3");
-        expect(hydrateArkInfo(snapshot)).toEqual({ ...info, serviceStatus: {} });
+        expect(hydrateArkadeInfo(snapshot)).toEqual({ ...info, serviceStatus: {} });
     });
 
     it("keeps the transaction limits undefined when not advertised — never 0n", () => {
         // 0n would read as a server that accepts no transaction and forbids
         // OP_RETURN outright, which is the opposite of "did not say".
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
-        expect(hydrateArkInfo(snapshot).maxTxWeight).toBeUndefined();
-        expect(hydrateArkInfo(snapshot).maxOpReturnOutputs).toBeUndefined();
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
+        expect(hydrateArkadeInfo(snapshot).maxTxWeight).toBeUndefined();
+        expect(hydrateArkadeInfo(snapshot).maxOpReturnOutputs).toBeUndefined();
     });
 
     it("accepts a snapshot written before the transaction limits existed", () => {
         const raw = JSON.parse(
             JSON.stringify(
-                serializeArkInfoSnapshot(
-                    makeArkInfo({ maxTxWeight: 40_000n, maxOpReturnOutputs: 3n }),
+                serializeArkadeInfoSnapshot(
+                    makeArkadeInfo({ maxTxWeight: 40_000n, maxOpReturnOutputs: 3n }),
                     1,
                 ),
             ),
         );
         delete raw.arkInfo.maxTxWeight;
         delete raw.arkInfo.maxOpReturnOutputs;
-        const hydrated = hydrateArkInfo(parseStoredArkInfoSnapshot(raw));
+        const hydrated = hydrateArkadeInfo(parseStoredArkadeInfoSnapshot(raw));
         expect(hydrated.maxTxWeight).toBeUndefined();
         expect(hydrated.maxOpReturnOutputs).toBeUndefined();
     });
 });
 
-describe("parseStoredArkInfoSnapshot", () => {
+describe("parseStoredArkadeInfoSnapshot", () => {
     it("accepts a well-formed snapshot", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
-        expect(parseStoredArkInfoSnapshot(JSON.parse(JSON.stringify(snapshot)))).toEqual(snapshot);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
+        expect(parseStoredArkadeInfoSnapshot(JSON.parse(JSON.stringify(snapshot)))).toEqual(
+            snapshot,
+        );
     });
 
     it.each([
@@ -158,66 +162,76 @@ describe("parseStoredArkInfoSnapshot", () => {
         ["missing savedAt", { version: 1, source: "arkade.getInfo", arkInfo: {} }],
         ["wrong source", { version: 1, savedAt: 1, source: "x", arkInfo: {} }],
     ])("rejects %s", (_label, raw) => {
-        expect(() => parseStoredArkInfoSnapshot(raw)).toThrow(MalformedArkInfoSnapshotError);
+        expect(() => parseStoredArkadeInfoSnapshot(raw)).toThrow(MalformedArkadeInfoSnapshotError);
     });
 
     it("rejects a non-decimal bigint field", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
         (snapshot.arkInfo as any).dust = "not-a-number";
-        expect(() => parseStoredArkInfoSnapshot(snapshot)).toThrow(MalformedArkInfoSnapshotError);
+        expect(() => parseStoredArkadeInfoSnapshot(snapshot)).toThrow(
+            MalformedArkadeInfoSnapshotError,
+        );
     });
 
     it("rejects a missing string field", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
         delete (snapshot.arkInfo as any).signerPubkey;
-        expect(() => parseStoredArkInfoSnapshot(snapshot)).toThrow(MalformedArkInfoSnapshotError);
+        expect(() => parseStoredArkadeInfoSnapshot(snapshot)).toThrow(
+            MalformedArkadeInfoSnapshotError,
+        );
     });
 
     it("rejects a malformed deprecatedSigners entry", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
         (snapshot.arkInfo as any).deprecatedSigners = [{ pubkey: "02ab" }];
-        expect(() => parseStoredArkInfoSnapshot(snapshot)).toThrow(MalformedArkInfoSnapshotError);
+        expect(() => parseStoredArkadeInfoSnapshot(snapshot)).toThrow(
+            MalformedArkadeInfoSnapshotError,
+        );
     });
 
     it("rejects a malformed scheduledSession", () => {
-        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
+        const snapshot = serializeArkadeInfoSnapshot(makeArkadeInfo(), 1);
         (snapshot.arkInfo.scheduledSession as any).period = 30; // number, not decimal string
-        expect(() => parseStoredArkInfoSnapshot(snapshot)).toThrow(MalformedArkInfoSnapshotError);
+        expect(() => parseStoredArkadeInfoSnapshot(snapshot)).toThrow(
+            MalformedArkadeInfoSnapshotError,
+        );
     });
 });
 
-describe("loadArkInfoSnapshot / saveArkInfoSnapshot", () => {
+describe("loadArkadeInfoSnapshot / saveArkadeInfoSnapshot", () => {
     it("returns null when nothing has been persisted", async () => {
         const repo = new InMemoryWalletRepository();
-        expect(await loadArkInfoSnapshot(repo)).toBeNull();
+        expect(await loadArkadeInfoSnapshot(repo)).toBeNull();
     });
 
     it("round-trips through the repository", async () => {
         const repo = new InMemoryWalletRepository();
-        const info = makeArkInfo();
-        await saveArkInfoSnapshot(repo, info, 999);
-        const loaded = await loadArkInfoSnapshot(repo);
-        expect(loaded).toEqual(serializeArkInfoSnapshot(info, 999));
+        const info = makeArkadeInfo();
+        await saveArkadeInfoSnapshot(repo, info, 999);
+        const loaded = await loadArkadeInfoSnapshot(repo);
+        expect(loaded).toEqual(serializeArkadeInfoSnapshot(info, 999));
     });
 
     it("preserves unrelated settings keys", async () => {
         const repo = new InMemoryWalletRepository();
         await repo.saveWalletState({ settings: { hasPendingTx: true }, lastSyncTime: 42 });
-        await saveArkInfoSnapshot(repo, makeArkInfo(), 1);
+        await saveArkadeInfoSnapshot(repo, makeArkadeInfo(), 1);
         const state = await repo.getWalletState();
         expect(state?.settings?.hasPendingTx).toBe(true);
         expect(state?.lastSyncTime).toBe(42);
-        expect(state?.settings?.[ARK_INFO_SNAPSHOT_KEY]).toBeDefined();
+        expect(state?.settings?.[ARKADE_INFO_SNAPSHOT_KEY]).toBeDefined();
     });
 
     it("throws terminally when the stored snapshot is malformed", async () => {
         const repo = new InMemoryWalletRepository();
-        await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 2 } } });
-        await expect(loadArkInfoSnapshot(repo)).rejects.toThrow(MalformedArkInfoSnapshotError);
+        await repo.saveWalletState({ settings: { [ARKADE_INFO_SNAPSHOT_KEY]: { version: 2 } } });
+        await expect(loadArkadeInfoSnapshot(repo)).rejects.toThrow(
+            MalformedArkadeInfoSnapshotError,
+        );
     });
 });
 
-describe("resolveArkInfo", () => {
+describe("resolveArkadeInfo", () => {
     const live = (info: ArkadeInfo) => ({ getInfo: async () => info });
     const failing = (err: unknown) => ({
         getInfo: async () => {
@@ -227,27 +241,30 @@ describe("resolveArkInfo", () => {
 
     it("returns live info WITHOUT writing the cache (persistence is deferred)", async () => {
         const repo = new InMemoryWalletRepository();
-        const info = makeArkInfo();
-        const resolved = await resolveArkInfo(live(info), repo);
+        const info = makeArkadeInfo();
+        const resolved = await resolveArkadeInfo(live(info), repo);
         expect(resolved.source).toBe("live");
         expect(resolved.info).toEqual(info);
         // resolve must not persist — that only happens post-validation.
-        expect(await loadArkInfoSnapshot(repo)).toBeNull();
+        expect(await loadArkadeInfoSnapshot(repo)).toBeNull();
     });
 
     it("falls back to the cached snapshot on a retryable failure", async () => {
         const repo = new InMemoryWalletRepository();
-        const info = makeArkInfo();
-        await saveArkInfoSnapshot(repo, info, 700);
-        const resolved = await resolveArkInfo(failing(new ProviderUnavailableError("503")), repo);
+        const info = makeArkadeInfo();
+        await saveArkadeInfoSnapshot(repo, info, 700);
+        const resolved = await resolveArkadeInfo(
+            failing(new ProviderUnavailableError("503")),
+            repo,
+        );
         expect(resolved.source).toBe("cache");
         expect(resolved.info).toEqual({ ...info, serviceStatus: {} });
     });
 
     it("treats a transport FetchError as retryable", async () => {
         const repo = new InMemoryWalletRepository();
-        await saveArkInfoSnapshot(repo, makeArkInfo(), 1);
-        const resolved = await resolveArkInfo(
+        await saveArkadeInfoSnapshot(repo, makeArkadeInfo(), 1);
+        const resolved = await resolveArkadeInfo(
             failing(new FetchError("Network request failed", { url: "x" })),
             repo,
         );
@@ -257,32 +274,32 @@ describe("resolveArkInfo", () => {
     it("throws a typed unavailable error on retryable failure with no cache", async () => {
         const repo = new InMemoryWalletRepository();
         await expect(
-            resolveArkInfo(failing(new ProviderUnavailableError("503")), repo),
+            resolveArkadeInfo(failing(new ProviderUnavailableError("503")), repo),
         ).rejects.toBeInstanceOf(ProviderUnavailableError);
     });
 
     it("propagates a terminal failure unchanged (no cache fallback)", async () => {
         const repo = new InMemoryWalletRepository();
-        await saveArkInfoSnapshot(repo, makeArkInfo(), 1); // cache present, but must be ignored
+        await saveArkadeInfoSnapshot(repo, makeArkadeInfo(), 1); // cache present, but must be ignored
         const terminal = new Error("400 bad request");
-        await expect(resolveArkInfo(failing(terminal), repo)).rejects.toBe(terminal);
+        await expect(resolveArkadeInfo(failing(terminal), repo)).rejects.toBe(terminal);
     });
 
     it("surfaces a malformed cache as terminal on retryable failure", async () => {
         const repo = new InMemoryWalletRepository();
-        await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 9 } } });
+        await repo.saveWalletState({ settings: { [ARKADE_INFO_SNAPSHOT_KEY]: { version: 9 } } });
         await expect(
-            resolveArkInfo(failing(new ProviderUnavailableError("503")), repo),
-        ).rejects.toThrow(MalformedArkInfoSnapshotError);
+            resolveArkadeInfo(failing(new ProviderUnavailableError("503")), repo),
+        ).rejects.toThrow(MalformedArkadeInfoSnapshotError);
     });
 });
 
-describe("saveValidatedArkInfoSnapshot", () => {
+describe("saveValidatedArkadeInfoSnapshot", () => {
     it("persists the snapshot", async () => {
         const repo = new InMemoryWalletRepository();
-        const info = makeArkInfo();
-        await saveValidatedArkInfoSnapshot(repo, info, 321);
-        expect(await loadArkInfoSnapshot(repo)).toEqual(serializeArkInfoSnapshot(info, 321));
+        const info = makeArkadeInfo();
+        await saveValidatedArkadeInfoSnapshot(repo, info, 321);
+        expect(await loadArkadeInfoSnapshot(repo)).toEqual(serializeArkadeInfoSnapshot(info, 321));
     });
 
     it("swallows storage failures (best-effort — must not fail boot)", async () => {
@@ -290,7 +307,9 @@ describe("saveValidatedArkInfoSnapshot", () => {
         repo.saveWalletState = async () => {
             throw new Error("disk full");
         };
-        await expect(saveValidatedArkInfoSnapshot(repo, makeArkInfo(), 1)).resolves.toBeUndefined();
+        await expect(
+            saveValidatedArkadeInfoSnapshot(repo, makeArkadeInfo(), 1),
+        ).resolves.toBeUndefined();
     });
 });
 
@@ -303,7 +322,7 @@ describe("isRetryableProviderError", () => {
             isRetryableProviderError(new DOMException("The operation timed out.", "TimeoutError")),
         ).toBe(true);
         expect(isRetryableProviderError(new Error("400"))).toBe(false);
-        expect(isRetryableProviderError(new MalformedArkInfoSnapshotError("x"))).toBe(false);
+        expect(isRetryableProviderError(new MalformedArkadeInfoSnapshotError("x"))).toBe(false);
     });
 });
 
@@ -341,7 +360,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         };
-        const info = makeArkInfo();
+        const info = makeArkadeInfo();
 
         const online = await createWallet(async () => info, repos);
         expect(online.serverInfoSource).toBe("live");
@@ -362,7 +381,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         };
-        await saveArkInfoSnapshot(repos.walletRepository, makeArkInfo(), 1);
+        await saveArkadeInfoSnapshot(repos.walletRepository, makeArkadeInfo(), 1);
         const provider = {} as OnchainProvider;
         const factory = vi.fn(() => provider);
 
@@ -398,7 +417,11 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             contractRepository: new InMemoryContractRepository(),
         };
         // Seed a cached snapshot for an unsupported network.
-        await saveArkInfoSnapshot(repos.walletRepository, makeArkInfo({ network: "bogusnet" }), 1);
+        await saveArkadeInfoSnapshot(
+            repos.walletRepository,
+            makeArkadeInfo({ network: "bogusnet" }),
+            1,
+        );
         await expect(
             createWallet(async () => {
                 throw new ProviderUnavailableError("operator down");
@@ -412,12 +435,12 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             contractRepository: new InMemoryContractRepository(),
         };
         // Live getInfo succeeds but returns an unsupported network, so
-        // construction throws after resolveArkInfo returned. The cache must
+        // construction throws after resolveArkadeInfo returned. The cache must
         // stay empty — a terminal live response must never poison it.
         await expect(
-            createWallet(async () => makeArkInfo({ network: "bogusnet" }), repos),
+            createWallet(async () => makeArkadeInfo({ network: "bogusnet" }), repos),
         ).rejects.toThrow(/Unsupported network/);
-        expect(await loadArkInfoSnapshot(repos.walletRepository)).toBeNull();
+        expect(await loadArkadeInfoSnapshot(repos.walletRepository)).toBeNull();
     });
 
     it("getArkadeReader normalizes, and binds the wallet's own indexer", async () => {
@@ -435,7 +458,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         };
-        const wallet = await createWallet(async () => makeArkInfo(), repos, {
+        const wallet = await createWallet(async () => makeArkadeInfo(), repos, {
             getVtxos,
             getVirtualTxs,
         } as unknown as Partial<IndexerProvider>);
@@ -466,14 +489,14 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         };
-        let served = makeArkInfo();
+        let served = makeArkadeInfo();
         const wallet = await createWallet(async () => served, repos);
         expect((await wallet.getArkadeInfo()).digest).toBe("digest-abc");
 
-        served = makeArkInfo({ digest: "digest-rotated" });
+        served = makeArkadeInfo({ digest: "digest-rotated" });
         expect((await wallet.getArkadeInfo()).digest).toBe("digest-rotated");
         // The wallet's own pinned epoch is untouched by the read.
-        expect(wallet.dustAmount).toBe(makeArkInfo().dust);
+        expect(wallet.dustAmount).toBe(makeArkadeInfo().dust);
     });
 
     it("getArkadeInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
@@ -483,7 +506,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         };
-        const info = makeArkInfo();
+        const info = makeArkadeInfo();
         let reachable = true;
         const wallet = await createWallet(async () => {
             if (!reachable) throw new ProviderUnavailableError("operator down");
@@ -508,7 +531,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         };
-        const info = makeArkInfo();
+        const info = makeArkadeInfo();
         let reachable = true;
         const wallet = await createWallet(async () => {
             if (!reachable) throw new ProviderUnavailableError("operator down");
@@ -530,7 +553,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         let live = true;
         const wallet = await createWallet(async () => {
             if (!live) throw terminal;
-            return makeArkInfo();
+            return makeArkadeInfo();
         }, repos);
 
         live = false;
@@ -546,14 +569,14 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             Wallet.create({
                 identity: SingleKey.fromHex(privKeyHex),
                 arkProvider: {
-                    getInfo: async () => makeArkInfo({ checkpointTapscript: "zz" }),
+                    getInfo: async () => makeArkadeInfo({ checkpointTapscript: "zz" }),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: indexerStub(),
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },
             }),
         ).rejects.toThrow(/checkpointTapscript/);
-        expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
+        expect(await loadArkadeInfoSnapshot(walletRepository)).toBeNull();
     });
 
     it("full Wallet.create rejects a sub-floor checkpoint exit delay [P720-2] and does not cache", async () => {
@@ -571,14 +594,15 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             Wallet.create({
                 identity: SingleKey.fromHex(privKeyHex),
                 arkProvider: {
-                    getInfo: async () => makeArkInfo({ checkpointTapscript: oneBlockCheckpoint }),
+                    getInfo: async () =>
+                        makeArkadeInfo({ checkpointTapscript: oneBlockCheckpoint }),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: indexerStub(),
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },
             }),
         ).rejects.toThrow(/checkpoint exit delay rejected/);
-        expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
+        expect(await loadArkadeInfoSnapshot(walletRepository)).toBeNull();
     });
 
     it("full Wallet.create rejects a checkpoint script pinned to the wrong pubkey [P720-2] and does not cache", async () => {
@@ -598,13 +622,13 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
                 identity: SingleKey.fromHex(privKeyHex),
                 arkProvider: {
                     getInfo: async () =>
-                        makeArkInfo({ checkpointTapscript: wrongPubkeyCheckpoint }),
+                        makeArkadeInfo({ checkpointTapscript: wrongPubkeyCheckpoint }),
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: indexerStub(),
                 onchainProvider: {} as OnchainProvider,
                 storage: { walletRepository, contractRepository },
             }),
         ).rejects.toThrow(/does not match the advertised forfeitPubkey/);
-        expect(await loadArkInfoSnapshot(walletRepository)).toBeNull();
+        expect(await loadArkadeInfoSnapshot(walletRepository)).toBeNull();
     });
 });

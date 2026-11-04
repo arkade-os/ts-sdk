@@ -25,7 +25,7 @@ import {
     SerializedTapLeaf,
     createdAtToIso,
 } from "../serialization";
-import { scriptFromArkAddress } from "../scriptFromAddress";
+import { scriptFromArkadeAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
 import { getSerializedExecutor, runInTransaction } from "./transaction";
@@ -186,7 +186,7 @@ export class SQLiteWalletRepository implements WalletRepository {
      *   - 0.4.x install: `script` is already NOT NULL but `virtual_status_json
      *     NOT NULL` is still there, and `saveVtxos` no longer writes it.
      *
-     * The backfill derives `script` from the Ark address, matching what the
+     * The backfill derives `script` from the Arkade address, matching what the
      * indexer would have returned — new rows from the indexer always carry a
      * populated `script`, so the migration is idempotent.
      *
@@ -256,7 +256,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             for (const row of nullRows) {
                 await tx.run(
                     `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
-                    [scriptFromArkAddress(row.address), row.txid, row.vout],
+                    [scriptFromArkadeAddress(row.address), row.txid, row.vout],
                 );
             }
 
@@ -782,7 +782,7 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
         // Post-migration every row has `script`, but the backfill is
         // idempotent: derive from `address` if the legacy column is still
         // null (e.g. the migration hasn't run yet on this handle).
-        script: row.script ?? scriptFromArkAddress(row.address),
+        script: row.script ?? scriptFromArkadeAddress(row.address),
     };
 
     return deserializeVtxo(serialized);

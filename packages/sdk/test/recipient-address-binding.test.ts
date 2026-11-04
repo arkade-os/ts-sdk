@@ -221,7 +221,7 @@ describe("Wallet recipient address binding", () => {
         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
     );
 
-    const mockArkInfo = {
+    const mockArkadeInfo = {
         signerPubkey: SERVER_KEY_HEX,
         forfeitPubkey: SERVER_KEY_HEX,
         batchExpiry: BigInt(144),
@@ -237,7 +237,7 @@ describe("Wallet recipient address binding", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
     });
 
     it("send rejects an address from another network before spending", async () => {
@@ -272,7 +272,7 @@ describe("Wallet recipient address binding", () => {
         mockFetch.mockReset();
         mockFetch.mockResolvedValueOnce(
             jsonResponse({
-                ...mockArkInfo,
+                ...mockArkadeInfo,
                 deprecatedSigners: [
                     { pubkey: hex.encode(DEPRECATED_XONLY), cutoffDate: cutoff.toString() },
                 ],
@@ -325,7 +325,7 @@ describe("send with caller-selected vtxos", () => {
         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
     );
 
-    const mockArkInfo = {
+    const mockArkadeInfo = {
         signerPubkey: SERVER_KEY_HEX,
         forfeitPubkey: SERVER_KEY_HEX,
         batchExpiry: BigInt(144),
@@ -351,7 +351,7 @@ describe("send with caller-selected vtxos", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
     });
 
     it("rejects an empty selection instead of choosing for the caller", async () => {
@@ -523,7 +523,7 @@ describe("send argument dispatch", () => {
         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
     );
 
-    const mockArkInfo = {
+    const mockArkadeInfo = {
         signerPubkey: SERVER_KEY_HEX,
         forfeitPubkey: SERVER_KEY_HEX,
         batchExpiry: BigInt(144),
@@ -545,7 +545,7 @@ describe("send argument dispatch", () => {
 
     beforeEach(() => {
         mockFetch.mockReset();
-        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
+        mockFetch.mockResolvedValueOnce(jsonResponse(mockArkadeInfo));
     });
 
     it("reads a lone recipient object as a recipient, not as params", async () => {

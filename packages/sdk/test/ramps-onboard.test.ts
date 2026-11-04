@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { DustChangeError, Ramps } from "../src/wallet/ramps";
 
 const BOARDING_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
-const ARK_ADDR =
+const ARKADE_ADDR =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 
 const utxo = (fill: string, value: number) => ({ txid: fill.repeat(32), vout: 0, value });
@@ -11,7 +11,7 @@ const wallet = (over: Record<string, unknown> = {}) =>
     ({
         dustAmount: 330n,
         getBoardingUtxos: vi.fn().mockResolvedValue([utxo("11", 100_000)]),
-        getAddress: vi.fn().mockResolvedValue(ARK_ADDR),
+        getAddress: vi.fn().mockResolvedValue(ARKADE_ADDR),
         getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),
         settle: vi.fn().mockResolvedValue("txSETTLE"),
         ...over,
@@ -52,7 +52,7 @@ describe("Ramps.onboard pays for the change it creates", () => {
 
         const { inputs, outputs } = w.settle.mock.calls[0]![0];
         expect(outputs).toEqual([
-            { address: ARK_ADDR, amount: 49_900n },
+            { address: ARKADE_ADDR, amount: 49_900n },
             { address: BOARDING_ADDR, amount: 49_943n },
         ]);
         const spent: bigint = inputs.reduce(
@@ -72,7 +72,7 @@ describe("Ramps.onboard pays for the change it creates", () => {
         await new Ramps(w).onboard(priced);
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
-            { address: ARK_ADDR, amount: 99_893n },
+            { address: ARKADE_ADDR, amount: 99_893n },
         ]);
     });
 
@@ -103,7 +103,7 @@ describe("Ramps.onboard pays for the change it creates", () => {
         await new Ramps(w).onboard(steep, undefined, 50_000n);
 
         expect(w.settle.mock.calls[0]![0].outputs).toEqual([
-            { address: ARK_ADDR, amount: 50_000n },
+            { address: ARKADE_ADDR, amount: 50_000n },
         ]);
     });
 });

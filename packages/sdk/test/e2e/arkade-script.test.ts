@@ -27,7 +27,7 @@ import type { Identity } from "../../src/identity";
 import {
     addEmulatorPacket,
     beforeEachFaucet,
-    createTestArkWallet,
+    createTestArkadeWallet,
     createTestIdentity,
     faucetOffchain,
     faucetOnchain,
@@ -51,7 +51,7 @@ function makeEmulatorExtensionOutput(
 }
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const ARKADE_OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI.
 const ESPLORA_URL = "http://localhost:3000/api";
 const FUNDING_SATS = 1_000_000;
@@ -321,8 +321,8 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(ARKADE_OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(ARKADE_OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
     /** Connect an Arkade client bound to the given signing identity. */
@@ -365,7 +365,7 @@ describe("arkade", () => {
 
     // Offchain transaction with arkade script
     it("TestOffchain", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const bob = createTestIdentity();
         const ark = await connect(bob);
 
@@ -382,7 +382,7 @@ describe("arkade", () => {
         faucetOffchain(contract.address, fundAmount);
         await waitForVtxo(contract.pkScript);
 
-        // Spend through the high-level builder: Bob (user) signs the ark tx and
+        // Spend through the high-level builder: Bob (user) signs the Arkade transaction and
         // checkpoint inputs, and the emulator — last non-arkd signer — signs with
         // its tweaked key and finalizes with arkd internally.
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
@@ -404,9 +404,9 @@ describe("arkade", () => {
         });
     }
 
-    // Two coins of one covenant contract in one ark tx, each paying its own output.
+    // Two coins of one covenant contract in one Arkade transaction, each paying its own output.
     it("TestOffchainMultiCoin", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const ark = await connect(createTestIdentity());
         const aliceAddress = await alice.wallet.getAddress();
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
@@ -438,11 +438,11 @@ describe("arkade", () => {
         await waitForSpent(contract.pkScript);
     });
 
-    // Coins of two contracts, through two functions, in one ark tx: a user-signed
+    // Coins of two contracts, through two functions, in one Arkade transaction: a user-signed
     // covenant and a server-signed hashlock covenant with a condition witness. Built with
     // `ark.transaction()`, so each `.from()` names its function.
     it("TestOffchainTwoContracts", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const ark = await connect(createTestIdentity());
         const aliceAddress = await alice.wallet.getAddress();
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
@@ -472,9 +472,9 @@ describe("arkade", () => {
         await waitForSpent(claim.pkScript);
     });
 
-    // arkd path (no covenant): two functions of one contract in one ark tx.
+    // arkd path (no covenant): two functions of one contract in one Arkade transaction.
     it("TestTapscriptTwoFunctions", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const ark = await connect(createTestIdentity());
         const preimage = crypto.getRandomValues(new Uint8Array(32));
         const contract = ark.contract(tapscriptProgram, { hash: hash160(preimage) });
@@ -496,7 +496,7 @@ describe("arkade", () => {
 
     // Settlement flow via intent + batch session (using arkade script)
     it("TestSettlement", { timeout: 120000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const bob = createTestIdentity();
         const ark = await connect(bob);
 
@@ -622,7 +622,7 @@ describe("arkade", () => {
 
     // Boarding flow via intent + batch session (using arkade script)
     it("TestBoarding", { timeout: 120000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const bob = createTestIdentity();
         const ark = await connect(bob);
 
@@ -790,7 +790,7 @@ describe("arkade", () => {
 
     // Offchain transaction with asset introspection
     it("TestOffchainTxWithAsset", { timeout: 60000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const bob = createTestIdentity();
         const ark = await connect(bob);
 
@@ -853,11 +853,11 @@ describe("arkade", () => {
 
         // Bob signs the arkTx and checkpoints; emulator auto-finalizes via
         // arkd because it's the last non-arkd signer.
-        const bobSignedArkTx = await bob.sign(arkTx);
+        const bobSignedArkadeTx = await bob.sign(arkTx);
         const bobSignedCheckpoints = await Promise.all(checkpoints.map((c) => bob.sign(c)));
 
         const introResult = await emulator.submitTx(
-            base64.encode(bobSignedArkTx.toPSBT()),
+            base64.encode(bobSignedArkadeTx.toPSBT()),
             bobSignedCheckpoints.map((c) => base64.encode(c.toPSBT())),
         );
         expect(introResult.signedArkTx).toBeTruthy();
@@ -865,7 +865,7 @@ describe("arkade", () => {
 
     // Settlement flow with asset introspection
     it("TestSettlementWithAsset", { timeout: 180000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         const bob = createTestIdentity();
         const ark = await connect(bob);
 

@@ -123,7 +123,7 @@ describe.each([
     }
 
     async function arkProvider() {
-        const { ExpoArkProvider } = await import("../src/providers/expoArk");
+        const { ExpoArkProvider } = await import("../src/providers/expoArkade");
         return new ExpoArkProvider("https://ark.test");
     }
 

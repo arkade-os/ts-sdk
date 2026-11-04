@@ -343,15 +343,15 @@ describe("Wallet.getTransactionHistory batches createdAt lookups", () => {
         vi.restoreAllMocks();
     });
 
-    const arkTxIdAt = (i: number) => "f" + (i + 1).toString(16).padStart(63, "0");
+    const arkadeTxIdAt = (i: number) => "f" + (i + 1).toString(16).padStart(63, "0");
 
     /**
      * A wallet holding one spent VTXO per contract, each spent by a distinct
-     * `arkTxId` unless `sharedArkTxId` — the send-everything shape, whose
+     * `arkTxId` unless `sharedArkadeTxId` — the send-everything shape, whose
      * `createdAt` lives only at the indexer. Returns the outpoint-shaped queries
      * `getTransactionHistory` makes.
      */
-    const walletWithSpentVtxos = async (count: number, sharedArkTxId?: string) => {
+    const walletWithSpentVtxos = async (count: number, sharedArkadeTxId?: string) => {
         const handle = await makeStaticWalletForTest();
         const spent = new Map(
             Array.from({ length: count }, (_, i) => {
@@ -361,7 +361,7 @@ describe("Wallet.getTransactionHistory batches createdAt lookups", () => {
                     {
                         ...vtxoFor(script, i),
                         isSpent: true,
-                        arkTxId: sharedArkTxId ?? arkTxIdAt(i),
+                        arkTxId: sharedArkadeTxId ?? arkadeTxIdAt(i),
                     },
                 ] as const;
             }),
@@ -414,7 +414,7 @@ describe("Wallet.getTransactionHistory batches createdAt lookups", () => {
     });
 
     it("does not re-request a txid shared by several vtxos", async () => {
-        const shared = arkTxIdAt(0);
+        const shared = arkadeTxIdAt(0);
         const { wallet, outpointCalls } = await walletWithSpentVtxos(5, shared);
 
         await wallet.getTransactionHistory();

@@ -22,7 +22,11 @@ import { Transaction } from "../src/utils/transaction";
 import { networks } from "../src/networks";
 import type { Recipient } from "../src/wallet";
 import type { SignerSession } from "../src/tree/signingSession";
-import type { ArkProvider, BatchStartedEvent, TreeSigningStartedEvent } from "../src/providers/ark";
+import type {
+    ArkProvider,
+    BatchStartedEvent,
+    TreeSigningStartedEvent,
+} from "../src/providers/arkade";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
 import type { Intent } from "../src/intent";
@@ -46,7 +50,7 @@ const FORFEIT_ADDRESS = Address(networks.regtest).encode({
     pubkey: hex.decode("22".repeat(32)),
 });
 
-function makeArkProvider() {
+function makeArkadeProvider() {
     return {
         confirmRegistration: vi.fn(async () => {}),
         getInfo: vi.fn(async () => ({
@@ -139,7 +143,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
     it("validates expected recipients against the vtxo tree before signing", async () => {
         const session = makeSession();
         const recipients: Recipient[] = [{ address: "ark1qexample", amount: 1000 }];
-        const handler = makeHandler(session, makeArkProvider(), recipients);
+        const handler = makeHandler(session, makeArkadeProvider(), recipients);
         const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
 
         await handler.onBatchStarted(batchStarted);
@@ -161,7 +165,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
         vi.mocked(validateBatchRecipients).mockImplementation(() => {
             throw ErrOffchainOutputNotFound("ark1qexample");
         });
-        const handler = makeHandler(session, makeArkProvider(), [
+        const handler = makeHandler(session, makeArkadeProvider(), [
             { address: "ark1qexample", amount: 1000 },
         ]);
         const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
@@ -175,7 +179,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
 
     it("skips recipient validation when none are provided (compat)", async () => {
         const session = makeSession();
-        const handler = makeHandler(session, makeArkProvider());
+        const handler = makeHandler(session, makeArkadeProvider());
         const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
 
         await handler.onBatchStarted(batchStarted);
@@ -189,7 +193,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
         const session = makeSession();
         const handler = makeHandler(
             session,
-            makeArkProvider(),
+            makeArkadeProvider(),
             undefined,
             undefined,
             proofDeclaring([DECLARED_OUTPUT]),
@@ -210,7 +214,7 @@ describe("createArkadeBatchHandler recipient validation", () => {
         const session = makeSession();
         const handler = makeHandler(
             session,
-            makeArkProvider(),
+            makeArkadeProvider(),
             undefined,
             undefined,
             proofDeclaring([DECLARED_OUTPUT]),
@@ -232,7 +236,7 @@ describe("createArkadeBatchHandler commitment tx equality", () => {
     });
 
     async function runUntilFinalization(finalCommitmentTx: string) {
-        const arkProvider = makeArkProvider();
+        const arkProvider = makeArkadeProvider();
         const emulator = makeEmulator();
         const handler = makeHandler(makeSession(), arkProvider, undefined, emulator);
         const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
@@ -288,7 +292,7 @@ describe("createArkadeBatchHandler finalization without tree signing", () => {
     }
 
     async function finalizeWithout(commitmentTx: string, recipients?: Recipient[]) {
-        const arkProvider = makeArkProvider();
+        const arkProvider = makeArkadeProvider();
         const emulator = makeEmulator();
         const handler = makeHandler(makeSession(), arkProvider, recipients, emulator);
 
@@ -321,7 +325,7 @@ describe("createArkadeBatchHandler finalization without tree signing", () => {
     });
 
     it("does not re-check recipients when tree signing already validated them", async () => {
-        const arkProvider = makeArkProvider();
+        const arkProvider = makeArkadeProvider();
         const handler = makeHandler(
             makeSession(),
             arkProvider,

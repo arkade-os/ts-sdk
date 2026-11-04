@@ -206,12 +206,12 @@ describe("classifySpend", () => {
         // the shape regtest produces: `spentBy` is the checkpoint, which takes
         // the deposit outpoint and carries the covenant leaf, and `arkTxId`
         // spends the checkpoint's output — same leaf, different outpoint. A
-        // classifier handed only the ark tx answers `indeterminate` for every
+        // classifier handed only the Arkade transaction answers `indeterminate` for every
         // real spend, which is precisely the bug the e2e caught.
         const offer = makeOffer("want-btc", BigInt(21_000));
         const deposit = { txid: "ab".repeat(32), vout: 0 };
         const checkpoint = spendPsbt([{ offer, deposit, via: "cancel" }]);
-        // the ark tx spends the checkpoint, not the deposit
+        // the Arkade transaction spends the checkpoint, not the deposit
         const arkTx = spendPsbt([
             { offer, deposit: { txid: checkpoint.txid, vout: 0 }, via: "cancel" },
         ]);

@@ -1,12 +1,12 @@
 # Arkade Monorepo
 
-TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-chain wallets via the Ark protocol and Arkade Intents asset swaps.
+TypeScript packages for the Arkade Bitcoin wallet ecosystem — on-chain/off-chain wallets via the Arkade and Arkade Intents asset swaps.
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| [`@arkade-os/sdk`](packages/sdk/) | Bitcoin wallet SDK with Taproot and Ark protocol support |
+| [`@arkade-os/sdk`](packages/sdk/) | Bitcoin wallet SDK with Taproot and Arkade support |
 | [`@arkade-os/swap`](packages/swap/) | Client-side Arkade Intents asset swaps: state a route, get an outcome — pay, receive, exchange |
 
 The [`regtest/`](regtest/) directory is a shared regtest environment, vendored as the

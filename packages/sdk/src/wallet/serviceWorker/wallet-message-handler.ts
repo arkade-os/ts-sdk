@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { collectUtxos } from "../../repositories/walletRepository";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/arkade";
 import {
     GetVtxosOptions,
     IndexerProvider,
@@ -83,7 +83,7 @@ import {
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
-import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { scriptFromArkadeAddress } from "../../repositories/scriptFromAddress";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -1237,7 +1237,7 @@ export class WalletMessageHandler
         } as WalletUpdaterResponse;
     }
 
-    // Flows that surrender control to the Ark server and the other participants
+    // Flows that surrender control to the operator and the other participants
     // in a batch round: quiet gaps between protocol events can easily exceed
     // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
     // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
@@ -2112,7 +2112,7 @@ export class WalletMessageHandler
                 }
                 let walletScript: string | undefined;
                 try {
-                    walletScript = scriptFromArkAddress(address);
+                    walletScript = scriptFromArkadeAddress(address);
                 } catch {
                     walletScript = undefined;
                 }
@@ -2506,7 +2506,7 @@ export class WalletMessageHandler
         // visible balance.
         let walletScript: string;
         try {
-            walletScript = scriptFromArkAddress(walletAddress);
+            walletScript = scriptFromArkadeAddress(walletAddress);
         } catch (e) {
             throw new Error(
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,

@@ -8,8 +8,8 @@ import type {
     TreeNoncesEvent,
     BatchFinalizationEvent,
     SettlementEvent,
-} from "../providers/ark";
-import { SettlementEventType } from "../providers/ark";
+} from "../providers/arkade";
+import { SettlementEventType } from "../providers/arkade";
 import { TxTree, type TxTreeNode } from "../tree/txTree";
 import { hex } from "@scure/base";
 

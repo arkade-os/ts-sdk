@@ -11,7 +11,7 @@ import {
     Transaction,
     VtxoScript,
 } from "../src";
-import { mintCoin } from "./helpers/prevArkTx";
+import { mintCoin } from "./helpers/prevArkadeTx";
 
 const key = (seed: number) => schnorr.getPublicKey(new Uint8Array(32).fill(seed));
 const SERVER = key(7);
@@ -82,7 +82,7 @@ describe("submitViaEmulator", () => {
         });
     });
 
-    it("rejects a returned ark tx with a different txid", async () => {
+    it("rejects a returned Arkade transaction with a different txid", async () => {
         const other = base64.encode((await spend()).arkTx.toPSBT());
         await expect(
             submitViaEmulator(

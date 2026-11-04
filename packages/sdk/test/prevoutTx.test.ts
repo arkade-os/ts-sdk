@@ -22,7 +22,7 @@ function p2tr(seed = 1): Uint8Array {
     ]);
 }
 
-/** A one-input/one-output tx standing in for a previous ark tx. */
+/** A one-input/one-output tx standing in for a previous Arkade transaction. */
 function prevTx(seed: number): { txid: string; psbt: string; raw: Uint8Array } {
     const tx = new Transaction({ version: 3 });
     tx.addInput({
@@ -49,8 +49,8 @@ function indexerOf(txs: { txid: string; psbt: string }[]) {
     };
 }
 
-/** An ark tx shaped like `buildOffchainTx` output: n inputs spending n checkpoints. */
-function arkTxWith(inputs: number): Transaction {
+/** An Arkade transaction shaped like `buildOffchainTx` output: n inputs spending n checkpoints. */
+function arkadeTxWith(inputs: number): Transaction {
     const tx = new Transaction({ version: 3 });
     for (let i = 0; i < inputs; i++) {
         tx.addInput({
@@ -152,7 +152,7 @@ describe("resolvePrevTxs", () => {
 describe("attachPrevArkTxs", () => {
     it("sets exactly one field on every input, keyed by the coin txid", async () => {
         const coins = [prevTx(11), prevTx(12), prevTx(13)];
-        const arkTx = arkTxWith(3);
+        const arkTx = arkadeTxWith(3);
 
         await attachPrevArkTxs(
             arkTx,
@@ -170,7 +170,7 @@ describe("attachPrevArkTxs", () => {
     it("leaves an input that already carries the field alone", async () => {
         const coins = [prevTx(14), prevTx(15)];
         const supplied = prevTx(16);
-        const arkTx = arkTxWith(2);
+        const arkTx = arkadeTxWith(2);
         setArkPsbtField(arkTx, 0, PrevArkTxField, supplied.raw);
         const indexer = indexerOf(coins);
 
@@ -190,7 +190,7 @@ describe("attachPrevArkTxs", () => {
     });
 
     it("fetches nothing when every input is already covered", async () => {
-        const arkTx = arkTxWith(1);
+        const arkTx = arkadeTxWith(1);
         setArkPsbtField(arkTx, 0, PrevArkTxField, prevTx(17).raw);
         const indexer = indexerOf([]);
 
@@ -200,7 +200,7 @@ describe("attachPrevArkTxs", () => {
     });
 
     it("refuses an input with no source txid rather than submitting a tx the emulator rejects", async () => {
-        const arkTx = arkTxWith(2);
+        const arkTx = arkadeTxWith(2);
         await expect(
             attachPrevArkTxs(arkTx, [prevTx(18).txid], indexerOf([])),
         ).rejects.toBeInstanceOf(PrevTxUnavailableError);

@@ -42,7 +42,7 @@ import {
     deriveLightningSend,
     deriveOnchainReceive,
     deriveOnchainSend,
-    l1NetworkFromArk,
+    l1NetworkFromArkade,
     lightningReceiveRequest,
     lightningSendRequest,
     newRfqId,
@@ -250,7 +250,7 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
     const network = networkFromArkadeInfo(input.info);
     const arkade = input.corridors.get("arkade").deps;
     return {
-        operatorPubkey: toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
+        operatorPubkey: toXOnly(hex.decode(input.info.signerPubkey), "operator signer key"),
         // The resolved per-network pin, never operator-reported: it lands in a covenant leaf
         // that decides who can move the funds.
         emulatorPubkey: toXOnly(hex.decode(arkade.emulatorPubkey), "emulator signer key"),
@@ -354,7 +354,7 @@ const quoteArkadeAsset = async (
         receiveAddress,
         maker.pkScript,
         networkFromArkadeInfo(input.info).hrp,
-        toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
+        toXOnly(hex.decode(input.info.signerPubkey), "operator signer key"),
     );
     const choice = payment?.carrier;
     const carrierRequest =
@@ -429,7 +429,7 @@ const quoteArkadeAsset = async (
             receiveAddress:
                 receiveAddress ??
                 new ArkAddress(
-                    toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
+                    toXOnly(hex.decode(input.info.signerPubkey), "operator signer key"),
                     maker.pkScript.slice(2),
                     networkFromArkadeInfo(input.info).hrp,
                 ).encode(),
@@ -781,7 +781,7 @@ const quoteOnchainSend = async (
     if (destination?.kind !== "address") {
         throw new Error("an onchain send is quoted against the L1 address it pays");
     }
-    const l1Network = l1NetworkFromArk(input.info.network);
+    const l1Network = l1NetworkFromArkade(input.info.network);
     // Refuse an unpayable destination before negotiating, not at claim time with funds locked.
     const payoutPkScript = l1ScriptForAddress(destination.address, l1Network);
     const pair = rfqPairFor(input.legs.give, input.legs.take);
@@ -944,7 +944,7 @@ const quoteOnchainReceive = async (
     const pinned = pinnedFor(input);
     const pair = rfqPairFor(input.legs.give, input.legs.take);
     const rfqId = newRfqId();
-    const l1Network = l1NetworkFromArk(input.info.network);
+    const l1Network = l1NetworkFromArkade(input.info.network);
 
     // Two wallet keys: the claim secret (P, covenant receiver role) and the L1 refund key. Asking
     // twice keeps them distinct; minting one here is what key provisioning forbids.

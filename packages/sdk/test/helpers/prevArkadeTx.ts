@@ -3,14 +3,14 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { Transaction } from "../../src";
 
 /**
- * Emulator v0.0.7+ makes a covenant spend resolve the previous ark tx of every
+ * Emulator v0.0.7+ makes a covenant spend resolve the previous Arkade transaction of every
  * input through the indexer, and the resolver keys results by the txid each PSBT
  * actually computes to. So a test coin can no longer carry a made-up txid: it
  * has to be the real id of a tx the mock indexer can serve.
  */
 const minted = new Map<string, string>();
 
-/** A coin whose txid is the real id of a servable stand-in previous ark tx. */
+/** A coin whose txid is the real id of a servable stand-in previous Arkade transaction. */
 export function mintCoin(value: number, vout = 0): { txid: string; vout: number; value: number } {
     const seed = minted.size + 1;
     const script = new Uint8Array([

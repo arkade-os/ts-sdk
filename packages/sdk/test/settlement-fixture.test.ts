@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createVtxo, type TestArkWallet } from "./e2e/utils";
+import { createVtxo, type TestArkadeWallet } from "./e2e/utils";
 
 vi.mock("child_process", () => ({ execSync: vi.fn(() => "") }));
 
@@ -20,7 +20,7 @@ it("waits for settlement membership rather than matching the commitment to the l
             .mockResolvedValue(settled),
         settle: vi.fn().mockResolvedValue(commitment),
     };
-    const result = createVtxo({ wallet } as unknown as TestArkWallet, 10_000);
+    const result = createVtxo({ wallet } as unknown as TestArkadeWallet, 10_000);
     const assertion = expect(result).resolves.toBe(commitment);
     await vi.runAllTimersAsync();
     await assertion;

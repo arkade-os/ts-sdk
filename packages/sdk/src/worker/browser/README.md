@@ -53,7 +53,7 @@ Each handler implements the `MessageHandler` interface:
 
 - `messageTag` — unique string used to route messages to this handler.
 - `start(services, repositories, channel?)` — called once after initialization
-  with the wallet, Ark provider, repositories, and a push channel to the
+  with the wallet, Arkade provider, repositories, and a push channel to the
   clients. The channel is scoped to the generation it was handed out in and
   goes inert on its own after a re-init or `stop()`.
 - `stop()` — called on shutdown.

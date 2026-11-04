@@ -64,7 +64,7 @@ export class RestEmulatorProvider implements EmulatorProvider {
 
     async getInfo(): Promise<EmulatorInfo> {
         const url = `${this.serverUrl}/v1/info`;
-        // `baseFetch`, not the Ark-server `fetch`: the emulator is a distinct
+        // `baseFetch`, not the operator `fetch`: the emulator is a distinct
         // origin and rejects `X-Build-Version` / `X-SDK-VERSION` in preflight.
         const response = await baseFetch(url);
         if (!response.ok) {

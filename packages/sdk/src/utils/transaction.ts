@@ -16,7 +16,7 @@ export class Transaction extends BtcSignerTransaction {
     };
 
     constructor(opts?: TxOpts) {
-        super(withArkOpts(opts));
+        super(withArkadeOpts(opts));
     }
 
     /**
@@ -26,20 +26,20 @@ export class Transaction extends BtcSignerTransaction {
      */
     static fromPSBT(psbt_: Bytes, opts?: TxOpts): Transaction {
         try {
-            return BtcSignerTransaction.fromPSBT(psbt_, withArkOpts(opts));
+            return BtcSignerTransaction.fromPSBT(psbt_, withArkadeOpts(opts));
         } catch (err) {
             const repaired = repairLegacyOutputTapTrees(psbt_);
             if (!repaired) throw err;
-            return BtcSignerTransaction.fromPSBT(repaired, withArkOpts(opts));
+            return BtcSignerTransaction.fromPSBT(repaired, withArkadeOpts(opts));
         }
     }
 
     static fromRaw(raw: Bytes, opts?: TxOpts): Transaction {
-        return BtcSignerTransaction.fromRaw(raw, withArkOpts(opts));
+        return BtcSignerTransaction.fromRaw(raw, withArkadeOpts(opts));
     }
 }
 
-function withArkOpts(opts?: TxOpts): TxOpts {
+function withArkadeOpts(opts?: TxOpts): TxOpts {
     return { ...Transaction.ARK_TX_OPTS, ...opts };
 }
 

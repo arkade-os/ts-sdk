@@ -136,9 +136,9 @@ const LOCKUP_OUTPOINT = { txid: "99".repeat(32), vout: 0 };
 const LOCKUP_VALUE = 100_000;
 /** The txid our own receive claim comes back with. */
 const CLAIM_TXID = "ac".repeat(32);
-/** The ark transaction a lockup spend is carried by — the counterparty's, on
+/** The Arkade transaction a lockup spend is carried by — the counterparty's, on
  * every leg but a settled receive. */
-const ARK_TXID = "ab".repeat(32);
+const ARKADE_TXID = "ab".repeat(32);
 
 const UNROLL = CSVMultisigTapscript.encode({
     timelock: { type: "blocks", value: BigInt(144) },
@@ -208,7 +208,7 @@ interface FakeVtxo {
      * to name. On its own it does NOT mean unspent: the wire contract permits
      * `isSpent: true` alongside it. */
     spentBy: string;
-    /** The ark transaction that spent the checkpoint `spentBy` names — what
+    /** The Arkade transaction that spent the checkpoint `spentBy` names — what
      * history correlates on, and what the manager stamps onto a terminal
      * record. Optional on the wire, so its absence is a case of its own. */
     arkTxId?: string;
@@ -738,11 +738,11 @@ describe("nextOnchainReceiveAction", () => {
     });
 
     it("reads a preimage-revealing spend as the solver taking the fill, not as our claim", () => {
-        expect(at({ phase: "claimed", txid: ARK_TXID, preimage: PREIMAGE })).toBe("taken");
+        expect(at({ phase: "claimed", txid: ARKADE_TXID, preimage: PREIMAGE })).toBe("taken");
     });
 
     it("reads a preimage-less spend as OUR refund landing, not as a sweep against us", () => {
-        expect(at({ phase: "swept", txid: ARK_TXID })).toBe("refunded");
+        expect(at({ phase: "swept", txid: ARKADE_TXID })).toBe("refunded");
     });
 
     it("never refunds once the Arkade half settled — that money is the solver's payment", () => {
@@ -4655,7 +4655,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(states).toEqual(["settled"]);
             expect(store.records.get(RFQ_ID)?.state).toBe("settled");
             expect(store.records.get(RFQ_ID)?.settlementPreimageHex).toBe(hex.encode(PREIMAGE));
-            // The claim read names no ark tx, and the stored refund spend is not what ended it.
+            // The claim read names no Arkade transaction, and the stored refund spend is not what ended it.
             expect(store.records.get(RFQ_ID)?.lockupSpendTxids).toBeUndefined();
             expect(await m.hasSwap(RFQ_ID)).toBe(false);
         });
@@ -5025,13 +5025,15 @@ describe("RfqSwapManager — manager-owned persistence", () => {
     });
 
     describe("stamping the spend that ended the swap", () => {
-        it("records the ark transactions the chain read named", async () => {
+        it("records the Arkade transactions the chain read named", async () => {
             const store = fakeStore();
             const s = spies();
             const swap = lightningSwap();
             const m = manager({
                 indexer: fakeIndexer({
-                    vtxos: [{ ...LOCKUP_OUTPOINT, spentBy: CLAIM_SPEND.txid, arkTxId: ARK_TXID }],
+                    vtxos: [
+                        { ...LOCKUP_OUTPOINT, spentBy: CLAIM_SPEND.txid, arkTxId: ARKADE_TXID },
+                    ],
                     txs: [CLAIM_SPEND],
                 }),
                 repository: store,
@@ -5045,11 +5047,11 @@ describe("RfqSwapManager — manager-owned persistence", () => {
             expect(swap.state).toBe("settled");
             // The counterparty's transaction — nothing local produced it, so no
             // other field on the record can name it.
-            expect(swap.lockupSpendTxids).toEqual([ARK_TXID]);
-            expect(store.records.get(RFQ_ID)?.lockupSpendTxids).toEqual([ARK_TXID]);
+            expect(swap.lockupSpendTxids).toEqual([ARKADE_TXID]);
+            expect(store.records.get(RFQ_ID)?.lockupSpendTxids).toEqual([ARKADE_TXID]);
         });
 
-        it("stamps nothing when the indexer named the checkpoint but not the ark tx", async () => {
+        it("stamps nothing when the indexer named the checkpoint but not the Arkade transaction", async () => {
             // `LockupSpend.txid` is optional, and a checkpoint txid is not
             // what history correlates on. Fewer txids beats a wrong one.
             const store = fakeStore();
@@ -5074,7 +5076,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
                 storedSend({
                     state: "settled",
                     updatedAt: SAFE_NOW - 10,
-                    lockupSpendTxids: [ARK_TXID],
+                    lockupSpendTxids: [ARKADE_TXID],
                 }),
             ]);
             const s = spies();
@@ -5087,7 +5089,7 @@ describe("RfqSwapManager — manager-owned persistence", () => {
 
             const result = await m.restoreFromRepository({ includeTerminal: true });
 
-            expect(result.restored[0].lockupSpendTxids).toEqual([ARK_TXID]);
+            expect(result.restored[0].lockupSpendTxids).toEqual([ARKADE_TXID]);
         });
     });
 

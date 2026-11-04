@@ -19,7 +19,7 @@ import {
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/arkade";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { Contract, ExtendedContractVtxo } from "../contracts/types";
@@ -32,13 +32,13 @@ import {
     type SignerSet,
     type SignerStatus,
 } from "./signerRotation";
-import { hasBoardingTxExpired } from "../utils/arkTransaction";
+import { hasBoardingTxExpired } from "../utils/arkadeTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
 import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { Estimator } from "../arkfee";
+import { Estimator } from "../arkadeFee";
 import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
@@ -738,13 +738,13 @@ export type MigrationLegSkipReason = "below-dust" | "oversized-only" | "not-spen
 export type MigrationGlobalSkipReason = "no-deprecated-vtxos" | "unknown-wallet-signer";
 
 /**
- * Outcome of one migration leg. VTXOs migrate via the Ark send path
+ * Outcome of one migration leg. VTXOs migrate via the Arkade send path
  * ({@link Wallet.sendSelectedVtxosToSelf}); boarding coins, being on-chain inputs with no send
  * path, via settle. Each leg sizes and reports independently — one leg's failure or skip never
  * suppresses the other.
  */
 export interface MigrationLegReport {
-    /** VTXO leg: Ark transaction id from send. Boarding leg: settle commitment txid. */
+    /** VTXO leg: Arkade transaction id from send. Boarding leg: settle commitment txid. */
     txid?: string;
     /** Inputs submitted and accepted in this leg's transaction; empty on error/skip. */
     migrated: MigrationVtxoRef[];
@@ -819,7 +819,7 @@ interface MigrationCapableWallet {
     settleServerInfoChanges?(): Promise<void>;
     /**
      * Spend the given own deprecated-signer VTXOs into one full-value active-signer output via
-     * the Ark send path (not `settle`), preserving input assets. Never accepts boarding inputs.
+     * the Arkade send path (not `settle`), preserving input assets. Never accepts boarding inputs.
      */
     sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[], now?: TimeHeight): Promise<string>;
     /**
@@ -1185,7 +1185,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const info = await this.getInfoProvider()?.getInfo();
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
-        // `info` is undefined only with no ark provider wired, which prices as zero (gross).
+        // `info` is undefined only with no Arkade provider wired, which prices as zero (gross).
         const estimator = new Estimator(info?.fees.intentFee ?? {});
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);

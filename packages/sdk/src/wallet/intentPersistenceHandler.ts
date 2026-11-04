@@ -1,5 +1,5 @@
 import { collectIntents } from "../repositories/intentRepository";
-import { SettlementEvent } from "../providers/ark";
+import { SettlementEvent } from "../providers/arkade";
 import { IntentRepository } from "../repositories/intentRepository";
 import { Batch } from "./batch";
 import { applySettlementEventToIntent } from "./intentStateReducer";

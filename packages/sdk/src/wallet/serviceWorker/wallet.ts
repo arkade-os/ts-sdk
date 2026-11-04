@@ -21,7 +21,7 @@ import {
     Recipient,
     SendParams,
 } from "..";
-import { ArkadeInfo, INFO_FETCH_TIMEOUT_MS, SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, INFO_FETCH_TIMEOUT_MS, SettlementEvent } from "../../providers/arkade";
 import { createDefaultActivityRegistry, buildActivities, type Activity } from "../activity";
 import { hex } from "@scure/base";
 import {
@@ -1084,9 +1084,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             return (response as ResponseGetArkadeInfo).payload.info;
         } catch (cause) {
             // Keep the original reachable as `cause`. Unlike its siblings, this
-            // call reaches `resolveArkInfo` in the worker, which distinguishes
+            // call reaches `resolveArkadeInfo` in the worker, which distinguishes
             // `ProviderUnavailableError` (offline — retry) from
-            // `MalformedArkInfoSnapshotError` (corrupt cache — re-onboard).
+            // `MalformedArkadeInfoSnapshotError` (corrupt cache — re-onboard).
             // structuredClone drops the prototype AND normalizes a custom
             // `name` to "Error", so neither survives the boundary on its own;
             // the worker sends the name beside the error as plain data and

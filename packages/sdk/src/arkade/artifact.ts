@@ -141,9 +141,9 @@ function inputDef(name: string, type: string): InputDef {
     return { name, type: argType(type) };
 }
 
-function argType(arkType: string): ArkadeArgType {
-    if (!Object.hasOwn(ARKADE_TYPE_ENCODINGS, arkType)) fail(`unknown type '${arkType}'`);
-    return arkType as ArkadeArgType;
+function argType(arkadeType: string): ArkadeArgType {
+    if (!Object.hasOwn(ARKADE_TYPE_ENCODINGS, arkadeType)) fail(`unknown type '${arkadeType}'`);
+    return arkadeType as ArkadeArgType;
 }
 
 function arrayParts(type: string): [string, number] {

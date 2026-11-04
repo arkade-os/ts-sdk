@@ -1,4 +1,4 @@
-import { SettlementEvent, SettlementEventType } from "../providers/ark";
+import { SettlementEvent, SettlementEventType } from "../providers/arkade";
 import { ArkIntent, ArkIntentState, isTerminalIntentState } from "../repositories/intentRepository";
 
 /**

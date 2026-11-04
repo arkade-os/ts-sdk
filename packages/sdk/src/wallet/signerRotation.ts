@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import type { ArkadeInfo } from "../providers/ark";
+import type { ArkadeInfo } from "../providers/arkade";
 import { toXOnly } from "../utils/keys";
 
 /**

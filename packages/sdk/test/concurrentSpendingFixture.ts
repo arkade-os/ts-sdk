@@ -10,7 +10,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/arkade";
 import type { IntentRepository } from "../src/repositories/intentRepository";
 import { SingleKey } from "../src/identity/singleKey";
 

@@ -33,8 +33,8 @@ export {
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
-} from "./arkcontract";
-export type { ParsedArkContract } from "./arkcontract";
+} from "./arkadeContract";
+export type { ParsedArkContract } from "./arkadeContract";
 
 // Contract watcher
 export { ContractWatcher } from "./contractWatcher";

@@ -8,7 +8,7 @@ import {
 import type { IWallet } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import type { BoardingUtxoGroup } from "../src/wallet/wallet";
-import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/ark";
+import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/arkade";
 import type { Contract, ContractWithVtxos, ExtendedContractVtxo } from "../src/contracts/types";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
@@ -61,7 +61,7 @@ const DEP_DUE = "ee".repeat(32);
 const DEP_EXPIRED = "ff".repeat(32);
 const UNKNOWN = "dd".repeat(32);
 
-const ARK_ADDRESS =
+const ARKADE_ADDRESS =
     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
 
 const NOW_S = Math.floor(Date.now() / 1000);
@@ -152,7 +152,7 @@ interface MigrationMockOptions {
 
 function createMigrationMockWallet(opts: MigrationMockOptions) {
     const settle = vi.fn().mockResolvedValue("migrate-txid");
-    // The VTXO leg migrates through the Ark send path; the boarding leg keeps
+    // The VTXO leg migrates through the Arkade send path; the boarding leg keeps
     // settle. Distinct return so tests can tell the two legs' txids apart.
     const sendSelectedVtxosToSelf = vi.fn().mockResolvedValue("vtxo-send-txid");
     let arkServerPublicKey = hex.decode(opts.walletSigner ?? ACTIVE);
@@ -186,7 +186,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),
-        getAddress: vi.fn().mockResolvedValue(opts.address ?? ARK_ADDRESS),
+        getAddress: vi.fn().mockResolvedValue(opts.address ?? ARKADE_ADDRESS),
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getVtxos: vi.fn().mockResolvedValue([]),
         getSpendableVtxos: vi.fn().mockResolvedValue([]),
@@ -602,7 +602,7 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         expect(report.boarding?.migrated[0].value).toBe(5000);
         expect(settle).toHaveBeenCalledOnce();
         expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
-        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARK_ADDRESS);
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARKADE_ADDRESS);
     });
 
     it("migrates old-signer boarding + VTXOs in SEPARATE legs (send + settle), never one settle", async () => {
@@ -623,7 +623,7 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         expect(sentInputs.map((v) => v.value)).toEqual([4000]);
         expect(settle.mock.calls[0][0].inputs).toHaveLength(1);
         expect(settle.mock.calls[0][0].inputs[0].value).toBe(6000);
-        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARK_ADDRESS);
+        expect(settle.mock.calls[0][0].outputs[0].address).toBe(ARKADE_ADDRESS);
 
         expect(report.vtxos?.txid).toBe("vtxo-send-txid");
         expect(report.vtxos?.migrated.map((m) => m.value)).toEqual([4000]);
@@ -909,7 +909,7 @@ function createPollableWallet() {
         rotateServerSigner: vi.fn().mockResolvedValue(undefined),
         getVtxos: vi.fn().mockResolvedValue([]),
         getSpendableVtxos: vi.fn().mockResolvedValue([]),
-        getAddress: vi.fn().mockResolvedValue(ARK_ADDRESS),
+        getAddress: vi.fn().mockResolvedValue(ARKADE_ADDRESS),
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
@@ -993,10 +993,10 @@ function makeVtxoWithExpiry(
     } as unknown as ExtendedContractVtxo;
 }
 
-// Active-signer Ark address (the rotation/recovery destination) and a distinct
-// deprecated-signer Ark address the wallet's stale snapshot derives. Both are
+// Active-signer Arkade address (the rotation/recovery destination) and a distinct
+// deprecated-signer Arkade address the wallet's stale snapshot derives. Both are
 // valid bech32m so the periodic-settle output-fee step can decode them.
-const ACTIVE_ADDRESS = ARK_ADDRESS;
+const ACTIVE_ADDRESS = ARKADE_ADDRESS;
 const DEPRECATED_ADDRESS =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 

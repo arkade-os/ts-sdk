@@ -14,7 +14,7 @@ import {
 import type { DelegateProvider } from "../../src/providers/delegate";
 import {
     TEST_DELEGATE_PUB_KEY,
-    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DEFAULT_ARKADE_ADDRESS,
     TEST_PUB_KEY,
     TEST_SERVER_PUB_KEY,
     TEST_SERVER_PUB_KEY_HEX,
@@ -71,7 +71,7 @@ function run(offchainInput: string, vtxos: ContractVtxo[]) {
         getDelegateInfo: async () => ({
             pubkey: hex.encode(TEST_DELEGATE_PUB_KEY),
             fee: "0",
-            delegateAddress: TEST_DEFAULT_ARK_ADDRESS,
+            delegateAddress: TEST_DEFAULT_ARKADE_ADDRESS,
         }),
         delegate: async (intent: { proof: string }) => {
             registered.push(intent);
@@ -83,7 +83,7 @@ function run(offchainInput: string, vtxos: ContractVtxo[]) {
         { getInfo: async () => arkInfo(offchainInput) },
         identity,
     );
-    return { registered, result: manager.delegate(vtxos, TEST_DEFAULT_ARK_ADDRESS) };
+    return { registered, result: manager.delegate(vtxos, TEST_DEFAULT_ARKADE_ADDRESS) };
 }
 
 /** Amount of the output paying `destination` in the registered intent proof. */
@@ -104,7 +104,7 @@ describe("delegate input fee rounding", () => {
 
         expect(failed).toEqual([]);
         expect(delegated).toHaveLength(1);
-        expect(delegatedAmount(registered[0].proof, TEST_DEFAULT_ARK_ADDRESS)).toBe(997n);
+        expect(delegatedAmount(registered[0].proof, TEST_DEFAULT_ARKADE_ADDRESS)).toBe(997n);
     });
 
     it("skips an input whose rounded-up fee leaves nothing", async () => {
@@ -138,7 +138,7 @@ describe("periodic settle boarding fee rounding", () => {
     it("skips a boarding input whose rounded-up fee leaves nothing", async () => {
         const settle = vi.fn().mockResolvedValue("mock-txid");
         const wallet = {
-            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARKADE_ADDRESS),
             getContractManager: vi.fn().mockResolvedValue({
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),

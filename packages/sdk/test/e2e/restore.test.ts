@@ -7,7 +7,7 @@ import { buildReceiveContract } from "../../src/wallet/walletReceiveRotator";
 import {
     beforeEachFaucet,
     createSharedRepos,
-    createTestArkWalletFromMnemonic,
+    createTestArkadeWalletFromMnemonic,
     faucetOffchain,
     waitFor,
 } from "./utils";
@@ -58,7 +58,7 @@ describe("Wallet.restore()", () => {
         // ── Wallet A: HD mode, the "issuer" ───────────────────────────
         // lookAheadWindow: 1 keeps the band tight; A is only used to fund
         // the index-0 baseline and to derive the deep index-5 address.
-        const a = await createTestArkWalletFromMnemonic(mnemonic, undefined, "hd", 1);
+        const a = await createTestArkadeWalletFromMnemonic(mnemonic, undefined, "hd", 1);
 
         // Wrap A in try/finally so a failed assertion can't leak A's
         // watcher/state into later e2e files.
@@ -106,7 +106,7 @@ describe("Wallet.restore()", () => {
 
             // ── Wallet B: same seed, HD mode, FRESH separate repos ────────
             const freshRepos = createSharedRepos();
-            const b = await createTestArkWalletFromMnemonic(mnemonic, freshRepos, "hd", 1);
+            const b = await createTestArkadeWalletFromMnemonic(mnemonic, freshRepos, "hd", 1);
 
             // Wrap B in try/finally too — guarantee b.dispose() runs even
             // if a B-side assertion throws.

@@ -1499,7 +1499,7 @@ describe("Wallet.restore", () => {
     });
 
     it("equal-delay server: a funded index-0 boarding UTXO restores without aborting (first-wins)", async () => {
-        // mockArkInfo sets boardingExitDelay === unilateralExitDelay, so the
+        // mockArkadeInfo sets boardingExitDelay === unilateralExitDelay, so the
         // boarding script is byte-identical to the default candidate. A funded
         // on-chain boarding UTXO must restore cleanly: the boarding hit is
         // tolerated first-wins at the persistence layer (the init-persisted
@@ -1515,7 +1515,7 @@ describe("Wallet.restore", () => {
     });
 
     it("equal-delay: a funded ROTATED boarding index restores as a boarding UTXO (Finding #1)", async () => {
-        // The core regression. mockArkInfo is equal-delay, so the boarding
+        // The core regression. mockArkadeInfo is equal-delay, so the boarding
         // script at a rotated index N (>0) is byte-identical to the default
         // script at N. Fund index 2 ON-CHAIN ONLY (no L2 VTXO). The boarding
         // probe is the sole hit, so the index is persisted as a `boarding`
@@ -1797,7 +1797,7 @@ describe("Wallet.restore", () => {
             await wallet.restore({ gapLimit: 5 });
 
             // The contract is recovered and carries the deprecated signer in
-            // BOTH the persisted params and the encoded Ark address — so later
+            // BOTH the persisted params and the encoded Arkade address — so later
             // signing/forfeit resolves the key the VTXO was actually minted
             // under, not the current one.
             const rows = await collectContracts(contractRepository, { type: ["default"] });

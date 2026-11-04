@@ -38,7 +38,7 @@ describe("RestEmulatorProvider fetch boundary", () => {
     });
 
     // The emulator is a distinct origin from arkd, so it must not receive the
-    // Ark-server compatibility headers — `baseFetch` is the wrapper that omits
+    // operator compatibility headers — `baseFetch` is the wrapper that omits
     // them, and swapping it for `fetch` would break preflight, not a test.
     it("sends no Arkade-specific headers to the emulator origin", async () => {
         await new RestEmulatorProvider("https://emulator.test").getInfo();

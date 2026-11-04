@@ -12,7 +12,7 @@ import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { AmbiguousDestination, MissingCorridorDep } from "../../../src/client/errors";
 import { corridorSet } from "../../../src/client/corridors/registry";
 import { encodeInvoice } from "../../helpers/bolt11";
-import { FOREIGN_SIGNER, arkAddressFor, corridorBaseFor } from "./fixtures";
+import { FOREIGN_SIGNER, arkadeAddressFor, corridorBaseFor } from "./fixtures";
 
 const HASH = "f5636521e98000697a6700b979c288ddad56cb3995a2eb07550872c466ccc3e5";
 const NOW = 1_700_000_000;
@@ -24,9 +24,9 @@ const invoiceOn = (prefix: string, amount = "20u"): string =>
 const amountlessOn = (prefix: string): string =>
     encodeInvoice({ prefix, timestamp: NOW - 60, expiry: 3_600, paymentHash: HASH });
 
-const ARK_REGTEST = arkAddressFor("regtest");
-const ARK_MAINNET = arkAddressFor("bitcoin");
-const ARK_FOREIGN = arkAddressFor("regtest", FOREIGN_SIGNER);
+const ARKADE_REGTEST = arkadeAddressFor("regtest");
+const ARKADE_MAINNET = arkadeAddressFor("bitcoin");
+const ARKADE_FOREIGN = arkadeAddressFor("regtest", FOREIGN_SIGNER);
 
 /** Bech32 on each network. */
 const BCRT1 = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
@@ -50,9 +50,9 @@ describe("the parsing matrix", () => {
 
     describe("bare destinations", () => {
         it("claims an Arkade address for the arkade corridor", () => {
-            expect(claimOn("regtest", ARK_REGTEST)).toEqual({
+            expect(claimOn("regtest", ARKADE_REGTEST)).toEqual({
                 corridor: "arkade",
-                instrument: { kind: "address", address: ARK_REGTEST },
+                instrument: { kind: "address", address: ARKADE_REGTEST },
             });
         });
 
@@ -87,16 +87,16 @@ describe("the parsing matrix", () => {
 
     describe("as a BIP21 param", () => {
         it("claims the `ark=` param", () => {
-            expect(claimOn("regtest", `bitcoin:?ark=${ARK_REGTEST}`)).toEqual({
+            expect(claimOn("regtest", `bitcoin:?ark=${ARKADE_REGTEST}`)).toEqual({
                 corridor: "arkade",
-                instrument: { kind: "address", address: ARK_REGTEST },
+                instrument: { kind: "address", address: ARKADE_REGTEST },
             });
         });
 
         it("claims an upper-case `ark=` param, exactly as it claims it bare", () => {
             // The filter was case-sensitive and dropped this with a
             // `console.warn`, while `arkTarget` claimed the same string bare.
-            const upper = ARK_REGTEST.toUpperCase();
+            const upper = ARKADE_REGTEST.toUpperCase();
             expect(claimOn("regtest", upper)?.corridor).toBe("arkade");
             expect(claimOn("regtest", `bitcoin:?ark=${upper}`)).toEqual({
                 corridor: "arkade",
@@ -149,12 +149,12 @@ describe("the parsing matrix", () => {
         it("refuses another operator's Arkade address", () => {
             // `isValidArkAddress` proves bech32m and a 65-byte payload and
             // nothing about whose server key is embedded.
-            expect(() => claimOn("regtest", ARK_FOREIGN)).toThrow(AmbiguousDestination);
-            expect(() => claimOn("regtest", ARK_FOREIGN)).toThrow(/unknown operator signer key/);
+            expect(() => claimOn("regtest", ARKADE_FOREIGN)).toThrow(AmbiguousDestination);
+            expect(() => claimOn("regtest", ARKADE_FOREIGN)).toThrow(/unknown operator signer key/);
         });
 
         it("refuses an Arkade address from another network", () => {
-            expect(() => claimOn("regtest", ARK_MAINNET)).toThrow(/expected prefix "tark"/);
+            expect(() => claimOn("regtest", ARKADE_MAINNET)).toThrow(/expected prefix "tark"/);
         });
 
         it("refuses a mainnet on-chain address on a regtest wallet", () => {
@@ -220,7 +220,7 @@ describe("the parsing matrix", () => {
             // is safe for core — its rails are interchangeable and its quotes
             // are receiver-exact. Here the choice decides which asset moves and
             // against which counterparty.
-            const uri = `bitcoin:${BCRT1}?ark=${ARK_REGTEST}`;
+            const uri = `bitcoin:${BCRT1}?ark=${ARKADE_REGTEST}`;
             expect(() => claimOn("regtest", uri)).toThrow(AmbiguousDestination);
             expect(() => claimOn("regtest", uri)).toThrow(/arkade and onchain/);
         });
@@ -249,14 +249,14 @@ describe("the parsing matrix", () => {
             });
             expect(disabled.claim(invoiceOn("lnbcrt"))?.corridor).toBe("lightning");
             expect(() => disabled.claim(BCRT1)).toThrow(MissingCorridorDep);
-            expect(() => disabled.claim(ARK_REGTEST)).toThrow(MissingCorridorDep);
+            expect(() => disabled.claim(ARKADE_REGTEST)).toThrow(MissingCorridorDep);
         });
 
         it("asks a module only about its own destination class", () => {
             // Each module answers `undefined` for a string that is not its
             // business — the arm the registry counts as "not mine".
             const set = corridorSet(corridorBaseFor("regtest"));
-            expect(set.get("onchain").matches(ARK_REGTEST)).toBe(undefined);
+            expect(set.get("onchain").matches(ARKADE_REGTEST)).toBe(undefined);
             expect(set.get("lightning").matches(BCRT1)).toBe(undefined);
             expect(set.get("arkade").matches(invoiceOn("lnbcrt"))).toBe(undefined);
         });

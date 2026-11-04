@@ -13,7 +13,7 @@ import {
 } from "../../src";
 import {
     beforeEachFaucet,
-    createTestArkWallet,
+    createTestArkadeWallet,
     createTestOnchainWallet,
     createVtxo,
     execCommand,
@@ -66,7 +66,7 @@ describe("unilateral exit packages", () => {
     }
 
     it("exits a single settled vtxo end-to-end", { timeout: 300_000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         await createVtxo(alice, 60_000);
 
         const feeWallet = await OnchainWallet.create(alice.identity, "regtest");
@@ -116,7 +116,7 @@ describe("unilateral exit packages", () => {
     it("graph mode: funds the exit from an ephemeral fee wallet", {
         timeout: 300_000,
     }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         await createVtxo(alice, 60_000);
 
         const dest = await createTestOnchainWallet();
@@ -168,7 +168,7 @@ describe("unilateral exit packages", () => {
     });
 
     it("dedupes shared ancestors across two vtxos", { timeout: 300_000 }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         await createVtxo(alice, 100_000);
 
         // split into two vtxos under ONE commitment (shared tree ancestors)
@@ -224,9 +224,9 @@ describe("unilateral exit packages", () => {
     it("exits a vhtlc as receiver with the preimage (condition witness)", {
         timeout: 300_000,
     }, async () => {
-        const alice = await createTestArkWallet();
+        const alice = await createTestArkadeWallet();
         await createVtxo(alice, 30_000);
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
 
         const preimage = new TextEncoder().encode("exit-package-preimage");
         const preimageHash = hash160(preimage);

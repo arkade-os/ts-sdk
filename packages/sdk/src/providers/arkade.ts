@@ -17,7 +17,7 @@ import {
     throwIfHttpUnavailable,
     toProviderUnavailable,
 } from "./errors";
-import type { IntentFeeConfig } from "../arkfee";
+import type { IntentFeeConfig } from "../arkadeFee";
 import { Intent } from "../intent";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { fetch } from "../utils/fetch";
@@ -203,7 +203,7 @@ export interface ArkadeInfo {
      */
     vtxoTreeExpiry?: bigint;
     /**
-     * Weight budget an ark transaction must stay under; the server answers
+     * Weight budget an Arkade transaction must stay under; the server answers
      * `TX_TOO_LARGE` past it.
      *
      * `undefined` when not advertised — a server that omits the field and one
@@ -465,13 +465,13 @@ export class RestArkProvider implements ArkProvider {
         // v0.9.9-rc.1 #1104), parsed via the shared maybeArkError. A raw
         // substring match would let an unrelated error body that merely mentions
         // the token trigger a spurious refresh + signer rotation.
-        const arkError = maybeArkError(new Error(body));
+        const arkadeError = maybeArkError(new Error(body));
         // A structured arkd error means the operator is up and deliberately
         // rejecting the request — terminal, even when grpc-gateway renders it as a
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
-        if (!arkError) throwIfHttpUnavailable(response, "arkade");
-        if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
+        if (!arkadeError) throwIfHttpUnavailable(response, "arkade");
+        if (!isArkError(arkadeError, ArkErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
@@ -1274,6 +1274,6 @@ function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
 
 function handleError(errorText: string, defaultMessage: string): never {
     const error = new Error(errorText);
-    const arkError = maybeArkError(error);
-    throw arkError ?? new Error(defaultMessage);
+    const arkadeError = maybeArkError(error);
+    throw arkadeError ?? new Error(defaultMessage);
 }

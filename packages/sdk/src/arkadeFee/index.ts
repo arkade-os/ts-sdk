@@ -1,4 +1,4 @@
-export { Estimator } from "./estimator";
+export { Estimator } from "../arkadeFee/estimator";
 export type {
     FeeAmount,
     IntentFeeConfig,
@@ -6,4 +6,4 @@ export type {
     OnchainInput,
     FeeOutput,
     VtxoType,
-} from "./types";
+} from "../arkadeFee/types";

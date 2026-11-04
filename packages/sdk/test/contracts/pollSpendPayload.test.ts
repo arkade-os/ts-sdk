@@ -17,7 +17,7 @@ import {
 } from "./helpers";
 
 const CHECKPOINT = "cc".repeat(32);
-const ARK_TX = "dd".repeat(32);
+const ARKADE_TX = "dd".repeat(32);
 
 const contract = (): Contract => ({
     type: "default",
@@ -70,7 +70,7 @@ describe("failsafe poll: what a vtxo_spent event carries", () => {
                 ...unspent,
                 isSpent: true,
                 spentBy: CHECKPOINT,
-                arkTxId: ARK_TX,
+                arkTxId: ARKADE_TX,
             },
         ]);
         await vi.advanceTimersByTimeAsync(1200);
@@ -84,7 +84,7 @@ describe("failsafe poll: what a vtxo_spent event carries", () => {
             vout: unspent.vout,
             isSpent: true,
             spentBy: CHECKPOINT,
-            arkTxId: ARK_TX,
+            arkTxId: ARKADE_TX,
         });
 
         await watcher.stopWatching();

@@ -3,7 +3,7 @@ import { expect, describe, it, beforeEach } from "vitest";
 import { ArkadeCash, RestIndexerProvider } from "../../src";
 import {
     beforeEachFaucet,
-    createTestArkWallet,
+    createTestArkadeWallet,
     faucetOffchain,
     mineBlocks,
     waitFor,
@@ -25,7 +25,7 @@ describe("ArkadeCash", () => {
     };
 
     const fundedWallet = async (amount: number) => {
-        const w = await createTestArkWallet();
+        const w = await createTestArkadeWallet();
         faucetOffchain(await w.wallet.getAddress(), amount);
         await waitFor(async () => (await w.wallet.getVtxos()).length > 0);
         return w;
@@ -33,7 +33,7 @@ describe("ArkadeCash", () => {
 
     it("should send and claim arkadeCash (happy path)", async () => {
         const alice = await fundedWallet(10000);
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
 
         // Alice creates cash — Bob never shares an address
         const cashStr = await alice.wallet.createCash(5000);
@@ -58,8 +58,8 @@ describe("ArkadeCash", () => {
 
     it("should report an already-claimed arkadeCash instead of sweeping it", async () => {
         const alice = await fundedWallet(10000);
-        const bob = await createTestArkWallet();
-        const charlie = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
+        const charlie = await createTestArkadeWallet();
 
         const cashStr = await alice.wallet.createCash(5000);
         await waitForCashFunded(cashStr);
@@ -100,7 +100,7 @@ describe("ArkadeCash", () => {
 
     it("should claim each arkadeCash independently", async () => {
         const alice = await fundedWallet(30000);
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
 
         const cash1 = await alice.wallet.createCash(5000);
         // Until this tx is indexed the second send re-picks its input, or its change.
@@ -149,7 +149,7 @@ describe("ArkadeCash", () => {
 
     it("should recover a server-swept arkadeCash by importing it for recovery", async () => {
         const alice = await fundedWallet(10000);
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
 
         const { cashStr, cashScript } = await sweptCash(alice, 5000);
 
@@ -196,7 +196,7 @@ describe("ArkadeCash", () => {
 
     it("should be idempotent when claimCash is re-run before recovery settles", async () => {
         const alice = await fundedWallet(10000);
-        const bob = await createTestArkWallet();
+        const bob = await createTestArkadeWallet();
 
         const { cashStr, cashScript } = await sweptCash(alice, 5000);
 

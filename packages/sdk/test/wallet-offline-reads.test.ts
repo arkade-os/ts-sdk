@@ -8,7 +8,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { ArkadeInfo } from "../src/providers/arkade";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
 
 /** Spin until `predicate` holds, so a test never races the microtask queue. */

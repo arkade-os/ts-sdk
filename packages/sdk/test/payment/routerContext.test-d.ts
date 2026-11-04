@@ -1,11 +1,11 @@
 import { describe, expectTypeOf, it } from "vitest";
 import { PaymentRouter } from "../../src/payment/router";
-import { arkRail } from "../../src/payment/rails/ark";
-import { arkAssetRail } from "../../src/payment/rails/arkAsset";
+import { arkRail } from "../../src/payment/rails/arkade";
+import { arkAssetRail } from "../../src/payment/rails/arkadeAsset";
 import { onchainRail } from "../../src/payment/rails/onchain";
 import type { RouterContext } from "../../src/payment/types";
 import type { IWallet } from "../../src/index";
-import type { FeeInfo } from "../../src/providers/ark";
+import type { FeeInfo } from "../../src/providers/arkade";
 import type { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 
 // Compile-time only: erased types are invisible to runtime assertions. wallet#950.

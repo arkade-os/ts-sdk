@@ -6,7 +6,7 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { VtxoScript, TapLeafScript, scriptFromTapLeafScript } from "../src/script/base";
 import { MultisigTapscript } from "../src/script/tapscript";
 import { SingleKey } from "../src/identity/singleKey";
-import { verifyTapscriptSignatures, combineTapscriptSigs } from "../src/utils/arkTransaction";
+import { verifyTapscriptSignatures, combineTapscriptSigs } from "../src/utils/arkadeTransaction";
 
 describe("verifyTapscriptSignatures", async () => {
     // Test identities

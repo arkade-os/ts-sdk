@@ -20,7 +20,7 @@ import {
     waitFor,
 } from "./utils";
 
-const arkUrl = "http://localhost:7070";
+const arkadeUrl = "http://localhost:7070";
 
 /**
  * End-to-end proof of the client-side server-info digest mechanism
@@ -84,7 +84,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
      * (pinned to its boot signer `A`) can fund.
      */
     const resetToBaselineSigner = async (): Promise<void> => {
-        const info = await getServerInfo(arkUrl);
+        const info = await getServerInfo(arkadeUrl);
         const onA = norm(info.signerPubkey) === (await xonly(A_SEC));
         if (onA && info.deprecatedSigners.length === 0) return;
         await rotateArkdSigner({ activeSignerPriv: A_SEC, deprecatedSigners: [] });
@@ -93,7 +93,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     const makeWallet = async (): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(),
-            arkProvider: new RestArkProvider(arkUrl),
+            arkProvider: new RestArkProvider(arkadeUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -110,7 +110,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
      * not the `ArkProvider` interface `wallet.arkProvider` is typed as (the
      * wallet duck-types `onServerInfoChanged` at setup). Reach them via this
      * structural cast — the same `_digest` probe the unit suite
-     * (`arkProviderDigest.test.ts`) uses.
+     * (`arkadeProviderDigest.test.ts`) uses.
      */
     type DigestProbe = {
         _digest: string;

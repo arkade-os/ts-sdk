@@ -194,7 +194,7 @@ describe("watchOfferSwaps", () => {
     });
 
     it("writes nothing when the spending tx cannot be read", async () => {
-        // the indexer lags a freshly submitted ark tx. Persisting a guess here
+        // the indexer lags a freshly submitted Arkade transaction. Persisting a guess here
         // is what made a wrong label permanent — later scans skip stored swaps
         const offer = makeOffer();
         const repository = new InMemoryAssetSwapRepository();

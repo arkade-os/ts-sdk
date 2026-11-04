@@ -13,7 +13,7 @@ import {
     SingleKey,
     Wallet,
 } from "../../src";
-import { ArkProvider } from "../../src/providers/ark";
+import { ArkProvider } from "../../src/providers/arkade";
 import { OnchainProvider } from "../../src/providers/onchain";
 import { VirtualCoin } from "../../src/wallet";
 import {
@@ -595,7 +595,7 @@ describe("ContractWatcher watch-only scripts", () => {
 const mockPrivKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 const serverPubKeyHex = "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb";
 
-function createMockArkProvider(): ArkProvider {
+function createMockArkadeProvider(): ArkProvider {
     return {
         getInfo: vi.fn().mockResolvedValue({
             signerPubkey: "02" + serverPubKeyHex,
@@ -658,7 +658,7 @@ describe("watch-only scripts stay out of the wallet", () => {
 
         const wallet = await Wallet.create({
             identity: SingleKey.fromHex(mockPrivKeyHex),
-            arkProvider: createMockArkProvider(),
+            arkProvider: createMockArkadeProvider(),
             indexerProvider: mockIndexer,
             onchainProvider: createMockOnchainProvider(),
             storage: { walletRepository, contractRepository },

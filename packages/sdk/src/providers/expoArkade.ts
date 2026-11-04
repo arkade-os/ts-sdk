@@ -1,5 +1,10 @@
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
-import { RestArkProvider, SettlementEvent, TxNotificationEvent, isFetchTimeoutError } from "./ark";
+import {
+    RestArkProvider,
+    SettlementEvent,
+    TxNotificationEvent,
+    isFetchTimeoutError,
+} from "./arkade";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 import { ARKADE_VERSION_HEADERS } from "../utils/fetch";
 
