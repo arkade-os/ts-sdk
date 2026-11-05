@@ -1,0 +1,31 @@
+contract TimedSavings(pubkey owner, bytes32 payout, int releaseAt, int exitSequence) {
+  function release() {
+    require(tx.numInputs == 1, "one position");
+    require(tx.numOutputs == 3, "payout extension and anchor");
+    require(checkTime(releaseAt), "still locked");
+    ScriptPubKey destination = { program: payout, version: 1 };
+    require(tx.outputs[0].script == destination, "committed payout");
+    require(tx.outputs[0].value == tx.input.current.value, "preserve principal");
+    require(tx.outputs[1].value == 0, "zero value extension");
+    require(tx.outputs[2].value == 0, "zero value anchor");
+  }
+
+  function release(signature serverSig, signature emulatorSig) tapscript {
+    require(after(releaseAt));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+  }
+
+  function renew() {
+    require(!checkTime(releaseAt), "mature savings must release");
+    require(tx.version == 2, "batch intent");
+    require(tx.numInputs == 2, "message and position");
+    require(this.activeInputIndex == 1, "position index");
+    require(tx.outputs[0].script == tx.input.current.script, "same contract");
+    require(tx.outputs[0].value == tx.input.current.value, "preserve principal");
+  }
+
+  function unilateral(signature ownerSig) tapscript {
+    require(older(exitSequence));
+    require(checkSig(ownerSig, owner));
+  }
+}
