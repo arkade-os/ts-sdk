@@ -34,7 +34,7 @@ const arkUrl = "http://localhost:7070";
  * request then carries a stale `X-Digest`; arkd v0.9.11 rejects a stale-but-
  * present digest with a structured `DIGEST_MISMATCH` (GetInfo is exempt, so the
  * refresh path always works). On that rejection the SDK clears + refetches info,
- * fires `onServerInfoChanged` (the wallet re-derives: `refreshDeprecatedSigners`
+ * fires `onOperatorInfoChanged` (the wallet re-derives: `refreshDeprecatedSigners`
  * then `rotateServerSigner` onto the new key), and THROWS `DigestMismatchError`
  * — it never silently retries the request built against the now-stale config.
  *
@@ -106,15 +106,15 @@ describe("server-info digest mismatch across a real signer rotation", () => {
         });
 
     /**
-     * `onServerInfoChanged` and the cached `_digest` live on `RestArkProvider`,
+     * `onOperatorInfoChanged` and the cached `_digest` live on `RestArkProvider`,
      * not the `ArkProvider` interface `wallet.arkProvider` is typed as (the
-     * wallet duck-types `onServerInfoChanged` at setup). Reach them via this
+     * wallet duck-types `onOperatorInfoChanged` at setup). Reach them via this
      * structural cast — the same `_digest` probe the unit suite
      * (`arkProviderDigest.test.ts`) uses.
      */
     type DigestProbe = {
         _digest: string;
-        onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
+        onOperatorInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
     };
 
     // Order matters: restore baseline signer A BEFORE the faucet redeems notes.
@@ -144,7 +144,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
 
             // Record every refreshed info the provider emits on a mismatch.
             const emitted: ArkadeInfo[] = [];
-            probe.onServerInfoChanged((info) => emitted.push(info));
+            probe.onOperatorInfoChanged((info) => emitted.push(info));
 
             // Fund a real VTXO under A (the ark CLI faucet only funds while
             // the server is on its home signer A) — the input the mutating
@@ -177,7 +177,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
             // WITHOUT a getInfo first (only the no-params settle path refreshes
             // info), so arkd sees the stale digest and rejects with a
             // structured DIGEST_MISMATCH. authedFetch then clears + refetches
-            // info, fires onServerInfoChanged, and THROWS DigestMismatchError —
+            // info, fires onOperatorInfoChanged, and THROWS DigestMismatchError —
             // it never silently retries. The throw simultaneously proves the
             // client SENT X-Digest (no header ⇒ no mismatch) and that arkd
             // round-tripped the structured error over its REST gateway.
@@ -202,7 +202,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
             expect(probe._digest).not.toBe(digestA);
             expect(probe._digest).toBe(refreshed.digest);
 
-            // The wallet's serialized onServerInfoChanged handler re-derived
+            // The wallet's serialized onOperatorInfoChanged handler re-derived
             // onto B (refreshDeprecatedSigners + rotateServerSigner). It runs
             // async off the emit, so poll for the flip.
             await waitFor(async () => hex.encode(wallet.arkServerPublicKey) === toX, {

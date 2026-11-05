@@ -79,7 +79,7 @@ describe("operator offline (e2e)", () => {
                 cachedVtxos.map((v) => `${v.txid}:${v.vout}`).sort(),
             );
             expect(offline.getProviderConnectionState().mode).toBe("degraded");
-            expect(offline.serverInfoSource).toBe("cache");
+            expect(offline.operatorInfoSource).toBe("cache");
         } finally {
             if (!onlineDisposed) await online.dispose().catch(() => undefined);
             await offline?.dispose().catch(() => undefined);
