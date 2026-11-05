@@ -236,6 +236,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **A failed contract-manager start-up no longer leaves its watcher running.**
+  `getContractManager()` dropped a manager whose baseline registration, or the
+  identity key read before it, rejected after `ContractManager.create()` had
+  started its watcher. Nothing held the manager any more, so its event stream
+  and failsafe polling outlived the failure. The start-up now disposes it
+  before the rejection reaches the caller, which can retry as before.
+
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
   or unrelated settings. Genuine absence still returns null.

@@ -2237,108 +2237,115 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 return { height, time };
             },
         });
-
-        // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
-        // to INDEX 0 (identity x-only key) as the permanent fallback set. Rotated display
-        // contracts are single-timelock at the current delay and tagged WALLET_RECEIVE_SOURCE;
-        // the matrix is deliberately NOT re-registered at rotated keys (it would expand per boot).
-        const baselinePubkey = await baselinePubkeyPromise;
-        // The matrix also fans the SERVER-signer axis (current + every deprecated signer), so funds
-        // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
-        // by scriptHex.
-        const delegatePubKey =
-            this.offchainTapscript instanceof DelegateVtxo.Script
-                ? this.offchainTapscript.options.delegatePubKey
-                : undefined;
-        const baselineSigners = [
-            this.offchainTapscript.options.serverPubKey,
-            ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
-        ];
-        const seenBaselineScripts = new Set<string>();
-        const baseline: CreateContractParams[] = [];
-        for (const serverPubKey of baselineSigners) {
-            for (const csvTimelock of this.walletContractTimelocks) {
-                const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-                const defaultScript = new DefaultVtxo.Script({
-                    pubKey: baselinePubkey,
-                    serverPubKey,
-                    csvTimelock,
-                });
-                const defaultScriptHex = hex.encode(defaultScript.pkScript);
-
-                if (!seenBaselineScripts.has(defaultScriptHex)) {
-                    seenBaselineScripts.add(defaultScriptHex);
-                    // Persisted before the boarding baseline below, so in the degenerate
-                    // equal-delay collision the index-0 row stays `default` (first-wins).
-                    baseline.push({
-                        type: "default",
-                        params: {
-                            pubKey: hex.encode(defaultScript.options.pubKey),
-                            serverPubKey: hex.encode(serverPubKey),
-                            csvTimelock: csvTimelockStr,
-                        },
-                        script: defaultScriptHex,
-                        address: defaultScript.address(this.network.hrp, serverPubKey).encode(),
-                        state: "active",
-                    });
-                }
-
-                if (delegatePubKey) {
-                    const delegateScript = new DelegateVtxo.Script({
+        try {
+            // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
+            // to INDEX 0 (identity x-only key) as the permanent fallback set. Rotated display
+            // contracts are single-timelock at the current delay and tagged WALLET_RECEIVE_SOURCE;
+            // the matrix is deliberately NOT re-registered at rotated keys (it would expand per boot).
+            const baselinePubkey = await baselinePubkeyPromise;
+            // The matrix also fans the SERVER-signer axis (current + every deprecated signer), so funds
+            // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
+            // by scriptHex.
+            const delegatePubKey =
+                this.offchainTapscript instanceof DelegateVtxo.Script
+                    ? this.offchainTapscript.options.delegatePubKey
+                    : undefined;
+            const baselineSigners = [
+                this.offchainTapscript.options.serverPubKey,
+                ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+            ];
+            const seenBaselineScripts = new Set<string>();
+            const baseline: CreateContractParams[] = [];
+            for (const serverPubKey of baselineSigners) {
+                for (const csvTimelock of this.walletContractTimelocks) {
+                    const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+                    const defaultScript = new DefaultVtxo.Script({
                         pubKey: baselinePubkey,
                         serverPubKey,
-                        delegatePubKey,
                         csvTimelock,
                     });
-                    const delegateScriptHex = hex.encode(delegateScript.pkScript);
+                    const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-                    if (seenBaselineScripts.has(delegateScriptHex)) continue;
-                    seenBaselineScripts.add(delegateScriptHex);
-                    baseline.push({
-                        type: "delegate",
-                        params: {
-                            pubKey: hex.encode(delegateScript.options.pubKey),
-                            serverPubKey: hex.encode(serverPubKey),
-                            delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
-                            csvTimelock: csvTimelockStr,
-                        },
-                        script: delegateScriptHex,
-                        address: delegateScript.address(this.network.hrp, serverPubKey).encode(),
-                        state: "active",
-                    });
+                    if (!seenBaselineScripts.has(defaultScriptHex)) {
+                        seenBaselineScripts.add(defaultScriptHex);
+                        // Persisted before the boarding baseline below, so in the degenerate
+                        // equal-delay collision the index-0 row stays `default` (first-wins).
+                        baseline.push({
+                            type: "default",
+                            params: {
+                                pubKey: hex.encode(defaultScript.options.pubKey),
+                                serverPubKey: hex.encode(serverPubKey),
+                                csvTimelock: csvTimelockStr,
+                            },
+                            script: defaultScriptHex,
+                            address: defaultScript.address(this.network.hrp, serverPubKey).encode(),
+                            state: "active",
+                        });
+                    }
+
+                    if (delegatePubKey) {
+                        const delegateScript = new DelegateVtxo.Script({
+                            pubKey: baselinePubkey,
+                            serverPubKey,
+                            delegatePubKey,
+                            csvTimelock,
+                        });
+                        const delegateScriptHex = hex.encode(delegateScript.pkScript);
+
+                        if (seenBaselineScripts.has(delegateScriptHex)) continue;
+                        seenBaselineScripts.add(delegateScriptHex);
+                        baseline.push({
+                            type: "delegate",
+                            params: {
+                                pubKey: hex.encode(delegateScript.options.pubKey),
+                                serverPubKey: hex.encode(serverPubKey),
+                                delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
+                                csvTimelock: csvTimelockStr,
+                            },
+                            script: delegateScriptHex,
+                            address: delegateScript
+                                .address(this.network.hrp, serverPubKey)
+                                .encode(),
+                            state: "active",
+                        });
+                    }
                 }
             }
-        }
 
-        // Baseline boarding rows, anchored at INDEX 0 (`baselinePubkey`, NOT the possibly-rotated
-        // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
-        // is index-independent. Same signer axis as above; only the signer fans, since the
-        // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
-        // default/delegate one (degenerate equal delays) stays that type via the shared set.
-        const boardingCsvTimelock =
-            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        for (const serverPubKey of baselineSigners) {
-            const baselineBoarding = new DefaultVtxo.Script({
-                pubKey: baselinePubkey,
-                serverPubKey,
-                csvTimelock: boardingCsvTimelock,
-            });
-            const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
-            if (seenBaselineScripts.has(boardingScriptHex)) continue;
-            seenBaselineScripts.add(boardingScriptHex);
-            baseline.push({
-                type: "boarding",
-                params: {
-                    pubKey: hex.encode(baselineBoarding.options.pubKey),
-                    serverPubKey: hex.encode(serverPubKey),
-                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
-                },
-                script: boardingScriptHex,
-                address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
-                state: "active",
-            });
+            // Baseline boarding rows, anchored at INDEX 0 (`baselinePubkey`, NOT the possibly-rotated
+            // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
+            // is index-independent. Same signer axis as above; only the signer fans, since the
+            // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
+            // default/delegate one (degenerate equal delays) stays that type via the shared set.
+            const boardingCsvTimelock =
+                this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+            for (const serverPubKey of baselineSigners) {
+                const baselineBoarding = new DefaultVtxo.Script({
+                    pubKey: baselinePubkey,
+                    serverPubKey,
+                    csvTimelock: boardingCsvTimelock,
+                });
+                const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
+                if (seenBaselineScripts.has(boardingScriptHex)) continue;
+                seenBaselineScripts.add(boardingScriptHex);
+                baseline.push({
+                    type: "boarding",
+                    params: {
+                        pubKey: hex.encode(baselineBoarding.options.pubKey),
+                        serverPubKey: hex.encode(serverPubKey),
+                        csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+                    },
+                    script: boardingScriptHex,
+                    address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
+                    state: "active",
+                });
+            }
+            await manager.createContracts(baseline);
+        } catch (error) {
+            // No caller holds it yet, so nothing else would stop its watcher's stream and polling.
+            await manager.dispose().catch(() => undefined);
+            throw error;
         }
-        await manager.createContracts(baseline);
 
         return manager;
     }

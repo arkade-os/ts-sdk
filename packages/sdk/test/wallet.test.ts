@@ -12,6 +12,7 @@ import {
     OnchainWallet,
     RestArkProvider,
     ReadonlyWallet,
+    ContractManager,
     Batch,
     DefaultVtxo,
     DelegateVtxo,
@@ -1838,6 +1839,40 @@ describe("ReadonlyWallet", () => {
             `${DEFAULT_ARKADE_SERVER_URL}/v1/info`,
             expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
+    });
+
+    it("disposes a contract manager whose start-up fails after it began watching", async () => {
+        const key = SingleKey.fromRandomBytes();
+        const wallet = await ReadonlyWallet.create({
+            identity: ReadonlySingleKey.fromPublicKey(await key.compressedPublicKey()),
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+            } as Partial<ArkProvider> as ArkProvider,
+            indexerProvider: {
+                getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                getSubscription: async function* () {},
+            } as Partial<IndexerProvider> as IndexerProvider,
+            onchainProvider: {} as OnchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+        const failure = new Error("baseline registration failed");
+        const createContracts = vi
+            .spyOn(ContractManager.prototype, "createContracts")
+            .mockRejectedValueOnce(failure);
+        const dispose = vi.spyOn(ContractManager.prototype, "dispose");
+        try {
+            await expect(wallet.getContractManager()).rejects.toBe(failure);
+            expect(dispose).toHaveBeenCalledTimes(1);
+        } finally {
+            createContracts.mockRestore();
+            dispose.mockRestore();
+            await wallet.dispose();
+        }
     });
 
     it("should query balance with ReadonlyWallet", async () => {
