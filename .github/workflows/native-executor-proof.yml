@@ -32,6 +32,8 @@ jobs:
       - run: pnpm --filter @arkade-os/sdk build
       - name: Fresh funded native and offline delegatee proof
         run: node packages/sdk/test/proof/native-executor/prove.mjs
+      - name: Fresh funded journal response loss and keyless recovery proof
+        run: node packages/sdk/test/proof/native-execution-journal/prove.mjs
       - name: Upload public evidence only
         if: always()
         uses: actions/upload-artifact@v6
@@ -39,6 +41,7 @@ jobs:
           name: native-executor-proof-${{ github.sha }}
           path: |
             .tmp/native-executor/*/public/*.json
+            .tmp/native-execution-journal/*/public/*.json
             !**/private/**
             !**/*key*
             !**/*.sqlite*
