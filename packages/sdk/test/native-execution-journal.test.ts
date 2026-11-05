@@ -362,12 +362,33 @@ describe("NativeExecutionJournal receipts", () => {
 
 describe("NativeExecutionJournal observation", () => {
     it.each(["observe", "reconcile"] as const)(
-        "rejects wire-bounded replies that expand beyond journal policy through %s",
+        "keeps a custom transaction envelope without JSON serialization unknown through %s",
         async (method) => {
             const f = await observationFixture();
+            const before = await f.repo.getWalletState();
+            const indexer = {
+                getVtxos: f.indexer.getVtxos,
+                getVirtualTxs: async () => ({ txs: f.txs, toJSON: () => undefined }),
+            };
+            expect((await f.journal[method](source, indexer))?.state).toBe("unknown");
+            expect(await f.repo.getWalletState()).toEqual(before);
+            expect(await f.journal.getReceipt(source)).toBeUndefined();
+            expect(await f.journal.get(source)).toEqual(f.record);
+            await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
+        },
+    );
+
+    it.each(
+        (["observe", "reconcile"] as const).flatMap((method) =>
+            [false, true].map((multibyte) => ({ method, multibyte })),
+        ),
+    )(
+        "rejects wire-bounded replies that expand beyond journal policy through $method (multibyte: $multibyte)",
+        async ({ method, multibyte }) => {
+            const f = await observationFixture();
             const limit = 4 * 1024 * 1024;
-            const padding = new Array(200_000).fill("1e20").join(",");
-            const wire = `{"txs":${JSON.stringify(f.txs)},"padding":[${padding}]}`;
+            const padding = new Array(multibyte ? 100_000 : 200_000).fill("1e20").join(",");
+            const wire = `{"txs":${JSON.stringify(f.txs)},"padding":[${padding}],"text":"${multibyte ? "€".repeat(1_000_000) : ""}"}`;
             expect(Buffer.byteLength(wire)).toBeLessThan(limit);
             const fetch = vi
                 .spyOn(globalThis, "fetch")
@@ -380,7 +401,10 @@ describe("NativeExecutionJournal observation", () => {
                 maxResponseBytes: limit,
             });
             expect(reply.txs).toEqual(f.txs);
-            expect(JSON.stringify(reply).length).toBeGreaterThan(limit);
+            const serialized = JSON.stringify(reply);
+            expect(Buffer.byteLength(serialized)).toBeGreaterThan(limit);
+            if (multibyte) expect(serialized.length).toBeLessThan(limit);
+            else expect(serialized.length).toBeGreaterThan(limit);
             const indexer = {
                 getVtxos: f.indexer.getVtxos,
                 getVirtualTxs: provider.getVirtualTxs.bind(provider),

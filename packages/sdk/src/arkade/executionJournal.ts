@@ -1,4 +1,4 @@
-import { base64, hex } from "@scure/base";
+import { base64, hex, utf8 } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import type {
     AtomicWalletState,
@@ -236,7 +236,7 @@ function assertCompleteReply(reply: unknown, field: "vtxos" | "txs"): void {
         !value ||
         !Array.isArray(value[field]) ||
         value[field].length !== 2 ||
-        JSON.stringify(value).length > MAX_REQUEST_BYTES
+        utf8.decode(JSON.stringify(value)).length > MAX_REQUEST_BYTES
     )
         throw new Error("invalid or oversized observation reply");
     const page = value.page;

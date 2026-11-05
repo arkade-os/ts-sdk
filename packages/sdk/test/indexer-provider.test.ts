@@ -509,6 +509,59 @@ describe("RestIndexerProvider", () => {
             expect(mockFetch).not.toHaveBeenCalled();
         });
 
+        it.each(["remove", "raise"])(
+            "retains the entry cap and coalescing across automatic pages when callers %s the cap",
+            async (mutation) => {
+                const firstPage = JSON.stringify({
+                    vtxos: Array.from({ length: 500 }, (_, i) => wireVtxo(`page0-${i}`)),
+                    page: { current: 1, next: 2, total: 2 },
+                });
+                const limit = new TextEncoder().encode(firstPage).length;
+                let release!: (response: Response) => void;
+                const firstReply = new Promise<Response>((resolve) => {
+                    release = resolve;
+                });
+                const cancel = vi.fn();
+                mockFetch.mockImplementation(async (url: string) => {
+                    if (new URL(url).searchParams.get("page.index") === "0") return firstReply;
+                    const chunks = ['{"vtxos":[],"padding":"', "x".repeat(limit), '"}'];
+                    let next = 0;
+                    return new Response(
+                        new ReadableStream({
+                            pull(controller) {
+                                if (next < chunks.length)
+                                    controller.enqueue(new TextEncoder().encode(chunks[next++]));
+                                else controller.close();
+                            },
+                            cancel,
+                        }),
+                    );
+                });
+                const provider = new RestIndexerProvider("http://localhost:7070");
+                const mutable: { scripts: string[]; maxResponseBytes?: number } = {
+                    scripts: ["script-a"],
+                    maxResponseBytes: limit,
+                };
+                const pending = provider.getVtxos(mutable);
+                const joined = provider.getVtxos({ ...mutable });
+                await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledOnce());
+                if (mutation === "remove") delete mutable.maxResponseBytes;
+                else mutable.maxResponseBytes = limit * 2;
+                release(new Response(firstPage));
+                const results = await Promise.allSettled([pending, joined]);
+                expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+                for (const result of results) {
+                    if (result.status === "rejected")
+                        expect(result.reason.message).toContain("exceeds maxResponseBytes");
+                }
+                expect(mockFetch).toHaveBeenCalledTimes(2);
+                expect(cancel).toHaveBeenCalledOnce();
+                expect(new URL(mockFetch.mock.calls[1][0]).searchParams.get("page.index")).toBe(
+                    "2",
+                );
+            },
+        );
+
         it("pages an unpaged query to exhaustion", async () => {
             // The server answers with a page of its own choosing, so returning
             // its first one verbatim hands the caller a silent prefix.

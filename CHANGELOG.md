@@ -583,6 +583,12 @@ style and have not been backfilled.
   reads keep their existing defaults. Pagination whose current page exceeds its
   total cannot acknowledge a receipt or release the occupied prepared slot.
 
+- **Indexer read limits stay fixed through pagination and journal validation.**
+  Automatic VTXO pages retain the caller's initial response-byte cap even if its
+  options change while a page is pending. Journal observations measure serialized
+  replies in UTF-8 bytes, so multibyte payloads cannot exceed the 4 MiB policy
+  while passing a string-length check.
+
 - **Native recovery accepts the indexer's final-page cursor.** A complete single
   page may repeat its final index in `next`; malformed or nonterminal cursors still
   leave the journal unresolved. Unreadable bounded error bodies retain status-only
