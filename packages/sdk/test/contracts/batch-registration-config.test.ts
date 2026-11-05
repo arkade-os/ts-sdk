@@ -38,6 +38,21 @@ describe("ContractManager batch registration config", () => {
         );
     });
 
+    it("keeps a deprecated callback that the new config leaves out", async () => {
+        const deleteBatchRegistration = vi.fn();
+        await reconcile({
+            intentRepository: repository,
+            batchRegistrationReconciliation: { deleteBatchRegistration },
+            intentReconciliation: { isOutpointInFlight },
+        });
+        expect(reconcileIntents).toHaveBeenCalledWith(
+            expect.objectContaining({
+                deleteIntent: deleteBatchRegistration,
+                isOutpointInFlight,
+            }),
+        );
+    });
+
     it("keeps reading the deprecated keys", async () => {
         const deleteIntent = vi.fn();
         await reconcile({

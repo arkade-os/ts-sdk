@@ -1034,13 +1034,12 @@ export class ContractManager implements IContractManager {
         const repository = this.config.batchRegistrationRepository ?? this.config.intentRepository;
         if (!repository) return;
         const reconciliation = this.config.batchRegistrationReconciliation;
+        const deprecated = this.config.intentReconciliation;
         try {
             await reconcileIntents({
-                ...this.config.intentReconciliation,
-                ...(reconciliation && {
-                    deleteIntent: reconciliation.deleteBatchRegistration,
-                    isOutpointInFlight: reconciliation.isOutpointInFlight,
-                }),
+                deleteIntent: reconciliation?.deleteBatchRegistration ?? deprecated?.deleteIntent,
+                isOutpointInFlight:
+                    reconciliation?.isOutpointInFlight ?? deprecated?.isOutpointInFlight,
                 intentRepository: repository,
                 indexerProvider: this.config.indexerProvider,
             });
