@@ -263,6 +263,13 @@ style and have not been backfilled.
   follow the address snapshot; a coin listed again reads as unspent on the next
   sync. Unrolled VTXOs the indexer wrote still need a seen spend.
 
+- **A pending onchain spend is cleared only once its row is saved.**
+  The onchain sync dropped a released or confirmed pending entry before writing
+  the coin's row, so a failed write, or a dispose mid-sync, still deleted the
+  entry. An unrolled VTXO then kept its stale `spentBy` and stayed out of the
+  balance and coin selection until a full resync. Entries now go only after the
+  write succeeds, and a disposed manager no longer touches the pending state.
+
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
   identity key read before it, rejected after `ContractManager.create()` had

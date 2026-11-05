@@ -2219,31 +2219,33 @@ export class ContractManager implements IContractManager {
                 ((c.state === "active" && isOnchainScoped(c)) || owners.has(c.script)),
         );
         const wanted = scripts && new Set(scripts);
-        const before = Object.keys(pending);
+        const settled: string[] = [];
         let tip: Promise<{ height: number }> | undefined;
         const tipHeight = async () => (await (tip ??= onchainProvider.getChainTip())).height;
         for (const contract of targets) {
             if (this.disposed) return;
             if (wanted && !wanted.has(contract.script)) continue;
             try {
-                await this.syncOnchainContract(
-                    contract,
-                    onchainProvider,
-                    network,
-                    pending,
-                    tipHeight,
+                settled.push(
+                    ...(await this.syncOnchainContract(
+                        contract,
+                        onchainProvider,
+                        network,
+                        pending,
+                        tipHeight,
+                    )),
                 );
             } catch (e) {
                 console.warn(`[contracts] onchain sync failed for ${contract.script}`, e);
             }
         }
-        const settled = before.filter((key) => !(key in pending));
+        // After dispose the repositories may belong to a successor.
+        if (this.disposed) return;
         if (settled.length > 0) {
             await this.updatePendingSpends((latest) => {
                 for (const key of settled) delete latest[key];
             });
         }
-        if (this.disposed) return;
         // The coins are stored; a failed subscribe is retried by the next sync.
         await this.onchainWatcher
             ?.setTargets(
@@ -2256,9 +2258,9 @@ export class ContractManager implements IContractManager {
         contract: Contract,
         onchainProvider: OnchainProvider,
         network: Network,
-        pending: Record<string, OnchainPendingSpend>,
+        pending: Readonly<Record<string, OnchainPendingSpend>>,
         tipHeight: () => Promise<number>,
-    ): Promise<void> {
+    ): Promise<string[]> {
         const tapscript = contractHandlers.get(contract.type)!.createScript(contract.params);
         const coins = await onchainProvider.getCoins(onchainAddressOf(contract, network));
         const stored = new Map(
@@ -2268,6 +2270,9 @@ export class ContractManager implements IContractManager {
             ]),
         );
         const rows: ExtendedVirtualCoin[] = [];
+        // Pending keys this sync resolves, reported only once their rows are saved: dropping an
+        // entry whose release never reached the row would leave the coin marked spent.
+        const settled: string[] = [];
         for (const coin of coins) {
             const key = vtxoOutpoint(coin);
             const prior = stored.get(key);
@@ -2281,7 +2286,7 @@ export class ContractManager implements IContractManager {
                 rows.push({ ...row, spentBy: entry.spender });
                 continue;
             }
-            delete pending[key];
+            if (entry) settled.push(key);
             rows.push(entry && row.spentBy === entry.spender ? { ...row, spentBy: "" } : row);
         }
         const live = new Set(rows.map(vtxoOutpoint));
@@ -2304,12 +2309,12 @@ export class ContractManager implements IContractManager {
             const seenSpender = outspend?.spent ? outspend.txid : undefined;
             const spentBy = seenSpender || pending[key]?.spender || row.spentBy || "";
             spent.push({ ...row, isSpent: true, spentBy });
-            delete pending[key];
+            if (pending[key]) settled.push(key);
         }
 
         const writes = [...rows, ...spent];
         // After dispose the repositories may belong to a successor.
-        if (writes.length === 0 || this.disposed) return;
+        if (writes.length === 0 || this.disposed) return [];
         await saveVtxosForContract(this.config.walletRepository, contract, writes);
         const emit = (type: "vtxo_received" | "vtxo_spent", vtxos: ExtendedVirtualCoin[]) => {
             if (vtxos.length === 0) return;
@@ -2326,6 +2331,7 @@ export class ContractManager implements IContractManager {
             rows.filter((r) => !stored.has(vtxoOutpoint(r))),
         );
         emit("vtxo_spent", spent);
+        return settled;
     }
 
     /**

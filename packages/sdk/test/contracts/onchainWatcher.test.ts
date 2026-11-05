@@ -247,6 +247,58 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    // An indexer-written row keeps its stored facts, so only the release clears its spentBy.
+    const indexerRow = () => ({
+        ...toOnchainCoinRow(coin, boarding, script),
+        status: coin.status,
+        commitmentTxIds: ["ee".repeat(32)],
+    });
+
+    it("keeps a released pending spend when saving its row fails", async () => {
+        const { manager, walletRepository, tip } = await setup(async () => [coin]);
+        await saveVtxosForContract(walletRepository, boarding, [indexerRow()]);
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+        tip.height = 306;
+        vi.spyOn(walletRepository, "saveVtxosForScript").mockRejectedValueOnce(
+            new Error("db down"),
+        );
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await manager.syncOnchain();
+        expect(await pendingOf(walletRepository)).toHaveProperty(`${coin.txid}:1`);
+
+        await manager.syncOnchain();
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
+    it("keeps a released pending spend when disposed before its row is saved", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const { manager, walletRepository, tip, onchainProvider } = await setup(async () => [coin]);
+        await saveVtxosForContract(walletRepository, boarding, [indexerRow()]);
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+        tip.height = 306;
+        onchainProvider.getCoins.mockImplementation(async () => {
+            await gate;
+            return [coin];
+        });
+
+        const sync = manager.syncOnchain();
+        await vi.waitFor(() => expect(onchainProvider.getCoins).toHaveBeenCalled());
+        manager.dispose();
+        release();
+        await sync;
+
+        expect(await pendingOf(walletRepository)).toHaveProperty(`${coin.txid}:1`);
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row.spentBy).toBe(spender);
+    });
+
     it("confirms a pending spend once the coin is spent onchain", async () => {
         const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
         const { manager, walletRepository } = await setup(getCoins, [{}, { spent: true }]);
