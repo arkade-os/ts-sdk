@@ -1,5 +1,5 @@
 import { runInNewContext } from "node:vm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { hex } from "@scure/base";
@@ -199,5 +199,58 @@ describe("PRF passkeys", () => {
         expect((await evaluatePrf({ rpId: rp.id, salt, client })).prf).toEqual(
             new Uint8Array(32).fill(6),
         );
+    });
+
+    const answering = (first: unknown) => ({
+        create: async () => null,
+        get: async () =>
+            ({
+                rawId: new Uint8Array(16).buffer,
+                response: { userHandle: null },
+                getClientExtensionResults: () => ({ prf: { results: { first } } }),
+            }) as unknown as Credential,
+    });
+
+    it("refuses array output that is not 32 real bytes, which would read as a predictable all-zero secret", async () => {
+        for (const first of [
+            new Array(32),
+            new Array(32).fill(null),
+            { length: 32 },
+            new Array(32).fill(256),
+            new Array(32).fill(1.5),
+        ]) {
+            await expect(
+                evaluatePrf({ rpId: rp.id, salt, client: answering(first) }),
+            ).rejects.toThrow(PrfUnavailable);
+        }
+    });
+
+    it("derives no words from a secret that is not 32 bytes", () => {
+        expect(() => mnemonicFromPrf(new Uint8Array(0), "label")).toThrow(PrfUnavailable);
+        expect(() => mnemonicFromPrf(new Uint8Array(31), "label")).toThrow(PrfUnavailable);
+    });
+
+    it("reads a cancel by its name, from another realm or where there is no DOMException", async () => {
+        const rejecting = (e: unknown) => ({
+            create: async () => null,
+            get: async () => {
+                throw e;
+            },
+        });
+        await expect(
+            evaluatePrf({
+                rpId: rp.id,
+                salt,
+                client: rejecting({ name: "NotAllowedError", message: "x" }),
+            }),
+        ).rejects.toThrow(PasskeyCancelled);
+        vi.stubGlobal("DOMException", undefined);
+        try {
+            await expect(
+                evaluatePrf({ rpId: rp.id, salt, client: rejecting(new Error("boom")) }),
+            ).rejects.toThrow("boom");
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 });

@@ -65,7 +65,8 @@ style and have not been backfilled.
   gives no 32-byte secret or one different from the secret it returned at creation (an
   authenticator that returns none at creation has nothing to compare against). The primitives (`createPrfPasskey`, `evaluatePrf`,
   `mnemonicFromPrf`, `prfSupport`) are exported; every call that prompts takes a
-  `client` in place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
+  `client` in place of `navigator.credentials`, and `mnemonicFromPrf` refuses a secret
+  that is not 32 bytes. Adds `@noble/hashes` as a direct dependency (already
   in the tree through `@noble/curves`).
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
