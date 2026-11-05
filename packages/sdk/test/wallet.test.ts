@@ -13,6 +13,7 @@ import {
     RestArkProvider,
     ReadonlyWallet,
     ContractManager,
+    ContractWatcher,
     Batch,
     DefaultVtxo,
     DelegateVtxo,
@@ -1865,12 +1866,18 @@ describe("ReadonlyWallet", () => {
             .spyOn(ContractManager.prototype, "createContracts")
             .mockRejectedValueOnce(failure);
         const dispose = vi.spyOn(ContractManager.prototype, "dispose");
+        const startWatching = vi.spyOn(ContractWatcher.prototype, "startWatching");
+        const stopWatching = vi.spyOn(ContractWatcher.prototype, "stopWatching");
         try {
             await expect(wallet.getContractManager()).rejects.toBe(failure);
             expect(dispose).toHaveBeenCalledTimes(1);
+            expect(startWatching).toHaveBeenCalledTimes(1);
+            expect(stopWatching).toHaveBeenCalledTimes(1);
         } finally {
             createContracts.mockRestore();
             dispose.mockRestore();
+            startWatching.mockRestore();
+            stopWatching.mockRestore();
             await wallet.dispose();
         }
     });
