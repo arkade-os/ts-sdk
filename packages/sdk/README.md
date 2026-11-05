@@ -1506,7 +1506,7 @@ import { arkade, Arkade, ArkAddress } from '@arkade-os/sdk'
 
 const program = arkade.programFromArtifact(artifactJson)
 const client = await Arkade.connect({
-  service: { network: 'bitcoin' }, // operator, indexer, esplora, and covenant cosigner
+  service: { network: 'bitcoin' }, // operator, indexer and esplora
   identity: wallet.identity,
   contractManager: await wallet.getContractManager(),
 })
