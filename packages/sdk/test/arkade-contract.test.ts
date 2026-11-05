@@ -126,6 +126,9 @@ function stubProviders(server: Uint8Array, emulatorKey: Uint8Array, indexerVtxos
             captured.arkTx = arkTx;
             return { signedArkTx: arkTx, signedCheckpointTxs: checkpointTxs };
         },
+        async submitProof() {
+            throw new Error("x");
+        },
         async submitIntent() {
             throw new Error("x");
         },

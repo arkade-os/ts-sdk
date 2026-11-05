@@ -780,15 +780,15 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
                         return this;
                     },
                 }),
-                deleteIntent: vi.fn().mockResolvedValue(undefined),
+                deleteBatchRegistration: vi.fn().mockResolvedValue(undefined),
             },
             getSpendableVtxos,
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
-            makeRegisterIntentSignature: registerInputs,
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: registerInputs,
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -798,7 +798,9 @@ describe("gated reads stay ungated (D1b/D1d)", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: vi.fn().mockRejectedValue(new Error("stop-after-selection")),
+            safeCreateBatchRegistration: vi
+                .fn()
+                .mockRejectedValue(new Error("stop-after-selection")),
             persistIntentSnapshot: vi.fn(),
         };
 

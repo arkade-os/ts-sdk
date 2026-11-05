@@ -1032,7 +1032,7 @@ describe("Wallet HD rotation", () => {
             {
                 name: "delete-intent proof after rotation",
                 rationale:
-                    "safeRegisterIntent uses this path to recover from duplicated input; an unsigned proof would wedge retry",
+                    "safeCreateBatchRegistration uses this path to recover from duplicated input; an unsigned proof would wedge retry",
                 operation: "delete",
             },
             {
@@ -1055,10 +1055,10 @@ describe("Wallet HD rotation", () => {
                 const coin = makeVtxoForContract(rotated);
                 const intent =
                     operation === "register"
-                        ? await wallet.makeRegisterIntentSignature([coin], [], [], [])
+                        ? await wallet.makeBatchRegistrationProof([coin], [], [], [])
                         : operation === "delete"
-                          ? await wallet.makeDeleteIntentSignature([coin])
-                          : await wallet.makeGetPendingTxIntentSignature([coin]);
+                          ? await wallet.makeDeleteBatchRegistrationProof([coin])
+                          : await wallet.makeGetPendingTxProof([coin]);
                 const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
                 expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(rotatedPubKeyHex);
@@ -1092,7 +1092,7 @@ describe("Wallet HD rotation", () => {
             // Order: rotated-coin FIRST so tx-input 0 (synthetic
             // toSpend) carries the rotated pubkey signature too;
             // tx-input 1 = rotated coin; tx-input 2 = baseline coin.
-            const intent = await wallet.makeRegisterIntentSignature(
+            const intent = await wallet.makeBatchRegistrationProof(
                 [rotatedCoin, baselineCoin],
                 [],
                 [],
@@ -1166,14 +1166,14 @@ describe("Wallet HD rotation", () => {
             } as Contract);
 
             await expect(
-                wallet.makeRegisterIntentSignature([orphanCoin], [], [], []),
+                wallet.makeBatchRegistrationProof([orphanCoin], [], [], []),
             ).rejects.toBeInstanceOf(MissingSigningDescriptorError);
 
             // Re-throw to capture the typed instance and assert on its
             // exposed fields (test the contract on the error, not just
             // the message).
             try {
-                await wallet.makeRegisterIntentSignature([orphanCoin], [], [], []);
+                await wallet.makeBatchRegistrationProof([orphanCoin], [], [], []);
                 throw new Error("expected throw");
             } catch (err) {
                 expect(err).toBeInstanceOf(MissingSigningDescriptorError);
@@ -1228,7 +1228,7 @@ describe("Wallet HD rotation", () => {
                 tapTree: cosignerScript.encode(),
             };
 
-            const intent = await wallet.makeRegisterIntentSignature(
+            const intent = await wallet.makeBatchRegistrationProof(
                 [rotatedCoin, cosignerCoin],
                 [],
                 [],
@@ -1375,7 +1375,7 @@ describe("Wallet HD rotation", () => {
             )!;
             const coin = makeVtxoForContract(baseline);
 
-            const intent = await wallet.makeRegisterIntentSignature([coin], [], [], []);
+            const intent = await wallet.makeBatchRegistrationProof([coin], [], [], []);
             const proof = Transaction.fromPSBT(base64.decode(intent.proof));
 
             expect(signSpy).not.toHaveBeenCalled();

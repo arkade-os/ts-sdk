@@ -79,7 +79,7 @@ function makeEvents() {
 
     const batchStarted = {
         id: "batch-1",
-        intentIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
+        registrationIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
         batchExpiry: 100n,
     } as unknown as BatchStartedEvent;
 

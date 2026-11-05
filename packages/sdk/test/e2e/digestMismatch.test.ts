@@ -173,7 +173,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
             expect(probe._digest).toBe(digestA);
 
             // The next MUTATING request carries the stale `X-Digest`. settle()
-            // with explicit params reaches registerIntent through authedFetch
+            // with explicit params reaches createBatchRegistration through authedFetch
             // WITHOUT a getInfo first (only the no-params settle path refreshes
             // info), so arkd sees the stale digest and rejects with a
             // structured DIGEST_MISMATCH. authedFetch then clears + refetches

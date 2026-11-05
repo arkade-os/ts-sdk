@@ -1020,22 +1020,23 @@ describe("Common", () => {
                     },
                 ];
 
-                const intent = await alice.wallet.makeRegisterIntentSignature(
+                const intent = await alice.wallet.makeBatchRegistrationProof(
                     virtualCoins,
                     outputs,
                     onchainOutputsIndexes,
                     cosignerPubkeys,
                 );
 
-                const deleteIntent = await alice.wallet.makeDeleteIntentSignature(virtualCoins);
+                const deleteIntent =
+                    await alice.wallet.makeDeleteBatchRegistrationProof(virtualCoins);
 
                 // register intent
-                const registerResponse = await provider.registerIntent(intent);
+                const registerResponse = await provider.createBatchRegistration(intent);
                 expect(registerResponse).toBeDefined();
 
                 // should fail to register the same intent again
                 try {
-                    await provider.registerIntent(intent);
+                    await provider.createBatchRegistration(intent);
                 } catch (error: any) {
                     expect(error).toBeDefined();
                     expect(error).toBeInstanceOf(ArkError);
@@ -1046,7 +1047,7 @@ describe("Common", () => {
                 }
 
                 // delete intent
-                await provider.deleteIntent(deleteIntent);
+                await provider.deleteBatchRegistration(deleteIntent);
             });
 
             it("should finalize pending transactions", { timeout: 60000 }, async () => {

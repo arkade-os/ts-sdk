@@ -229,11 +229,11 @@ describe("settle refreshes the swept state of expired inputs", () => {
             getContractManager: vi.fn(async () => ({ refreshOutpoints })),
             getVtxos: vi.fn(async () => opts.fresh ?? []),
             logUngatedInputs: vi.fn(async () => {}),
-            makeRegisterIntentSignature: vi.fn(async (inputs: ExtendedCoin[]) => {
+            makeBatchRegistrationProof: vi.fn(async (inputs: ExtendedCoin[]) => {
                 captured.push(inputs);
                 throw new Error(STOP);
             }),
-            makeDeleteIntentSignature: vi.fn(async () => ({})),
+            makeDeleteBatchRegistrationProof: vi.fn(async () => ({})),
         };
         return { thisArg, refreshOutpoints, getChainTip, captured };
     }
@@ -300,7 +300,7 @@ describe("settle refreshes the swept state of expired inputs", () => {
         await expect(result).rejects.toThrow(/could not confirm the swept state/i);
 
         expect(h.refreshOutpoints).toHaveBeenCalled();
-        expect(h.thisArg.makeRegisterIntentSignature).not.toHaveBeenCalled();
+        expect(h.thisArg.makeBatchRegistrationProof).not.toHaveBeenCalled();
         expect(h.captured).toEqual([]);
         await expect(result).rejects.not.toBeInstanceOf(ProviderUnavailableError);
     });

@@ -69,12 +69,12 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         let serverAccepted = false;
         const provider = {
             getEventStream: vi.fn(() => stream),
-            registerIntent: vi.fn(async () => {
+            createBatchRegistration: vi.fn(async () => {
                 serverAccepted = true;
                 if (lostAck) throw failure;
                 return "server-intent";
             }),
-            deleteIntent: vi.fn().mockRejectedValue(new Error("delete response lost")),
+            deleteBatchRegistration: vi.fn().mockRejectedValue(new Error("delete response lost")),
         };
         const wallet: any = {
             network: "mutinynet",
@@ -88,17 +88,17 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
                 .mockResolvedValue(
                     "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
                 ),
-            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: base64.encode(proof.toPSBT()),
                 message: { type: "register", expire_at: 0 },
             }),
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "stored-delete-proof",
                 message: deleteMessage,
             }),
             logUngatedInputs: vi.fn(),
             getContractManager: vi.fn().mockResolvedValue({ assertAnnotatable: vi.fn() }),
-            safeRegisterIntent: Wallet.prototype.safeRegisterIntent,
+            safeCreateBatchRegistration: Wallet.prototype.safeCreateBatchRegistration,
             createBatchHandler: vi.fn().mockReturnValue({}),
             persistIntentSnapshot: (Wallet.prototype as any).persistIntentSnapshot,
         };
@@ -122,7 +122,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
             const s = setup(lostAck);
             await expect(s.settle()).rejects.toBe(s.failure);
             expect(s.accepted()).toBe(true);
-            expect(s.provider.deleteIntent).toHaveBeenCalledOnce();
+            expect(s.provider.deleteBatchRegistration).toHaveBeenCalledOnce();
             expect(s.wallet._settlingOutpoints.size).toBe(0);
             expect(s.stream.return).toHaveBeenCalledOnce();
             const state = lostAck ? "waiting_to_submit" : "waiting_for_batch";
@@ -161,8 +161,8 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
             throw s.failure;
         });
         await expect(s.settle()).rejects.toBe(s.failure);
-        expect(s.provider.registerIntent).not.toHaveBeenCalled();
-        expect(s.provider.deleteIntent).not.toHaveBeenCalled();
+        expect(s.provider.createBatchRegistration).not.toHaveBeenCalled();
+        expect(s.provider.deleteBatchRegistration).not.toHaveBeenCalled();
         expect((await collectIntents(repository))[0].state).toBe("cancelled");
         expect(await repository.getLockedVtxoOutpoints()).toEqual([]);
         expect(s.wallet._settlingOutpoints.size).toBe(0);
@@ -172,8 +172,8 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         "cancels for acknowledged deletion or the existing no-match response: %s",
         async (reply) => {
             const s = setup(true);
-            if (reply) s.provider.deleteIntent.mockRejectedValue(reply);
-            else s.provider.deleteIntent.mockResolvedValue(undefined);
+            if (reply) s.provider.deleteBatchRegistration.mockRejectedValue(reply);
+            else s.provider.deleteBatchRegistration.mockResolvedValue(undefined);
             await expect(s.settle()).rejects.toBe(s.failure);
             expect((await collectIntents(repository))[0].state).toBe("cancelled");
             expect(await repository.getLockedVtxoOutpoints()).toEqual([]);

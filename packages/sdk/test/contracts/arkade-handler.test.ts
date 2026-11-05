@@ -128,6 +128,9 @@ function stubProviders() {
         async submitTx(arkTx: string, checkpointTxs: string[]) {
             return { signedArkTx: arkTx, signedCheckpointTxs: checkpointTxs };
         },
+        async submitProof(): Promise<never> {
+            throw new Error("x");
+        },
         async submitIntent(): Promise<never> {
             throw new Error("x");
         },

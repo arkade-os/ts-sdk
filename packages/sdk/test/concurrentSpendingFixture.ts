@@ -61,8 +61,8 @@ export async function fundedWallet(
     const walletRepository = new InMemoryWalletRepository();
     const arkProvider = {
         getInfo: vi.fn(async () => arkInfo()),
-        registerIntent: vi.fn(async () => "intent-1"),
-        deleteIntent: vi.fn(async () => undefined),
+        createBatchRegistration: vi.fn(async () => "intent-1"),
+        deleteBatchRegistration: vi.fn(async () => undefined),
         getEventStream: vi.fn(),
     };
     const wallet = await Wallet.create({
@@ -147,7 +147,7 @@ export function parkSettle(
         throw new Error("event stream closed by test");
     });
     const intent = { proof: "", message: {} };
-    vi.spyOn(wallet as any, "makeRegisterIntentSignature").mockResolvedValue(intent);
-    vi.spyOn(wallet as any, "makeDeleteIntentSignature").mockResolvedValue(intent);
+    vi.spyOn(wallet as any, "makeBatchRegistrationProof").mockResolvedValue(intent);
+    vi.spyOn(wallet as any, "makeDeleteBatchRegistrationProof").mockResolvedValue(intent);
     return { open };
 }

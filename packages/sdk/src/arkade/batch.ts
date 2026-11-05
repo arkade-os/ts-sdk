@@ -105,7 +105,7 @@ export function createArkadeBatchHandler(
             const intentIdHash = sha256(utf8IntentId);
             const intentIdHashStr = hex.encode(intentIdHash);
 
-            if (!event.intentIdHashes.includes(intentIdHashStr)) return { skip: true };
+            if (!event.registrationIdHashes.includes(intentIdHashStr)) return { skip: true };
 
             const info = await arkProvider.getInfo();
             // Bound the expiry before confirming, so a rejected round is never

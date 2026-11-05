@@ -170,7 +170,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
     const batchStarted = (batchExpiry: bigint) =>
         ({
             id: "batch-1",
-            intentIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
+            registrationIdHashes: [hex.encode(sha256(new TextEncoder().encode(INTENT_ID)))],
             batchExpiry,
         }) as unknown as BatchStartedEvent;
 
@@ -202,7 +202,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
         await expect(
             makeHandler(arkProvider, makeSession()).onBatchStarted({
                 id: "batch-1",
-                intentIdHashes: ["ff".repeat(32)],
+                registrationIdHashes: ["ff".repeat(32)],
                 batchExpiry: 1n,
             } as unknown as BatchStartedEvent),
         ).resolves.toEqual({ skip: true });

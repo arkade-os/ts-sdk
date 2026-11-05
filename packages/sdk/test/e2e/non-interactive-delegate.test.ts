@@ -156,13 +156,13 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             },
         ]);
 
-        const signedProof = await emulator.submitIntent({
+        const signedProof = await emulator.submitProof({
             proof: base64.encode(validProof.toPSBT()),
             message,
         });
 
         // Server accepts the emulator-co-signed proof.
-        const intentId = await arkProvider.registerIntent({
+        const intentId = await arkProvider.createBatchRegistration({
             proof: signedProof,
             message,
         });
@@ -257,7 +257,7 @@ function buildDelegateHandler(opts: {
     return {
         async onBatchStarted(event) {
             const intentIdHash = hex.encode(sha256(new TextEncoder().encode(opts.intentId)));
-            if (!event.intentIdHashes.includes(intentIdHash)) {
+            if (!event.registrationIdHashes.includes(intentIdHash)) {
                 return { skip: true };
             }
             const info = await arkProvider.getInfo();

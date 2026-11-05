@@ -30,6 +30,20 @@ style and have not been backfilled.
   `resolveCheckpointExitDelayPolicy` and `CheckpointExitDelayPolicy` are
   removed, and `assertValidServerUnrollScript(checkpointTapscript, network,
   advertisedForfeitPubkey?)` takes the pinned network and forfeit key directly.
+- **Operator calls are named after batch registrations.** A proof is the object,
+  and a batch registration is what it creates or deletes. `ArkProvider.registerIntent`
+  is now `createBatchRegistration`, `deleteIntent` is `deleteBatchRegistration`,
+  and `EmulatorProvider.submitIntent` is `submitProof`. On `Wallet`,
+  `safeRegisterIntent` is `safeCreateBatchRegistration`,
+  `makeRegisterIntentSignature` is `makeBatchRegistrationProof`,
+  `makeDeleteIntentSignature` is `makeDeleteBatchRegistrationProof`, and
+  `makeGetPendingTxIntentSignature` is `makeGetPendingTxProof`.
+  `BatchStartedEvent.intentIdHashes` is `registrationIdHashes`. Every old name stays
+  as a `@deprecated` alias, and the routes and request keys the operator parses do
+  not change. A custom `ArkProvider` must add the two new methods, and a custom
+  `EmulatorProvider` must add `submitProof`, because the SDK now calls them. An
+  object typed as `BatchStartedEvent` must set both keys.
+
 - **`WalletBalance.intentLocked` is renamed `pendingSettlement`.** The bucket
   holds funds committed to an in-flight intent, which return to `available`
   when it terminates; the new name says what the user is waiting for rather

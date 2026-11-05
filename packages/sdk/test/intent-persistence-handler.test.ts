@@ -14,6 +14,7 @@ import {
 const started: BatchStartedEvent = {
     type: SettlementEventType.BatchStarted,
     id: "batch-1",
+    registrationIdHashes: [],
     intentIdHashes: [],
     batchExpiry: 0n,
 };

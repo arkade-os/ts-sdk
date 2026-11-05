@@ -579,13 +579,13 @@ describe("arkade", () => {
 
         // Submit to emulator
         const signedProofB64 = base64.encode(signedProof.toPSBT());
-        const introSignedProof = await emulator.submitIntent({
+        const introSignedProof = await emulator.submitProof({
             proof: signedProofB64,
             message,
         });
 
         // Register intent with server
-        const intentId = await arkProvider.registerIntent({
+        const intentId = await arkProvider.createBatchRegistration({
             proof: introSignedProof,
             message,
         });
@@ -750,12 +750,12 @@ describe("arkade", () => {
         const signedProof = await bob.sign(intentProof);
         const signedProofB64 = base64.encode(signedProof.toPSBT());
 
-        const introSignedProof = await emulator.submitIntent({
+        const introSignedProof = await emulator.submitProof({
             proof: signedProofB64,
             message,
         });
 
-        const intentId = await arkProvider.registerIntent({
+        const intentId = await arkProvider.createBatchRegistration({
             proof: introSignedProof,
             message,
         });
@@ -1026,12 +1026,12 @@ describe("arkade", () => {
         const signedSettleProof = await bob.sign(settleIntentProof);
         const signedSettleProofB64 = base64.encode(signedSettleProof.toPSBT());
 
-        const introSettleProof = await emulator.submitIntent({
+        const introSettleProof = await emulator.submitProof({
             proof: signedSettleProofB64,
             message: settleMessage,
         });
 
-        const settleIntentId = await arkProvider.registerIntent({
+        const settleIntentId = await arkProvider.createBatchRegistration({
             proof: introSettleProof,
             message: settleMessage,
         });

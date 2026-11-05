@@ -84,12 +84,22 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.finalizeTx(arkTxid, finalCheckpointTxs);
     }
 
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>) {
-        return this.inner.registerIntent(intent);
+    createBatchRegistration(intent: SignedIntent<Intent.RegisterMessage>) {
+        return this.inner.createBatchRegistration(intent);
     }
 
+    /** @deprecated Use {@link createBatchRegistration}. */
+    registerIntent(intent: SignedIntent<Intent.RegisterMessage>) {
+        return this.createBatchRegistration(intent);
+    }
+
+    deleteBatchRegistration(intent: SignedIntent<Intent.DeleteMessage>) {
+        return this.inner.deleteBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link deleteBatchRegistration}. */
     deleteIntent(intent: SignedIntent<Intent.DeleteMessage>) {
-        return this.inner.deleteIntent(intent);
+        return this.deleteBatchRegistration(intent);
     }
 
     confirmRegistration(intentId: string) {

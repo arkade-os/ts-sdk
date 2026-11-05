@@ -45,7 +45,7 @@ describe("send without concurrentSpending", () => {
             inputs: [coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 9_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.createBatchRegistration).toHaveBeenCalled());
         // Queued behind the settle; picks only once it holds the lock.
         const sending = wallet.send({ address: await wallet.getAddress(), amount: 15_000 });
         // Picks unlocked, then queues its submit behind the send.
@@ -110,7 +110,7 @@ describe("concurrentSpending", () => {
             inputs: [coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 9_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.createBatchRegistration).toHaveBeenCalled());
         const sending = wallet.send({ address: await wallet.getAddress(), amount: 2_000 });
         await vi.waitFor(() => expect(submits).toHaveLength(1));
         expect(submits[0].inputs).toEqual([outpoints[1]]);
@@ -132,7 +132,7 @@ describe("concurrentSpending", () => {
             inputs: [coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 9_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.createBatchRegistration).toHaveBeenCalled());
         const sending = wallet.send({ address: await wallet.getAddress(), amount: 2_000 });
         await new Promise((r) => setTimeout(r, 50));
         expect(submits).toHaveLength(0);
@@ -224,7 +224,7 @@ describe("concurrentSpending", () => {
             inputs: [boarding, coins[0]],
             outputs: [{ address: BTC_ADDR, amount: 14_000n }],
         });
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalled());
+        await vi.waitFor(() => expect(arkProvider.createBatchRegistration).toHaveBeenCalled());
 
         await expect(
             wallet.settle({ inputs: [boarding], outputs: [{ address: BTC_ADDR, amount: 4_000n }] }),
@@ -233,7 +233,7 @@ describe("concurrentSpending", () => {
             holder: "in-flight",
             outpoints: [`${boarding.txid}:0`],
         });
-        expect(arkProvider.registerIntent).toHaveBeenCalledTimes(1);
+        expect(arkProvider.createBatchRegistration).toHaveBeenCalledTimes(1);
 
         batch.open();
         await settling.catch(() => undefined);
@@ -302,7 +302,7 @@ describe("a hold placed while the SDK is picking", () => {
         let open!: () => void;
         const signing = new Promise<void>((resolve) => (open = resolve));
         const sign = vi
-            .spyOn(wallet as any, "makeRegisterIntentSignature")
+            .spyOn(wallet as any, "makeBatchRegistrationProof")
             .mockImplementation(async () => {
                 await signing;
                 return { proof: "", message: {} };
@@ -314,7 +314,7 @@ describe("a hold placed while the SDK is picking", () => {
         open();
 
         await expect(settling).rejects.toMatchObject({ name: "VtxoReservedError", holder: "held" });
-        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        expect(arkProvider.createBatchRegistration).not.toHaveBeenCalled();
         hold.release();
         await wallet.dispose();
     });
@@ -331,12 +331,14 @@ describe("a hold placed while the SDK is picking", () => {
         let open!: () => void;
         const signing = new Promise<void>((resolve) => (open = resolve));
         const sign = vi
-            .spyOn(wallet as any, "makeRegisterIntentSignature")
+            .spyOn(wallet as any, "makeBatchRegistrationProof")
             .mockImplementation(async () => {
                 await signing;
                 return { proof: "", message: {} };
             });
-        arkProvider.deleteIntent.mockImplementation(() => new Promise<undefined>(() => {}));
+        arkProvider.deleteBatchRegistration.mockImplementation(
+            () => new Promise<undefined>(() => {}),
+        );
 
         const settled = wallet.settle().catch((error) => error);
         await vi.waitFor(() => expect(sign).toHaveBeenCalled());
@@ -354,7 +356,7 @@ describe("a hold placed while the SDK is picking", () => {
         submits[0].finish();
         expect(await sent).toBe("1".repeat(64));
         expect(await settled).toMatchObject({ name: "VtxoReservedError", holder: "held" });
-        expect(arkProvider.deleteIntent).not.toHaveBeenCalled();
+        expect(arkProvider.deleteBatchRegistration).not.toHaveBeenCalled();
         expect(await intentRepository.getLockedVtxoOutpoints()).toEqual([]);
         hold.release();
         await wallet.dispose();
@@ -373,9 +375,11 @@ describe("a hold placed while the SDK is picking", () => {
         await expect(wallet.settle(markSdkPicked(exitOf()))).rejects.toMatchObject({
             holder: "held",
         });
-        expect(arkProvider.registerIntent).not.toHaveBeenCalled();
+        expect(arkProvider.createBatchRegistration).not.toHaveBeenCalled();
         const named = wallet.settle(exitOf());
-        await vi.waitFor(() => expect(arkProvider.registerIntent).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() =>
+            expect(arkProvider.createBatchRegistration).toHaveBeenCalledTimes(1),
+        );
 
         batch.open();
         await named.catch(() => undefined);

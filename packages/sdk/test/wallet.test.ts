@@ -1910,7 +1910,7 @@ describe("ReadonlyWallet", () => {
     });
 });
 
-describe("Wallet.safeRegisterIntent", () => {
+describe("Wallet.safeCreateBatchRegistration", () => {
     it("signs the delete proof over the caller's inputs on 'duplicated input' retry", async () => {
         // This regression covers the incident where the auto-settle path
         // kept hitting "duplicated input" because the prior implementation
@@ -1927,21 +1927,21 @@ describe("Wallet.safeRegisterIntent", () => {
         } as ExtendedCoin;
         const callerInputs: ExtendedCoin[] = [boardingInput];
 
-        const registerIntent = vi
+        const createBatchRegistration = vi
             .fn()
             .mockRejectedValueOnce(new ArkError(0, "duplicated input", "FailedPrecondition"))
             .mockResolvedValueOnce("intent-id-after-retry");
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
-        const makeDeleteIntentSignature = vi.fn().mockResolvedValue({
+        const makeDeleteBatchRegistrationProof = vi.fn().mockResolvedValue({
             proof: "delete-proof",
             message: { type: "delete", expire_at: 0 },
         });
         const getVtxos = vi.fn().mockResolvedValue([]);
 
         const thisArg: any = {
-            arkProvider: { registerIntent, deleteIntent },
-            makeDeleteIntentSignature,
+            arkProvider: { createBatchRegistration, deleteBatchRegistration: deleteIntent },
+            makeDeleteBatchRegistrationProof,
             getVtxos,
         };
 
@@ -1950,7 +1950,7 @@ describe("Wallet.safeRegisterIntent", () => {
             message: { type: "register" } as any,
         };
 
-        const result = await (Wallet.prototype as any).safeRegisterIntent.call(
+        const result = await (Wallet.prototype as any).safeCreateBatchRegistration.call(
             thisArg,
             intent,
             callerInputs,
@@ -1959,29 +1959,29 @@ describe("Wallet.safeRegisterIntent", () => {
         expect(result).toBe("intent-id-after-retry");
         // The delete proof MUST be built from the caller's inputs, not
         // from getVtxos() — otherwise boarding-input stuck intents
-        // remain on the server and the next registerIntent collides
+        // remain on the server and the next createBatchRegistration collides
         // again, producing the DeleteIntent treadmill seen in the panic.
-        expect(makeDeleteIntentSignature).toHaveBeenCalledWith(callerInputs);
+        expect(makeDeleteBatchRegistrationProof).toHaveBeenCalledWith(callerInputs);
         expect(getVtxos).not.toHaveBeenCalled();
         expect(deleteIntent).toHaveBeenCalledTimes(1);
-        expect(registerIntent).toHaveBeenCalledTimes(2);
+        expect(createBatchRegistration).toHaveBeenCalledTimes(2);
     });
 
     it("does not attempt delete/retry for unrelated ArkError codes", async () => {
-        const registerIntent = vi
+        const createBatchRegistration = vi
             .fn()
             .mockRejectedValueOnce(new ArkError(3, "some other failure", "InvalidArgument"));
         const deleteIntent = vi.fn();
-        const makeDeleteIntentSignature = vi.fn();
+        const makeDeleteBatchRegistrationProof = vi.fn();
 
         const thisArg: any = {
-            arkProvider: { registerIntent, deleteIntent },
-            makeDeleteIntentSignature,
+            arkProvider: { createBatchRegistration, deleteBatchRegistration: deleteIntent },
+            makeDeleteBatchRegistrationProof,
             getVtxos: vi.fn(),
         };
 
         await expect(
-            (Wallet.prototype as any).safeRegisterIntent.call(
+            (Wallet.prototype as any).safeCreateBatchRegistration.call(
                 thisArg,
                 { proof: "p", message: { type: "register" } },
                 [] as ExtendedCoin[],
@@ -1989,8 +1989,8 @@ describe("Wallet.safeRegisterIntent", () => {
         ).rejects.toThrow("some other failure");
 
         expect(deleteIntent).not.toHaveBeenCalled();
-        expect(makeDeleteIntentSignature).not.toHaveBeenCalled();
-        expect(registerIntent).toHaveBeenCalledTimes(1);
+        expect(makeDeleteBatchRegistrationProof).not.toHaveBeenCalled();
+        expect(createBatchRegistration).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -2012,7 +2012,7 @@ describe("Wallet._settleImpl", () => {
             _txLock: new Promise<void>((resolve) => (release = resolve)),
             _withTxLock: (Wallet.prototype as any)._withTxLock,
             _settleImpl: (Wallet.prototype as any)._settleImpl,
-            safeRegisterIntent: vi.fn(),
+            safeCreateBatchRegistration: vi.fn(),
         };
 
         const settled = Wallet.prototype.settle.call(
@@ -2028,7 +2028,7 @@ describe("Wallet._settleImpl", () => {
         await rejected;
 
         expect(phases).toEqual(["preparing"]);
-        expect(thisArg.safeRegisterIntent).not.toHaveBeenCalled();
+        expect(thisArg.safeCreateBatchRegistration).not.toHaveBeenCalled();
     });
 
     it("primes the stream before registering the intent and replays the primed event to Batch.join", async () => {
@@ -2055,8 +2055,8 @@ describe("Wallet._settleImpl", () => {
             },
         } as AsyncIterableIterator<any>;
 
-        const safeRegisterIntent = vi.fn(async () => {
-            callOrder.push("safeRegisterIntent");
+        const safeCreateBatchRegistration = vi.fn(async () => {
+            callOrder.push("safeCreateBatchRegistration");
             return "intent-id";
         });
         const createBatchHandler = vi.fn().mockReturnValue({} as Batch.Handler);
@@ -2082,17 +2082,17 @@ describe("Wallet._settleImpl", () => {
             _settleImpl: (Wallet.prototype as any)._settleImpl,
             arkProvider: {
                 getEventStream: vi.fn().mockReturnValue(stream),
-                deleteIntent: vi.fn().mockResolvedValue(undefined),
+                deleteBatchRegistration: vi.fn().mockResolvedValue(undefined),
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
-            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "register-proof",
                 message: { type: "register" },
             }),
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -2100,7 +2100,7 @@ describe("Wallet._settleImpl", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent,
+            safeCreateBatchRegistration,
             createBatchHandler,
             updateDbAfterSettle,
             persistIntentSnapshot: vi.fn(),
@@ -2119,7 +2119,7 @@ describe("Wallet._settleImpl", () => {
             "preparing",
             "stream.next#1",
             "registration_attempt",
-            "safeRegisterIntent",
+            "safeCreateBatchRegistration",
             "Batch.join",
             "stream.next#2",
             "stream.return",
@@ -2165,9 +2165,9 @@ describe("Wallet._settleImpl", () => {
             _settleImpl: (Wallet.prototype as any)._settleImpl,
             arkProvider: {
                 getEventStream: vi.fn().mockReturnValue(stream),
-                deleteIntent,
-                registerIntent: vi.fn(async () => {
-                    callOrder.push("registerIntent");
+                deleteBatchRegistration: deleteIntent,
+                createBatchRegistration: vi.fn(async () => {
+                    callOrder.push("createBatchRegistration");
                     throw registerError;
                 }),
             },
@@ -2175,11 +2175,11 @@ describe("Wallet._settleImpl", () => {
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
-            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "register-proof",
                 message: { type: "register" },
             }),
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -2187,7 +2187,7 @@ describe("Wallet._settleImpl", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: Wallet.prototype.safeRegisterIntent,
+            safeCreateBatchRegistration: Wallet.prototype.safeCreateBatchRegistration,
             createBatchHandler: vi.fn(),
             updateDbAfterSettle: vi.fn(),
             persistIntentSnapshot: vi.fn(),
@@ -2203,7 +2203,7 @@ describe("Wallet._settleImpl", () => {
             "preparing",
             "stream.next",
             "registration_attempt",
-            "registerIntent",
+            "createBatchRegistration",
             "stream.return",
         ]);
         expect(stream.return).toHaveBeenCalledTimes(1);
@@ -2239,8 +2239,8 @@ describe("Wallet._settleImpl", () => {
                     next: vi.fn(() => new Promise(() => {})),
                     return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
                 }),
-                deleteIntent: vi.fn().mockRejectedValue(deleteError),
-                registerIntent: vi
+                deleteBatchRegistration: vi.fn().mockRejectedValue(deleteError),
+                createBatchRegistration: vi
                     .fn()
                     .mockRejectedValue(
                         new ArkError(31, "got 0 min expected 200", "INTENT_INSUFFICIENT_FEE"),
@@ -2250,11 +2250,11 @@ describe("Wallet._settleImpl", () => {
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
-            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "register-proof",
                 message: { type: "register" },
             }),
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -2262,7 +2262,7 @@ describe("Wallet._settleImpl", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: Wallet.prototype.safeRegisterIntent,
+            safeCreateBatchRegistration: Wallet.prototype.safeCreateBatchRegistration,
             persistIntentSnapshot: vi.fn(),
         };
 
@@ -2271,9 +2271,9 @@ describe("Wallet._settleImpl", () => {
                 Wallet.prototype.settle.call(thisArg, { inputs: [input], outputs: [] }),
             ).rejects.toThrow("got 0 min expected 200");
 
-            expect(thisArg.arkProvider.deleteIntent).toHaveBeenCalledTimes(1);
+            expect(thisArg.arkProvider.deleteBatchRegistration).toHaveBeenCalledTimes(1);
             const deleteWarnings = warn.mock.calls.filter((c) =>
-                String(c[0]).startsWith("Failed to delete intent"),
+                String(c[0]).startsWith("Failed to delete batch registration"),
             );
             expect(deleteWarnings).toHaveLength(warns ? 1 : 0);
         } finally {
@@ -2292,17 +2292,17 @@ describe("Wallet._settleImpl", () => {
                     next: vi.fn(() => new Promise(() => {})),
                     return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
                 }),
-                deleteIntent: vi.fn().mockResolvedValue(undefined),
+                deleteBatchRegistration: vi.fn().mockResolvedValue(undefined),
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: settling,
             getAddress: vi.fn().mockResolvedValue(walletAddress),
-            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "register-proof",
                 message: { type: "register" },
             }),
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -2310,7 +2310,7 @@ describe("Wallet._settleImpl", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: vi.fn().mockRejectedValue(new Error("register failed")),
+            safeCreateBatchRegistration: vi.fn().mockRejectedValue(new Error("register failed")),
             persistIntentSnapshot: vi.fn(async (_id: string, state: string) => {
                 claimedAt[state] = settling.has(key);
             }),
@@ -2343,17 +2343,17 @@ describe("Wallet._settleImpl", () => {
             network: "mutinynet",
             arkProvider: {
                 getEventStream: vi.fn().mockReturnValue(stream),
-                deleteIntent,
+                deleteBatchRegistration: deleteIntent,
             },
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
-            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+            makeBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "register-proof",
                 message: { type: "register" },
             }),
-            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+            makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                 proof: "delete-proof",
                 message: { type: "delete", expire_at: 0 },
             }),
@@ -2361,7 +2361,7 @@ describe("Wallet._settleImpl", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 assertAnnotatable: vi.fn().mockResolvedValue(undefined),
             }),
-            safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
+            safeCreateBatchRegistration: vi.fn().mockResolvedValue("intent-id"),
             createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
             updateDbAfterSettle: vi.fn().mockRejectedValue(new Error("db write failed")),
             maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
@@ -2423,7 +2423,7 @@ describe("Wallet._settleImpl", () => {
         const gatedVtxo = makeVtxo(1_000_000, "gated");
 
         // Build a `this` for _settleImpl that runs the auto-select branch and
-        // short-circuits at makeRegisterIntentSignature, capturing the final
+        // short-circuits at makeBatchRegistrationProof, capturing the final
         // selected inputs (which is what gets registered with the server).
         const buildThisArg = (
             vtxos: ExtendedVirtualCoin[],
@@ -2461,11 +2461,11 @@ describe("Wallet._settleImpl", () => {
                         getPublicKey: async () => new Uint8Array(32),
                     }),
                 },
-                makeRegisterIntentSignature: vi.fn(async (coins: ExtendedCoin[]) => {
+                makeBatchRegistrationProof: vi.fn(async (coins: ExtendedCoin[]) => {
                     capturedInputs = coins;
                     throw sentinel;
                 }),
-                makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                makeDeleteBatchRegistrationProof: vi.fn().mockResolvedValue({
                     proof: "delete-proof",
                     message: { type: "delete", expire_at: 0 },
                 }),

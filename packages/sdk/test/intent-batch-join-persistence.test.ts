@@ -18,6 +18,7 @@ async function* streamOf(...events: SettlementEvent[]): AsyncIterableIterator<Se
 const started: SettlementEvent = {
     type: SettlementEventType.BatchStarted,
     id: "batch-1",
+    registrationIdHashes: [],
     intentIdHashes: [],
     batchExpiry: 0n,
 };
