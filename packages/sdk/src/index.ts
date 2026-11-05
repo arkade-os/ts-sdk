@@ -5,12 +5,12 @@ export {
     evaluatePrf,
     mnemonicFromPrf,
     prfSupport,
-    DEFAULT_PASSKEY_DOMAIN,
+    DEFAULT_PASSKEY_LABEL,
     PrfUnavailable,
     PasskeyCancelled,
     PasskeyUnconfirmed,
 } from "./identity/passkey";
-export type { WebAuthnClient, PasskeyDomain } from "./identity/passkey";
+export type { WebAuthnClient } from "./identity/passkey";
 export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {

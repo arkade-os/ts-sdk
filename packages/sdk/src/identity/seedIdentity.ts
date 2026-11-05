@@ -19,10 +19,9 @@ import { HDCapableIdentity, ReadonlyHDCapableIdentity } from "./hdCapableIdentit
 import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 import {
     createPrfPasskey,
-    DEFAULT_PASSKEY_DOMAIN,
+    DEFAULT_PASSKEY_LABEL,
     evaluatePrf,
     mnemonicFromPrf,
-    type PasskeyDomain,
     type WebAuthnClient,
 } from "./passkey";
 
@@ -66,10 +65,13 @@ export type MnemonicOptions = SeedIdentityOptions & {
     passphrase?: string;
 };
 
-/** Where a passkey-derived identity comes from; `domain` defaults to {@link DEFAULT_PASSKEY_DOMAIN}. */
+/**
+ * Where a passkey-derived identity comes from. Each `label` is a separate wallet on the same
+ * passkey; its UTF-8 bytes are the PRF salt. Defaults to {@link DEFAULT_PASSKEY_LABEL}.
+ */
 export interface PasskeySource {
     client?: WebAuthnClient;
-    domain?: PasskeyDomain;
+    label?: string;
 }
 
 /** A passkey-derived identity, with its words so the app can offer them as a backup. */
@@ -380,7 +382,8 @@ export class MnemonicIdentity extends SeedIdentity {
     /**
      * Creates a passkey and derives an identity from its PRF secret. The words are the backup: the
      * passkey re-derives them on any device it syncs to, so whoever controls that passkey (and its
-     * sync account) can sign.
+     * sync account) can sign. The derivation follows Breez's seedless-restore spec, so the same
+     * passkey and label give the same words in any app that follows it.
      *
      * @example
      * ```typescript
@@ -398,16 +401,16 @@ export class MnemonicIdentity extends SeedIdentity {
         } & PasskeySource &
             MnemonicOptions,
     ): Promise<PasskeyMnemonic> {
-        const { rp, userName, userId, client, domain = DEFAULT_PASSKEY_DOMAIN, ...opts } = o;
+        const { rp, userName, userId, client, label = DEFAULT_PASSKEY_LABEL, ...opts } = o;
         const id = userId ?? crypto.getRandomValues(new Uint8Array(16));
         const { credentialId, prf } = await createPrfPasskey({
             rp,
             userId: id,
             userName,
-            salt: domain.salt,
+            salt: new TextEncoder().encode(label),
             client,
         });
-        const mnemonic = mnemonicFromPrf(prf, domain.label);
+        const mnemonic = mnemonicFromPrf(prf);
         return { identity: MnemonicIdentity.fromMnemonic(mnemonic, opts), mnemonic, credentialId };
     }
 
@@ -418,14 +421,14 @@ export class MnemonicIdentity extends SeedIdentity {
     static async fromPasskey(
         o: { rpId: string; credentialIds?: Uint8Array[] } & PasskeySource & MnemonicOptions,
     ): Promise<PasskeyMnemonic> {
-        const { rpId, credentialIds, client, domain = DEFAULT_PASSKEY_DOMAIN, ...opts } = o;
+        const { rpId, credentialIds, client, label = DEFAULT_PASSKEY_LABEL, ...opts } = o;
         const { credentialId, prf } = await evaluatePrf({
             rpId,
-            salt: domain.salt,
+            salt: new TextEncoder().encode(label),
             credentialIds,
             client,
         });
-        const mnemonic = mnemonicFromPrf(prf, domain.label);
+        const mnemonic = mnemonicFromPrf(prf);
         return { identity: MnemonicIdentity.fromMnemonic(mnemonic, opts), mnemonic, credentialId };
     }
 }

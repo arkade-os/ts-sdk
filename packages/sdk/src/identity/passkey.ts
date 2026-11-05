@@ -1,6 +1,3 @@
-import { hkdf } from "@noble/hashes/hkdf.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { entropyToMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
@@ -31,16 +28,8 @@ export class PasskeyUnconfirmed extends PrfUnavailable {
     name = "PasskeyUnconfirmed";
 }
 
-/** The PRF salt and HKDF label keys derive under; changing either changes every key. */
-export interface PasskeyDomain {
-    salt: Uint8Array;
-    label: string;
-}
-
-export const DEFAULT_PASSKEY_DOMAIN: PasskeyDomain = {
-    salt: sha256(utf8ToBytes("arkade/passkey/mnemonic/v1")),
-    label: "arkade/passkey/mnemonic/v1",
-};
+/** The label of a passkey's first wallet, as in Breez's seedless-restore spec. */
+export const DEFAULT_PASSKEY_LABEL = "Default";
 
 type Bytes = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
 
@@ -213,6 +202,9 @@ export async function evaluatePrf(o: {
     };
 }
 
-/** Twelve BIP39 words from a PRF secret: the same passkey and label always give the same words. */
-export const mnemonicFromPrf = (prfSecret: Uint8Array, label: string): string =>
-    entropyToMnemonic(hkdf(sha256, secret(prfSecret), undefined, utf8ToBytes(label), 16), wordlist);
+/**
+ * Twelve BIP39 words from a PRF secret's first 16 bytes, as Breez's seedless-restore spec derives
+ * them: a seedless-restore app evaluating the same passkey with the same salt gets the same words.
+ */
+export const mnemonicFromPrf = (prfSecret: Uint8Array): string =>
+    entropyToMnemonic(secret(prfSecret).slice(0, 16), wordlist);

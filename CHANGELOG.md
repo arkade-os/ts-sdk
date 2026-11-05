@@ -58,16 +58,17 @@ style and have not been backfilled.
   creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
   `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
   the passkey syncs to. Both return the identity, the words (for the app to offer as a
-  backup) and the credential id. The words come from HKDF-SHA256 over the PRF secret
-  under a salt and label, `DEFAULT_PASSKEY_DOMAIN` unless an app passes its own `domain`
-  to keep words it derived before. A passkey is used once right after creation and
-  refused (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it
-  gives no 32-byte secret or one different from the secret it returned at creation (an
-  authenticator that returns none at creation has nothing to compare against). The primitives (`createPrfPasskey`, `evaluatePrf`,
-  `mnemonicFromPrf`, `prfSupport`) are exported; every call that prompts takes a
-  `client` in place of `navigator.credentials`, and `mnemonicFromPrf` refuses a secret
-  that is not 32 bytes. Adds `@noble/hashes` as a direct dependency (already
-  in the tree through `@noble/curves`).
+  backup) and the credential id. The derivation follows Breez's seedless-restore spec:
+  a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF salt as UTF-8
+  bytes, and the first 16 bytes of the PRF output are the BIP39 entropy, so the same
+  passkey and label give the same words in any app that follows the spec; each label
+  is a separate wallet. A passkey is used once right after creation and refused
+  (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it gives
+  no 32-byte secret or one different from the secret it returned at creation (an
+  authenticator that returns none at creation has nothing to compare against). The
+  primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
+  exported; every call that prompts takes a `client` in place of
+  `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
   submitted already signed, so arkd finalizes the transaction within

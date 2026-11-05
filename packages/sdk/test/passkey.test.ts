@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
-import { validateMnemonic } from "@scure/bip39";
+import { entropyToMnemonic, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { hex } from "@scure/base";
 import { MnemonicIdentity } from "../src/identity/seedIdentity";
@@ -59,23 +59,36 @@ describe("passkey identity", () => {
         expect(again.mnemonic).toBe(a.mnemonic);
     });
 
-    it("keeps an app's own salt and label, so words it already derived stay the same", async () => {
+    it("derives the seedless-restore words: the label's UTF-8 bytes as the PRF salt, the first 16 bytes as entropy", async () => {
         const client = new FakeAuthenticator();
-        const domain = { salt, label: "my app seed v1" };
-        const own = await MnemonicIdentity.createPasskey({ rp, userName: "a", client, domain });
-        const { prf } = await evaluatePrf({
+        const made = await MnemonicIdentity.createPasskey({ rp, userName: "a", client });
+        const used = async (label: string) =>
+            (
+                await evaluatePrf({
+                    rpId: rp.id,
+                    salt: new TextEncoder().encode(label),
+                    credentialIds: [made.credentialId],
+                    client,
+                })
+            ).prf;
+        expect(made.mnemonic).toBe(
+            entropyToMnemonic((await used("Default")).slice(0, 16), wordlist),
+        );
+        const work = await MnemonicIdentity.fromPasskey({
             rpId: rp.id,
-            salt,
-            credentialIds: [own.credentialId],
+            credentialIds: [made.credentialId],
+            label: "work",
             client,
         });
-        expect(own.mnemonic).toBe(mnemonicFromPrf(prf, "my app seed v1"));
-        const defaults = await MnemonicIdentity.fromPasskey({
-            rpId: rp.id,
-            credentialIds: [own.credentialId],
-            client,
-        });
-        expect(defaults.mnemonic).not.toBe(own.mnemonic);
+        expect(work.mnemonic).toBe(entropyToMnemonic((await used("work")).slice(0, 16), wordlist));
+        expect(work.mnemonic).not.toBe(made.mnemonic);
+    });
+
+    it("turns a PRF secret into words exactly as BIP39 turns its first 16 bytes", () => {
+        const prf = new Uint8Array(32).fill(0xff, 16);
+        expect(mnemonicFromPrf(prf)).toBe(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        );
     });
 });
 
@@ -226,8 +239,8 @@ describe("PRF passkeys", () => {
     });
 
     it("derives no words from a secret that is not 32 bytes", () => {
-        expect(() => mnemonicFromPrf(new Uint8Array(0), "label")).toThrow(PrfUnavailable);
-        expect(() => mnemonicFromPrf(new Uint8Array(31), "label")).toThrow(PrfUnavailable);
+        expect(() => mnemonicFromPrf(new Uint8Array(0))).toThrow(PrfUnavailable);
+        expect(() => mnemonicFromPrf(new Uint8Array(31))).toThrow(PrfUnavailable);
     });
 
     it("reads a cancel by its name, from another realm or where there is no DOMException", async () => {
