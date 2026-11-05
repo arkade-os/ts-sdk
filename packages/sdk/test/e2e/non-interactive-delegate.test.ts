@@ -9,7 +9,7 @@ import {
     Batch,
     CSVMultisigTapscript,
     resolveBatchExpiryPolicy,
-    Intent,
+    Proof,
     networks,
     RestArkProvider,
     RestIndexerProvider,
@@ -113,7 +113,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         const session = solverIdentity.signerSession();
         const sessionPubKey = hex.encode(await session.getPublicKey());
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -121,7 +121,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             cosigners_public_keys: [sessionPubKey],
         };
 
-        // Construct the extended coin shape that Intent.create expects.
+        // Construct the extended coin shape that Proof.create expects.
         // OP_INSPECTINPUTSCRIPTPUBKEY needs to resolve the prevout pkScript of
         // every real input, so each coin carries its creating tx as PrevArkTx.
         const [coin] = await withPrevTxs(
@@ -141,7 +141,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         );
 
         // Self-send to the same pkScript with the same amount.
-        const validProof = Intent.create(
+        const validProof = Proof.create(
             message,
             [coin],
             [{ script: delegatePkScript, amount: BigInt(DELEGATE_AMOUNT) }],
@@ -238,7 +238,7 @@ async function waitForVtxo(indexer: RestIndexerProvider, pkScript: Uint8Array, t
 function buildDelegateHandler(opts: {
     intentId: string;
     signedProof: string;
-    message: Intent.RegisterMessage;
+    message: Proof.RegisterMessage;
     coin: {
         txid: string;
         vout: number;

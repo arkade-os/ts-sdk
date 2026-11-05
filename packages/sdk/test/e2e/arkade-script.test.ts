@@ -16,7 +16,7 @@ import {
     RestIndexerProvider,
     SingleKey,
     Transaction,
-    Intent,
+    Proof,
     Batch,
     RestEmulatorProvider,
     Extension,
@@ -537,7 +537,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -545,7 +545,7 @@ describe("arkade", () => {
             cosigners_public_keys: [sessionPubKey],
         };
 
-        // Create the intent proof. `script` is what marks this as a virtual output rather than a
+        // Create the proof. `script` is what marks this as a virtual output rather than a
         // boarding input, so the batch handler builds a forfeit for it.
         // `prevTx` carries the raw creating tx of each real proof input — the
         // emulator resolves the prevout pkScript from it.
@@ -568,7 +568,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -712,7 +712,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -741,7 +741,7 @@ describe("arkade", () => {
             explorer,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -989,7 +989,7 @@ describe("arkade", () => {
             },
         ];
 
-        const settleMessage: Intent.RegisterMessage = {
+        const settleMessage: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -1017,7 +1017,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const settleIntentProof = Intent.create(
+        const settleIntentProof = Proof.create(
             settleMessage,
             [settleCoin],
             [...outputs, makeEmulatorExtensionOutput(1, settleArkadeScript, transferPacket)],

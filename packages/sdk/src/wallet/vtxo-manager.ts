@@ -157,10 +157,10 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
 export const MAX_VTXOS_PER_SETTLEMENT = 50;
 
 /**
- * Maximum number of inputs the server accepts in a single intent proof
+ * Maximum number of inputs the server accepts in a single proof
  * (get-pending-tx and friends). Larger input sets must be split into batches.
  */
-export const MAX_INPUTS_PER_INTENT = 20;
+export const MAX_INPUTS_PER_PROOF = 20;
 
 /**
  * Order VTXOs highest-value first (new array). For value-driven paths (recovery, manual full

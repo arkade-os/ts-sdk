@@ -1,5 +1,5 @@
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { assertNonNegativeMs } from "../utils/time";
 import {
     ArkadeInfo,
@@ -7,6 +7,7 @@ import {
     PendingTx,
     SettlementEvent,
     SignedIntent,
+    SignedProof,
     TxNotificationEvent,
 } from "./ark";
 
@@ -116,7 +117,7 @@ export class CachingOperatorProvider implements OperatorProvider {
         return this.inner.getTransactionsStream(signal);
     }
 
-    getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
+    getPendingTxs(intent: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]> {
         return this.inner.getPendingTxs(intent);
     }
 
