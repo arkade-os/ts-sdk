@@ -261,9 +261,9 @@ style and have not been backfilled.
   factory that ignores it keeps working but sends no headers. Indexer
   subscriptions send none, because the indexer can be another origin. Like
   the native `EventSource`, the `fetch` transport accepts LF, CR and CRLF line
-  endings, strips only the first space from a field value, and fails a
-  response that is not a 200 `text/event-stream`. It does not reconnect by
-  itself, as the callers already do.
+  endings, reads fields line by line as the spec does, and fails a response
+  that is not a 200 `text/event-stream`. It does not reconnect by itself, as
+  the callers already do.
   In Node, streams no longer need the `eventsource` package or
   `--experimental-eventsource`.
 

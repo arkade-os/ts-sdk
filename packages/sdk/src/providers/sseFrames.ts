@@ -5,26 +5,32 @@ export async function* readSseFrames(
     const decoder = new TextDecoder();
     let buffer = "";
     let pendingCR = false;
+    let event = "";
+    let data: string[] = [];
     try {
         for (;;) {
-            const { done, value } = await reader.read();
+            const { done, value: chunk } = await reader.read();
             if (done) return;
-            const text = decoder.decode(value, { stream: true });
+            const text = decoder.decode(chunk, { stream: true });
             if (!text) continue;
             const skipLF = pendingCR && text.startsWith("\n");
             pendingCR = text.endsWith("\r");
             buffer += (skipLF ? text.slice(1) : text).replace(/\r\n?/g, "\n");
-            const blocks = buffer.split("\n\n");
-            buffer = blocks.pop() ?? "";
-            for (const block of blocks) {
-                let event = "message";
-                const data: string[] = [];
-                for (const line of block.split("\n")) {
-                    if (line.startsWith("event:")) event = line.slice(6).replace(/^ /, "");
-                    else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+                if (line === "") {
+                    const joined = data.join("\n");
+                    if (joined) yield { event: event || "message", data: joined };
+                    event = "";
+                    data = [];
+                    continue;
                 }
-                const joined = data.join("\n");
-                if (joined) yield { event: event || "message", data: joined };
+                const colon = line.indexOf(":");
+                const field = colon === -1 ? line : line.slice(0, colon);
+                const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
+                if (field === "event") event = value;
+                else if (field === "data") data.push(value);
             }
         }
     } finally {

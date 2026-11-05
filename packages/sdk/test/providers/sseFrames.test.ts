@@ -36,6 +36,16 @@ describe("readSseFrames", () => {
         expect(await framesOf(["event:\ndata: a\n\n"])).toEqual([{ event: "message", data: "a" }]);
     });
 
+    it("resets the event name on a bare event line", async () => {
+        expect(await framesOf(["event: failure\nevent\ndata: a\n\n"])).toEqual([
+            { event: "message", data: "a" },
+        ]);
+    });
+
+    it("adds an empty data line for a bare data line", async () => {
+        expect(await framesOf(["data: a\ndata\n\n"])).toEqual([{ event: "message", data: "a\n" }]);
+    });
+
     it("strips only the first space from an event name", async () => {
         expect(await framesOf(["event:  failure \ndata: a\n\n"])).toEqual([
             { event: " failure ", data: "a" },
