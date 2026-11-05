@@ -1,5 +1,6 @@
 import { Outpoint } from "../../wallet";
 import {
+    BatchRegistration,
     ArkIntent,
     IntentPageFilter,
     IntentRepository,
@@ -15,6 +16,37 @@ import {
     initBatchesDatabase,
     STORE_INTENTS,
 } from "./batchesSchema";
+
+/** A {@link BatchRegistration} as IndexedDB holds it: the store's keyPath and index read these names. */
+type StoredIntent = Omit<BatchRegistration, "proofTxId" | "registrationId" | "inputs"> & {
+    intentTxId: string;
+    intentId?: string;
+    intentVtxos: Outpoint[];
+};
+
+const toStored = ({
+    proofTxId,
+    registrationId,
+    inputs,
+    ...rest
+}: BatchRegistration): StoredIntent => ({
+    ...rest,
+    intentTxId: proofTxId,
+    intentId: registrationId,
+    intentVtxos: inputs,
+});
+
+const fromStored = ({
+    intentTxId,
+    intentId,
+    intentVtxos,
+    ...rest
+}: StoredIntent): BatchRegistration => ({
+    ...rest,
+    proofTxId: intentTxId,
+    registrationId: intentId,
+    inputs: intentVtxos,
+});
 
 /**
  * @experimental Intent persistence is opt-in. Stored in its own database,
@@ -41,7 +73,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
     async saveIntent(intent: ArkIntent): Promise<void> {
         const db = await this.getDB();
         const transaction = db.transaction([STORE_INTENTS], "readwrite");
-        transaction.objectStore(STORE_INTENTS).put({ ...intent, updatedAt: Date.now() });
+        transaction.objectStore(STORE_INTENTS).put(toStored({ ...intent, updatedAt: Date.now() }));
         await awaitTransaction(transaction);
     }
 
@@ -52,17 +84,19 @@ export class IndexedDBIntentRepository implements IntentRepository {
         assertPageRequest(page);
         const db = await this.getDB();
         const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
-        if (filter?.intentTxIds) {
-            const keys = [...new Set(filter.intentTxIds)]
+        if (filter?.proofTxIds) {
+            const keys = [...new Set(filter.proofTxIds)]
                 .filter((id) => page.after === undefined || id > page.after)
                 .sort();
             const intents = await Promise.all(
-                keys.map((id) => promisifyRequest<ArkIntent | undefined>(store.get(id))),
+                keys.map((id) => promisifyRequest<StoredIntent | undefined>(store.get(id))),
             );
             return pageResult(
-                intents.filter((i): i is ArkIntent => !!i && intentMatchesFilter(i, filter)),
+                intents
+                    .map((i) => i && fromStored(i))
+                    .filter((i): i is BatchRegistration => !!i && intentMatchesFilter(i, filter)),
                 page.limit,
-                (intent) => intent.intentTxId,
+                (intent) => intent.proofTxId,
             );
         }
         const range =
@@ -74,13 +108,13 @@ export class IndexedDBIntentRepository implements IntentRepository {
             request.onsuccess = () => {
                 const cursor = request.result;
                 if (!cursor) {
-                    resolve(pageResult(rows, page.limit, (intent) => intent.intentTxId));
+                    resolve(pageResult(rows, page.limit, (intent) => intent.proofTxId));
                     return;
                 }
-                const intent = cursor.value as ArkIntent;
+                const intent = fromStored(cursor.value as StoredIntent);
                 if (!filter || intentMatchesFilter(intent, filter)) rows.push(intent);
                 if (rows.length > page.limit) {
-                    resolve(pageResult(rows, page.limit, (intent) => intent.intentTxId));
+                    resolve(pageResult(rows, page.limit, (intent) => intent.proofTxId));
                     return;
                 }
                 cursor.continue();
@@ -91,7 +125,7 @@ export class IndexedDBIntentRepository implements IntentRepository {
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const db = await this.getDB();
         const store = db.transaction([STORE_INTENTS], "readonly").objectStore(STORE_INTENTS);
-        const all = (await promisifyRequest(store.getAll())) as ArkIntent[];
+        const all = (await promisifyRequest(store.getAll())) as StoredIntent[];
         const out: Outpoint[] = [];
         for (const i of all)
             if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push(o);

@@ -452,9 +452,12 @@ import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTx
 import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
 import type {
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
 } from "./repositories/intentRepository";
 import type {
@@ -1148,9 +1151,12 @@ export type {
     ContractRepository,
     ContractFilter,
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
     VirtualTxRepository,
     VirtualTx,

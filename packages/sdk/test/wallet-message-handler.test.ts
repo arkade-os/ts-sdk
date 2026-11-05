@@ -2372,7 +2372,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             }),
         ]);
         await intents.saveIntent({
-            intentTxId: "i",
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -2381,7 +2381,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: "aa".repeat(32), vout: 0 }],
+            inputs: [{ txid: "aa".repeat(32), vout: 0 }],
         });
 
         const response = await updater.handleMessage({

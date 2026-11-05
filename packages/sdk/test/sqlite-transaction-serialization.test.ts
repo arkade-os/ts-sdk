@@ -15,7 +15,7 @@ import type { ArkIntent } from "../src/repositories/intentRepository";
 // used to fail with "cannot start a transaction within a transaction".
 
 const intent = (id: string): ArkIntent => ({
-    intentTxId: id,
+    proofTxId: id,
     state: "waiting_for_batch",
     createdAt: 1,
     updatedAt: 1,
@@ -24,7 +24,7 @@ const intent = (id: string): ArkIntent => ({
     deleteProof: "dp",
     deleteProofMessage: "dpm",
     partialForfeits: [],
-    intentVtxos: [{ txid: id, vout: 0 }],
+    inputs: [{ txid: id, vout: 0 }],
 });
 
 const vtx = (txid: string): VirtualTx => ({
@@ -128,7 +128,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
                 lastSyncTime: undefined,
             });
             expect(settledBeforeRelease).toEqual([]);
-            expect((await collectIntents(intents)).map((row) => row.intentTxId)).toEqual([
+            expect((await collectIntents(intents)).map((row) => row.proofTxId)).toEqual([
                 "outside",
             ]);
             expect(await virtual.getVirtualTx("outside")).not.toBeNull();
@@ -151,7 +151,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
             vtxs.upsertVirtualTxs([vtx("t2")]),
         ]);
 
-        expect((await collectIntents(intents)).map((i) => i.intentTxId).sort()).toEqual(["a", "b"]);
+        expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(["a", "b"]);
         expect(await vtxs.getVirtualTx("t1")).not.toBeNull();
         expect(await vtxs.getVirtualTx("t2")).not.toBeNull();
     });
@@ -164,7 +164,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
         const ids = Array.from({ length: 8 }, (_, i) => `i${i}`);
         await Promise.all(ids.map((id) => intents.saveIntent(intent(id))));
 
-        expect((await collectIntents(intents)).map((i) => i.intentTxId).sort()).toEqual(
+        expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(
             [...ids].sort(),
         );
     });
@@ -203,7 +203,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
             "PRAGMA table_info(ark_vtxos)",
         );
         expect(cols.find((c) => c.name === "script")?.notnull).toBe(1); // migrated
-        expect((await collectIntents(intents)).map((i) => i.intentTxId)).toContain("z");
+        expect((await collectIntents(intents)).map((i) => i.proofTxId)).toContain("z");
     });
 
     it("serializes two wallet-repo migrations on a legacy table without a script column", async () => {

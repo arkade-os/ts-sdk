@@ -14,8 +14,8 @@ intentRepositoryConformance(
 it("filters selective intent states in one SQLite page query", async () => {
     const db = createNodeSQLExecutor();
     const repository = new SQLiteIntentRepository(db);
-    const makeIntent = (intentTxId: string, state: "cancelled" | "waiting_for_batch") => ({
-        intentTxId,
+    const makeIntent = (proofTxId: string, state: "cancelled" | "waiting_for_batch") => ({
+        proofTxId,
         state,
         createdAt: 1,
         updatedAt: 1,
@@ -24,7 +24,7 @@ it("filters selective intent states in one SQLite page query", async () => {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        intentVtxos: [],
+        inputs: [],
     });
     for (let i = 0; i < 200; i++) {
         await repository.saveIntent(makeIntent(`a${String(i).padStart(3, "0")}`, "cancelled"));
@@ -36,12 +36,12 @@ it("filters selective intent states in one SQLite page query", async () => {
     const all = vi.spyOn(db, "all");
     const filter = { states: ["waiting_for_batch" as const] };
     const first = await repository.getIntentsPage(filter, { limit: 2 });
-    expect(first.items.map((intent) => intent.intentTxId)).toEqual(["z0", "z1"]);
+    expect(first.items.map((intent) => intent.proofTxId)).toEqual(["z0", "z1"]);
     expect(first.nextCursor).toBe("z1");
     expect(all).toHaveBeenCalledTimes(1);
     all.mockClear();
     const second = await repository.getIntentsPage(filter, { limit: 2, after: first.nextCursor });
-    expect(second.items.map((intent) => intent.intentTxId)).toEqual(["z2", "z3"]);
+    expect(second.items.map((intent) => intent.proofTxId)).toEqual(["z2", "z3"]);
     expect(all).toHaveBeenCalledTimes(1);
     expect((await repository.getIntentsPage({ states: [] }, { limit: 2 })).items).toEqual([]);
 });

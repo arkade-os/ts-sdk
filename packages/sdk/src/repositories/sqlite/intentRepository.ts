@@ -121,8 +121,8 @@ export class SQLiteIntentRepository implements IntentRepository {
                   signer_descriptor = excluded.signer_descriptor,
                   intent_vtxos_json = excluded.intent_vtxos_json`,
                 [
-                    intent.intentTxId,
-                    intent.intentId ?? null,
+                    intent.proofTxId,
+                    intent.registrationId ?? null,
                     intent.state,
                     intent.validFrom ?? null,
                     intent.validUntil ?? null,
@@ -137,7 +137,7 @@ export class SQLiteIntentRepository implements IntentRepository {
                     intent.cancellationReason ?? null,
                     JSON.stringify(intent.partialForfeits),
                     intent.signerDescriptor ?? null,
-                    JSON.stringify(intent.intentVtxos),
+                    JSON.stringify(intent.inputs),
                 ],
             );
         });
@@ -172,7 +172,7 @@ export class SQLiteIntentRepository implements IntentRepository {
             }
             if (batch.length < batchSize) break;
         }
-        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
+        return pageResult(rows, page.limit, (intent) => intent.proofTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
@@ -191,8 +191,8 @@ export class SQLiteIntentRepository implements IntentRepository {
 
 function rowToIntent(r: IntentRow): ArkIntent {
     return {
-        intentTxId: r.intent_tx_id,
-        intentId: r.intent_id ?? undefined,
+        proofTxId: r.intent_tx_id,
+        registrationId: r.intent_id ?? undefined,
         state: r.state as ArkIntentState,
         validFrom: r.valid_from ?? undefined,
         validUntil: r.valid_until ?? undefined,
@@ -207,6 +207,6 @@ function rowToIntent(r: IntentRow): ArkIntent {
         cancellationReason: r.cancellation_reason ?? undefined,
         partialForfeits: JSON.parse(r.partial_forfeits_json),
         signerDescriptor: r.signer_descriptor ?? undefined,
-        intentVtxos: JSON.parse(r.intent_vtxos_json),
+        inputs: JSON.parse(r.intent_vtxos_json),
     };
 }

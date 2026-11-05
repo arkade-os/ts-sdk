@@ -410,7 +410,7 @@ describe("getSpendableVtxos", () => {
         const intents = new InMemoryIntentRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await intents.saveIntent({
-            intentTxId: "i",
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -419,7 +419,7 @@ describe("getSpendableVtxos", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
+            inputs: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
         });
 
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual([MARKED_SCRIPT]);
@@ -499,7 +499,7 @@ describe("getBalance", () => {
 
     const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
         intents.saveIntent({
-            intentTxId: `i-${txid.slice(0, 4)}`,
+            proofTxId: `i-${txid.slice(0, 4)}`,
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -508,7 +508,7 @@ describe("getBalance", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid, vout: 0 }],
+            inputs: [{ txid, vout: 0 }],
         });
 
     it("counts gated funds as owned but not as available (D1c)", async () => {
@@ -920,7 +920,7 @@ describe("logUngatedInputs", () => {
 
         const lockedTxid = "e3".repeat(32);
         await intents.saveIntent({
-            intentTxId: "i",
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -929,7 +929,7 @@ describe("logUngatedInputs", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: lockedTxid, vout: 0 }],
+            inputs: [{ txid: lockedTxid, vout: 0 }],
         });
 
         const inputs = [

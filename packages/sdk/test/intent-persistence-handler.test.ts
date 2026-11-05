@@ -33,7 +33,7 @@ const intentTxId = "i1";
 function seededRepo(): InMemoryIntentRepository {
     const repo = new InMemoryIntentRepository();
     const intent: ArkIntent = {
-        intentTxId,
+        proofTxId: intentTxId,
         state: "waiting_for_batch",
         createdAt: 1,
         updatedAt: 1,
@@ -42,7 +42,7 @@ function seededRepo(): InMemoryIntentRepository {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        intentVtxos: [{ txid: "v", vout: 0 }],
+        inputs: [{ txid: "v", vout: 0 }],
     };
     void repo.saveIntent(intent);
     return repo;
@@ -59,7 +59,7 @@ function baseHandler(overrides: Partial<Batch.Handler> = {}): Batch.Handler {
 }
 
 const stateOf = (repo: InMemoryIntentRepository) =>
-    collectIntents(repo, { intentTxIds: [intentTxId] }).then((r) => r[0]);
+    collectIntents(repo, { proofTxIds: [intentTxId] }).then((r) => r[0]);
 
 describe("wrapHandlerWithIntentPersistence", () => {
     it("advances to batch_in_progress on a started (non-skipped) batch", async () => {
