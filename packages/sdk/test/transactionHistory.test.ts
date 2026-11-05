@@ -1637,4 +1637,91 @@ describe("buildTransactionHistory", () => {
             },
         );
     });
+
+    describe("long-lived wallet", () => {
+        // A lifetime of receives, sends with change, refreshes and exits with
+        // change, and the rows it must produce, newest first.
+        function lifetime(cycles: number) {
+            const vtxos: VirtualCoin[] = [];
+            const rows: Pick<ArkTransaction, "key" | "type" | "amount">[] = [];
+            const key = { commitmentTxid: "", boardingTxid: "", arkTxid: "" };
+            let live: VirtualCoin[] = [];
+            let n = 0;
+            const id = () => (++n).toString(16).padStart(64, "0");
+            const coin = (value: number, leaf: boolean, commitment: string, txid = id()) => {
+                const vtxo: VirtualCoin = {
+                    txid,
+                    vout: 0,
+                    value,
+                    script: "",
+                    status: { confirmed: leaf, isLeaf: leaf },
+                    createdAt: new Date(n * 1000),
+                    isUnrolled: false,
+                    isSpent: false,
+                    isPreconfirmed: !leaf,
+                    commitmentTxIds: [commitment],
+                };
+                vtxos.push(vtxo);
+                live.push(vtxo);
+                return vtxo;
+            };
+            const settle = (change: number) => {
+                const commitment = id();
+                const forfeits = live;
+                live = [];
+                for (const v of forfeits)
+                    Object.assign(v, { isSpent: true, settledBy: commitment });
+                coin(forfeits.reduce((a, v) => a + v.value, 0) - change, true, commitment);
+                return commitment;
+            };
+
+            let commitment = id();
+            coin(100_000, true, commitment);
+            rows.push({
+                key: { ...key, commitmentTxid: commitment },
+                type: TxType.TxReceived,
+                amount: 100_000,
+            });
+            for (let i = 0; i < cycles; i++) {
+                const received = coin(2000, false, commitment);
+                rows.push({
+                    key: { ...key, arkTxid: received.txid },
+                    type: TxType.TxReceived,
+                    amount: 2000,
+                });
+
+                const arkTxid = id();
+                const inputs = live.splice(0, 2);
+                for (const v of inputs) Object.assign(v, { isSpent: true, arkTxId: arkTxid });
+                coin(inputs.reduce((a, v) => a + v.value, 0) - 500, false, commitment, arkTxid);
+                rows.push({ key: { ...key, arkTxid }, type: TxType.TxSent, amount: 500 });
+
+                if (i % 7 === 6) {
+                    commitment = settle(300);
+                    rows.push({
+                        key: { ...key, commitmentTxid: commitment },
+                        type: TxType.TxSent,
+                        amount: 300,
+                    });
+                } else if (i % 5 === 4) {
+                    commitment = settle(0);
+                }
+            }
+            return { vtxos, rows: rows.reverse() };
+        }
+
+        it("reports every payment once over a long lifetime", async () => {
+            const { vtxos, rows } = lifetime(500);
+            const history = await buildTransactionHistoryImpl(vtxos, [], new Set());
+            expect(history.map(({ key, type, amount }) => ({ key, type, amount }))).toEqual(rows);
+        });
+
+        // A scan per coin takes ~3s here.
+        it("builds the history in linear time", async () => {
+            const { vtxos } = lifetime(4000);
+            const start = performance.now();
+            await buildTransactionHistoryImpl(vtxos, [], new Set());
+            expect(performance.now() - start).toBeLessThan(1000);
+        });
+    });
 });

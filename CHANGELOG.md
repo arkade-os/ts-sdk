@@ -1050,6 +1050,14 @@ style and have not been backfilled.
 
 ### Performance
 
+- **Transaction history builds in linear time.** `buildTransactionHistory`
+  rescanned every VTXO the wallet ever held, spent ones included, two to four
+  times per VTXO. Refreshes made it worse, because they leave no row to stop
+  the rescan. The cost grew with the square of a list that only grows: on
+  Hermes, `getTransactionHistory` blocked the JS thread for 3–4 s. The builder
+  now indexes the VTXOs once per call, and a 9k-VTXO history takes ~30 ms
+  instead of ~3 s. Output is unchanged.
+
 - **A wallet registers its baseline contracts in one batch.**
   `initializeContractManager` created each baseline contract (the default,
   delegate and boarding scripts, per signer and timelock) with its own
