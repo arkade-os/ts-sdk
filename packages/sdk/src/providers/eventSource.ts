@@ -9,6 +9,7 @@
  */
 
 import { baseFetch } from "../utils/fetch";
+import { readSseFrames } from "./sseFrames";
 
 /**
  * The slice of `EventSource` this SDK actually uses. Structural rather than the DOM type because
@@ -144,31 +145,9 @@ export class FetchEventSource implements EventSourceLike {
             await response.body?.cancel();
             throw new Error(`SSE response ${response.status} ${type}`);
         }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let pendingCR = false;
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) throw new Error("SSE stream ended");
-            const text = decoder.decode(value, { stream: true });
-            if (!text) continue;
-            const skipLF = pendingCR && text.startsWith("\n");
-            pendingCR = text.endsWith("\r");
-            buffer += (skipLF ? text.slice(1) : text).replace(/\r\n?/g, "\n");
-            const blocks = buffer.split("\n\n");
-            buffer = blocks.pop() ?? "";
-            for (const block of blocks) {
-                let type = "message";
-                const data: string[] = [];
-                for (const line of block.split("\n")) {
-                    if (line.startsWith("event:")) type = line.slice(6).trim();
-                    else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
-                }
-                if (data.length > 0) {
-                    this.events.dispatchEvent(new MessageEvent(type, { data: data.join("\n") }));
-                }
-            }
+        for await (const { event, data } of readSseFrames(response.body)) {
+            this.events.dispatchEvent(new MessageEvent(event, { data }));
         }
+        throw new Error("SSE stream ended");
     }
 }

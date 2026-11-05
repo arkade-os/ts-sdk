@@ -268,6 +268,16 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
+  SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
+  `getEventStream` and `getTransactionsStream` took a refused stream's status
+  for an unknown message, and reconnected at once into the same refusal when
+  arkd closed the stream. Expo streams now read frames through the same SSE
+  reader as the `fetch` transport: a `failure` event throws the stream failure
+  on every Expo stream, as on the other transports, and `ExpoIndexerProvider`
+  no longer detects it from the data. Other named events are ignored, a
+  frame's `data:` lines form one message, and CR line endings are accepted.
+
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
   identity key read before it, rejected after `ContractManager.create()` had
