@@ -431,7 +431,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             serverKey: server,
             userKey: storedUser,
         });
-        expect(contract.args).toBe(args);
+        expect({ ...contract.args }).toEqual(args);
         await expect(
             contract.functions
                 .exit()
@@ -581,18 +581,19 @@ describe("arkade.Arkade / ArkadeContract", () => {
         );
     });
 
-    it("keeps overlapping covenant and condition inputs independent and validates values", async () => {
+    it.each(["bytes32", "Request"])("keeps same-named inputs independent (%s)", async (type) => {
         const { ark } = await connect();
         const program = arkade.programFromArtifact({
             formatVersion: 1,
             contractName: "Hashlock",
             constructorInputs: [{ name: "digest", type: "bytes32" }],
+            structs: [{ name: "Request", fields: [{ name: "value", type: "bytes32" }] }],
             functions: [
                 {
                     name: "claim",
                     arkade: {
                         inputs: [
-                            { name: "preimage", type: "bytes32" },
+                            { name: "preimage", type },
                             { name: "flag", type: "bool" },
                         ],
                         asm: ["OP_1"],
@@ -621,8 +622,9 @@ describe("arkade.Arkade / ArkadeContract", () => {
         });
         expect(() => ark.contract(program, { digest: new Uint8Array(31) })).toThrow(/32-byte/);
         const contract = ark.contract(program, { digest: new Uint8Array(32) });
-        const covenant = new Uint8Array(32).fill(1),
+        const covenantBytes = new Uint8Array(32).fill(1),
             condition = new Uint8Array(32).fill(2);
+        const covenant = type === "bytes32" ? covenantBytes : { value: covenantBytes };
         const call = contract.functions.claim;
         expect(() => call(covenant, 2n, condition)).toThrow(/boolean/);
         expect(() => call(covenant, Number.MAX_SAFE_INTEGER + 1, condition)).toThrow(
@@ -642,8 +644,151 @@ describe("arkade.Arkade / ArkadeContract", () => {
             .map((out) => Extension.fromBytes(out.script!).getEmulatorPacket())[0]!;
         expect(RawWitness.decode(packet.entries[0].witness!)).toEqual([
             new Uint8Array([1]),
-            covenant,
+            covenantBytes,
         ]);
+    });
+
+    it("takes struct and array params whole by name, at deploy and at call", async () => {
+        const { ark } = await connect();
+        const program = arkade.programFromArtifact({
+            formatVersion: 1,
+            contractName: "Nested",
+            constructorInputs: [
+                { name: "policy", type: "Policy" },
+                { name: "oracles", type: "pubkey[2]" },
+            ],
+            structs: [
+                {
+                    name: "Policy",
+                    fields: [
+                        { name: "owner", type: "pubkey" },
+                        { name: "outs", type: "Outpoint[2]" },
+                    ],
+                },
+            ],
+            functions: [
+                {
+                    name: "spend",
+                    arkade: {
+                        inputs: [
+                            { name: "request", type: "Policy" },
+                            { name: "flag", type: "bool" },
+                        ],
+                        asm: ["OP_1"],
+                    },
+                    leaves: [
+                        {
+                            name: "spend",
+                            asm: [
+                                "<SERVER_KEY>",
+                                "OP_CHECKSIGVERIFY",
+                                "<EMULATOR_KEY:spend>",
+                                "OP_CHECKSIG",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+        const outs = [
+            { txid: new Uint8Array(32).fill(1), vout: 0n },
+            { txid: new Uint8Array(32).fill(2), vout: 1n },
+        ];
+        const oracles = [xOnly(), xOnly()];
+        const flat = (prefix: string, owner: Uint8Array) => ({
+            [`${prefix}.owner`]: owner,
+            [`${prefix}.outs.0.txid`]: outs[0].txid,
+            [`${prefix}.outs.0.vout`]: 0n,
+            [`${prefix}.outs.1.txid`]: outs[1].txid,
+            [`${prefix}.outs.1.vout`]: 1n,
+        });
+        const deployed = {
+            ...flat("policy", receiver),
+            "oracles.0": oracles[0],
+            "oracles.1": oracles[1],
+        };
+
+        interface Policy {
+            owner: Uint8Array;
+            outs: { txid: Uint8Array; vout: bigint }[];
+        }
+        const policy: Policy = { owner: receiver, outs };
+        const contract = ark.contract(program, { policy, oracles });
+        expect({ ...contract.args }).toEqual({ ...deployed, server });
+        expect({ ...ark.contract(program, deployed).args }).toEqual({ ...deployed, server });
+        expect(() =>
+            ark.contract(program, {
+                policy: { owner: receiver, outs },
+                oracles: [...oracles, receiver],
+            }),
+        ).toThrow(/undeclared argument 'oracles.2'/);
+        expect(() => ark.contract(program, { ...deployed, policy: { owner: receiver } })).toThrow(
+            /duplicate argument 'policy.owner'/,
+        );
+
+        const request: Policy = { owner: oracles[0], outs };
+        expect({ ...contract.unlock.spend(request, 1n).args }).toEqual({
+            ...flat("request", oracles[0]),
+            flag: 1n,
+        });
+        const spend = contract.functions.spend;
+        expect(() => spend(oracles[0], outs[0].txid, 0n, outs[1].txid, 1n, 1n)).toThrow(
+            /expected 2 argument/,
+        );
+        expect(() => spend({ owner: oracles[0], outs: [outs[0]] }, 1n)).toThrow(
+            /missing input 'request.outs.1.txid'/,
+        );
+        expect(() => spend({ ...request, extra: 1n }, 1n)).toThrow(
+            /unexpected input 'request.extra'/,
+        );
+        expect(() => spend({ ...request, owner: 1n }, 1n)).toThrow(/'request.owner' expects/);
+        for (const empty of [{}, []]) {
+            expect(() => ark.contract(program, { ...deployed, extra: empty })).toThrow(
+                /argument 'extra' must not be an empty/,
+            );
+            expect(() => ark.contract(program, { ...deployed, "oracles.2": empty })).toThrow(
+                /argument 'oracles.2' must not be an empty/,
+            );
+            expect(() => spend({ ...request, extra: empty }, 1n)).toThrow(
+                /argument 'request.extra' must not be an empty/,
+            );
+            expect(() => spend({ ...request, outs: [...outs, empty] }, 1n)).toThrow(
+                /argument 'request.outs.2' must not be an empty/,
+            );
+        }
+        const sparseOracles = [...oracles];
+        sparseOracles.length = 3;
+        expect(() => ark.contract(program, { policy, oracles: sparseOracles })).toThrow(
+            /argument 'oracles.2'.*sparse/,
+        );
+        const sparseOuts = [...outs];
+        sparseOuts.length = 3;
+        expect(() => spend({ ...request, outs: sparseOuts }, 1n)).toThrow(
+            /argument 'request.outs.2'.*sparse/,
+        );
+        for (const opaque of [Promise.resolve(receiver), new ArrayBuffer(32), new Map()]) {
+            expect(() => spend(opaque, 1n)).toThrow(
+                /argument 'request' must be bytes, a number, a struct or an array/,
+            );
+        }
+        class Owner {
+            constructor(readonly owner: Uint8Array) {}
+            readonly outs = outs;
+        }
+        expect({ ...contract.unlock.spend(new Owner(oracles[0]), 1n).args }).toEqual({
+            ...flat("request", oracles[0]),
+            flag: 1n,
+        });
+        const cyclic: Record<string, unknown> = { ...request };
+        cyclic.self = cyclic;
+        expect(() => spend(cyclic, 1n)).toThrow(/argument 'request.self' must not be cyclic/);
+        const sharedOut = { txid: outs[0].txid, vout: 0n };
+        expect(
+            ark.contract(program, {
+                policy: { owner: receiver, outs: [sharedOut, sharedOut] },
+                oracles,
+            }).args["policy.outs.1.vout"],
+        ).toBe(0n);
     });
 
     it("fails locally when leaf signing needs another identity or a covenant tweak", async () => {

@@ -77,6 +77,7 @@ export {
     type AsmToken,
     type ArkadeParamValue,
     type ArkadeArgValue,
+    type ArkadeNestedValue,
     type ArkadeArgType,
     type InputDef,
     type InputRef,
