@@ -42,7 +42,7 @@ import {
 } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
-import { Intent } from "../intent";
+import { Proof } from "../proof";
 import { isSubdust, isVirtualCoin, requiresForfeit } from "../wallet";
 import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
@@ -77,7 +77,7 @@ export function createArkadeBatchHandler(
     inputs: ArkadeBatchInput[],
     signer: Identity,
     signedProof: string,
-    message: Intent.RegisterMessage,
+    message: Proof.RegisterMessage,
     session: SignerSession,
     arkProvider: ArkProvider,
     emulator: EmulatorProvider,
@@ -314,7 +314,7 @@ export function createArkadeBatchHandler(
             }
 
             // Sign boarding inputs on the commitment tx
-            // The emulator already knows the arkade scripts from the intent proof,
+            // The emulator already knows the arkade scripts from the proof,
             // so we don't modify the commitment tx outputs (which would change the txid).
             if (boardingIndices.length > 0) {
                 commitmentPsbt = await signer.sign(commitmentPsbt, boardingIndices);

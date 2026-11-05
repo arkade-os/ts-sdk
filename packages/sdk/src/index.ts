@@ -247,6 +247,7 @@ import {
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -320,7 +321,7 @@ import {
     type RawTxSource,
     type WithPrevTx,
 } from "./utils/prevoutTx";
-import { Intent, type IntentCoin } from "./intent";
+import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
@@ -806,7 +807,8 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    // Intent proof
+    // Proof
+    Proof,
     Intent,
     // BIP-322 message signing
     BIP322,
@@ -943,6 +945,7 @@ export type {
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
+    ProofInput,
     IntentCoin,
     VerifyServerSignatures,
     TapLeaves,
@@ -984,6 +987,7 @@ export type {
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,

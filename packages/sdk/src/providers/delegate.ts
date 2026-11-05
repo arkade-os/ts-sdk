@@ -1,5 +1,5 @@
-import { Intent } from "../intent";
-import { SignedIntent } from "./ark";
+import { Proof } from "../proof";
+import { SignedProof } from "./ark";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
@@ -32,7 +32,7 @@ export interface DelegateProvider {
      * @param forfeitTxs - Forfeit transactions associated with the delegation request
      */
     delegate(
-        intent: SignedIntent<Intent.RegisterMessage>,
+        intent: SignedProof<Proof.RegisterMessage>,
         forfeitTxs: string[],
         options?: DelegateOptions,
     ): Promise<void>;
@@ -60,7 +60,7 @@ export class RestDelegateProvider implements DelegateProvider {
      * @throws Error if the remote service rejects the request
      */
     async delegate(
-        intent: SignedIntent<Intent.RegisterMessage>,
+        intent: SignedProof<Proof.RegisterMessage>,
         forfeitTxs: string[],
         options?: DelegateOptions,
     ): Promise<void> {
@@ -72,7 +72,7 @@ export class RestDelegateProvider implements DelegateProvider {
             },
             body: JSON.stringify({
                 intent: {
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                     proof: intent.proof,
                 },
                 forfeit_txs: forfeitTxs,

@@ -201,6 +201,16 @@ style and have not been backfilled.
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
 
+- **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
+  A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin
+  outputs, its signature proves the user controls them, and its message says what
+  to do with them. `Proof` is both a namespace and a type, so
+  `const proof: Proof = Proof.create(...)` compiles. `IntentCoin` is now
+  `ProofInput`, `SignedIntent` is `SignedProof`, `AssetInputType.Intent` is
+  `AssetInputType.Proof`, and `AssetInput.createIntent` is
+  `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
+  `ark-intent-proof-message` tag does not change, because the operator verifies it.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
