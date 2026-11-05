@@ -933,12 +933,14 @@ export interface IAssetManager extends IReadonlyAssetManager {
     burn(params: BurnParams): Promise<string>;
 }
 
-/** Options for {@link IReadonlyWallet.getArkadeInfo}. */
-export type GetArkadeInfoOptions = {
+/** Options for {@link IReadonlyWallet.getOperatorInfo}. */
+export type GetOperatorInfoOptions = {
     /** Throw when the operator is unreachable instead of answering from the
      * persisted snapshot — for callers binding the answer into a covenant. */
     requireLive?: boolean;
 };
+/** @deprecated Use {@link GetOperatorInfoOptions}. */
+export type GetArkadeInfoOptions = GetOperatorInfoOptions;
 
 /**
  * Chain reads beyond the wallet's own VTXOs: an arbitrary script's virtual outputs and the
@@ -1059,7 +1061,10 @@ export interface IReadonlyWallet {
      *
      * @see ArkadeInfo
      */
-    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo>;
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo>;
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo: IReadonlyWallet["getOperatorInfo"];
 
     /**
      * Server-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);

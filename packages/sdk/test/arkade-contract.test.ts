@@ -748,7 +748,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
     // A client connected for derivation/registration alone — `getInfo` and
     // nothing else. This is the shape `@arkade-os/swap`'s createOffer uses now
-    // that it sources the server info from `wallet.getArkadeInfo()` instead of
+    // that it sources the server info from `wallet.getOperatorInfo()` instead of
     // building a provider from a URL.
     describe("a getInfo-only `arkade` provider", () => {
         const identity = stubIdentity(xOnly());

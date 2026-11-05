@@ -343,7 +343,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
     });
 
     it("round-trips GET_ARKADE_INFO, bigints intact", async () => {
-        // Guards the wire-format decision documented on `ResponseGetArkadeInfo`:
+        // Guards the wire-format decision documented on `ResponseGetOperatorInfo`:
         // a serializer inserted on either side would fail this deep-compare.
         //
         // Cloned for real here rather than through the harness's
@@ -367,7 +367,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        await expect(wallet.getOperatorInfo()).resolves.toEqual(info);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: "GET_ARKADE_INFO" }),
         );
@@ -390,7 +390,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         const wallet = createWallet(serviceWorker as any, messageTag);
 
-        await expect(wallet.getArkadeInfo({ requireLive: true })).resolves.toEqual(info);
+        await expect(wallet.getOperatorInfo({ requireLive: true })).resolves.toEqual(info);
         expect(serviceWorker.postMessage).toHaveBeenLastCalledWith(
             expect.objectContaining({
                 type: "GET_ARKADE_INFO",
@@ -398,7 +398,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             }),
         );
 
-        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        await expect(wallet.getOperatorInfo()).resolves.toEqual(info);
         const last = (serviceWorker.postMessage as any).mock.calls.at(-1)[0];
         expect(last.type).toBe("GET_ARKADE_INFO");
         expect("payload" in last).toBe(false);
@@ -488,7 +488,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
+        const err = (await wallet.getOperatorInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("ProviderUnavailableError");
     });
 
@@ -508,7 +508,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
+        const err = (await wallet.getOperatorInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("Error");
         expect((err.cause as Error).message).toBe("no cached snapshot");
     });

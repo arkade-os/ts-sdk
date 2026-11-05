@@ -48,7 +48,7 @@ import {
     RequestCreateContract,
     RequestDeleteContract,
     RequestGetAddress,
-    RequestGetArkadeInfo,
+    RequestGetOperatorInfo,
     RequestIndexerGetVtxos,
     RequestIndexerGetVirtualTxs,
     RequestSubmitTx,
@@ -79,7 +79,7 @@ import {
     RequestUpdateContract,
     ResponseAnnotateVtxos,
     ResponseGetAddress,
-    ResponseGetArkadeInfo,
+    ResponseGetOperatorInfo,
     ResponseIndexerGetVtxos,
     ResponseIndexerGetVirtualTxs,
     ResponseSubmitTx,
@@ -192,7 +192,7 @@ import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
-import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
+import type { ArkadeBroadcaster, ArkadeReader, GetOperatorInfoOptions, VirtualCoin } from "..";
 import {
     isMessageBusInitializingError,
     isMessageBusNotInitializedError,
@@ -1065,10 +1065,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Delegated to the worker, which holds the wallet that owns the connection.
-     * The payload crosses raw — see {@link ResponseGetArkadeInfo} for why.
+     * The payload crosses raw — see {@link ResponseGetOperatorInfo} for why.
      */
-    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        const message: RequestGetArkadeInfo = {
+    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        const message: RequestGetOperatorInfo = {
             id: getRandomId(),
             tag: this.messageTag,
             type: "GET_ARKADE_INFO",
@@ -1081,7 +1081,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetArkadeInfo).payload.info;
+            return (response as ResponseGetOperatorInfo).payload.info;
         } catch (cause) {
             // Keep the original reachable as `cause`. Unlike its siblings, this
             // call reaches `resolveArkInfo` in the worker, which distinguishes
@@ -1094,6 +1094,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // `cause.name` the one thing a page can branch on.
             throw new Error(`Failed to get arkade info: ${cause}`, { cause });
         }
+    }
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.getOperatorInfo(opts);
     }
 
     /**

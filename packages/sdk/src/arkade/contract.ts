@@ -322,7 +322,7 @@ export interface ArkadeConnectProviderOptions extends ArkadeConnectCommonOptions
     /**
      * The Arkade server provider. Only `getInfo` is required (enough to derive, register and
      * inspect contracts); without `submitTx`/`finalizeTx`, `.send()` throws. So a caller already
-     * holding `wallet.getArkadeInfo()` can connect without a second `/v1/info` round-trip.
+     * holding `wallet.getOperatorInfo()` can connect without a second `/v1/info` round-trip.
      */
     arkade: ArkadeServerProvider;
     /**

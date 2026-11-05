@@ -160,6 +160,10 @@ style and have not been backfilled.
 
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
+- **`getOperatorInfo` replaces `getArkadeInfo`.** Wallets expose the new method,
+  and `GetArkadeInfoOptions` becomes `GetOperatorInfoOptions`. The old names stay
+  as deprecated aliases. A custom `IReadonlyWallet` must add the new method.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
