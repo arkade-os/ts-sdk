@@ -1,9 +1,9 @@
 import { hex } from "@scure/base";
-import type { ArkadeInfo } from "../providers/ark";
+import type { OperatorInfo } from "../providers/ark";
 import { toXOnly } from "../utils/keys";
 
 /**
- * Classification of a contract's server signer against a fresh {@link ArkadeInfo} snapshot.
+ * Classification of a contract's server signer against a fresh {@link OperatorInfo} snapshot.
  * Always derived at read time from `params.serverPubKey` and the advertised signer set; no
  * stale-key metadata is persisted.
  *
@@ -58,7 +58,7 @@ export function toXOnlySignerHex(pubkeyHex: string): string {
 }
 
 /** Build the {@link SignerSet} from a server-info snapshot, skipping empty deprecated pubkeys. */
-export function signerSetFromInfo(info: ArkadeInfo): SignerSet {
+export function signerSetFromInfo(info: OperatorInfo): SignerSet {
     const active = toXOnlySignerHex(info.signerPubkey);
     const deprecated = new Map<string, bigint>();
     for (const signer of info.deprecatedSigners) {
@@ -103,12 +103,12 @@ export function classifyAgainstSignerSet(
 }
 
 /**
- * Classify one contract signer against {@link ArkadeInfo}. For many contracts, prefer
+ * Classify one contract signer against {@link OperatorInfo}. For many contracts, prefer
  * {@link classifyAgainstSignerSet} with a shared signer set.
  */
 export function classifyContractSigner(
     contractServerPubKeyHex: string,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     nowSeconds: number = Math.floor(Date.now() / 1000),
 ): SignerClassification {
     return classifyAgainstSignerSet(contractServerPubKeyHex, signerSetFromInfo(info), nowSeconds);

@@ -8,7 +8,7 @@ import { rotatedReceiveMetadata } from "./helpers";
 
 /**
  * Typed parameters for boarding contracts: the `default` shape, with `csvTimelock` carrying the
- * server's boarding-exit delay (`ArkadeInfo.boardingExitDelay`) instead of the unilateral-exit
+ * server's boarding-exit delay (`OperatorInfo.boardingExitDelay`) instead of the unilateral-exit
  * delay.
  */
 export type BoardingContractParams = DefaultContractParams;

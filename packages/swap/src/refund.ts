@@ -39,7 +39,7 @@ import {
     Extension,
     getArkPsbtFields,
     isVtxoSpent,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     signAndSubmitOffchainTx,
     scriptFromTapLeafScript,
     toXOnly,
@@ -428,7 +428,7 @@ export const operatorUnrollScript = async (
     const info = await operator.getInfo();
     return assertValidServerUnrollScript(
         info.checkpointTapscript,
-        network ?? networkFromArkadeInfo(info),
+        network ?? networkFromOperatorInfo(info),
         toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
     );
 };

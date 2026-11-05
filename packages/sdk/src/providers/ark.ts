@@ -168,20 +168,23 @@ export interface DeprecatedSigner {
 
 export type ServiceStatus = Record<string, string>;
 
+/** @deprecated Use {@link OperatorInfo}. */
+export type ArkadeInfo = OperatorInfo;
+
 /**
- * The Arkade server's advertised configuration — the `/v1/info` response.
+ * The operator's advertised configuration, the `/v1/info` response.
  *
  * Naming/placement vs the NArk reference (AGENTS.md asks divergences to be
  * noted): NArk calls this `ArkServerInfo`, reads it via `GetServerInfoAsync`
  * on the *transport*, and caches it in a dedicated `CachingClientTransport`.
- * This SDK names it for the product (`ArkadeInfo`, per #734) and hangs the
- * read off the wallet (`getArkadeInfo()`), because here the wallet is the one
+ * This SDK names it for the operator and hangs the
+ * read off the wallet (`getOperatorInfo()`), because here the wallet is the one
  * object every consumer already holds and — in the service-worker model — the
  * only side that has a transport at all; the page has no provider to hang it
  * on. The `CachingClientTransport`-style memo lives at this layer instead, as
  * `CachingArkProvider`.
  */
-export interface ArkadeInfo {
+export interface OperatorInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
     deprecatedSigners: DeprecatedSigner[];
@@ -291,7 +294,7 @@ export interface TxNotificationEvent {
 
 export interface ArkProvider {
     /** Fetch Arkade server configuration and fee settings. */
-    getInfo(): Promise<ArkadeInfo>;
+    getInfo(): Promise<OperatorInfo>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
@@ -480,7 +483,7 @@ export class RestArkProvider implements ArkProvider {
         // so the caller must rebuild and retry it under the refreshed server info.
         this._digest = "";
         this._suppressNextGetInfoChangeEmit = true;
-        let info: ArkadeInfo;
+        let info: OperatorInfo;
         try {
             info = await this.getInfo();
         } finally {
@@ -513,7 +516,7 @@ export class RestArkProvider implements ArkProvider {
         return response;
     }
 
-    async getInfo(): Promise<ArkadeInfo> {
+    async getInfo(): Promise<OperatorInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
         // the indexer. The fetch carries its own budget where the runtime
@@ -540,7 +543,7 @@ export class RestArkProvider implements ArkProvider {
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
-        const info: ArkadeInfo = {
+        const info: OperatorInfo = {
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:

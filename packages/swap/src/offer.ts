@@ -17,11 +17,11 @@ import {
     RestIndexerProvider,
     arkade,
     asset,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
     type ArkTxInput,
-    type ArkadeInfo,
+    type OperatorInfo,
     type EmulatorProvider,
     type IWallet,
     type Outpoint,
@@ -424,7 +424,7 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
  */
 async function registerOfferContract(
     wallet: IWallet,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     binding: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
@@ -445,13 +445,13 @@ async function registerOfferContract(
  * row's `address` on the network its script was derived for. */
 const derivingClient = (
     wallet: IWallet,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     contractManager: Awaited<ReturnType<IWallet["getContractManager"]>>,
 ): Promise<arkade.Arkade> =>
     arkade.Arkade.connect({
         arkade: { getInfo: async () => info },
         identity: wallet.identity,
-        network: networkFromArkadeInfo(info),
+        network: networkFromOperatorInfo(info),
         contractManager,
     });
 
@@ -632,7 +632,7 @@ export interface OfferParams {
      * live for the reason {@link createOffer} reads live — the info's
      * `signerPubkey` ends up in a covenant leaf.
      */
-    info?: ArkadeInfo;
+    info?: OperatorInfo;
     /**
      * The maker position, when the caller already read it.
      *
@@ -660,7 +660,7 @@ export interface DerivedOffer {
     /** The covenant's parameters — {@link registerDerivedOffer}'s only input. */
     readonly binding: Readonly<Omit<Offer, "swapPkScript">>;
     /** The live info this covenant is bound to. */
-    readonly info: ArkadeInfo;
+    readonly info: OperatorInfo;
     readonly operatorPubkey: Uint8Array;
 }
 
@@ -715,7 +715,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
             })(),
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    const network = networkFromArkadeInfo(info);
+    const network = networkFromOperatorInfo(info);
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
     );

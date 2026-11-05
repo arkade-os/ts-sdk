@@ -32,10 +32,10 @@ import {
     assertTimerMs,
     VHTLC,
     asset,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     resolveEmulatorPubkey,
     toXOnly,
-    type ArkadeInfo,
+    type OperatorInfo,
     type IWallet,
 } from "@arkade-os/sdk";
 
@@ -1239,7 +1239,7 @@ export async function requestLightningSend(
     }
 
     const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const network = networkFromArkadeInfo(info);
+    const network = networkFromOperatorInfo(info);
     const derived = deriveLightningSend({
         quote,
         paymentHash: params.invoice.paymentHash,
@@ -1441,7 +1441,7 @@ export async function requestArkadeSwap(
             : resolveReceivePkScript(
                   receiveAddress,
                   ownPkScript,
-                  networkFromArkadeInfo(info).hrp,
+                  networkFromOperatorInfo(info).hrp,
                   toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
               );
     const pair = rfqPair(
@@ -1530,8 +1530,8 @@ export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
 /** The covenant terms the trader's OWN live server info supplies. */
-const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
-    const network = networkFromArkadeInfo(info);
+const serverTerms = (info: OperatorInfo, emulatorPubkey: string | undefined) => {
+    const network = networkFromOperatorInfo(info);
     return {
         operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
         emulatorPubkey: toXOnly(

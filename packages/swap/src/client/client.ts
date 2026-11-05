@@ -12,7 +12,7 @@ import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
 import { corridorSet, type CorridorSet } from "./corridors/registry";
 import {
-    liveArkadeInfo,
+    liveOperatorInfo,
     resolveCorridorBase,
     type CorridorBase,
     type CorridorOverrides,
@@ -383,7 +383,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
             // live: a snapshot could bind the tree to a signer key the operator no longer co-signs
             // for; an unreachable operator is `OperatorUnreachable` here, before funding
-            const info = await liveArkadeInfo(wallet, { requireLive: true });
+            const info = await liveOperatorInfo(wallet, { requireLive: true });
             const rendezvous = market.card.discovery_pubkey;
             if (rendezvous === undefined) {
                 // unreachable: `eligibleMarkets` drops a corridor card with no rendezvous, and an asset card without one prices from its feed

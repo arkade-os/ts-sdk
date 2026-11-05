@@ -244,6 +244,7 @@ import {
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
@@ -326,6 +327,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     Network,
@@ -775,6 +777,7 @@ export {
     ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
@@ -981,6 +984,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
