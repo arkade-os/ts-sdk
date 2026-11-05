@@ -145,7 +145,7 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
     it("rejects a response the server never signed, before finalizing", async () => {
         const p = provider({ cosignArkTx: async (psbt) => psbt });
         await expect(submit(p, { serverPubkey: SERVER_PUBKEY })).rejects.toThrow(
-            /ark tx: input 0 is not signed by the server/,
+            /transaction: input 0 is not signed by the server/,
         );
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -164,7 +164,7 @@ describe("signAndSubmitOffchainTx server-signature verification", () => {
     it("fails closed when the response carries no final ark tx — but only when asked to verify", async () => {
         await expect(
             submit(provider({ dropFinalArkTx: true }), { serverPubkey: SERVER_PUBKEY }),
-        ).rejects.toThrow(/no final ark tx to verify/);
+        ).rejects.toThrow(/no final transaction to verify/);
 
         // The same response with verification omitted is the pre-existing path.
         const p = provider({ dropFinalArkTx: true });

@@ -1150,7 +1150,7 @@ function isTxNotInBlockError(err: unknown): boolean {
 
 /**
  * Compute the txid of a serialized transaction. For segwit transactions
- * (every Ark transaction), the broadcast hex includes witness data, but
+ * (every offchain transaction), the broadcast hex includes witness data, but
  * the txid is the double-SHA256 of the legacy (witness-stripped)
  * serialization. Hashing the raw broadcast bytes directly would yield
  * the wtxid instead — silently breaking any caller that tracks the tx

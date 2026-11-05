@@ -76,8 +76,8 @@ export class CachingArkProvider implements ArkProvider {
         return this.inflight;
     }
 
-    submitTx(signedArkTx: string, checkpointTxs: string[]) {
-        return this.inner.submitTx(signedArkTx, checkpointTxs);
+    submitTx(signedTx: string, checkpointTxs: string[]) {
+        return this.inner.submitTx(signedTx, checkpointTxs);
     }
 
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]) {

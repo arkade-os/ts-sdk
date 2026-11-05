@@ -232,7 +232,7 @@ export interface LockupSpend {
     /** What the vtxo's `spentBy` names — the checkpoint, never the ark
      * transaction. */
     checkpointTxid: string;
-    /** The ark transaction that spent the above checkpoint output. What
+    /** The transaction that spent the above checkpoint output. What
      * history correlation matches on; absent when the indexer omitted it. */
     txid?: string;
 }
@@ -344,7 +344,7 @@ export async function readLockupFate(
             continue;
         }
         // Truthiness, not presence: an unnamed `spentBy` is "". When set it names the
-        // CHECKPOINT tx, which carries the lockup leaf's witness (the ark tx spends the
+        // CHECKPOINT tx, which carries the lockup leaf's witness (the transaction spends the
         // checkpoint, so it is the wrong place to look).
         if (vtxo.spentBy)
             spentBy.set(vtxo.spentBy, {

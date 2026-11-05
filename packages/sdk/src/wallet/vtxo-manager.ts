@@ -744,7 +744,7 @@ export type MigrationGlobalSkipReason = "no-deprecated-vtxos" | "unknown-wallet-
  * suppresses the other.
  */
 export interface MigrationLegReport {
-    /** VTXO leg: Ark transaction id from send. Boarding leg: settle commitment txid. */
+    /** VTXO leg: transaction id from send. Boarding leg: settle commitment txid. */
     txid?: string;
     /** Inputs submitted and accepted in this leg's transaction; empty on error/skip. */
     migrated: MigrationVtxoRef[];

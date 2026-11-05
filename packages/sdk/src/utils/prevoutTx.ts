@@ -129,7 +129,7 @@ export async function attachPrevArkTxs(
 
 /**
  * Attach `PrevoutTxField` to every input of an onchain PSBT, reading each
- * input's own outpoint — unlike an ark tx, an onchain tx spends its prevout
+ * input's own outpoint — unlike an offchain transaction, an onchain tx spends its prevout
  * directly, so the txid is in the PSBT already.
  */
 export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Promise<void> {

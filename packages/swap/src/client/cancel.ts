@@ -154,7 +154,7 @@ const reconcileDepositSpend = async (
     if (deposit === undefined) return undefined;
     const candidates = spendTxidsOf(deposit);
     if (candidates.length === 0) return undefined;
-    // As the watcher chooses: the ark tx when the indexer gave one, else the checkpoint.
+    // As the watcher chooses: the transaction when the indexer gave one, else the checkpoint.
     const spentTxid = deposit.arkTxId || deposit.spentBy;
     if (!spentTxid) return undefined;
     const { txs } = await indexer.getVirtualTxs(candidates);

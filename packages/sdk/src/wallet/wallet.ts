@@ -3309,7 +3309,7 @@ export class Wallet
     async getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
         const ark = this.arkProvider;
         return {
-            submitTx: (signedArkTx, checkpointTxs) => ark.submitTx(signedArkTx, checkpointTxs),
+            submitTx: (signedTx, checkpointTxs) => ark.submitTx(signedTx, checkpointTxs),
             finalizeTx: (arkTxid, finalCheckpointTxs) =>
                 ark.finalizeTx(arkTxid, finalCheckpointTxs),
         };
@@ -5317,7 +5317,7 @@ export class Wallet
                 const paidToMe = this.arkTxAmountPaidTo(pendingTx.finalArkTx, myPkScriptHex);
                 if (paidToMe === 0) continue;
 
-                // The ark tx spends the checkpoints; the cash VTXOs are the checkpoints' inputs.
+                // The transaction spends the checkpoints; the cash VTXOs are the checkpoints' inputs.
                 result.swept += paidToMe;
                 for (const checkpoint of checkpointTxs) {
                     for (let i = 0; i < checkpoint.inputsLength; i++) {
@@ -5337,7 +5337,7 @@ export class Wallet
         return result;
     }
 
-    /** Sum the outputs of an ark tx PSBT that pay the given scriptPubKey. */
+    /** Sum the outputs of a transaction PSBT that pay the given scriptPubKey. */
     private arkTxAmountPaidTo(arkTxPsbt: string, pkScriptHex: string): number {
         const arkTx = Transaction.fromPSBT(base64.decode(arkTxPsbt));
         let total = 0;
@@ -6242,7 +6242,7 @@ export class Wallet
     ): Promise<void> {
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
-            const inputArkTxIds = new Set<string>();
+            const inputTxIds = new Set<string>();
             // Grouped by the address each UTXO sits on, which after rotation may not be the
             // current boarding address.
             const boardingRemovalsByAddress = new Map<string, Set<string>>();
@@ -6261,7 +6261,7 @@ export class Wallet
                         throw new Error(`missing annotation for virtual coin ${outpoint}`);
                     }
                     if (vtxo.arkTxId) {
-                        inputArkTxIds.add(vtxo.arkTxId);
+                        inputTxIds.add(vtxo.arkTxId);
                     }
                     const settledFacts = { ...vtxo, isSpent: true };
                     spentVtxos.push({

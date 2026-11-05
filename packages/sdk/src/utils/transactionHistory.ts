@@ -101,7 +101,7 @@ function subtractAssets(spent: VirtualCoin[], change: VirtualCoin[]): Asset[] | 
 }
 
 /**
- * Ark txids the main loop needs a `createdAt` for: spent virtual outputs whose
+ * Txids the main loop needs a `createdAt` for: spent virtual outputs whose
  * spending transaction left the wallet no output to read the time off. Exactly
  * the loop's fetch set, and exactly the complement of {@link localCreatedAtByTxid}
  * — which is why gating history costs no extra indexer call, even though it

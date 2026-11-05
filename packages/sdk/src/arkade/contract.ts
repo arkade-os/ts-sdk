@@ -18,7 +18,7 @@
  * declared, values type-checked).
  *
  * A covenant spend needs an `indexer` as well as an `emulator`: the co-signer resolves each
- * input's prevout from the previous ark tx the PSBT carries. Pure tapscript spends need neither.
+ * input's prevout from the previous transaction the PSBT carries. Pure tapscript spends need neither.
  *
  * @example
  * ```typescript
@@ -217,9 +217,9 @@ export interface Utxo {
      */
     assets?: readonly Asset[];
     /**
-     * Raw bytes of the ark tx that created this VTXO, attached as its input's PrevArkTx. Overrides
+     * Raw bytes of the transaction that created this VTXO, attached as its input's PrevArkTx. Overrides
      * the indexer-resolved value; supply it when the tx isn't indexable yet (a recursive covenant
-     * spending an ark tx the caller just built).
+     * spending a transaction the caller just built).
      */
     sourceTx?: Uint8Array;
 }
@@ -332,7 +332,7 @@ export interface ArkadeConnectProviderOptions extends ArkadeConnectCommonOptions
     emulator?: EmulatorProvider;
     /**
      * Indexer — enables `getUtxos`/`getBalance` and coin auto-selection, and
-     * resolves the previous ark txs a covenant spend must carry (see
+     * resolves the previous transactions a covenant spend must carry (see
      * {@link attachPrevArkTxs}). Required for covenant spends.
      */
     indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
@@ -980,7 +980,7 @@ export class ArkadeTransactionBuilder {
         return this;
     }
 
-    /** Assemble the unsigned ark transaction and its checkpoints. */
+    /** Assemble the unsigned transaction and its checkpoints. */
     async build(): Promise<{ arkTx: Transaction; checkpoints: Transaction[] }> {
         const { arkTx, checkpoints } = await this.assemble();
         return { arkTx, checkpoints };
@@ -1061,7 +1061,7 @@ export class ArkadeTransactionBuilder {
             const indexer = this.client.indexer;
             if (!indexer) {
                 throw new PrevTxUnavailableError(
-                    "covenant spends require an `indexer` on the Arkade client to resolve the previous ark tx of each input",
+                    "covenant spends require an `indexer` on the Arkade client to resolve the previous transaction of each input",
                 );
             }
             await attachPrevArkTxs(
@@ -1190,7 +1190,7 @@ export class ArkadeTransactionBuilder {
         };
     }
 
-    /** Sign the client-owned inputs of the ark tx (no-op when there are none). */
+    /** Sign the client-owned inputs of the transaction (no-op when there are none). */
     private async signArk(arkTx: Transaction, userInputs: number[]): Promise<Transaction> {
         if (userInputs.length === 0) return arkTx;
         const { identity } = this.client;

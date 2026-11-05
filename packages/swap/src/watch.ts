@@ -169,7 +169,7 @@ export async function watchOfferSwaps<S extends OfferSwapFacts>({
     const classify = async (swap: S, vtxo: ContractVtxo, spentTxid: string) => {
         if (swap.spentTxid === spentTxid && swap.status === "cancelling") return "cancelled";
         try {
-            // The checkpoint carries the deposit outpoint; the ark tx is the recorded id.
+            // The checkpoint carries the deposit outpoint; the transaction is the recorded id.
             const candidates = spendTxidsOf(vtxo);
             if (candidates.length === 0) return "indeterminate";
             const { txs } = await indexer.getVirtualTxs(candidates);

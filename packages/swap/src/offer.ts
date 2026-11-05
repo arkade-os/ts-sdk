@@ -778,7 +778,7 @@ export async function registerDerivedOffer(
 }
 
 /**
- * Cancel an offer: spend the swap VTXO back to the user. Returns the ark txid. No path is on a
+ * Cancel an offer: spend the swap VTXO back to the user. Returns the txid. No path is on a
  * deadline, so an unfilled deposit stays at the swap address until the user cancels.
  *
  * Routes out: `fulfill` (server alone, but constrained to pay `makerWP` at least `wantAmount`),

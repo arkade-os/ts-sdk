@@ -106,7 +106,7 @@ const unscannedSwapCandidates = (
 export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
 
 /**
- * Classify a spend by the covenant leaf it took (a submitted ark tx keeps each input's
+ * Classify a spend by the covenant leaf it took (a submitted transaction keeps each input's
  * `tapLeafScript`). `fulfill` is the solver paying; every other leaf returns the deposit.
  * Not by asset movement: once registered, the deposit is the wallet's own coin, so an
  * asset offer's cancel nets to zero exactly like its fill. Leaves also survive batching.
@@ -114,8 +114,8 @@ export type SpendKind = "cancelled" | "fulfilled" | "indeterminate";
  * **`exit` reports `cancelled`, like `cancel`.** Reporting it `indeterminate` would leave
  * the swap `pending` forever: re-queued every scan, and never retired.
  *
- * **Pass the checkpoint (`vtxo.spentBy`), not the ark tx.** Only the checkpoint spends the
- * deposit outpoint; the ark tx spends the checkpoint's output, so it always yields
+ * **Pass the checkpoint (`vtxo.spentBy`), not the transaction.** Only the checkpoint spends the
+ * deposit outpoint; the transaction spends the checkpoint's output, so it always yields
  * `indeterminate`. {@link classifyDepositSpend} tries both.
  *
  * @param operatorPubkey - The key the covenant was *funded* against. A rotated key fails

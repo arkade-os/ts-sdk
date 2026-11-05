@@ -292,10 +292,10 @@ export namespace VHTLC {
          * Return the timelocked non-interactive refund tapleaf and its ArkadeScript.
          *
          * Spent through the generic covenant path ({@link EmulatorProvider},
-         * {@link ArkadeTransactionBuilder}): build the ark tx on this leaf plus its checkpoint;
+         * {@link ArkadeTransactionBuilder}): build the transaction on this leaf plus its checkpoint;
          * attach this ArkadeScript to the input in an `EmulatorPacket` (type 1, empty witness:
          * the script pushes its own index with `PUSHCURRENTINPUTINDEX`) inside an `Extension`
-         * OP_RETURN; attach the input's creating ark tx as `PrevArkTx` (the emulator can't
+         * OP_RETURN; attach the input's creating transaction as `PrevArkTx` (the emulator can't
          * otherwise resolve its prevout); POST to the emulator's `/v1/tx`. The emulator co-signs
          * for `nirCosigner` only if `enforcePayTo(senderPkScript)` holds, and finalizes with arkd.
          * `server`'s signature is still required at consensus level, outside the covenant.

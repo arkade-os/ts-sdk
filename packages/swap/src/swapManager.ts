@@ -127,7 +127,7 @@ interface RfqSwapCommon {
      * `onchain_receive` the L1 HTLC refund. */
     refundTxid?: string;
     /**
-     * The ark transactions that SPENT the lockup, from the chain read that ended the swap
+     * The transactions that SPENT the lockup, from the chain read that ended the swap
      * (`LockupFate.spends`) — moves no local action produced, so a terminal record can
      * name them without another network read. Absent without a chain verdict, or when the
      * indexer named only the checkpoint.
@@ -1969,7 +1969,7 @@ export class RfqSwapManager {
     }
 
     /**
-     * Record which ark transactions ended the lockup. Only named ark txids: a checkpoint
+     * Record which transactions ended the lockup. Only named txids: a checkpoint
      * txid would name a transaction the wallet's activity never shows. Assigned, not
      * merged: the fate is one complete read, reached once.
      */

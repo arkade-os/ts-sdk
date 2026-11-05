@@ -84,7 +84,7 @@ export interface RfqSwapOrigin {
     amount?: number;
 
     /**
-     * The ark transaction that funded {@link lockupAddress}. Origin, not manager state: only the
+     * The transaction that funded {@link lockupAddress}. Origin, not manager state: only the
      * caller that broadcast it knows it, so it is written once and no `project` emits it.
      */
     fundingTxid?: string;

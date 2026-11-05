@@ -7,7 +7,7 @@
  * spendable the moment the lockup lands, with no covclaimd. Mirror of `pushRefundWithoutReceiver`,
  * except:
  *
- * - The preimage rides the PSBT's `ConditionWitness`, attached AFTER signing on the ark tx and
+ * - The preimage rides the PSBT's `ConditionWitness`, attached AFTER signing on the transaction and
  *   every checkpoint; attaching it first yields `INVALID_SIGNATURE` (`claimWithPreimageIdentity`
  *   owns that ordering).
  * - The leaf is NOT covenant-pinned, so one aggregate output pays wherever the trader says; the

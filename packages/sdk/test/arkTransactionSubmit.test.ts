@@ -172,7 +172,7 @@ describe("submitOffchainTx ark txid reconciliation", () => {
 
         await expect(
             submitOffchainTx(p, offchainTx([checkpoint(1)]), s, undefined, { oneShot: false }),
-        ).rejects.toThrow(/submitTx returned ark txid/);
+        ).rejects.toThrow(/submitTx returned txid/);
         expect(s.signCheckpoint).not.toHaveBeenCalled();
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });
@@ -186,7 +186,7 @@ describe("submitOffchainTx ark txid reconciliation", () => {
         });
 
         await expect(submitOffchainTx(p, offchainTx([checkpoint(1)]), signer())).rejects.toThrow(
-            new RegExp(`submitTx returned final ark tx ${foreign.id}`),
+            new RegExp(`submitTx returned final transaction ${foreign.id}`),
         );
         expect(p.finalizeTx).not.toHaveBeenCalled();
     });

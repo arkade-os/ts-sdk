@@ -140,7 +140,7 @@ export const PrevArkTxField: ArkPsbtFieldCoder<Uint8Array> = {
 /**
  * PrevoutTxField carries the serialized raw bitcoin tx that produced the
  * previous output spent by an input. Used by OP_INSPECTINPUTSCRIPTPUBKEY in
- * the SubmitOnchainTx flow, where there is no Ark tx but a plain Bitcoin
+ * the SubmitOnchainTx flow, where there is no offchain transaction but a plain Bitcoin
  * funding tx whose pkScript must be resolvable.
  *
  * Key: [0xde] || "prevouttx". Value: serialized wire.MsgTx (NOT a PSBT).

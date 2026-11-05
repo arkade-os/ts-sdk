@@ -151,7 +151,7 @@ async function activityInputOf(
 }
 
 /** One read of everything at the lockup: the transactions that funded it, and
- * the ark transactions that spent it. */
+ * the transactions that spent it. */
 async function lockupTxids(
     indexer: LockupSpendIndexer,
     record: RfqSwapRecord,
@@ -168,7 +168,7 @@ async function lockupTxids(
         const out: string[] = [];
         for (const vtxo of vtxos ?? []) {
             if (wantFunding) out.push(vtxo.txid);
-            // `spentBy` names the checkpoint; history carries the ark tx.
+            // `spentBy` names the checkpoint; history carries the transaction.
             if (vtxo.arkTxId) out.push(vtxo.arkTxId);
         }
         return out;

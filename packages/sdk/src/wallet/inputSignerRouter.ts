@@ -153,7 +153,7 @@ export class InputSignerRouter {
      * pre-flight the {@link BatchSignableIdentity.signMultiple} fast path,
      * which can only fold work a single identity key can sign.
      *
-     * Accepts several job sets (e.g. an arkTx's jobs plus one set per
+     * Accepts several job sets (e.g. a transaction's jobs plus one set per
      * checkpoint) and classifies their union in a single pass. Eligibility
      * is monotonic — the union routes entirely to the baseline key iff every
      * set does — so this returns the same answer as ANDing the per-set

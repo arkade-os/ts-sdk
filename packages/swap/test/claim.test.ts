@@ -551,7 +551,7 @@ describe("pushClaim", () => {
                 destinationPkScript: DESTINATION_PK_SCRIPT,
                 expectedAmount: EXPECTED_AMOUNT,
             }),
-        ).rejects.toThrow(/no final ark tx to verify/);
+        ).rejects.toThrow(/no final transaction to verify/);
         expect(operator.finalized).toHaveLength(0);
     });
 

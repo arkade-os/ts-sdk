@@ -144,7 +144,7 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
 
 /**
  * Build the checkpoint transaction spending `vtxo`, plus the input that spends
- * it (the ark tx's actual input).
+ * it (the transaction's actual input).
  *
  * A pure function of `(vtxo, serverUnrollScript)` — nothing here is
  * server-supplied — so finalization paths can rebuild the checkpoint they
@@ -414,7 +414,7 @@ export function isValidArkAddress(address: string): boolean {
  */
 export interface OffchainTxSubmitProvider {
     submitTx(
-        signedArkTx: string,
+        signedTx: string,
         checkpointTxs: string[],
     ): Promise<{ arkTxid: string; finalArkTx?: string; signedCheckpointTxs: string[] }>;
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
@@ -426,7 +426,7 @@ export interface OffchainTxSubmitProvider {
  *
  * - The wallet path routes each input to its owning contract's key
  *   (`InputSignerRouter`) and, when every input resolves to the baseline key,
- *   batch-signs the arkTx and all checkpoints in one popup — returning the
+ *   batch-signs the transaction and all checkpoints in one popup — returning the
  *   user-signed checkpoints from {@link signArkTx} so they are merged onto the
  *   server's signatures.
  * - A single-key spend (e.g. an ArkadeCash sweep) signs every input with one
@@ -456,9 +456,9 @@ export interface OffchainTxSigner {
  * Pair each server-returned checkpoint PSBT with the locally built checkpoint
  * of the same txid, rejecting anything else.
  *
- * The ark tx signed just above spends each checkpoint at `checkpointTxid:0`, so
+ * The transaction signed just above spends each checkpoint at `checkpointTxid:0`, so
  * the response is only usable if it carries the same txids: a checkpoint with
- * any other txid leaves that ark tx unspendable. The two sets are therefore
+ * any other txid leaves that transaction unspendable. The two sets are therefore
  * equal by construction, and this pairing is what the signing step below
  * consumes.
  *
@@ -502,7 +502,7 @@ export function matchServerCheckpoints(
 }
 
 /**
- * Assert a `submitTx` response refers to the ark transaction just submitted.
+ * Assert a `submitTx` response refers to the transaction just submitted.
  *
  * The returned `arkTxid` is what gets passed to `finalizeTx` and persisted by
  * callers, so a stale or misrouted response must be rejected before either
@@ -514,19 +514,19 @@ export function matchServerCheckpoints(
  */
 export function assertSubmittedArkTxid(
     response: { arkTxid: string; finalArkTx?: string },
-    signedArkTx: Transaction,
+    signedTx: Transaction,
     context: string,
 ): void {
-    if (response.arkTxid !== signedArkTx.id) {
+    if (response.arkTxid !== signedTx.id) {
         throw new ServerResponseMismatchError(
-            `${context} returned ark txid ${response.arkTxid}, expected ${signedArkTx.id}`,
+            `${context} returned txid ${response.arkTxid}, expected ${signedTx.id}`,
         );
     }
     if (response.finalArkTx === undefined) return;
     const finalTxid = Transaction.fromPSBT(base64.decode(response.finalArkTx)).id;
-    if (finalTxid !== signedArkTx.id) {
+    if (finalTxid !== signedTx.id) {
         throw new ServerResponseMismatchError(
-            `${context} returned final ark tx ${finalTxid}, expected ${signedArkTx.id}`,
+            `${context} returned final transaction ${finalTxid}, expected ${signedTx.id}`,
         );
     }
 }
@@ -681,7 +681,7 @@ export function assertCheckpointsMatchInputs(
  *
  * `options.oneShot` (default on): see `WalletConfig.oneShotSubmit`.
  *
- * @returns The Ark transaction id, final ark tx and checkpoint PSBTs from the
+ * @returns The transaction id, final transaction and checkpoint PSBTs from the
  * raw server response (for the wallet's bookkeeping).
  */
 export async function submitOffchainTx(
@@ -692,7 +692,7 @@ export async function submitOffchainTx(
     options?: { verifyServerSignatures?: VerifyServerSignatures; oneShot?: boolean },
 ): Promise<{ arkTxid: string; finalArkTx?: string; signedCheckpointTxs: string[] }> {
     const oneShot = options?.oneShot !== false;
-    const { arkTx: signedArkTx, userSignedCheckpoints: batchSigned } = await signer.signArkTx(
+    const { arkTx: signedTx, userSignedCheckpoints: batchSigned } = await signer.signArkTx(
         offchainTx.arkTx,
         offchainTx.checkpoints,
     );
@@ -713,20 +713,20 @@ export async function submitOffchainTx(
         (oneShot
             ? await Promise.all(offchainTx.checkpoints.map((c) => signer.signCheckpoint(c.clone())))
             : undefined)
-    )?.map((c) => withArkInputWitness(c, signedArkTx));
+    )?.map((c) => withInputWitness(c, signedTx));
 
     // Mark pending before submitting — if the caller crashes between submit and
     // finalize, its recovery hook can retry from persisted state.
     await hooks?.beforeSubmit?.();
 
     const response = await provider.submitTx(
-        base64.encode(signedArkTx.toPSBT()),
+        base64.encode(signedTx.toPSBT()),
         (oneShot
             ? userSignedCheckpoints!
-            : offchainTx.checkpoints.map((c) => withArkInputWitness(c, signedArkTx))
+            : offchainTx.checkpoints.map((c) => withInputWitness(c, signedTx))
         ).map((c) => base64.encode(c.toPSBT())),
     );
-    assertSubmittedArkTxid(response, signedArkTx, "submitTx");
+    assertSubmittedArkTxid(response, signedTx, "submitTx");
     const { arkTxid, signedCheckpointTxs } = response;
 
     // The server returns one signed checkpoint per submitted checkpoint, and
@@ -756,7 +756,7 @@ export async function submitOffchainTx(
         // asked for and cannot be run is a failed check, not a passed one.
         if (response.finalArkTx === undefined) {
             throw new ServerResponseMismatchError(
-                "submitTx: server returned no final ark tx to verify its signatures against",
+                "submitTx: operator returned no final transaction to verify its signatures against",
             );
         }
         const finalArkTx = Transaction.fromPSBT(base64.decode(response.finalArkTx));
@@ -771,7 +771,7 @@ export async function submitOffchainTx(
                 offchainTx.arkTx,
                 i,
                 serverPubkeys,
-                "submitTx ark tx",
+                "submitTx transaction",
             );
         }
         // Each checkpoint carries exactly one input, the VTXO being spent.
@@ -833,15 +833,15 @@ function carryConditionWitness(ours: Transaction, server: Transaction): void {
 }
 
 // arkd v0.9.24+ refuses, at submit, a checkpoint whose condition witness differs from that of
-// the ark tx input spending it, and a signer that attaches the witness while signing (a swap
+// the transaction input spending it, and a signer that attaches the witness while signing (a swap
 // claim's) leaves none on the unsigned checkpoint the two-step flow submits. Matching by txid
-// alone holds because the ark tx spends each checkpoint at vout 0 only; vout 1 is its anchor.
-function withArkInputWitness(checkpoint: Transaction, signedArkTx: Transaction): Transaction {
+// alone holds because the transaction spends each checkpoint at vout 0 only; vout 1 is its anchor.
+function withInputWitness(checkpoint: Transaction, signedTx: Transaction): Transaction {
     if (getArkPsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
-    for (let i = 0; i < signedArkTx.inputsLength; i++) {
-        const { txid } = signedArkTx.getInput(i);
+    for (let i = 0; i < signedTx.inputsLength; i++) {
+        const { txid } = signedTx.getInput(i);
         if (!txid || hex.encode(txid) !== checkpoint.id) continue;
-        const [witness] = getArkPsbtFields(signedArkTx, i, ConditionWitness);
+        const [witness] = getArkPsbtFields(signedTx, i, ConditionWitness);
         if (!witness) return checkpoint;
         const carried = checkpoint.clone();
         setArkPsbtField(carried, 0, ConditionWitness, witness);
@@ -872,7 +872,7 @@ function carriesTapscriptSigs(server: Transaction, userSigned: Transaction): boo
  * to move bearer coins to the receiver's address without spinning up a full
  * background-managed wallet on shared repositories.
  *
- * @returns The Ark transaction id.
+ * @returns The transaction id.
  */
 export async function signAndSubmitOffchainTx(params: {
     identity: { sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> };
