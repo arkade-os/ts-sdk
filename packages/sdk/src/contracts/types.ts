@@ -291,7 +291,7 @@ export interface DiscoveryDeps {
      */
     onchainNetwork?: Network;
     /**
-     * The server's **current** signer key (x-only, 32 bytes) from a fresh server-info snapshot at
+     * The operator's **current** signer key (x-only, 32 bytes) from a fresh operator info snapshot at
      * restore time; L2 discovery probes it first.
      */
     serverPubKey: Uint8Array;

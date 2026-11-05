@@ -207,13 +207,13 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         }
     });
 
-    it("dispose() drains an in-flight onServerInfoChanged handler before teardown", async () => {
+    it("dispose() drains an in-flight onOperatorInfoChanged handler before teardown", async () => {
         const { wallet } = await makeStaticWalletForTest();
 
-        // Stand in for a handleServerInfoChanged still mid-flight (rotation /
+        // Stand in for a handleOperatorInfoChanged still mid-flight (rotation /
         // createContract not yet settled) at the moment dispose() is called.
         let releaseHandler!: () => void;
-        (wallet as unknown as { _serverInfoInFlight: Promise<void> })._serverInfoInFlight =
+        (wallet as unknown as { _operatorInfoInFlight: Promise<void> })._operatorInfoInFlight =
             new Promise<void>((resolve) => {
                 releaseHandler = resolve;
             });
@@ -292,7 +292,7 @@ describe("Boarding watch path across server-signer rotation", () => {
         }
     });
 
-    it("handleServerInfoChanged rotates onto the new signer and keeps watching the old one", async () => {
+    it("handleOperatorInfoChanged rotates onto the new signer and keeps watching the old one", async () => {
         const { wallet, contractRepository } = await makeStaticWalletForTest();
         try {
             const oldSigner = hex.encode(wallet.arkServerPublicKey);
@@ -323,13 +323,13 @@ describe("Boarding watch path across server-signer rotation", () => {
             // arkd rotated to NEW and now advertises the old signer as deprecated.
             await (
                 wallet as unknown as {
-                    handleServerInfoChanged(info: {
+                    handleOperatorInfoChanged(info: {
                         signerPubkey: string;
                         checkpointTapscript: string;
                         deprecatedSigners?: { pubkey: string }[];
                     }): Promise<void>;
                 }
-            ).handleServerInfoChanged({
+            ).handleOperatorInfoChanged({
                 signerPubkey: NEW,
                 checkpointTapscript: mockArkInfo.checkpointTapscript,
                 deprecatedSigners: [{ pubkey: oldSigner }],

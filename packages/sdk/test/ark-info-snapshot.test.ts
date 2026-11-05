@@ -344,14 +344,14 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         const info = makeArkInfo();
 
         const online = await createWallet(async () => info, repos);
-        expect(online.serverInfoSource).toBe("live");
+        expect(online.operatorInfoSource).toBe("live");
         const onlineAddress = online.arkAddress.encode();
 
         // Operator now unreachable → construct from the snapshot written above.
         const offline = await createWallet(async () => {
             throw new ProviderUnavailableError("operator down");
         }, repos);
-        expect(offline.serverInfoSource).toBe("cache");
+        expect(offline.operatorInfoSource).toBe("cache");
         expect(offline.arkAddress.encode()).toBe(onlineAddress);
         expect(offline.network).toEqual(online.network);
         expect(offline.dustAmount).toBe(online.dustAmount);
@@ -375,7 +375,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
             factory,
         );
 
-        expect(wallet.serverInfoSource).toBe("cache");
+        expect(wallet.operatorInfoSource).toBe("cache");
         expect(factory).toHaveBeenCalledWith("mutinynet");
         expect(wallet.onchainProvider).toBe(provider);
     });

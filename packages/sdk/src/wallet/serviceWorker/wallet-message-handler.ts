@@ -290,7 +290,7 @@ export type ResponseGetStatus = ResponseEnvelope & {
     payload: {
         walletInitialized: boolean;
         xOnlyPublicKey: Uint8Array | undefined;
-        // Wallet-level provider-connection freshness (boot server-info source
+        // Wallet-level provider-connection freshness (boot operator info source
         // composed with contract-manager sync health). Optional so a status
         // response can predate a fully wired worker; always set for an
         // initialized wallet.

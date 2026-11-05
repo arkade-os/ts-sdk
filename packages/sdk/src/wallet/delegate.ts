@@ -92,7 +92,7 @@ export class DelegateManagerImpl implements IDelegateManager {
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
-        // Server info and delegate info come from different providers and share nothing.
+        // Operator info and delegate info come from different providers and share nothing.
         const [arkInfo, delegateInfo] = await Promise.all([
             this.arkInfoProvider.getInfo(),
             this.delegateProvider.getDelegateInfo(),

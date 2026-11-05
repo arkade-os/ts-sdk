@@ -143,8 +143,8 @@ interface MigrationMockOptions {
     /** Boarding groups returned by `getBoardingUtxosForSigners` (Section 7). */
     boardingGroups?: BoardingUtxoGroup[];
     /**
-     * x-only hex the wallet lands on when `settleServerInfoChanges` drains —
-     * models the real wallet applying a rotation off an `onServerInfoChanged`
+     * x-only hex the wallet lands on when `settleOperatorInfoChanges` drains —
+     * models the real wallet applying a rotation off an `onOperatorInfoChanged`
      * emit that its own `getInfo` produced.
      */
     rotateOnSettle?: string;
@@ -169,7 +169,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
     // The migration pass refreshes the wallet's deprecated-signer cache from the
     // fresh info snapshot (the real Wallet inherits this from ReadonlyWallet).
     const refreshDeprecatedSigners = vi.fn();
-    const settleServerInfoChanges = vi.fn(async () => {
+    const settleOperatorInfoChanges = vi.fn(async () => {
         if (opts.rotateOnSettle) arkServerPublicKey = hex.decode(opts.rotateOnSettle);
     });
 
@@ -179,7 +179,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         },
         arkProvider: { getInfo },
         refreshDeprecatedSigners,
-        settleServerInfoChanges,
+        settleOperatorInfoChanges,
         rotateServerSigner,
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
@@ -212,7 +212,7 @@ function createMigrationMockWallet(opts: MigrationMockOptions) {
         getBoardingUtxosForSigners,
         getInfo,
         refreshDeprecatedSigners,
-        settleServerInfoChanges,
+        settleOperatorInfoChanges,
     };
 }
 
@@ -381,7 +381,7 @@ describe("VtxoManager - deprecated-signer migration", () => {
             wallet,
             rotateServerSigner,
             sendSelectedVtxosToSelf,
-            settleServerInfoChanges,
+            settleOperatorInfoChanges,
             getContractsWithVtxos,
         } = createMigrationMockWallet({
             walletSigner: DEP_A,
@@ -392,8 +392,8 @@ describe("VtxoManager - deprecated-signer migration", () => {
 
         const report = await newManager(wallet).migrateDeprecatedSignerVtxos();
 
-        expect(settleServerInfoChanges).toHaveBeenCalledOnce();
-        expect(settleServerInfoChanges.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(settleOperatorInfoChanges).toHaveBeenCalledOnce();
+        expect(settleOperatorInfoChanges.mock.invocationCallOrder[0]).toBeLessThan(
             getContractsWithVtxos.mock.invocationCallOrder[0],
         );
         expect(rotateServerSigner).not.toHaveBeenCalled();
@@ -403,7 +403,7 @@ describe("VtxoManager - deprecated-signer migration", () => {
     });
 
     it("settles an in-flight rotation before reporting deprecated-signer status", async () => {
-        const { wallet, settleServerInfoChanges, getContractsWithVtxos } =
+        const { wallet, settleOperatorInfoChanges, getContractsWithVtxos } =
             createMigrationMockWallet({
                 walletSigner: DEP_A,
                 rotateOnSettle: ACTIVE,
@@ -413,8 +413,8 @@ describe("VtxoManager - deprecated-signer migration", () => {
 
         const status = await newManager(wallet).getDeprecatedSignerStatus();
 
-        expect(settleServerInfoChanges).toHaveBeenCalledOnce();
-        expect(settleServerInfoChanges.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(settleOperatorInfoChanges).toHaveBeenCalledOnce();
+        expect(settleOperatorInfoChanges.mock.invocationCallOrder[0]).toBeLessThan(
             getContractsWithVtxos.mock.invocationCallOrder[0],
         );
         // Classified from the settled snapshot: DEP_A is deprecated, not the

@@ -12,8 +12,8 @@ import {
 
 const DEFAULT_TTL_MS = 60_000;
 
-type ServerInfoEventSource = Partial<{
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
+type OperatorInfoEventSource = Partial<{
+    onOperatorInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
 }>;
 
 /**
@@ -36,14 +36,14 @@ export class CachingArkProvider implements ArkProvider {
     ) {
         assertNonNegativeMs("ttlMs", ttlMs);
         this.unsubscribe =
-            (inner as ServerInfoEventSource).onServerInfoChanged?.((info) => {
+            (inner as OperatorInfoEventSource).onOperatorInfoChanged?.((info) => {
                 this.cached = info;
                 this.expiresAt = Date.now() + this.ttlMs;
                 this.generation++;
             }) ?? (() => {});
     }
 
-    /** Releases the inner provider's server-info subscription. */
+    /** Releases the inner provider's operator info subscription. */
     dispose(): void {
         this.unsubscribe();
     }
@@ -120,7 +120,14 @@ export class CachingArkProvider implements ArkProvider {
         return this.inner.getPendingTxs(intent);
     }
 
+    onOperatorInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+        return (
+            (this.inner as OperatorInfoEventSource).onOperatorInfoChanged?.(listener) ?? (() => {})
+        );
+    }
+
+    /** @deprecated Use {@link onOperatorInfoChanged}. */
     onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
-        return (this.inner as ServerInfoEventSource).onServerInfoChanged?.(listener) ?? (() => {});
+        return this.onOperatorInfoChanged(listener);
     }
 }

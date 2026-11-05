@@ -316,7 +316,7 @@ export const liveArkadeInfo = async (
         return await wallet.getArkadeInfo({ requireLive });
     } catch (cause) {
         throw new OperatorUnreachable(
-            `the Arkade server info could not be read${requireLive ? " live" : ""}: ${
+            `the operator info could not be read${requireLive ? " live" : ""}: ${
                 cause instanceof Error ? cause.message : String(cause)
             }`,
             { cause },

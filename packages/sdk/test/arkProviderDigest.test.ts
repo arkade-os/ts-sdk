@@ -74,7 +74,7 @@ afterEach(() => {
 // off a mocked fetch proved non-deterministic on CI runners), so the behavior
 // below is what we lock in: digest caching and the DIGEST_MISMATCH detection
 // contract — keyed on arkd's structured ErrorDetails name, not a raw substring.
-describe("RestArkProvider server-info digest negotiation", () => {
+describe("RestArkProvider operator info digest negotiation", () => {
     it("getInfo caches the server digest", async () => {
         const provider = new RestArkProvider("http://ark.test");
         vi.stubGlobal(
@@ -105,7 +105,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         // pinned with the rest of the classifier in ark-info-snapshot.test.ts.
     });
 
-    it("getInfo emits onServerInfoChanged when the digest moved — and only then", async () => {
+    it("getInfo emits onOperatorInfoChanged when the digest moved — and only then", async () => {
         // A read is also a rotation signal (PR #803 review): without this, an
         // info read after the operator rotated advances the cached digest,
         // arkd stops answering DIGEST_MISMATCH, and the one event-driven
@@ -118,7 +118,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         );
 
         const seen: { digest?: string }[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         await provider.getInfo(); // boot read: no previous digest, silent
         expect(seen).toHaveLength(0);
@@ -131,7 +131,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(digestOf(provider)).toBe("d2");
     });
 
-    it("getInfo emits onServerInfoChanged when a refresh returns a changed digest", async () => {
+    it("getInfo emits onOperatorInfoChanged when a refresh returns a changed digest", async () => {
         const ROTATED = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
         const provider = new RestArkProvider("http://ark.test");
         let digest = "d1";
@@ -143,7 +143,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await provider.getInfo();
 
         const seen: { signerPubkey: string; digest: string }[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         digest = "d2";
         signer = ROTATED;
@@ -166,7 +166,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         );
 
         const seen: { signerPubkey: string; digest: string }[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         await provider.getInfo();
         expect(seen).toHaveLength(0);
@@ -187,7 +187,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
             "fetch",
             vi.fn(async () => okInfo("d1")),
         );
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         await provider.getInfo();
         await provider.getInfo();
@@ -195,7 +195,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         expect(seen).toHaveLength(0);
     });
 
-    it("on DIGEST_MISMATCH refreshes + emits onServerInfoChanged + throws (no silent retry)", async () => {
+    it("on DIGEST_MISMATCH refreshes + emits onOperatorInfoChanged + throws (no silent retry)", async () => {
         const provider = new RestArkProvider("http://ark.test");
         let submitAttempts = 0;
         vi.stubGlobal(
@@ -209,7 +209,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await provider.getInfo();
 
         const seen: { signerPubkey: string }[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         // Mirrors NArk #131: the SDK throws rather than silently retrying a
         // request that was built against the now-stale server config.
@@ -237,7 +237,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await provider.getInfo();
 
         const seen: unknown[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         let caught: unknown;
         try {
@@ -269,7 +269,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
         await provider.getInfo();
 
         const seen: unknown[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         await expect(provider.submitTx("rawtx", [])).rejects.toThrow();
         expect(seen).toHaveLength(0);
@@ -289,7 +289,7 @@ describe("RestArkProvider server-info digest negotiation", () => {
 
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const seen: unknown[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         let caught: unknown;
         try {

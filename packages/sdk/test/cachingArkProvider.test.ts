@@ -34,7 +34,7 @@ function fakeInner(getInfo: () => Promise<ArkadeInfo>) {
     const listeners = new Set<(info: ArkadeInfo) => void>();
     return {
         getInfo,
-        onServerInfoChanged: (listener: (info: ArkadeInfo) => void) => {
+        onOperatorInfoChanged: (listener: (info: ArkadeInfo) => void) => {
             listeners.add(listener);
             return () => listeners.delete(listener);
         },
@@ -52,7 +52,7 @@ describe("CachingArkProvider", () => {
         "rejects invalid TTL %s before subscribing",
         (ttl) => {
             const inner = new RestArkProvider("https://example.com");
-            const subscribe = vi.spyOn(inner, "onServerInfoChanged");
+            const subscribe = vi.spyOn(inner, "onOperatorInfoChanged");
             expect(() => new CachingArkProvider(inner, ttl)).toThrow(
                 "ttlMs must be a non-negative safe integer",
             );
@@ -184,7 +184,7 @@ describe("CachingArkProvider", () => {
         expect((await provider.getInfo()).digest).toBe("d1");
     });
 
-    it("disposes cleanly when the inner provider emits no server-info events", () => {
+    it("disposes cleanly when the inner provider emits no operator info events", () => {
         const provider = new CachingArkProvider({
             getInfo: async () => fakeInfo("d1"),
         } as unknown as ArkProvider);
@@ -204,7 +204,7 @@ describe("CachingArkProvider", () => {
         await provider.getInfo();
 
         const seen: ArkadeInfo[] = [];
-        provider.onServerInfoChanged((info) => seen.push(info));
+        provider.onOperatorInfoChanged((info) => seen.push(info));
 
         digest = "d2";
         signerPubkey = ROTATED;

@@ -147,7 +147,7 @@ import { isRetryableProviderError } from "../providers/availability";
 import {
     resolveArkInfo,
     saveValidatedArkInfoSnapshot,
-    type ServerInfoSource,
+    type OperatorInfoSource,
 } from "./arkInfoSnapshot";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -694,7 +694,7 @@ export class ArkadeCashOperatorMismatchError extends Error {
 }
 
 /**
- * Freshness of provider-backed sync (server-info source + indexer-sync health). Balances/VTXOs
+ * Freshness of provider-backed sync (operator info source + indexer-sync health). Balances/VTXOs
  * are always served from the repository regardless. `syncing` says a provider sync is in flight
  * right now; optional so adding it breaks no implementer, {@link ReadonlyWallet} always sets it.
  */
@@ -770,35 +770,40 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Whether the LATEST server-info resolution was live or fell back to the cached snapshot.
      * Updated on every {@link getArkadeInfo} read so recovery (or a fresh fallback) is reflected.
      */
-    protected _serverInfoSource: ServerInfoSource = "live";
+    protected _operatorInfoSource: OperatorInfoSource = "live";
 
     /**
      * Epoch-ms of the last live operator contact, or the cached snapshot's `savedAt` when the
      * latest resolution fell back.
      */
-    protected _serverInfoLastOnlineAt?: number;
+    protected _operatorInfoLastOnlineAt?: number;
 
-    /** @see {@link _serverInfoSource} */
-    get serverInfoSource(): ServerInfoSource {
-        return this._serverInfoSource;
+    /** @see {@link _operatorInfoSource} */
+    get operatorInfoSource(): OperatorInfoSource {
+        return this._operatorInfoSource;
+    }
+
+    /** @deprecated Use {@link operatorInfoSource}. */
+    get serverInfoSource(): OperatorInfoSource {
+        return this.operatorInfoSource;
     }
 
     /**
      * Composed provider-connection freshness: degraded on `arkade` (`cache`) when the latest
-     * server-info resolution fell back, else degraded on `indexer` (`repository`) when an
+     * operator info resolution fell back, else degraded on `indexer` (`repository`) when an
      * initialized contract manager has, else online. Never forces a `ContractManager` to
      * construct, so it is safe for readonly callers.
      */
     getProviderConnectionState(): ProviderConnectionState {
         const syncing = this._contractManager?.getSyncState().syncing ?? false;
-        if (this._serverInfoSource === "cache") {
+        if (this._operatorInfoSource === "cache") {
             return {
                 mode: "degraded",
                 syncing,
                 source: "cache",
                 provider: "arkade",
-                reason: "constructed from cached server-info; operator was unreachable at boot",
-                lastOnlineAt: this._serverInfoLastOnlineAt,
+                reason: "constructed from cached operator info; operator was unreachable at boot",
+                lastOnlineAt: this._operatorInfoLastOnlineAt,
             };
         }
         const sync = this._contractManager?.getSyncState();
@@ -809,14 +814,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 source: "repository",
                 provider: "indexer",
                 reason: sync.reason,
-                lastOnlineAt: sync.lastSyncedAt ?? this._serverInfoLastOnlineAt,
+                lastOnlineAt: sync.lastSyncedAt ?? this._operatorInfoLastOnlineAt,
             };
         }
         return {
             mode: "online",
             syncing,
             source: "live",
-            lastOnlineAt: sync?.lastSyncedAt ?? this._serverInfoLastOnlineAt ?? 0,
+            lastOnlineAt: sync?.lastSyncedAt ?? this._operatorInfoLastOnlineAt ?? 0,
         };
     }
 
@@ -881,7 +886,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected _deprecatedSigners: Map<string, bigint> = new Map();
 
     /**
-     * Refresh the cached deprecated-signer set from server info; feeds
+     * Refresh the cached deprecated-signer set from operator info; feeds
      * {@link pendingRecoveryOutpoints}. Lenient: a malformed entry is skipped, never fatal.
      */
     refreshDeprecatedSigners(info: {
@@ -937,14 +942,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Server info for the connected Arkade server: live wins, a retryable failure falls back to
+     * Operator info for the connected operator: live wins, a retryable failure falls back to
      * the boot snapshot, a terminal one propagates. Live because `signerPubkey`,
      * `checkpointTapscript` and `fees` move on rotation, and a covenant built against a
      * superseded signer is unspendable.
      *
      * @remarks Reading does NOT re-pin the wallet ({@link arkServerPublicKey}, {@link dustAmount},
      * tapscripts), so inside a rotation window this can report epoch N+1 while the wallet spends
-     * on N; the provider's `onServerInfoChanged` closes the window. Pass `{ requireLive: true }`
+     * on N; the provider's `onOperatorInfoChanged` closes the window. Pass `{ requireLive: true }`
      * before binding the answer into a covenant to fail closed instead of getting the snapshot.
      *
      * @returns The Arkade server's info
@@ -957,11 +962,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             opts,
         );
         // Track the LATEST resolution, which also makes fail-closed expressible: read, then check.
-        this._serverInfoSource = source;
+        this._operatorInfoSource = source;
         if (source === "live") {
-            this._serverInfoLastOnlineAt = Date.now();
+            this._operatorInfoLastOnlineAt = Date.now();
         } else if (lastOnlineAt !== undefined) {
-            this._serverInfoLastOnlineAt = lastOnlineAt;
+            this._operatorInfoLastOnlineAt = lastOnlineAt;
         }
         return info;
     }
@@ -1040,7 +1045,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider = new RestIndexerProvider(derived ?? DEFAULT_ARKADE_SERVER_URL);
         }
 
-        // Repositories BEFORE the first server-info fetch, so boot can fall back to the cached
+        // Repositories BEFORE the first operator info fetch, so boot can fall back to the cached
         // snapshot when the operator is unreachable.
         const walletRepository =
             config.storage?.walletRepository ?? new IndexedDBWalletRepository();
@@ -1048,7 +1053,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractRepository =
             config.storage?.contractRepository ?? new IndexedDBContractRepository();
 
-        // Independent of server info, so its round trip overlaps that one instead of following it.
+        // Independent of operator info, so its round trip overlaps that one instead of following it.
         const delegatePubKeyPromise = config.delegateProvider
             ?.getDelegateInfo()
             .then((info) => toXOnly(hex.decode(info.pubkey), "delegate key"))
@@ -1058,8 +1063,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // (saveValidatedArkInfoSnapshot in create()), so a bad live response can't poison it.
         const {
             info,
-            source: serverInfoSource,
-            lastOnlineAt: serverInfoLastOnlineAt,
+            source: operatorInfoSource,
+            lastOnlineAt: operatorInfoLastOnlineAt,
         } = await resolveArkInfo(arkProvider, walletRepository);
 
         // `info` reused, so `getInfo` is fetched once and the network gate also applies to a cached
@@ -1165,8 +1170,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
-            serverInfoSource,
-            serverInfoLastOnlineAt,
+            operatorInfoSource,
+            operatorInfoLastOnlineAt,
             delegateProvider: config.delegateProvider,
             walletContractTimelocks,
         };
@@ -1213,15 +1218,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet.virtualTxRepository = config.storage?.virtualTxRepository;
         wallet.exitDataCapture = config.storage?.exitDataCapture;
-        wallet._serverInfoSource = setup.serverInfoSource;
+        wallet._operatorInfoSource = setup.operatorInfoSource;
         // Construction validated the live response (network, signer, address
         // params); only now is it safe to refresh the cached snapshot.
-        if (setup.serverInfoSource === "live") {
+        if (setup.operatorInfoSource === "live") {
             const now = Date.now();
             await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
-            wallet._serverInfoLastOnlineAt = now;
+            wallet._operatorInfoLastOnlineAt = now;
         } else {
-            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
+            wallet._operatorInfoLastOnlineAt = setup.operatorInfoLastOnlineAt;
         }
         wallet.refreshDeprecatedSigners(setup.info);
         return wallet;
@@ -2419,21 +2424,21 @@ export class Wallet
      */
     private _receiveRotator?: WalletReceiveRotator;
 
-    /** Unsubscribe for `onServerInfoChanged` (mid-session signer rotation). */
-    private _serverInfoUnsub?: () => void;
+    /** Unsubscribe for `onOperatorInfoChanged` (mid-session signer rotation). */
+    private _operatorInfoUnsub?: () => void;
 
     /**
-     * Tail of the serialized {@link handleServerInfoChanged} chain; {@link dispose} awaits it so an
+     * Tail of the serialized {@link handleOperatorInfoChanged} chain; {@link dispose} awaits it so an
      * in-flight rotation settles before the contract manager is torn down.
      */
-    private _serverInfoInFlight: Promise<void> = Promise.resolve();
+    private _operatorInfoInFlight: Promise<void> = Promise.resolve();
 
     /**
-     * React to a mid-session server-info change (`DIGEST_MISMATCH`): refresh deprecated signers
+     * React to a mid-session operator info change (`DIGEST_MISMATCH`): refresh deprecated signers
      * first so boarding watch widens immediately, then rotate via {@link rotateServerSigner} only
      * if the active signer changed. Old-signer rows stay active. Never throws into the emit loop.
      */
-    private async handleServerInfoChanged(info: {
+    private async handleOperatorInfoChanged(info: {
         signerPubkey: string;
         checkpointTapscript: string;
         // without cutoffDate a past-cutoff signer reads as DUE_NOW
@@ -2457,16 +2462,16 @@ export class Wallet
     }
 
     /**
-     * Await an `onServerInfoChanged` handler still applying a rotation. {@link rotateServerSigner}
+     * Await an `onOperatorInfoChanged` handler still applying a rotation. {@link rotateServerSigner}
      * persists the new signer's rows *before* committing the tapscripts, so a path that refreshes
-     * server info then reads signer-derived state must drain first or it reads torn state and
+     * operator info then reads signer-derived state must drain first or it reads torn state and
      * races the handler. Resolves once idle; handler rejections are swallowed (already logged).
      *
      * @internal Invoked by {@link dispose} and the {@link VtxoManager} migration
      * pass; not part of the stable public API.
      */
-    async settleServerInfoChanges(): Promise<void> {
-        await this._serverInfoInFlight?.catch(() => undefined);
+    async settleOperatorInfoChanges(): Promise<void> {
+        await this._operatorInfoInFlight?.catch(() => undefined);
     }
 
     private _receiveRotatorInstalled = false;
@@ -3213,7 +3218,7 @@ export class Wallet
         const provider = this._hdProvider;
         const hd = provider !== undefined;
 
-        // Manager init, the static identity descriptor, and server info do not use each other.
+        // Manager init, the static identity descriptor, and operator info do not use each other.
         const [manager, staticDescriptor, arkInfo] = await Promise.all([
             this.getContractManager(),
             hd ? undefined : identityDescriptor(this.identity),
@@ -3433,9 +3438,9 @@ export class Wallet
         // _runRestore never calls dispose()).
         await this._restoreInFlight?.catch(() => undefined);
 
-        this._serverInfoUnsub?.();
-        this._serverInfoUnsub = undefined;
-        await this.settleServerInfoChanges();
+        this._operatorInfoUnsub?.();
+        this._operatorInfoUnsub = undefined;
+        await this.settleOperatorInfoChanges();
 
         // Rotator first, so no late `vtxo_received` queues work and in-flight `createContract`
         // finishes before the contract manager goes. Its failure is rethrown at the end so the
@@ -3579,21 +3584,21 @@ export class Wallet
             config.oneShotSubmit,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
-        wallet._serverInfoSource = setup.serverInfoSource;
+        wallet._operatorInfoSource = setup.operatorInfoSource;
         // Construction validated the response, so it is now safe to refresh the cached snapshot.
-        if (setup.serverInfoSource === "live") {
+        if (setup.operatorInfoSource === "live") {
             const now = Date.now();
             await saveValidatedArkInfoSnapshot(setup.walletRepository, setup.info, now);
-            wallet._serverInfoLastOnlineAt = now;
+            wallet._operatorInfoLastOnlineAt = now;
         } else {
-            wallet._serverInfoLastOnlineAt = setup.serverInfoLastOnlineAt;
+            wallet._operatorInfoLastOnlineAt = setup.operatorInfoLastOnlineAt;
         }
         wallet.refreshDeprecatedSigners(setup.info);
         // Re-derive signer-dependent state when the provider refetches info on DIGEST_MISMATCH.
         // Duck-typed: only RestArkProvider implements it.
         {
             const ap = setup.arkProvider as Partial<{
-                onServerInfoChanged(
+                onOperatorInfoChanged(
                     cb: (info: {
                         signerPubkey: string;
                         checkpointTapscript: string;
@@ -3601,10 +3606,10 @@ export class Wallet
                     }) => void,
                 ): () => void;
             }>;
-            if (typeof ap.onServerInfoChanged === "function") {
-                wallet._serverInfoUnsub = ap.onServerInfoChanged((info) => {
-                    wallet._serverInfoInFlight = wallet._serverInfoInFlight
-                        .then(() => wallet.handleServerInfoChanged(info))
+            if (typeof ap.onOperatorInfoChanged === "function") {
+                wallet._operatorInfoUnsub = ap.onOperatorInfoChanged((info) => {
+                    wallet._operatorInfoInFlight = wallet._operatorInfoInFlight
+                        .then(() => wallet.handleOperatorInfoChanged(info))
                         .catch(() => undefined);
                 });
             }

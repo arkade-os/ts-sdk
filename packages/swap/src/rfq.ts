@@ -1013,7 +1013,7 @@ export function lightningSendContract(params: {
     operatorPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info; all three unilateral
+    /** From {@link unilateralClaimDelay} over the trader's OWN operator info; all three unilateral
      * tiers derive from it. */
     claimDelay: number;
     /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
@@ -2037,7 +2037,7 @@ export function lightningReceiveContract(params: {
     operatorPubkey: Uint8Array;
     /** `sha256(P)`, hex — the trader's OWN preimage hash. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info. */
+    /** From {@link unilateralClaimDelay} over the trader's OWN operator info. */
     claimDelay: number;
     /** Emulator x-only key — see {@link requestLightningSend}'s parameter. */
     emulatorPubkey: Uint8Array;

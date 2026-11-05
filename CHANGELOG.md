@@ -127,6 +127,15 @@ style and have not been backfilled.
   Callers on rc.26–28 must check `type === "event"` before reading `tx`.
   `getSubscription` still skips heartbeats.
   
+- **Operator info replaces server info in SDK names.**
+  `RestArkProvider.onServerInfoChanged`, `CachingArkProvider.onServerInfoChanged`,
+  `Wallet.serverInfoSource` and the `ServerInfoSource` type become
+  `onOperatorInfoChanged`, `operatorInfoSource` and `OperatorInfoSource`. The old
+  names stay as deprecated aliases. The wallet and `CachingArkProvider` now
+  subscribe through `onOperatorInfoChanged`, so a custom provider that emits
+  these events must implement the new name. SDK error text now says "operator
+  info".
+
 - **`toOffchainInputFeeParams` is exported.** It maps a VTXO to the
   `OffchainInput` fields `Estimator.evalOffchainInput` reads: amount, the
   `vtxo`/`recoverable` type, birth and expiry. Every fee-aware settle in the

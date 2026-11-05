@@ -27,8 +27,8 @@ import { rateGate } from "./rateGate";
  * Thrown by {@link RestArkProvider} when arkd rejects a request with
  * `DIGEST_MISMATCH` — the client's cached server info was stale (e.g. an
  * operator signer rotation). By the time this surfaces the provider has already
- * refreshed its info and fired `onServerInfoChanged`; the caller should rebuild
- * the request under the fresh server info and retry. Mirrors NArk's
+ * refreshed its info and fired `onOperatorInfoChanged`; the caller should rebuild
+ * the request under the fresh operator info and retry. Mirrors NArk's
  * `DigestMismatchException` (dotnet-sdk #131): the SDK never silently retries.
  */
 export class DigestMismatchError extends Error {
@@ -378,43 +378,48 @@ export class RestArkProvider implements ArkProvider {
     }
 
     /**
-     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
+     * Last operator info digest seen (from {@link getInfo}). Sent as `X-Digest`
      * on outgoing requests so arkd can reject a client whose cached info is
      * stale. Empty until the first {@link getInfo}.
      */
     private _digest = "";
-    private _hasServerInfo = false;
+    private _hasOperatorInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
-    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
+    private _operatorInfoListeners = new Set<(info: ArkadeInfo) => void>();
 
     /**
-     * Subscribe to server-info changes. Fired after a stale-info
+     * Subscribe to operator info changes. Fired after a stale-info
      * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
      * Returns an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
-        this._serverInfoListeners.add(listener);
+    onOperatorInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+        this._operatorInfoListeners.add(listener);
         return () => {
-            this._serverInfoListeners.delete(listener);
+            this._operatorInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkadeInfo): void {
-        for (const listener of this._serverInfoListeners) {
+    /** @deprecated Use {@link onOperatorInfoChanged}. */
+    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+        return this.onOperatorInfoChanged(listener);
+    }
+
+    private emitOperatorInfoChanged(info: ArkadeInfo): void {
+        for (const listener of this._operatorInfoListeners) {
             try {
                 listener(info);
             } catch (e) {
-                console.warn("onServerInfoChanged listener threw", e);
+                console.warn("onOperatorInfoChanged listener threw", e);
             }
         }
     }
 
     /**
-     * `fetch` wrapper for arkd requests that participates in server-info digest
+     * `fetch` wrapper for arkd requests that participates in operator info digest
      * negotiation. Sends the cached `X-Digest`; when arkd rejects a request with
      * `DIGEST_MISMATCH`, refreshes {@link getInfo} (updating the digest), fires
-     * {@link onServerInfoChanged}, and THROWS {@link DigestMismatchError} — it
+     * {@link onOperatorInfoChanged}, and THROWS {@link DigestMismatchError} — it
      * never silently retries, since the in-flight request was built against the
      * now-stale config. Dormant until arkd returns the error — then it is the
      * instant, event-driven signer-rotation trigger. {@link getInfo} itself never
@@ -474,10 +479,10 @@ export class RestArkProvider implements ArkProvider {
         if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
-        // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
+        // (dotnet-sdk #131): clear the digest, refetch info, fire onOperatorInfoChanged
         // so the wallet re-derives signer-dependent state, then THROW. The SDK does
         // NOT silently retry — the in-flight request was built against the old config,
-        // so the caller must rebuild and retry it under the refreshed server info.
+        // so the caller must rebuild and retry it under the refreshed operator info.
         this._digest = "";
         this._suppressNextGetInfoChangeEmit = true;
         let info: ArkadeInfo;
@@ -486,10 +491,10 @@ export class RestArkProvider implements ArkProvider {
         } finally {
             this._suppressNextGetInfoChangeEmit = false;
         }
-        this.emitServerInfoChanged(info);
+        this.emitOperatorInfoChanged(info);
         throw new DigestMismatchError(
-            "Arkade server reported a configuration digest mismatch; server info was " +
-                "refreshed. Rebuild and retry the request under the new server info.",
+            "The operator reported a configuration digest mismatch; operator info was " +
+                "refreshed. Rebuild and retry the request under the new operator info.",
         );
     }
 
@@ -531,13 +536,13 @@ export class RestArkProvider implements ArkProvider {
             // A 429 or 5xx means the operator is up but temporarily unable to
             // serve — a retryable availability failure, not a config/auth error.
             // Surface it as a typed unavailable error so wallet boot can fall
-            // back to a cached server-info snapshot. Pass the body so a 5xx that
+            // back to a cached operator info snapshot. Pass the body so a 5xx that
             // actually carries a structured arkd error (grpc-gateway maps gRPC
             // INTERNAL -> HTTP 500) stays terminal instead. `fetch` transport
             // failures (server unreachable) are already surfaced as FetchError
             // upstream.
             throwIfHttpUnavailable(response, "arkade", errorText);
-            handleError(errorText, `Failed to get server info: ${response.statusText}`);
+            handleError(errorText, `Failed to get operator info: ${response.statusText}`);
         }
         const fromServer = await response.json();
         const info: ArkadeInfo = {
@@ -588,18 +593,18 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
         };
         const previousDigest = this._digest;
-        const hadServerInfo = this._hasServerInfo;
+        const hadOperatorInfo = this._hasOperatorInfo;
         this._digest = info.digest;
-        this._hasServerInfo = true;
-        // A refresh can observe server-info changes before any digest-gated
-        // request fails. `_hasServerInfo` makes an empty previous digest count
+        this._hasOperatorInfo = true;
+        // A refresh can observe operator info changes before any digest-gated
+        // request fails. `_hasOperatorInfo` makes an empty previous digest count
         // as a real value; `DIGEST_MISMATCH` emits separately after its refetch.
         if (
-            hadServerInfo &&
+            hadOperatorInfo &&
             previousDigest !== info.digest &&
             !this._suppressNextGetInfoChangeEmit
         ) {
-            this.emitServerInfoChanged(info);
+            this.emitOperatorInfoChanged(info);
         }
         return info;
     }
