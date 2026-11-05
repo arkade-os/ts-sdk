@@ -349,6 +349,9 @@ style and have not been backfilled.
   which `findLockupVtxos` fills from the contract manager's rows, and both
   spends now declare every input's assets onto their one aggregate output.
 
+- **`scriptFromArkAddress` is renamed `pkScriptFromAddress`.** The helper is
+  internal, so nothing public changes.
+
 - **Docs: stale API comments.** The `OnchainWallet` and `nodeSwapRepository`
   examples passed `'mainnet'`, which is not a `NetworkName` (`'bitcoin'` is),
   and `StorageConfig.virtualTxRepository` was still described as inert although

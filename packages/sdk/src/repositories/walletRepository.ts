@@ -8,7 +8,7 @@ import {
     type PageRequest,
     type PageResult,
 } from "./page";
-import { scriptFromArkAddress } from "./scriptFromAddress";
+import { pkScriptFromAddress } from "./scriptFromAddress";
 import { isVtxoSpent } from "../wallet/vtxo";
 
 export interface TransactionHistoryPageFilter {
@@ -259,7 +259,7 @@ export function unspentScriptVtxos(rows: StoredVtxo[], copies: StoredVtxo[]): St
 function shouldReplaceScriptVtxo(existing: StoredVtxo, incoming: StoredVtxo): boolean {
     const canonical = (row: StoredVtxo) => {
         try {
-            return scriptFromArkAddress(row.address) === row.vtxo.script;
+            return pkScriptFromAddress(row.address) === row.vtxo.script;
         } catch {
             return false;
         }

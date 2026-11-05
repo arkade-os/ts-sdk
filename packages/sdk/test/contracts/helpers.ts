@@ -74,7 +74,7 @@ export const testDefaultScript = new DefaultVtxo.Script({
 export const TEST_DEFAULT_SCRIPT = hex.encode(testDefaultScript.pkScript);
 // Real Arkade address whose pkScript decodes to TEST_DEFAULT_SCRIPT. Use this
 // as the wallet's primary address in tests so script-aware code paths can
-// derive a script via scriptFromArkAddress and match VTXOs by default script.
+// derive a script via pkScriptFromAddress and match VTXOs by default script.
 export const TEST_DEFAULT_ARK_ADDRESS = testDefaultScript
     .address("ark", TEST_SERVER_PUB_KEY)
     .encode();

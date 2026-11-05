@@ -2817,7 +2817,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
     it("GET_VTXOS fails fast when the wallet's primary address can't be decoded", async () => {
         setupHandler();
         // Override the readonly wallet to return a malformed address that
-        // scriptFromArkAddress cannot decode. Before the fix this silently
+        // pkScriptFromAddress cannot decode. Before the fix this silently
         // dropped the wallet's primary bucket and zeroed the visible balance.
         (updater as any).readonlyWallet.getAddress = vi
             .fn()

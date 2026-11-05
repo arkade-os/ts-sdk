@@ -1,4 +1,4 @@
-import { scriptFromArkAddress } from "../scriptFromAddress";
+import { pkScriptFromAddress } from "../scriptFromAddress";
 import { legacyFactsOfRow } from "../legacyVtxoFacts";
 import { isVtxoSpent } from "../../wallet/vtxo";
 import type { VirtualCoin } from "../../wallet";
@@ -276,7 +276,7 @@ export function backfillVtxoIndexFields(transaction: IDBTransaction): void {
                 const legacy = legacyFactsOfRow(value);
                 const next = {
                     ...value,
-                    script: value.script || scriptFromArkAddress(value.address),
+                    script: value.script || pkScriptFromAddress(value.address),
                     ...unspentFlag({ ...value, isSpent: value.isSpent ?? legacy?.isSpent }),
                 };
                 if (next.script !== value.script || next.unspent !== value.unspent) {

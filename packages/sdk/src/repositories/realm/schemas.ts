@@ -9,7 +9,7 @@
  * ObjectSchema shape.
  */
 
-import { scriptFromArkAddress } from "../scriptFromAddress";
+import { pkScriptFromAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 
 export const ArkVtxoSchema = {
@@ -254,7 +254,7 @@ export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
     for (let i = 0; i < newVtxos.length; i++) {
         const newVtxo = newVtxos[i];
         if (!newVtxo.script) {
-            newVtxo.script = scriptFromArkAddress(newVtxo.address);
+            newVtxo.script = pkScriptFromAddress(newVtxo.address);
         }
 
         const facts = legacyVtxoFacts(legacyByPk.get(newVtxo.pk));

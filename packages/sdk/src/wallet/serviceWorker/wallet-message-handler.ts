@@ -83,7 +83,7 @@ import {
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
-import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { pkScriptFromAddress } from "../../repositories/scriptFromAddress";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -2112,7 +2112,7 @@ export class WalletMessageHandler
                 }
                 let walletScript: string | undefined;
                 try {
-                    walletScript = scriptFromArkAddress(address);
+                    walletScript = pkScriptFromAddress(address);
                 } catch {
                     walletScript = undefined;
                 }
@@ -2506,7 +2506,7 @@ export class WalletMessageHandler
         // visible balance.
         let walletScript: string;
         try {
-            walletScript = scriptFromArkAddress(walletAddress);
+            walletScript = pkScriptFromAddress(walletAddress);
         } catch (e) {
             throw new Error(
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,

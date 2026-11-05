@@ -36,7 +36,7 @@ import {
     STORE_WALLET_STATE,
     unspentFlag,
 } from "./schema";
-import { scriptFromArkAddress } from "../scriptFromAddress";
+import { pkScriptFromAddress } from "../scriptFromAddress";
 import { legacyFactsOfRow } from "../legacyVtxoFacts";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 import { checkSaveVtxosForScript } from "../../contracts/vtxoOwnership";
@@ -457,7 +457,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 // swept row comes back `isSwept: false`, spendable, until the first indexer sync.
 function deserializeVtxoWithBackfill({ unspent: _unspent, ...o }: RawVtxoRow): ExtendedVirtualCoin {
     if (!o.script) {
-        o = { ...o, script: scriptFromArkAddress(o.address) };
+        o = { ...o, script: pkScriptFromAddress(o.address) };
     }
     const facts = legacyFactsOfRow(o);
     // Blanks only: a row that carries its own values keeps them, the projection being lossier.

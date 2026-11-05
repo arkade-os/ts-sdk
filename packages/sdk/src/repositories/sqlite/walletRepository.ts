@@ -25,7 +25,7 @@ import {
     SerializedTapLeaf,
     createdAtToIso,
 } from "../serialization";
-import { scriptFromArkAddress } from "../scriptFromAddress";
+import { pkScriptFromAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 import { SQLExecutor } from "./types";
 import { getSerializedExecutor, runInTransaction } from "./transaction";
@@ -256,7 +256,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             for (const row of nullRows) {
                 await tx.run(
                     `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
-                    [scriptFromArkAddress(row.address), row.txid, row.vout],
+                    [pkScriptFromAddress(row.address), row.txid, row.vout],
                 );
             }
 
@@ -782,7 +782,7 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
         // Post-migration every row has `script`, but the backfill is
         // idempotent: derive from `address` if the legacy column is still
         // null (e.g. the migration hasn't run yet on this handle).
-        script: row.script ?? scriptFromArkAddress(row.address),
+        script: row.script ?? pkScriptFromAddress(row.address),
     };
 
     return deserializeVtxo(serialized);
