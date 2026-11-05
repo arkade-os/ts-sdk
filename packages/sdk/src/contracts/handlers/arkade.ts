@@ -220,7 +220,7 @@ export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, Arkade
             script.compiled[0].tapLeafScript;
         return {
             forfeitTapLeafScript: leaf,
-            intentTapLeafScript: leaf,
+            proofTapLeafScript: leaf,
             tapTree: script.encode(),
         };
     },

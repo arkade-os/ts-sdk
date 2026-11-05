@@ -48,7 +48,7 @@ describe("default delegation schedule", () => {
             value: 1_000_000,
             tapTree: testDelegateScript.encode(),
             forfeitTapLeafScript: testDelegateScript.forfeit(),
-            intentTapLeafScript: testDelegateScript.delegate(),
+            proofTapLeafScript: testDelegateScript.delegate(),
             expiresAt: new Date(expiry),
         });
 

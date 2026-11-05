@@ -372,16 +372,18 @@ export function isDiscoverable(
 /**
  * The per-contract tapscript annotation stamped onto every VTXO locked to a
  * contract (see `extendVirtualCoinForContract`): the leaf used to co-sign
- * forfeits, the leaf committed in intent proofs, and the encoded taproot tree.
+ * forfeits, the leaf committed in proofs, and the encoded taproot tree.
  */
 export interface DerivedContractTapscripts {
     forfeitTapLeafScript: TapLeafScript;
-    intentTapLeafScript: TapLeafScript;
+    proofTapLeafScript: TapLeafScript;
+    /** @deprecated Use {@link proofTapLeafScript}. */
+    intentTapLeafScript?: TapLeafScript;
     tapTree: Bytes;
 }
 
 /**
- * Optional {@link ContractHandler} capability providing the forfeit/intent tapscripts for VTXO
+ * Optional {@link ContractHandler} capability providing the forfeit/proof tapscripts for VTXO
  * annotation, for scripts without the legacy `forfeit()` (e.g. program-compiled arkade contracts).
  * Must be pure in `(contract.type, contract.script, contract.params)`: `ContractManager` memoizes
  * the result for its lifetime.

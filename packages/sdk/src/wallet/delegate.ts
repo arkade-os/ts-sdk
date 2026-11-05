@@ -476,7 +476,7 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
     return (
         v.tapTree !== undefined &&
         v.forfeitTapLeafScript !== undefined &&
-        v.intentTapLeafScript !== undefined
+        v.proofTapLeafScript !== undefined
     );
 }
 

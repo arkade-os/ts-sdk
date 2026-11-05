@@ -108,7 +108,7 @@ describe("Intent", () => {
                 value: 1000,
                 tapTree: vs.encode(),
                 forfeitTapLeafScript: vs.leaves[0],
-                intentTapLeafScript: vs.leaves[0],
+                proofTapLeafScript: vs.leaves[0],
                 prevTx,
             } as unknown as IntentCoin;
         }

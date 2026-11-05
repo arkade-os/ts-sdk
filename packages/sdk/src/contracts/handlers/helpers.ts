@@ -387,7 +387,7 @@ export function deriveVhtlcTapscripts(script: VhtlcLeaves): DerivedContractTapsc
     const leaf = script.refundWithoutReceiver();
     return {
         forfeitTapLeafScript: leaf,
-        intentTapLeafScript: leaf,
+        proofTapLeafScript: leaf,
         tapTree: script.encode(),
     };
 }

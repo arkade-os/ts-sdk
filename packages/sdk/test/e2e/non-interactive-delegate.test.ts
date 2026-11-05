@@ -132,7 +132,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
                     value: vtxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: vtxo.status,
                     isSpent: vtxo.isSpent,
                 },
