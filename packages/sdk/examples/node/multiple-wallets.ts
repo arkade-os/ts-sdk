@@ -17,7 +17,7 @@ import {
     InMemoryContractRepository,
     EsploraProvider,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
     Ramps,
@@ -53,7 +53,7 @@ function createSQLExecutor(dbPath: string): SQLExecutor {
 }
 
 async function main() {
-    console.log("Starting Ark SDK NodeJS Example...");
+    console.log("Starting Arkade SDK NodeJS Example...");
 
     const bob = SingleKey.fromRandomBytes();
     const alice = SingleKey.fromRandomBytes();
@@ -61,7 +61,7 @@ async function main() {
     // In-memory wallet
     const bobWallet = await Wallet.create({
         identity: bob,
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
         // No background renewal/boarding settlement: the example settles explicitly.
         settlementConfig: false,
@@ -82,7 +82,7 @@ async function main() {
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
         // No background renewal/boarding settlement: the example settles explicitly.
         settlementConfig: false,
@@ -122,8 +122,8 @@ async function main() {
     }
     console.log("[Alice]\tBoarding UTXOs found:", utxos.length);
 
-    // Settle (onboard) into the Ark protocol
-    console.log("[Alice]\tOnboarding into Ark...");
+    // Settle (board) into Arkade
+    console.log("[Alice]\tBoarding into Arkade...");
     const info = await aliceWallet.arkProvider.getInfo();
     const ramps = new Ramps(aliceWallet);
     const txid = await ramps.onboard(info.fees);

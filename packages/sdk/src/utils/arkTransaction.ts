@@ -407,8 +407,8 @@ export function isValidArkAddress(address: string): boolean {
 }
 
 /**
- * Minimal Ark provider surface required to submit and finalize an offchain
- * transaction. Both {@link ArkProvider} implementations satisfy it
+ * Minimal operator provider surface required to submit and finalize an offchain
+ * transaction. Both {@link OperatorProvider} implementations satisfy it
  * structurally, so declaring it here keeps this module free of a provider
  * import (and of the dependency cycle that would create).
  */
@@ -867,7 +867,7 @@ function carriesTapscriptSigs(server: Transaction, userSigned: Transaction): boo
  * is controlled by a single key — the "thin signer" path.
  *
  * Needs no wallet, repository, or contract state: just an identity that can
- * sign, an Ark provider, the inputs (already carrying their spend leaf and tap
+ * sign, an operator provider, the inputs (already carrying their spend leaf and tap
  * tree), the outputs, and the server unroll script. Used by the ArkadeCash sweep
  * to move bearer coins to the receiver's address without spinning up a full
  * background-managed wallet on shared repositories.

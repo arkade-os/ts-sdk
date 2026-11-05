@@ -5,7 +5,7 @@ import { equalBytes } from "@noble/curves/utils.js";
 import { base64 } from "@scure/base";
 import type { Identity } from "../identity";
 import { Transaction } from "../utils/transaction";
-import { craftToSpendTx, OP_RETURN_EMPTY_PKSCRIPT } from "../intent";
+import { craftToSpendTx, OP_RETURN_EMPTY_PKSCRIPT } from "../proof";
 
 const TAG_BIP322 = "BIP0322-signed-message";
 
@@ -15,7 +15,7 @@ const TAG_BIP322 = "BIP0322-signed-message";
  * Supports P2TR (Taproot) signing and verification, P2WPKH verification,
  * and legacy P2PKH verification (Bitcoin Core signmessage format).
  *
- * Reuses the same toSpend/toSign transaction construction as Intent proofs,
+ * Reuses the same toSpend/toSign transaction construction as Proofs,
  * but with the standard BIP-322 tagged hash ("BIP0322-signed-message")
  * instead of the Arkade-specific tag.
  *

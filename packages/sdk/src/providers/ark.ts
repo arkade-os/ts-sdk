@@ -18,13 +18,13 @@ import {
     toProviderUnavailable,
 } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
 /**
- * Thrown by {@link RestArkProvider} when arkd rejects a request with
+ * Thrown by {@link RestOperatorProvider} when arkd rejects a request with
  * `DIGEST_MISMATCH` — the client's cached server info was stale (e.g. an
  * operator signer rotation). By the time this surfaces the provider has already
  * refreshed its info and fired `onServerInfoChanged`; the caller should rebuild
@@ -179,7 +179,7 @@ export type ServiceStatus = Record<string, string>;
  * object every consumer already holds and — in the service-worker model — the
  * only side that has a transport at all; the page has no provider to hang it
  * on. The `CachingClientTransport`-style memo lives at this layer instead, as
- * `CachingArkProvider`.
+ * `CachingOperatorProvider`.
  */
 export interface ArkadeInfo {
     boardingExitDelay: bigint;
@@ -238,14 +238,17 @@ export interface ArkadeInfo {
     vtxoMinAmount: bigint;
 }
 
-/** Signed intent payload sent to the Arkade server. */
-export interface SignedIntent<T extends Intent.Message> {
+/** A signed {@link Proof} and its message, as sent to the operator. */
+export interface SignedProof<T extends Proof.Message> {
     /** Base64-encoded signed proof transaction. */
     proof: string;
 
-    /** Intent message payload associated with the proof. */
+    /** Message the proof commits to. */
     message: T;
 }
+
+/** @deprecated Use {@link SignedProof}. */
+export type SignedIntent<T extends Proof.Message> = SignedProof<T>;
 
 /** Transaction notification emitted by the Arkade server stream. */
 export interface TxNotification {
@@ -280,7 +283,7 @@ export interface SweepTxNotification extends TxNotification {
 }
 
 /**
- * One frame of {@link ArkProvider.getTransactionsStream}. Exactly one arm is
+ * One frame of {@link OperatorProvider.getTransactionsStream}. Exactly one arm is
  * set; an unrecognized frame is dropped rather than yielded.
  */
 export interface TxNotificationEvent {
@@ -289,7 +292,7 @@ export interface TxNotificationEvent {
     sweepTx?: SweepTxNotification;
 }
 
-export interface ArkProvider {
+export interface OperatorProvider {
     /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkadeInfo>;
 
@@ -335,7 +338,7 @@ export interface ArkProvider {
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
-    getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
+    getPendingTxs(intent: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]>;
 }
 
 /**
@@ -357,16 +360,16 @@ function advertisedLimit(fromServer: unknown): bigint | undefined {
 }
 
 /**
- * REST-based Arkade provider implementation.
+ * REST-based operator provider implementation.
  *
  * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.ArkService
  * @example
  * ```typescript
- * const provider = new RestArkProvider('https://arkade.computer');
+ * const provider = new RestOperatorProvider('https://arkade.computer');
  * const info = await provider.getInfo();
  * ```
  */
-export class RestArkProvider implements ArkProvider {
+export class RestOperatorProvider implements OperatorProvider {
     /** Overrides {@link configureEventSource} for this provider's streams. */
     protected readonly eventSource?: EventSourceFactory;
 
@@ -652,7 +655,7 @@ export class RestArkProvider implements ArkProvider {
             {
                 intent: {
                     proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                 },
             },
             (errorText) => `Failed to register intent: ${errorText}`,
@@ -669,7 +672,7 @@ export class RestArkProvider implements ArkProvider {
             {
                 intent: {
                     proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                 },
             },
             (errorText) => `Failed to delete intent: ${errorText}`,
@@ -900,14 +903,14 @@ export class RestArkProvider implements ArkProvider {
         return gen;
     }
 
-    async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
+    async getPendingTxs(intent: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await this.postJson(
             url,
             {
                 intent: {
                     proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                 },
             },
             (errorText) => `Failed to get pending transactions: ${errorText}`,
@@ -1277,3 +1280,10 @@ function handleError(errorText: string, defaultMessage: string): never {
     const arkError = maybeArkError(error);
     throw arkError ?? new Error(defaultMessage);
 }
+
+/** @deprecated Use {@link OperatorProvider}. */
+export type ArkProvider = OperatorProvider;
+/** @deprecated Use {@link RestOperatorProvider}. */
+export const RestArkProvider = RestOperatorProvider;
+/** @deprecated Use {@link RestOperatorProvider}. */
+export type RestArkProvider = RestOperatorProvider;

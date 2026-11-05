@@ -1,5 +1,5 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, OperatorProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -116,15 +116,17 @@ export interface BaseWalletConfig {
     /** Repository-backed storage configuration overrides. Defaults to IndexedDB if unset. */
     storage?: StorageConfig;
     /**
-     * The Arkade deployment, in place of `arkProvider`/`indexerProvider`/`onchainProvider`
+     * The Arkade deployment, in place of `operatorProvider`/`indexerProvider`/`onchainProvider`
      * (combining them throws): `{ network: "bitcoin" }` or `{ operatorUrl }`. With
      * `{ network }`, an operator reporting another network throws.
      *
      * @see ArkadeService
      */
     service?: ArkadeService;
-    /** Optional Arkade provider instance. */
-    arkProvider?: ArkProvider;
+    /** Optional operator provider instance. */
+    operatorProvider?: OperatorProvider;
+    /** @deprecated Use {@link operatorProvider}. */
+    arkProvider?: OperatorProvider;
     /** Optional indexer provider instance. */
     indexerProvider?: IndexerProvider;
     /** Optional onchain provider, or a factory given the operator's network once it is known. */
@@ -145,7 +147,7 @@ export interface BaseWalletConfig {
  * // Provider-based configuration (e.g., for Expo/React Native)
  * const wallet = await ReadonlyWallet.create({
  *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkProvider: new ExpoArkProvider(),
+ *   operatorProvider: new ExpoOperatorProvider(),
  *   indexerProvider: new ExpoIndexerProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
@@ -177,7 +179,7 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  * // Provider-based configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider(),
+ *   operatorProvider: new ExpoOperatorProvider(),
  *   indexerProvider: new ExpoIndexerProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
@@ -185,7 +187,7 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  * // With settlement configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *     boardingUtxoSweep: true,
@@ -972,7 +974,7 @@ export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
  * Submit and finalize a signed Arkade transaction. Only on {@link IWallet}: broadcasting is the
  * one thing a readonly wallet must not do (hence `ReadonlyWallet.arkProvider` is protected).
  */
-export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
+export type ArkadeBroadcaster = Pick<OperatorProvider, "submitTx" | "finalizeTx">;
 
 /**
  * Signing wallet interface: {@link IReadonlyWallet} plus sending, settling and asset operations.

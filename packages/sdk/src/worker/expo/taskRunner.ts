@@ -2,7 +2,7 @@ import type { TaskItem, TaskResult, TaskQueue } from "./taskQueue";
 import type { WalletRepository } from "../../repositories/walletRepository";
 import type { ContractRepository } from "../../repositories/contractRepository";
 import type { IndexerProvider } from "../../providers/indexer";
-import type { ArkProvider } from "../../providers/ark";
+import type { OperatorProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
 import type { Contract } from "../../contracts/types";
 import { getRandomId, extendVirtualCoinForContract } from "../../wallet/utils";
@@ -19,7 +19,7 @@ export interface TaskDependencies {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
     indexerProvider: IndexerProvider;
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     extendVtxo: (vtxo: VirtualCoin, contract: Contract) => ExtendedVirtualCoin;
 }
 
@@ -104,7 +104,7 @@ export interface CreateTaskDependenciesOptions {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
     indexerProvider: IndexerProvider;
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
 }
 
 /**
