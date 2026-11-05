@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { assertTimerMs } from "../../utils/time";
 import type { Transaction } from "@scure/btc-signer";
-import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
+import { Wallet, extractOperatorProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
     ArkadeBroadcaster,
@@ -111,7 +111,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *     arkProvider: new RestArkProvider(),
+ *     operatorProvider: new RestOperatorProvider(),
  *     onchainProvider: new EsploraProvider(),
  *     storage: { ... },
  *     background: {
@@ -187,7 +187,7 @@ export class ExpoWallet
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl = extractArkProviderUrl(wallet.arkProvider);
+            const arkServerUrl = extractOperatorProviderUrl(wallet.arkProvider);
 
             if (typeof arkServerUrl === "string" && arkServerUrl.length > 0) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;
@@ -322,6 +322,10 @@ export class ExpoWallet
 
     getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
         return this.wallet.getArkadeBroadcaster();
+    }
+
+    get oneShotSubmit(): boolean {
+        return this.wallet.oneShotSubmit;
     }
 
     getBalance(): Promise<WalletBalance> {

@@ -1,7 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import type { Transaction } from "@scure/btc-signer";
 import type { EmulatorProvider } from "../providers/emulator";
-import { ArkadeInfo, ArkProvider, Output, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, OperatorProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -9,6 +9,7 @@ import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { SettlementConfig } from "./vtxo-manager";
 import { GetVtxosOptions, IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import type { NetworkName } from "../networks";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
     ContractRepository,
@@ -34,6 +35,7 @@ export {
     type ActivityResolver,
 } from "./activity";
 import { DelegateProvider } from "../providers/delegate";
+import type { ArkadeService } from "../arkade/service";
 
 /**
  * Wallet receive-address strategy.
@@ -113,20 +115,24 @@ export interface BaseWalletConfig {
      * the default relaxes a fund-safety bound; intended for local testing.
      */
     minBatchExpirySeconds?: bigint;
-    /**
-     * Minimum accepted checkpoint exit delay decoded from `ArkadeInfo.checkpointTapscript`, as
-     * wall-clock seconds. Defaults per network (`defaultCheckpointExitDelayPolicy`, which already
-     * accepts hosted signet/mutinynet). Lowering it relaxes a fund-safety bound; for local testing.
-     */
-    minCheckpointExitDelaySeconds?: bigint;
     /** Repository-backed storage configuration overrides. Defaults to IndexedDB if unset. */
     storage?: StorageConfig;
-    /** Optional Arkade provider instance. */
-    arkProvider?: ArkProvider;
+    /**
+     * The Arkade deployment, in place of `operatorProvider`/`indexerProvider`/`onchainProvider`
+     * (combining them throws): `{ network: "bitcoin" }` or `{ operatorUrl }`. With
+     * `{ network }`, an operator reporting another network throws.
+     *
+     * @see ArkadeService
+     */
+    service?: ArkadeService;
+    /** Optional operator provider instance. */
+    operatorProvider?: OperatorProvider;
+    /** @deprecated Use {@link operatorProvider}. */
+    arkProvider?: OperatorProvider;
     /** Optional indexer provider instance. */
     indexerProvider?: IndexerProvider;
-    /** Optional onchain provider instance. */
-    onchainProvider?: OnchainProvider;
+    /** Optional onchain provider, or a factory given the operator's network once it is known. */
+    onchainProvider?: OnchainProvider | ((network: NetworkName) => OnchainProvider);
     /** Optional delegation service instance. */
     delegateProvider?: DelegateProvider;
 }
@@ -143,7 +149,7 @@ export interface BaseWalletConfig {
  * // Provider-based configuration (e.g., for Expo/React Native)
  * const wallet = await ReadonlyWallet.create({
  *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
- *   arkProvider: new ExpoArkProvider(),
+ *   operatorProvider: new ExpoOperatorProvider(),
  *   indexerProvider: new ExpoIndexerProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
@@ -175,7 +181,7 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  * // Provider-based configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider(),
+ *   operatorProvider: new ExpoOperatorProvider(),
  *   indexerProvider: new ExpoIndexerProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
@@ -183,7 +189,7 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  * // With settlement configuration
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *     boardingUtxoSweep: true,
@@ -204,12 +210,18 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      */
     settlementConfig?: SettlementConfig | false;
 
+    /** Short spelling of {@link settlementConfig}; setting both throws. */
+    settlement?: SettlementConfig | false;
+
     /**
      * Receive-address strategy. See {@link WalletMode}.
      *
      * @defaultValue `'auto'`
      */
     walletMode?: WalletMode;
+
+    /** Short spelling of {@link walletMode}; setting both throws. */
+    mode?: WalletMode;
 
     /**
      * Per-side width of the HD look-ahead watch window: receive scripts across
@@ -221,6 +233,17 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `20`
      */
     lookAheadWindow?: number;
+
+    /**
+     * Submit offchain transactions with signed checkpoints, so a supporting
+     * arkd finalizes them in one call (older arkd falls back to finalizeTx).
+     * Set `false` to keep the two-step flow for this wallet's sends and
+     * ArkadeCash sweeps, and for swap claims, refunds and cancels driven
+     * through it; an `Arkade` client takes its own `oneShotSubmit`.
+     *
+     * @defaultValue `true`
+     */
+    oneShotSubmit?: boolean;
 
     /**
      * Let spends run concurrently on disjoint VTXOs: the wallet lock covers only picking and
@@ -265,9 +288,9 @@ export type StorageConfig = {
      */
     intentRepository?: IntentRepository;
     /**
-     * **Experimental / inert.** Optional virtual-tx (exit-branch) repository. Currently only a
-     * best-effort raw-PSBT cache used by {@link Unroll} when passed to `Unroll.Session.create`;
-     * normal sync never populates or prunes it and {@link ContractManager} never receives it.
+     * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
+     * VTXO's exit branch into it and prunes it on spend (both best-effort, see
+     * {@link exitDataCapture}), and unilateral exits read it before the indexer.
      */
     virtualTxRepository?: VirtualTxRepository;
     /**
@@ -307,37 +330,42 @@ export interface WalletBalance {
     boarding: {
         /** Confirmed funds ready to swap for virtual outputs. */
         confirmed: number;
-        /** Pending funds awaiting confirmation on mainnet */
+        /** Pending funds awaiting an onchain confirmation. */
         unconfirmed: number;
         /** Combined boarding balance (`confirmed` + `unconfirmed`) */
         total: number;
+        /** Set on cached and service-worker balances: false until this instance has fetched
+         * boarding inputs, so zero boarding may only mean "not loaded". */
         loaded?: boolean;
     };
-    /** Settled (finalized) balance the wallet owns, including gated and intent-locked funds. */
+    /**
+     * Settled (finalized) balance the wallet owns, including {@link contractLocked} and
+     * {@link pendingSettlement} funds.
+     */
     settled: number;
     /** Preconfirmed (unfinalized) balance the wallet owns, on the same owned rule as {@link settled}. */
     preconfirmed: number;
     /**
      * Immediately spendable offchain balance — what generic selection would pick, so `send` never
-     * refuses it: `settled + preconfirmed - gated - intentLocked - reserved`, minus one dust
-     * carrier kept back if any of these outputs hold assets.
+     * refuses it: `settled + preconfirmed - contractLocked - pendingSettlement - reserved`, minus
+     * one dust carrier kept back if any of these outputs hold assets.
      */
     available: number;
     /**
      * Owned but refused by the generic-spending gate: a VHTLC lockup, an unmarked `arkade`
      * program, or an unregistered contract type. In `settled`/`preconfirmed` and `total`, never
-     * `available`. Takes precedence over {@link intentLocked} (the gate is durable; a lock clears).
+     * `available`. Takes precedence over {@link pendingSettlement} (the gate is durable; a lock clears).
      *
      * Subtract it from `settled + preconfirmed`, never from `total`, which also carries boarding,
-     * recoverable, pending-recovery and unrolled funds.
+     * `recoverable`, `deprecatedSignerLocked` and `unrolled` funds.
      */
-    gated: number;
+    contractLocked: number;
     /**
-     * Committed to an in-flight intent and not {@link gated}; returns to `available` when the
-     * intent terminates. Zero when unknown (no intent repository or a failed read), so it
+     * Committed to an in-flight intent and not {@link contractLocked}; returns to `available` when
+     * the intent terminates. Zero when unknown (no intent repository or a failed read), so it
      * under-reports into `available` rather than misattributing.
      */
-    intentLocked: number;
+    pendingSettlement: number;
     /** Held by `Wallet.reserveVtxos`: in `settled`/`preconfirmed` and `total`, never `available`. */
     reserved: number;
     /**
@@ -351,7 +379,7 @@ export interface WalletBalance {
      * Unswept funds under a deprecated signer past its cutoff. Not spendable until recovered
      * (excluded from `available`/`settled`/`preconfirmed` and coin selection), but in `total`.
      */
-    pendingRecovery: number;
+    deprecatedSignerLocked: number;
 
     /**
      * Already unilaterally exited: onchain behind its CSV, movable only by
@@ -361,7 +389,8 @@ export interface WalletBalance {
     unrolled: number;
 
     /**
-     * Total across offchain, recoverable, pending-recovery, unrolled and boarding funds.
+     * Total across offchain, `recoverable`, `deprecatedSignerLocked`, `unrolled` and boarding
+     * funds.
      *
      * Known wedge: while a `send`/`sendBitcoin`/`settle` is in flight, its VTXO inputs (not
      * boarding) are withheld from every bucket on the `Wallet` instance driving it; a
@@ -377,6 +406,15 @@ export interface WalletBalance {
      * {@link available}). Assets have no per-cause split of what is held but not selectable.
      */
     availableAssets: Asset[];
+
+    /** @deprecated Use {@link contractLocked}. It holds the same value. */
+    gated: number;
+
+    /** @deprecated Use {@link pendingSettlement}. It holds the same value. */
+    intentLocked: number;
+
+    /** @deprecated Use {@link deprecatedSignerLocked}. It holds the same value. */
+    pendingRecovery: number;
 }
 
 /**
@@ -730,7 +768,7 @@ export interface TxKey {
 /**
  * The categories the history builder itself assigns. Four name the mechanism that moved the
  * coin; `"gated"` names the counterparty: an offchain movement into or out of one of this
- * wallet's gated contracts (swap covenant, lockup — the {@link WalletBalance.gated} money).
+ * wallet's gated contracts (swap covenant, lockup — the {@link WalletBalance.contractLocked} money).
  * History treats that contract as external, so the tag tells "my own escrow" from "a stranger".
  */
 export type BuiltinTxTag = "offchain" | "boarding" | "exit" | "batch" | "gated";
@@ -819,6 +857,7 @@ export {
     isVirtualCoin,
     normalizeVtxo,
     requiresForfeit,
+    toOffchainInputFeeParams,
     type NormalizedExtendedVirtualCoin,
     type NormalizedVirtualCoin,
     type NormalizedVtxoPage,
@@ -953,7 +992,7 @@ export type ArkadeReader = Pick<IndexerProvider, "getVirtualTxs"> & {
  * Submit and finalize a signed Arkade transaction. Only on {@link IWallet}: broadcasting is the
  * one thing a readonly wallet must not do (hence `ReadonlyWallet.arkProvider` is protected).
  */
-export type ArkadeBroadcaster = Pick<ArkProvider, "submitTx" | "finalizeTx">;
+export type ArkadeBroadcaster = Pick<OperatorProvider, "submitTx" | "finalizeTx">;
 
 /**
  * Signing wallet interface: {@link IReadonlyWallet} plus sending, settling and asset operations.
@@ -968,6 +1007,9 @@ export interface IWallet extends IReadonlyWallet {
      * @see ArkadeBroadcaster
      */
     getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
+
+    /** @see WalletConfig.oneShotSubmit — read by plugins that sign checkpoints for this wallet. */
+    readonly oneShotSubmit?: boolean;
 
     /**
      * Signing identity associated with the wallet. Must be a real signer (`isSigningIdentity`):
@@ -1088,9 +1130,9 @@ export interface IReadonlyWallet {
     getStoredVtxos?(filter?: GetVtxosFilter): Promise<NormalizedExtendedVirtualCoin[]>;
 
     /**
-     * The subset of {@link getVtxos} generic spending may select: minus gated contracts,
-     * pending-recovery funds and intent-locked outpoints (all from one contract snapshot). Every
-     * implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
+     * The subset of {@link getVtxos} generic spending may select: minus `contractLocked`,
+     * `deprecatedSignerLocked` and `pendingSettlement` outpoints (all from one contract snapshot).
+     * Every implicit coin selection reads this; `getVtxos` stays the raw reporting/recovery read.
      *
      * @param filter - Same coin flags and defaults as {@link getVtxos}, with opt-in contract scopes
      * @see GetSpendableVtxosFilter

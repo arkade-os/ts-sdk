@@ -587,6 +587,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getSpendablePaths: vi.fn().mockResolvedValue(paths),
             isWatching: vi.fn().mockResolvedValue(true),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
+            getUnsupportedContracts: vi.fn().mockResolvedValue(contracts),
         };
         (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue(manager),
@@ -611,6 +612,16 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(getResponse).toMatchObject({
             tag: updater.messageTag,
             type: "CONTRACTS",
+            payload: { contracts },
+        });
+
+        const unsupportedResponse = await updater.handleMessage({
+            ...baseMessage("us"),
+            type: "GET_UNSUPPORTED_CONTRACTS",
+        } as any);
+        expect(unsupportedResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "UNSUPPORTED_CONTRACTS",
             payload: { contracts },
         });
 
@@ -2134,7 +2145,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 preconfirmed: 0,
                 available: 100000,
                 recoverable: 0,
-                pendingRecovery: 0,
+                deprecatedSignerLocked: 0,
                 unrolled: 50000,
                 total: 150000,
             },
@@ -2196,7 +2207,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 100000,
                 available: 100000,
                 recoverable: 0,
-                pendingRecovery: 0,
+                deprecatedSignerLocked: 0,
                 unrolled: 50000,
                 total: 150000,
             },
@@ -2231,7 +2242,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 preconfirmed: 0,
                 available: 100000,
                 recoverable: 0,
-                pendingRecovery: 0,
+                deprecatedSignerLocked: 0,
                 unrolled: 0,
                 total: 100000,
             },
@@ -2260,13 +2271,14 @@ describe("WalletMessageHandler repo-backed reads", () => {
             type: "GET_BALANCE",
         } as any);
 
-        // Excluded from the spendable buckets, surfaced under pendingRecovery,
+        // Excluded from the spendable buckets, surfaced under deprecatedSignerLocked,
         // still counted in total.
         expect(response).toMatchObject({
             type: "BALANCE",
             payload: {
                 settled: 100000,
                 available: 100000,
+                deprecatedSignerLocked: 70000,
                 pendingRecovery: 70000,
                 total: 170000,
             },
@@ -2451,15 +2463,16 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 // The ungated 10000, minus the one dust carrier (546) the
                 // available asset rides on.
                 available: 9454,
-                gated: 20000,
-                intentLocked: 0,
+                contractLocked: 20000,
+                pendingSettlement: 0,
+                gated: 20000, // deprecated alias of contractLocked
                 assets: [{ assetId: "cc".repeat(32), amount: 7n }],
                 availableAssets: [{ assetId: "cc".repeat(32), amount: 3n }],
             },
         });
     });
 
-    it("GET_BALANCE reports an intent-locked VTXO as intentLocked", async () => {
+    it("GET_BALANCE reports an intent-locked VTXO as pendingSettlement", async () => {
         const intents = new InMemoryIntentRepository();
         setupHandler([{ address: "contract-1", script: "s1", type: "default" }], intents);
 
@@ -2490,7 +2503,13 @@ describe("WalletMessageHandler repo-backed reads", () => {
 
         expect(response).toMatchObject({
             type: "BALANCE",
-            payload: { settled: 10000, available: 0, gated: 0, intentLocked: 10000 },
+            payload: {
+                settled: 10000,
+                available: 0,
+                contractLocked: 0,
+                pendingSettlement: 10000,
+                intentLocked: 10000,
+            },
         });
     });
 
@@ -3295,9 +3314,339 @@ describe("WalletMessageHandler event-push generations", () => {
         expect((updater as any).incomingFundsSubscription).toBeUndefined();
     });
 
+    it.each([false, true])(
+        "lazy init returns while incoming registration is pending (signing=%s)",
+        async (signing) => {
+            const gate = deferred<() => void>();
+            const getVtxoManager = vi.fn().mockResolvedValue({});
+            const wallet = makeWallet({
+                notifyIncomingFunds: vi.fn(() => gate.promise),
+                finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+                getVtxoManager,
+            });
+            attach(wallet);
+            if (signing) (updater as any).wallet = wallet;
+            (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
+            let completed = false;
+            const pending = updater
+                .handleMessage({
+                    ...baseMessage(),
+                    type: "INIT_WALLET",
+                    payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+                } as any)
+                .then((response) => {
+                    completed = true;
+                    return response;
+                });
+            await flush(30);
+            try {
+                expect(wallet.notifyIncomingFunds).toHaveBeenCalledOnce();
+                expect(completed).toBe(true);
+                expect(getVtxoManager).toHaveBeenCalledTimes(signing ? 1 : 0);
+            } finally {
+                gate.resolve(vi.fn());
+                await pending;
+                await flush();
+                await updater.stop();
+            }
+        },
+    );
+
+    it("eager init still waits for incoming registration", async () => {
+        const gate = deferred<() => void>();
+        attach(makeWallet({ notifyIncomingFunds: vi.fn(() => gate.promise) }));
+        let completed = false;
+        const pending = (updater as any).onWalletInitialized().then(() => {
+            completed = true;
+        });
+        await flush(30);
+        expect(completed).toBe(false);
+        gate.resolve(vi.fn());
+        await pending;
+        expect(completed).toBe(true);
+    });
+
+    it("eager init starts the VtxoManager only after incoming registration succeeds", async () => {
+        const gate = deferred<() => void>();
+        const getVtxoManager = vi.fn().mockResolvedValue({});
+        const wallet = makeWallet({
+            notifyIncomingFunds: vi.fn(() => gate.promise),
+            finalizePendingTxs: vi.fn().mockResolvedValue({ pending: [], finalized: [] }),
+            getVtxoManager,
+        });
+        attach(wallet);
+        (updater as any).wallet = wallet;
+        (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
+        const pending = (updater as any).onWalletInitialized();
+        await flush(30);
+        try {
+            expect(wallet.notifyIncomingFunds).toHaveBeenCalledOnce();
+            expect(getVtxoManager).not.toHaveBeenCalled();
+        } finally {
+            gate.resolve(vi.fn());
+            await pending;
+        }
+        expect(getVtxoManager).toHaveBeenCalledOnce();
+    });
+
+    it.each(["stop", "clear"])(
+        "serializes stale registration cleanup across %s before a shared-script replacement",
+        async (action) => {
+            const gate = deferred();
+            const onchainProvider = {};
+            const order: string[] = [];
+            let current: string | undefined;
+            let staleCallback: (funds: any) => Promise<void> = async () => {};
+            const old = makeWallet({
+                onchainProvider,
+                notifyIncomingFunds: vi.fn(async (callback) => {
+                    staleCallback = callback;
+                    await gate.promise;
+                    order.push("old subscribe");
+                    current = "old";
+                    return () => {
+                        order.push("old unsubscribe");
+                        current = undefined;
+                    };
+                }),
+            });
+            attach(old);
+            const first = (updater as any).onWalletInitialized();
+            await flush(30);
+            if (action === "stop") await updater.stop();
+            else await (updater as any).clear();
+            const fresh = makeWallet({
+                onchainProvider,
+                notifyIncomingFunds: vi.fn(async () => {
+                    order.push("fresh subscribe");
+                    current = "fresh";
+                    return vi.fn();
+                }),
+            });
+            attach(fresh);
+            const second = (updater as any).onWalletInitialized();
+            await flush(30);
+            try {
+                expect(fresh.notifyIncomingFunds).not.toHaveBeenCalled();
+                await staleCallback(vtxoFunds());
+                expect(await collectScriptVtxos(repository, TEST_DEFAULT_SCRIPT)).toEqual([]);
+                expect(emitted("VTXO_UPDATE")).toBe(false);
+            } finally {
+                gate.resolve();
+                await Promise.all([first, second]);
+            }
+            expect(order).toEqual(["old subscribe", "old unsubscribe", "fresh subscribe"]);
+            expect(current).toBe("fresh");
+        },
+    );
+
+    it.each([false, true])(
+        "a parked provider does not block a distinct provider (lazy=%s)",
+        async (lazy) => {
+            const gate = deferred();
+            const providerA = { subscribed: false };
+            const providerB = { subscribed: false };
+            const stopA = vi.fn(() => {
+                providerA.subscribed = false;
+            });
+            const stopB = vi.fn(() => {
+                providerB.subscribed = false;
+            });
+            let callbackB!: (funds: any) => Promise<void>;
+            attach(
+                makeWallet({
+                    onchainProvider: providerA,
+                    notifyIncomingFunds: vi.fn(async () => {
+                        await gate.promise;
+                        providerA.subscribed = true;
+                        return stopA;
+                    }),
+                }),
+            );
+            (updater as any).lazyBoardingInit = true;
+            await (updater as any).onWalletInitialized();
+            await flush();
+            await updater.stop();
+            const fresh = makeWallet({
+                onchainProvider: providerB,
+                notifyIncomingFunds: vi.fn(async (callback) => {
+                    callbackB = callback;
+                    providerB.subscribed = true;
+                    return stopB;
+                }),
+            });
+            attach(fresh);
+            (updater as any).lazyBoardingInit = lazy;
+            let completed = false;
+            const second = (updater as any).onWalletInitialized().then(() => {
+                completed = true;
+            });
+            await flush(30);
+            try {
+                expect(fresh.notifyIncomingFunds).toHaveBeenCalledOnce();
+                expect(completed).toBe(true);
+                expect(providerB.subscribed).toBe(true);
+            } finally {
+                gate.resolve();
+                await second;
+                await flush(30);
+            }
+            expect(stopA).toHaveBeenCalledOnce();
+            expect(stopB).not.toHaveBeenCalled();
+            expect(providerA.subscribed).toBe(false);
+            expect(providerB.subscribed).toBe(true);
+            expect((updater as any).incomingFundsSubscription).toBe(stopB);
+            await callbackB(vtxoFunds());
+            expect(
+                broadcast.mock.calls.filter(([response]) => response?.type === "VTXO_UPDATE"),
+            ).toHaveLength(1);
+        },
+    );
+
+    it("switching back to a parked provider waits for its stale registration cleanup", async () => {
+        const gate = deferred();
+        const providerA = {};
+        const providerB = {};
+        const order: string[] = [];
+        attach(
+            makeWallet({
+                onchainProvider: providerA,
+                notifyIncomingFunds: vi.fn(async () => {
+                    await gate.promise;
+                    order.push("old A subscribe");
+                    return () => {
+                        order.push("old A unsubscribe");
+                    };
+                }),
+            }),
+        );
+        (updater as any).lazyBoardingInit = true;
+        await (updater as any).onWalletInitialized();
+        await flush();
+        await updater.stop();
+        const middle = makeWallet({ onchainProvider: providerB });
+        attach(middle);
+        await (updater as any).onWalletInitialized();
+        await flush(30);
+        expect(middle.notifyIncomingFunds).toHaveBeenCalledOnce();
+        await updater.stop();
+        const stopA = vi.fn();
+        const fresh = makeWallet({
+            onchainProvider: providerA,
+            notifyIncomingFunds: vi.fn(async () => {
+                order.push("new A subscribe");
+                return stopA;
+            }),
+        });
+        attach(fresh);
+        (updater as any).lazyBoardingInit = false;
+        const pending = (updater as any).onWalletInitialized();
+        await flush(30);
+        try {
+            expect(fresh.notifyIncomingFunds).not.toHaveBeenCalled();
+        } finally {
+            gate.resolve();
+            await pending;
+        }
+        expect(order).toEqual(["old A subscribe", "old A unsubscribe", "new A subscribe"]);
+        expect((updater as any).incomingFundsSubscription).toBe(stopA);
+        expect(stopA).not.toHaveBeenCalled();
+    });
+
+    it("a failed lazy registration does not poison the next registration", async () => {
+        const notifyIncomingFunds = vi
+            .fn()
+            .mockRejectedValueOnce(new Error("provider unavailable"))
+            .mockResolvedValueOnce(vi.fn());
+        attach(makeWallet({ notifyIncomingFunds }));
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const message = {
+                ...baseMessage(),
+                type: "INIT_WALLET",
+                payload: { arkServerUrl: "http://localhost:7070", lazyBoarding: true },
+            } as any;
+            expect(await updater.handleMessage(message)).toMatchObject({
+                type: "WALLET_INITIALIZED",
+            });
+            await flush(30);
+            expect(await updater.handleMessage(message)).toMatchObject({
+                type: "WALLET_INITIALIZED",
+            });
+            await flush(30);
+            expect(notifyIncomingFunds).toHaveBeenCalledTimes(2);
+            expect((updater as any).incomingFundsSubscription).toBeTypeOf("function");
+        } finally {
+            errorLog.mockRestore();
+        }
+    });
+
+    it("a failed eager re-init keeps the live subscription delivering", async () => {
+        const unsubscribe = vi.fn();
+        let callback!: (funds: any) => Promise<void>;
+        attach(
+            makeWallet({
+                notifyIncomingFunds: vi.fn(async (cb) => {
+                    callback = cb;
+                    return unsubscribe;
+                }),
+            }),
+        );
+        (updater as any).refreshCachedData = vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error("onchain provider offline"));
+        const message = {
+            ...baseMessage(),
+            type: "INIT_WALLET",
+            payload: { arkServerUrl: "http://localhost:7070" },
+        } as any;
+
+        await updater.handleMessage(message);
+        await expect(updater.handleMessage(message)).rejects.toThrow("onchain provider offline");
+
+        expect((updater as any).incomingFundsSubscription).toBe(unsubscribe);
+        expect(unsubscribe).not.toHaveBeenCalled();
+        await callback(vtxoFunds());
+        expect(emitted("VTXO_UPDATE")).toBe(true);
+        expect(await collectScriptVtxos(repository, TEST_DEFAULT_SCRIPT)).toHaveLength(1);
+        await callback({ type: "utxo", coins: [] });
+        expect(emitted("UTXO_UPDATE")).toBe(true);
+    });
+
+    it("a re-init that fails before registering keeps a pending lazy registration", async () => {
+        const gate = deferred();
+        const unsubscribe = vi.fn();
+        let callback!: (funds: any) => Promise<void>;
+        attach(
+            makeWallet({
+                notifyIncomingFunds: vi.fn(async (cb) => {
+                    callback = cb;
+                    await gate.promise;
+                    return unsubscribe;
+                }),
+            }),
+        );
+        (updater as any).refreshCachedData = vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error("onchain provider offline"));
+        (updater as any).lazyBoardingInit = true;
+        await (updater as any).onWalletInitialized();
+        await flush(30);
+
+        (updater as any).lazyBoardingInit = false;
+        await expect((updater as any).onWalletInitialized()).rejects.toThrow();
+        gate.resolve();
+        await flush(30);
+
+        expect(unsubscribe).not.toHaveBeenCalled();
+        expect((updater as any).incomingFundsSubscription).toBe(unsubscribe);
+        await callback(vtxoFunds());
+        expect(emitted("VTXO_UPDATE")).toBe(true);
+    });
+
     it("lets the later of two overlapping INIT_WALLETs own the subscription", async () => {
-        // incomingFundsEpoch doing double duty as the initializer's mutual
-        // exclusion: the loser cannot unsubscribe the winner.
         const gate = deferred();
         const unsubFirst = vi.fn();
         const unsubSecond = vi.fn();
@@ -3318,9 +3667,11 @@ describe("WalletMessageHandler event-push generations", () => {
         await flush();
         const second = (updater as any).onWalletInitialized();
         await flush();
+        const callsBeforeRelease = calls;
         gate.resolve();
         await Promise.all([first, second]);
 
+        expect(callsBeforeRelease).toBe(1);
         expect(unsubFirst).toHaveBeenCalled();
         expect(unsubSecond).not.toHaveBeenCalled();
         expect((updater as any).incomingFundsSubscription).toBe(unsubSecond);

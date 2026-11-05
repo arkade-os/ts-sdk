@@ -3,7 +3,7 @@ import { Script, SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { scriptFromTapLeafScript } from "../script/base";
 import { Extension, ExtensionNotFoundError } from "../extension";
-import type { ArkProvider } from "../providers/ark";
+import type { OperatorProvider } from "../providers/ark";
 import {
     ONCHAIN_COSIGN_AMBIGUOUS_PREFIX,
     ONCHAIN_COSIGN_REJECTED_PREFIX,
@@ -263,7 +263,7 @@ export function estimateOnchainCosignFee(nIn: number, nOut: number, feeRate: num
 }
 
 export type OnchainSpendDeps = {
-    arkProvider?: Pick<ArkProvider, "cosignOnchainTx">;
+    arkProvider?: Pick<OperatorProvider, "cosignOnchainTx">;
     emulator?: Pick<EmulatorProvider, "submitOnchainTx">;
     onchainProvider: Pick<OnchainProvider, "broadcastTransaction" | "getRawTransaction">;
 };

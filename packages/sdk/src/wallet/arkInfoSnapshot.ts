@@ -1,4 +1,4 @@
-import type { ArkadeInfo, ArkProvider, FeeInfo } from "../providers/ark";
+import type { ArkadeInfo, OperatorProvider, FeeInfo } from "../providers/ark";
 import { isRetryableProviderError } from "../providers/availability";
 import { ProviderUnavailableError } from "../providers/errors";
 import type { WalletRepository } from "../repositories/walletRepository";
@@ -347,7 +347,7 @@ export interface ResolvedArkInfo {
  * wrong-network response does.
  */
 export async function resolveArkInfo(
-    arkProvider: Pick<ArkProvider, "getInfo">,
+    arkProvider: Pick<OperatorProvider, "getInfo">,
     walletRepository: WalletRepository,
     opts?: { requireLive?: boolean },
 ): Promise<ResolvedArkInfo> {

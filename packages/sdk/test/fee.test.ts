@@ -4,6 +4,7 @@ import { createRequire } from "module";
 import { dirname, join } from "path";
 import {
     Estimator,
+    toOffchainInputFeeParams,
     type IntentFeeConfig,
     type OffchainInput,
     type OnchainInput,
@@ -141,6 +142,25 @@ describe("Estimator", () => {
                 }
             });
         }
+
+        it("prices a coin through the exported toOffchainInputFeeParams", () => {
+            const estimator = new Estimator({
+                offchainInput:
+                    "inputType == 'vtxo' && now() - birth < 86400.0 ? amount * 0.002 : 0.0",
+            });
+            const coin = (isSwept: boolean) =>
+                ({
+                    value: 63_000,
+                    isSwept,
+                    createdAt: new Date(Date.now() - 3_600_000),
+                    expiresAt: new Date(Date.now() + 29 * 86_400_000),
+                }) as Parameters<typeof toOffchainInputFeeParams>[0];
+
+            const fee = (isSwept: boolean) =>
+                estimator.evalOffchainInput(toOffchainInputFeeParams(coin(isSwept))).satoshis;
+            expect(fee(false)).toBe(126);
+            expect(fee(true)).toBe(0);
+        });
     });
 
     describe("evalOnchainInput", () => {

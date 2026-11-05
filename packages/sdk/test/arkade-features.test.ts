@@ -14,7 +14,9 @@ import {
     networks,
     getArkPsbtFields,
     PrevArkTxField,
+    ConditionWitness,
     PrevTxUnavailableError,
+    ServerResponseMismatchError,
     type EmulatorInfo,
     type EmulatorProvider,
 } from "../src";
@@ -42,11 +44,16 @@ const payTo = [
 
 function claimProgram(): arkade.Program {
     return {
-        version: 0,
-        params: ["receiver", "amount", "server"],
+        version: 1,
+        params: [
+            { name: "receiver", type: "pubkey" },
+            { name: "amount", type: "int" },
+            { name: "server", type: "pubkey" },
+            { name: "h", type: "bytes20" },
+        ],
         functions: {
             claim: {
-                inputs: ["preimage"],
+                inputs: [{ name: "preimage", type: "bytes" }],
                 tapscript: {
                     signers: ["$server"],
                     asm: ["HASH160", "$h", "EQUALVERIFY"],
@@ -68,8 +75,25 @@ function fundingCoin(value: number) {
     };
 }
 
+function withSig(tx: Transaction, key: Uint8Array): Transaction {
+    tx.updateInput(0, {
+        tapScriptSig: [[{ pubKey: key, leafHash: new Uint8Array(32) }, new Uint8Array(64).fill(1)]],
+    });
+    return tx;
+}
+
+/** An arkd without one-shot support: rebuilds each checkpoint and signs only its own share. */
+const preOneShotArkd =
+    (server: Uint8Array) =>
+    (cps: string[]): string[] =>
+        cps.map((c) => {
+            const tx = Transaction.fromPSBT(base64.decode(c));
+            tx.updateInput(0, { tapScriptSig: undefined }, true);
+            return base64.encode(withSig(tx, server).toPSBT());
+        });
+
 function mockIdentity(key = xOnly()) {
-    const sign = vi.fn(async (tx: Transaction, _idx?: number[]) => tx);
+    const sign = vi.fn(async (tx: Transaction, _idx?: number[]) => withSig(tx, key));
     const identity = {
         xOnlyPublicKey: async () => key,
         sign,
@@ -164,8 +188,11 @@ describe("ArkadeContract — extended features", () => {
         });
         // A pure-tapscript path that requires the user's key.
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
                 move: {
                     tapscript: {
@@ -214,6 +241,230 @@ describe("ArkadeContract — extended features", () => {
         expect(
             sign.mock.calls.some((c2) => Array.isArray(c2[1]) && (c2[1] as number[]).includes(1)),
         ).toBe(true);
+    });
+
+    it("`.from([...])` spends several coins, each with its own fields and emulator entry", async () => {
+        const COIN2 = mintCoin(10_000);
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN, COIN2]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+
+        const preimage = new Uint8Array(32).fill(0x42);
+        const sourceTx = new Uint8Array(64).fill(7);
+
+        const { arkTx, checkpoints } = await c.functions
+            .claim(preimage)
+            .from([COIN, { ...COIN2, sourceTx }])
+            .to(p2tr(receiver), AMOUNT)
+            .change(p2tr())
+            .build();
+
+        expect(arkTx.inputsLength).toBe(2);
+        expect(checkpoints).toHaveLength(2);
+        for (const i of [0, 1]) {
+            expect(getArkPsbtFields(arkTx, i, ConditionWitness)).toEqual([[preimage]]);
+            expect(getArkPsbtFields(checkpoints[i], 0, ConditionWitness)).toEqual([[preimage]]);
+            expect(getArkPsbtFields(arkTx, i, PrevArkTxField)).toHaveLength(1);
+        }
+        // Coin 1's own sourceTx wins; coin 0's is resolved from the indexer.
+        expect(getArkPsbtFields(arkTx, 1, PrevArkTxField)[0]).toEqual(sourceTx);
+        const ext = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
+            .filter((o) => o.script && Extension.isExtension(o.script))
+            .map((o) => Extension.fromBytes(o.script!))[0];
+        expect(ext.getEmulatorPacket()!.entries.map((e) => e.vin)).toEqual([0, 1]);
+    });
+
+    it("`.from(coin, other.unlock.fn())` spends each coin through its own function", async () => {
+        const { identity, sign } = mockIdentity();
+        const COIN2 = mintCoin(5_000);
+        const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
+            COIN,
+            COIN2,
+        ]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity,
+            network: networks.regtest,
+        });
+        const htlc = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        // A second contract whose covenant leaf also needs the user's signature.
+        const vault = ark.contract(
+            {
+                version: 1,
+                params: [
+                    { name: "receiver", type: "pubkey" },
+                    { name: "amount", type: "int" },
+                    { name: "server", type: "pubkey" },
+                    { name: "user", type: "pubkey" },
+                ],
+                functions: {
+                    spend: {
+                        tapscript: { signers: ["$user", "$server"] },
+                        arkadeScript: { asm: payTo, witness: [1] },
+                    },
+                },
+            },
+            { receiver, amount: 5_000n },
+        );
+
+        await htlc.functions
+            .claim(new Uint8Array(32).fill(0x42))
+            .from(COIN)
+            .from(COIN2, vault.unlock.spend())
+            .to([
+                { script: p2tr(receiver), amount: AMOUNT },
+                { script: p2tr(receiver), amount: 5_000n },
+            ])
+            .send();
+
+        const tx = Transaction.fromPSBT(base64.decode(captured.arkTx!));
+        const leaf = (i: number) => hex.encode(tx.getInput(i).tapLeafScript![0][1]);
+        expect(leaf(0)).toBe(hex.encode(htlc.vtxoScript.functionByName("claim")!.tapLeafScript[1]));
+        expect(leaf(1)).toBe(
+            hex.encode(vault.vtxoScript.functionByName("spend")!.tapLeafScript[1]),
+        );
+        const ext = Extension.fromBytes(tx.getOutput(2).script!);
+        expect(ext.getEmulatorPacket()!.entries.map((e) => [e.vin, hex.encode(e.script)])).toEqual([
+            [0, hex.encode(htlc.vtxoScript.functionByName("claim")!.arkadeScript!)],
+            [1, hex.encode(vault.vtxoScript.functionByName("spend")!.arkadeScript!)],
+        ]);
+        // Only the htlc leaf carries a condition witness; only the vault leaf needs the user.
+        expect(getArkPsbtFields(tx, 0, ConditionWitness)).toHaveLength(1);
+        expect(getArkPsbtFields(tx, 1, ConditionWitness)).toHaveLength(0);
+        expect(sign.mock.calls[0][1]).toEqual([1]);
+    });
+
+    it("`ark.transaction()` takes every input's function from `.from()`", async () => {
+        const COIN2 = mintCoin(5_000);
+        const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
+            COIN,
+            COIN2,
+        ]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const args = { receiver, amount: AMOUNT, h: new Uint8Array(20) };
+        const a = ark.contract(claimProgram(), args);
+        const b = ark.contract(claimProgram(), { ...args, amount: 5_000n });
+        const preimage = new Uint8Array(32).fill(0x42);
+
+        // With no function of its own, every `.from()` names one, and there is nothing to select.
+        expect(() => ark.transaction().from(COIN)).toThrow(/name the function to spend through/);
+        await expect(ark.transaction().to(p2tr(receiver), AMOUNT).build()).rejects.toThrow(
+            /add coins with \.from/,
+        );
+
+        await ark
+            .transaction()
+            .from(COIN, a.unlock.claim(preimage))
+            .from(COIN2, b.unlock.claim(preimage))
+            .to([
+                { script: p2tr(receiver), amount: AMOUNT },
+                { script: p2tr(receiver), amount: 5_000n },
+            ])
+            .send();
+
+        const tx = Transaction.fromPSBT(base64.decode(captured.arkTx!));
+        const ext = Extension.fromBytes(tx.getOutput(2).script!);
+        const covenant = (c: arkade.ArkadeContract) =>
+            hex.encode(c.vtxoScript.functionByName("claim")!.arkadeScript!);
+        expect(ext.getEmulatorPacket()!.entries.map((e) => [e.vin, hex.encode(e.script)])).toEqual([
+            [0, covenant(a)],
+            [1, covenant(b)],
+        ]);
+    });
+
+    it("`.from()` refuses no coins, a repeated, swept or expired coin, a coin of another contract, and another client's contract", async () => {
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        const connect = () =>
+            arkade.Arkade.connect({
+                arkade: arkProvider,
+                emulator,
+                indexer,
+                network: networks.regtest,
+            });
+        const args = { receiver, amount: AMOUNT, h: new Uint8Array(20) };
+        const ark = await connect();
+        const c = ark.contract(claimProgram(), args);
+        const other = (await connect()).contract(claimProgram(), args);
+        const claim = () => c.functions.claim(new Uint8Array(32).fill(0x42));
+
+        expect(() => claim().from([])).toThrow(/no coins/);
+        expect(() => claim().from(COIN).from([COIN])).toThrow(/already an input/);
+        expect(() => claim().from({ ...COIN, isSwept: true })).toThrow(/was swept/);
+        expect(() => claim().from({ ...COIN, expiresAt: new Date(Date.now() - 1_000) })).toThrow(
+            /has expired/,
+        );
+        // A coin restored from JSON carries its expiry as a string.
+        const stored = { ...COIN, expiresAt: new Date(Date.now() - 1_000).toISOString() };
+        expect(() => claim().from(stored as unknown as arkade.Utxo)).toThrow(/has expired/);
+        // A coin is expired from the exact moment of its expiresAt.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+            expect(() => claim().from({ ...COIN, expiresAt: new Date() })).toThrow(/has expired/);
+            expect(() =>
+                claim().from({ ...COIN, expiresAt: new Date(Date.now() + 1) }),
+            ).not.toThrow();
+        } finally {
+            vi.useRealTimers();
+        }
+        // Not expired yet, or no expiry at all (an onchain coin): both are accepted.
+        expect(() =>
+            claim().from({ ...COIN, expiresAt: new Date(Date.now() + 60_000) }),
+        ).not.toThrow();
+        expect(() => claim().from(COIN)).not.toThrow();
+        expect(() => claim().from({ ...COIN, script: hex.encode(p2tr()) })).toThrow(
+            /not locked by the contract of claim/,
+        );
+        expect(() => claim().from(COIN, other.unlock.claim(new Uint8Array(32).fill(0x42)))).toThrow(
+            /another Arkade client/,
+        );
+    });
+
+    it("rejects an emulator reply carrying another ark tx", async () => {
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        vi.mocked(emulator.submitTx).mockResolvedValueOnce({
+            signedArkTx: foreignCheckpoint(),
+            signedCheckpointTxs: [],
+        });
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+
+        await expect(
+            c.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(COIN)
+                .to(p2tr(receiver), AMOUNT)
+                .send(),
+        ).rejects.toBeInstanceOf(ServerResponseMismatchError);
     });
 
     it("resolves a PrevArkTx field for every input of a covenant spend", async () => {
@@ -312,11 +563,21 @@ describe("ArkadeContract — extended features", () => {
         ).rejects.toBeInstanceOf(PrevTxUnavailableError);
     });
 
-    it("selects the smallest contract coin covering the outputs", async () => {
+    it("selects the smallest spendable contract coin covering the outputs", async () => {
         const small = mintCoin(5_000);
-        const big = mintCoin(20_000);
+        const swept = { ...mintCoin(12_000), isSwept: true };
+        const expired = { ...mintCoin(11_000), expiresAt: new Date(Date.now() - 1_000) };
+        const big = mintCoin(20_000); // no expiry fields: never skipped for expiry
+        const assetId = asset.AssetId.create(hex.encode(new Uint8Array(32).fill(3)), 0);
+        const withAsset = {
+            ...mintCoin(15_000),
+            assets: [{ assetId: assetId.toString(), amount: 330n }],
+        };
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [
             small,
+            swept,
+            expired,
+            withAsset,
             big,
         ]);
         const ark = await arkade.Arkade.connect({
@@ -331,7 +592,8 @@ describe("ArkadeContract — extended features", () => {
             h: new Uint8Array(20),
         });
 
-        // outputs require 10_000 → must pick `big` (5_000 can't cover)
+        // outputs require 10_000 → must pick `big` (5_000 can't cover, 11_000 expired, 12_000 swept,
+        // 15_000 carries assets the spend doesn't route)
         await c.functions
             .claim(new Uint8Array(32).fill(0x42))
             .to(p2tr(receiver), AMOUNT)
@@ -353,27 +615,60 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
-                exit: {
+                cooperative: {
                     tapscript: {
                         signers: ["$user", "$server"],
-                        csv: { type: "blocks", value: 20n },
                     },
                 },
             },
         });
-        await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
+        await c.functions.cooperative().from(COIN).to(p2tr(receiver), AMOUNT).send();
         expect(captured.via).toBe("ark");
         expect(arkProvider.submitTx).toHaveBeenCalled();
-        expect(arkProvider.finalizeTx).toHaveBeenCalled();
+        expect(arkProvider.finalizeTx).not.toHaveBeenCalled();
         expect(emulator.submitTx).not.toHaveBeenCalled();
         // Prevout resolution is emulator-only: arkd-direct spends must keep the
         // bytes they had before v0.0.7 support landed.
         const arkd = Transaction.fromPSBT(base64.decode(captured.arkTx!));
         expect(getArkPsbtFields(arkd, 0, PrevArkTxField)).toHaveLength(0);
         expect(indexer.getVirtualTxs).not.toHaveBeenCalled();
+    });
+
+    it("keeps the arkd path two-step with oneShotSubmit: false", async () => {
+        const { identity } = mockIdentity();
+        const { arkProvider, indexer, captured } = providers(server, emulatorKey, [COIN]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            indexer,
+            identity,
+            network: networks.regtest,
+            oneShotSubmit: false,
+        });
+        const c = ark.contract({
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
+            functions: {
+                cooperative: {
+                    tapscript: {
+                        signers: ["$user", "$server"],
+                    },
+                },
+            },
+        });
+        await c.functions.cooperative().from(COIN).to(p2tr(receiver), AMOUNT).send();
+
+        const submitted = Transaction.fromPSBT(base64.decode(captured.cps![0]));
+        expect(submitted.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        expect(arkProvider.finalizeTx).toHaveBeenCalledTimes(1);
     });
 
     // A pure-tapscript spend with one funded input: two checkpoints, so the
@@ -396,19 +691,21 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
-                exit: {
+                cooperative: {
                     tapscript: {
                         signers: ["$user", "$server"],
-                        csv: { type: "blocks", value: 20n },
                     },
                 },
             },
         });
         const send = c.functions
-            .exit()
+            .cooperative()
             .from(COIN)
             .fund([fundingCoin(60_000)])
             .to(p2tr(receiver), AMOUNT)
@@ -419,11 +716,14 @@ describe("ArkadeContract — extended features", () => {
     }
 
     it("arkd path finalizes reordered server checkpoints in the server's order", async () => {
-        const { arkProvider, send } = await sendTwoCheckpointSpend((cps) => [...cps].reverse());
+        const { arkProvider, send } = await sendTwoCheckpointSpend((cps) =>
+            preOneShotArkd(server)(cps).reverse(),
+        );
         await send;
 
-        const submitted = (arkProvider.submitTx.mock.calls[0] as unknown[])[1] as string[];
-        expect((arkProvider.finalizeTx.mock.calls[0] as unknown[])[1]).toEqual(
+        const txids = (cps: string[]) => cps.map((c) => Transaction.fromPSBT(base64.decode(c)).id);
+        const submitted = txids((arkProvider.submitTx.mock.calls[0] as unknown[])[1] as string[]);
+        expect(txids((arkProvider.finalizeTx.mock.calls[0] as unknown[])[1] as string[])).toEqual(
             [...submitted].reverse(),
         );
     });
@@ -447,8 +747,11 @@ describe("ArkadeContract — extended features", () => {
         expect(() =>
             ark.contract(
                 {
-                    version: 0,
-                    params: ["server"],
+                    version: 1,
+                    params: [
+                        { name: "server", type: "pubkey" },
+                        { name: "amount", type: "int" },
+                    ],
                     functions: {
                         bad: {
                             tapscript: {
@@ -474,8 +777,8 @@ describe("ArkadeContract — extended features", () => {
         expect(() =>
             ark.contract(
                 {
-                    version: 0,
-                    params: ["server"],
+                    version: 1,
+                    params: [{ name: "server", type: "pubkey" }],
                     functions: {
                         bad: {
                             tapscript: {
@@ -500,10 +803,15 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const artifact = {
-            params: ["receiver", "amount", "server"],
+            params: [
+                { name: "receiver", type: "pubkey" },
+                { name: "amount", type: "int" },
+                { name: "server", type: "pubkey" },
+                { name: "h", type: "bytes20" },
+            ],
             functions: {
                 claim: {
-                    inputs: ["preimage"],
+                    inputs: [{ name: "preimage", type: "bytes" }],
                     tapscript: {
                         signers: ["$server"],
                         asm: ["HASH160", "$h", "EQUALVERIFY"],
@@ -525,7 +833,7 @@ describe("ArkadeContract — extended features", () => {
                     },
                 },
             },
-        };
+        } as const;
         const program = arkade.parseArtifact(artifact);
         const fromArtifact = ark.contract(program, {
             receiver,
@@ -555,8 +863,13 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const prog: arkade.Program = {
-            version: 0,
-            params: ["receiver", "amount", "server", "user"],
+            version: 1,
+            params: [
+                { name: "receiver", type: "pubkey" },
+                { name: "amount", type: "int" },
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
                 spend: {
                     tapscript: { signers: ["$user", "$server"] },
@@ -580,7 +893,12 @@ describe("ArkadeContract — extended features", () => {
 
     it("arkd path signs once per tx, no checkpoint double-signing (fix #2/#3)", async () => {
         const { identity, sign } = mockIdentity();
-        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN]);
+        const { arkProvider, indexer, emulator } = providers(
+            server,
+            emulatorKey,
+            [COIN],
+            preOneShotArkd(server),
+        );
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
@@ -589,22 +907,77 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest,
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server", "user"],
+            version: 1,
+            params: [
+                { name: "server", type: "pubkey" },
+                { name: "user", type: "pubkey" },
+            ],
             functions: {
-                exit: {
+                cooperative: {
                     tapscript: {
                         signers: ["$user", "$server"],
-                        csv: { type: "blocks", value: 20n },
                     },
                 },
             },
         });
-        await c.functions.exit().from(COIN).to(p2tr(receiver), AMOUNT).send();
-        // exactly: sign(arkTx) once + sign(returned checkpoint) once. The old code
-        // also pre-signed the checkpoint before submit → 3 calls.
+        await c.functions.cooperative().from(COIN).to(p2tr(receiver), AMOUNT).send();
+        // sign(arkTx) + sign(own checkpoint) before submit; the fallback merges, never re-signs.
         expect(sign.mock.calls.length).toBe(2);
         expect(arkProvider.finalizeTx).toHaveBeenCalled();
+    });
+
+    it("refuses a server-only leaf without a covenant, before signing", async () => {
+        const { identity, sign } = mockIdentity();
+        const COIN2 = mintCoin(5_000);
+        const { arkProvider, indexer, emulator } = providers(server, emulatorKey, [COIN, COIN2]);
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity,
+            network: networks.regtest,
+        });
+        const c = ark.contract(
+            {
+                version: 1,
+                params: [
+                    { name: "server", type: "pubkey" },
+                    { name: "user", type: "pubkey" },
+                ],
+                functions: {
+                    cooperative: { tapscript: { signers: ["$user", "$server"] } },
+                    serverOnly: { tapscript: { signers: ["$server"] } },
+                },
+            },
+            {},
+        );
+        const htlc = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        const refused = /serverOnly: a leaf without a covenant needs the user's signature/;
+
+        // Next to a user-signed leaf (arkd path) and next to a covenant (emulator path).
+        await expect(
+            c.functions
+                .cooperative()
+                .from(COIN)
+                .from(COIN2, c.unlock.serverOnly())
+                .to(p2tr(receiver), 15_000n)
+                .send(),
+        ).rejects.toThrow(refused);
+        await expect(
+            htlc.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(COIN)
+                .from(COIN2, c.unlock.serverOnly())
+                .to(p2tr(receiver), 15_000n)
+                .send(),
+        ).rejects.toThrow(refused);
+        expect(sign).not.toHaveBeenCalled();
+        expect(arkProvider.submitTx).not.toHaveBeenCalled();
+        expect(emulator.submitTx).not.toHaveBeenCalled();
     });
 
     it("requires a change output for surplus, and appends it when set (fix #4)", async () => {
@@ -651,7 +1024,7 @@ describe("ArkadeContract — extended features", () => {
         expect(found).toBe(true);
     });
 
-    it("attaches an asset group alongside the emulator packet", async () => {
+    it("attaches an asset group alongside the emulator packet, and requires one for an asset coin", async () => {
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [COIN]);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
@@ -666,9 +1039,42 @@ describe("ArkadeContract — extended features", () => {
         });
 
         const assetId = asset.AssetId.create(hex.encode(new Uint8Array(32).fill(3)), 0);
+        const assetCoin = { ...COIN, assets: [{ assetId: assetId.toString(), amount: 330n }] };
+
+        // arkd refuses an input whose assets the spend does not route.
+        await expect(
+            c.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(assetCoin)
+                .to(p2tr(receiver), AMOUNT)
+                .send(),
+        ).rejects.toThrow(/carries assets; route them with .withAsset\(\) from input 0/);
+        expect(emulator.submitTx).not.toHaveBeenCalled();
+
+        // build() leaves routing to the caller, and the caller's own asset packet routes it.
+        const claim = () =>
+            c.functions
+                .claim(new Uint8Array(32).fill(0x42))
+                .from(assetCoin)
+                .to(p2tr(receiver), AMOUNT);
+        await expect(claim().build()).resolves.toBeDefined();
+        const callerPacket = asset.Packet.create([
+            asset.AssetGroup.create(
+                assetId,
+                null,
+                [asset.AssetInput.create(0, 330n)],
+                [asset.AssetOutput.create(0, 330n)],
+                [],
+            ),
+        ]);
+        await claim()
+            .withPacket(callerPacket as never)
+            .send();
+        expect(emulator.submitTx).toHaveBeenCalledTimes(1);
+
         await c.functions
             .claim(new Uint8Array(32).fill(0x42))
-            .from(COIN)
+            .from(assetCoin)
             .to(p2tr(receiver), AMOUNT)
             .withAsset({
                 assetId: assetId.toString(),
@@ -755,8 +1161,8 @@ describe("ArkadeContract — extended features", () => {
             network: networks.regtest, // no emulator
         });
         const c = ark.contract({
-            version: 0,
-            params: ["server"],
+            version: 1,
+            params: [{ name: "server", type: "pubkey" }],
             functions: {
                 exit: {
                     tapscript: { signers: ["$server"], csv: { type: "blocks", value: 20n } },

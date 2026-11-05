@@ -23,6 +23,7 @@ import {
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
+import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
@@ -531,7 +532,7 @@ const assetSidesOf = (legs: {
     const giveIsBtc = legs.give.assetId === BTC_ASSET_ID;
     const takeIsBtc = legs.take.assetId === BTC_ASSET_ID;
     if (giveIsBtc && takeIsBtc) {
-        throw new UnsupportedRoute("arkade:BTC -> arkade:BTC moves one asset, it swaps nothing", {
+        throw new UnsupportedRoute("give and take are both BTC, so the route swaps nothing", {
             give: "arkade",
             take: "arkade",
         });
@@ -657,14 +658,25 @@ const quoteLightningReceive = async (
     const rfqId = newRfqId();
 
     // A leg we claim: the key that receives it, and the P that unlocks it.
-    const secrets = await provisionClaimSecret(input.wallet);
+    const [secrets, payoutAddress] = await Promise.all([
+        provisionClaimSecret(input.wallet),
+        input.wallet.getAddress(),
+    ]);
     const paymentHash = hex.encode(secrets.paymentHash);
-    const payoutAddress = await input.wallet.getAddress();
     const lightning = input.corridors.get("lightning").deps;
     const sealTo = sealingKey(lightning);
-    const claimPacket = sealTo
-        ? await sealClaimPacket({ preimage: secrets.preimage, covclaimdPubkey: sealTo })
-        : undefined;
+    // Only an exact-out BTC take names, in the sats covclaimd compares, what the lockup must carry.
+    // Anything else would go unbound, and covclaimd would claim dust and hand the solver `P`.
+    const sealsAmount = pinned.on === "take" && input.legs.take.assetId === BTC_ASSET_ID;
+    const binds = bindsClaimAmount();
+    const claimPacket =
+        sealTo !== undefined && (!binds || sealsAmount)
+            ? await sealClaimPacket({
+                  preimage: secrets.preimage,
+                  covclaimdPubkey: sealTo,
+                  minAmount: binds ? pinned.value : undefined,
+              })
+            : undefined;
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(
@@ -797,8 +809,12 @@ const quoteOnchainSend = async (
 
     // Two wallet keys: the claim secret (P, covenant sender role) and the L1 HTLC claim key.
     // Asking twice keeps them distinct; minting one here is what key provisioning forbids.
-    const secrets = await provisionClaimSecret(input.wallet);
-    const payoutKey = await provisionRefundKey(input.wallet);
+    // Claim secret allocates an HD index; the refund key reuses the identity. Different
+    // keys, so the two provisions do not have to take turns.
+    const [secrets, payoutKey] = await Promise.all([
+        provisionClaimSecret(input.wallet),
+        provisionRefundKey(input.wallet),
+    ]);
     const paymentHash = hex.encode(secrets.paymentHash);
 
     const wire = await input.transport.requestQuote(
@@ -857,6 +873,7 @@ const quoteOnchainSend = async (
     });
     verifyRefundWindow({
         refundLocktime: derived.refundLocktime,
+        refundWithoutReceiverDelay: derived.refundWithoutReceiverDelay,
         now: input.now,
         maxSeconds: input.policy?.maxRefundWindowSeconds,
     });
@@ -931,13 +948,18 @@ const quoteOnchainReceive = async (
 
     // Two wallet keys: the claim secret (P, covenant receiver role) and the L1 refund key. Asking
     // twice keeps them distinct; minting one here is what key provisioning forbids.
-    const secrets = await provisionClaimSecret(input.wallet);
-    const refundKey = await provisionRefundKey(input.wallet);
+    // Claim secret allocates an HD index; the refund key reuses the identity. The two
+    // addresses are this wallet's own and do not depend on either key.
+    const [secrets, refundKey, payoutAddress, boardingAddress] = await Promise.all([
+        provisionClaimSecret(input.wallet),
+        provisionRefundKey(input.wallet),
+        input.wallet.getAddress(),
+        input.wallet.getBoardingAddress(),
+    ]);
     const paymentHash = hex.encode(secrets.paymentHash);
-    const payoutAddress = await input.wallet.getAddress();
     // Fixed at quote time: the manager refuses a record without it, and a refund must never be
     // built against a destination chosen after the money moved.
-    const refundPkScript = l1ScriptForAddress(await input.wallet.getBoardingAddress(), l1Network);
+    const refundPkScript = l1ScriptForAddress(boardingAddress, l1Network);
 
     const wire = await input.transport.requestQuote(
         withCanonicalAmount(

@@ -235,8 +235,10 @@ describe("ContractManager.syncOnchain", () => {
         await manager.syncOnchain();
         const read = walletRepository.getWalletState.bind(walletRepository);
         let other: Promise<void> | undefined;
-        vi.spyOn(walletRepository, "getWalletState").mockImplementation(async () => {
-            const state = await read();
+        // Writes go through the atomic update; a rival write lands while it is in flight.
+        const atomic = walletRepository.atomicWalletState!;
+        const update = atomic.update.bind(atomic);
+        vi.spyOn(atomic, "update").mockImplementation(async (updater) => {
             if (!other) {
                 other = updateWalletState(walletRepository, (s) => ({
                     ...s,
@@ -244,7 +246,7 @@ describe("ContractManager.syncOnchain", () => {
                 }));
                 await new Promise((r) => setTimeout(r, 5));
             }
-            return state;
+            return update(updater);
         });
         await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
         await other;

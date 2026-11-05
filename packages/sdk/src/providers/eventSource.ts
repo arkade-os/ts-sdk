@@ -12,8 +12,14 @@
  * Node's `eventsource` package and React Native polyfills are not DOM `EventSource`s.
  */
 export interface EventSourceLike {
-    addEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
-    removeEventListener(type: "message" | "error", listener: (event: MessageEvent) => void): void;
+    addEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void;
+    removeEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void;
     close(): void;
 }
 
@@ -32,7 +38,7 @@ export interface EventSourceCapable {
 const GUIDANCE =
     "Pass one with configureEventSource(url => new EventSource(url)) — in Node, from the " +
     "`eventsource` package or by running with --experimental-eventsource. In React Native, " +
-    "use ExpoArkProvider / ExpoIndexerProvider instead.";
+    "use ExpoOperatorProvider / ExpoIndexerProvider instead.";
 
 /**
  * No `EventSource` could be resolved, so no SSE stream can be opened. An environment property, so

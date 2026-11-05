@@ -23,7 +23,7 @@ import { hex } from "@scure/base";
  * const handler = wallet.createBatchHandler(intentId, inputs, expectedRecipients, musig2session);
  *
  * const abortController = new AbortController();
- * // Get event stream from the Arkade provider
+ * // Get event stream from the operator provider
  * const eventStream = arkProvider.getEventStream(
  *   abortController.signal,
  *   ['your-topic-1', 'your-topic-2']

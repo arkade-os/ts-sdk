@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
     IndexerProvider,
@@ -358,6 +358,15 @@ export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     payload: { contracts: ContractWithVtxos[]; filterApplied?: boolean };
 };
 
+export type RequestGetStoredContractsWithVtxos = RequestEnvelope & {
+    type: "GET_STORED_CONTRACTS_WITH_VTXOS";
+    payload: { filter?: GetContractsFilter };
+};
+export type ResponseGetStoredContractsWithVtxos = ResponseEnvelope & {
+    type: "STORED_CONTRACTS_WITH_VTXOS";
+    payload: { contracts: ContractWithVtxos[] };
+};
+
 function unsupportedByManager(method: string): Error {
     return new Error(`Contract manager does not support ${method}`);
 }
@@ -526,6 +535,14 @@ export type RequestGetAllSpendingPaths = RequestEnvelope & {
 export type ResponseGetAllSpendingPaths = ResponseEnvelope & {
     type: "ALL_SPENDING_PATHS";
     payload: { paths: PathSelection[] };
+};
+
+export type RequestGetUnsupportedContracts = RequestEnvelope & {
+    type: "GET_UNSUPPORTED_CONTRACTS";
+};
+export type ResponseGetUnsupportedContracts = ResponseEnvelope & {
+    type: "UNSUPPORTED_CONTRACTS";
+    payload: { contracts: Contract[] };
 };
 
 // broadcast messages
@@ -932,6 +949,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestGetStoredContractsWithVtxos
     | RequestWatchScript
     | RequestUnwatchScript
     | RequestGetWatchedScripts
@@ -940,6 +958,7 @@ export type WalletUpdaterRequest =
     | RequestDeleteContract
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
+    | RequestGetUnsupportedContracts
     | RequestIsContractManagerWatching
     | RequestRefreshVtxos
     | RequestRefreshOutpoints
@@ -996,6 +1015,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseGetStoredContractsWithVtxos
         | ResponseWatchScript
         | ResponseUnwatchScript
         | ResponseGetWatchedScripts
@@ -1005,6 +1025,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
+        | ResponseGetUnsupportedContracts
         | ResponseIsContractManagerWatching
         | ResponseRefreshVtxos
         | ResponseRefreshOutpoints
@@ -1038,8 +1059,11 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRestoreWallet
     );
 
-/** What a generation counter covers: a subscription field, a derived cache, or the request stream. */
-type Scope = "incomingFunds" | "contractEvents" | "boarding" | "request";
+/**
+ * What a generation counter covers: a subscription field, a derived cache, the
+ * request stream, or an initializer run.
+ */
+type Scope = "init" | "incomingFunds" | "contractEvents" | "boarding" | "request";
 
 /**
  * Bound to the generation live when it was created. Re-check `stale` after
@@ -1058,11 +1082,12 @@ export class WalletMessageHandler
     private wallet: Wallet | undefined;
     private readonlyWallet: ReadonlyWallet | undefined;
 
-    private arkProvider: ArkProvider | undefined;
+    private arkProvider: OperatorProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private walletRepository: WalletRepository | undefined;
 
     private incomingFundsSubscription: (() => void) | undefined;
+    private incomingFundsRegistrations = new WeakMap<object, Promise<void>>();
     private contractEventsSubscription: (() => void) | undefined;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
     private channel: { broadcast(response: WalletUpdaterResponse): void } | undefined;
@@ -1075,6 +1100,11 @@ export class WalletMessageHandler
     // stale, folding requests in would truncate an in-flight settle, and
     // sharing with boarding would kill every lazy refresh (see `boardingEpoch`).
     private incomingFundsEpoch = 0;
+    /**
+     * Supersedes older initializers without touching `incomingFundsEpoch`, so a
+     * re-init that fails before registering leaves the live subscription delivering.
+     */
+    private initEpoch = 0;
     private contractEventsEpoch = 0;
     private boardingEpoch = 0;
     /** Per-request progress callbacks: ends with the handler, not with a re-init. */
@@ -1107,6 +1137,7 @@ export class WalletMessageHandler
         // invoking its progress callback, and without the bumps it would re-arm
         // the tick queue that this just emptied.
         this.requestEpoch++;
+        this.initEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
         this.boardingEpoch++;
@@ -1160,6 +1191,8 @@ export class WalletMessageHandler
 
     private epochOf(scope: Scope): number {
         switch (scope) {
+            case "init":
+                return this.initEpoch;
             case "incomingFunds":
                 return this.incomingFundsEpoch;
             case "contractEvents":
@@ -1462,6 +1495,17 @@ export class WalletMessageHandler
                         payload: { contracts, filterApplied: true },
                     });
                 }
+                case "GET_STORED_CONTRACTS_WITH_VTXOS": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contracts = await manager.getStoredContractsWithVtxos(
+                        message.payload.filter,
+                    );
+                    return this.tagged({
+                        id,
+                        type: "STORED_CONTRACTS_WITH_VTXOS",
+                        payload: { contracts },
+                    });
+                }
                 case "WATCH_SCRIPT": {
                     const manager = await this.readonlyWallet.getContractManager();
                     // Acking a manager that cannot watch would tell the
@@ -1545,6 +1589,15 @@ export class WalletMessageHandler
                         id,
                         type: "ALL_SPENDING_PATHS",
                         payload: { paths },
+                    });
+                }
+                case "GET_UNSUPPORTED_CONTRACTS": {
+                    const manager = await this.readonlyWallet.getContractManager();
+                    const contracts = await manager.getUnsupportedContracts();
+                    return this.tagged({
+                        id,
+                        type: "UNSUPPORTED_CONTRACTS",
+                        payload: { contracts },
                     });
                 }
                 case "IS_CONTRACT_MANAGER_WATCHING": {
@@ -1996,32 +2049,31 @@ export class WalletMessageHandler
     }
     private async onWalletInitialized() {
         const wallet = this.readonlyWallet;
+        const signingWallet = this.wallet;
+        const lazyBoarding = this.lazyBoardingInit;
         if (!wallet || !this.arkProvider || !this.indexerProvider || !this.walletRepository) {
             return;
         }
 
-        // Bounds each await below to the generation that entered: a stop(),
-        // CLEAR or re-init landing inside one must not let the stale
-        // initializer resume and overwrite the new wallet's subscription.
-        // `incomingFundsEpoch` doubles as mutual exclusion between two
-        // overlapping INIT_WALLETs — whichever reaches the bump first makes the
-        // other return before it can unsubscribe the winner.
-        const init = this.newGeneration("incomingFunds");
+        // The last INIT to start wins: an older one returns at its next check.
+        this.initEpoch++;
+        const init = this.newGeneration("init");
 
         // Initialize contract manager FIRST — this populates the repository
         // with full virtual output history for all contracts (one indexer call per contract)
         await this.ensureContractEventBroadcasting();
         if (init.stale) return;
 
-        await this.refreshCachedData({ lazyBoarding: this.lazyBoardingInit });
+        await this.refreshCachedData({ lazyBoarding });
         if (init.stale) return;
 
         // Recover pending transactions (init-only, not on reload).
         // Pending txs only exist if a send was interrupted mid-finalization.
-        if (this.wallet) {
+        if (signingWallet) {
             try {
                 const vtxos = await this.getVtxosFromRepo();
-                const { pending, finalized } = await this.wallet.finalizePendingTxs(
+                if (init.stale) return;
+                const { pending, finalized } = await signingWallet.finalizePendingTxs(
                     vtxos.filter((vtxo) => vtxo.isSpent || (vtxo.isPreconfirmed && !vtxo.isSwept)),
                 );
                 console.info(
@@ -2033,14 +2085,41 @@ export class WalletMessageHandler
             if (init.stale) return;
         }
 
-        // unsubscribe previous subscription if any
+        this.incomingFundsEpoch++;
+        const emitter = this.newEmitter("incomingFunds");
+        const provider = wallet.onchainProvider ?? this;
+        // Serialized per provider: a provider may key watches by script (Electrum
+        // does), so a stale registration finishing late would overwrite, then
+        // unsubscribe, the live one. A timeout or bypass here reopens that race.
+        const previousRegistration =
+            this.incomingFundsRegistrations.get(provider) ?? Promise.resolve();
+        const registration = previousRegistration.then(() =>
+            this.registerIncomingFunds(wallet, emitter),
+        );
+        this.incomingFundsRegistrations.set(
+            provider,
+            registration.catch((error) => {
+                console.error("Error subscribing to incoming funds:", error);
+            }),
+        );
+
+        if (!lazyBoarding) await registration;
+        if (signingWallet && !emitter.stale) {
+            try {
+                await signingWallet.getVtxoManager();
+            } catch (error) {
+                console.error("Error starting VtxoManager:", error);
+            }
+        }
+    }
+
+    private async registerIncomingFunds(wallet: ReadonlyWallet, emitter: Emitter): Promise<void> {
+        if (emitter.stale) return;
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
         this.incomingFundsSubscription = undefined;
-        this.incomingFundsEpoch++;
-        // The new generation starts here — `init` is stale from now on.
-        const emitter = this.newEmitter("incomingFunds");
 
         const address = await wallet.getAddress();
+        if (emitter.stale) return;
 
         // subscribe for incoming funds and notify all clients when new funds arrive
         const unsubscribe = await wallet.notifyIncomingFunds(async (funds) => {
@@ -2144,17 +2223,6 @@ export class WalletMessageHandler
         // a bare return would leave a callback nothing can unsubscribe.
         if (emitter.stale) return unsubscribe();
         this.incomingFundsSubscription = unsubscribe;
-
-        // Eagerly start the VtxoManager so its background tasks (auto-renewal,
-        // boarding input polling/sweep) run inside the service worker without
-        // waiting for a client to send a VtxoManager message first.
-        if (this.wallet) {
-            try {
-                await this.wallet.getVtxoManager();
-            } catch (error) {
-                console.error("Error starting VtxoManager:", error);
-            }
-        }
     }
 
     /**
@@ -2175,7 +2243,8 @@ export class WalletMessageHandler
             const emitter = this.newEmitter("boarding");
             void (async () => {
                 // `emitter` gates every write: a `clear()` or re-init during the onchain fetch
-                // must not repopulate the wiped repository.
+                // must not repopulate the wiped repository. History stays behind this fetch so
+                // init returns with both onchain legs still parked.
                 await this.refreshBoardingCache(emitter);
                 if (emitter.stale) return;
                 this.boardingLoaded = true;
@@ -2187,26 +2256,38 @@ export class WalletMessageHandler
                         payload: { coins },
                     }),
                 );
-                await this.refreshHistoryCache(emitter);
+                await this.storeHistoryCache(await this.loadHistoryCache(), emitter);
             })().catch((error) => {
                 console.warn("[wallet] background refresh failed", error);
             });
             return;
         }
 
+        const history = this.loadHistoryCache();
+        void history.catch(() => undefined);
         await this.refreshBoardingCache();
         this.boardingLoaded = true;
-        await this.refreshHistoryCache();
+        await this.storeHistoryCache(await history);
     }
 
-    /** @param gen - set by a background caller; each write is skipped once it goes stale. */
-    private async refreshHistoryCache(gen?: Generation): Promise<void> {
+    /** History rows plus the address they are stored under. Does not write. */
+    private async loadHistoryCache(): Promise<
+        { address: string; txs: ArkTransaction[] } | undefined
+    > {
         const wallet = this.readonlyWallet;
-        const repository = this.walletRepository;
-        if (!wallet || !repository) return;
+        if (!wallet || !this.walletRepository) return undefined;
         const address = await wallet.getAddress();
         const txs = await this.buildTransactionHistoryFromCache();
-        if (txs && !gen?.stale) await repository.saveTransactions(address, txs);
+        if (!txs) return undefined;
+        return { address, txs };
+    }
+
+    private async storeHistoryCache(
+        history: { address: string; txs: ArkTransaction[] } | undefined,
+        gen?: Generation,
+    ): Promise<void> {
+        if (!history || gen?.stale || !this.walletRepository) return;
+        await this.walletRepository.saveTransactions(history.address, history.txs);
     }
 
     /** @param gen - set by a background caller; the refresh is skipped once it goes stale. */
@@ -2333,6 +2414,7 @@ export class WalletMessageHandler
         // what stop an in-flight callback from emitting — or writing — a
         // just-wiped wallet's state.
         this.requestEpoch++;
+        this.initEpoch++;
         this.incomingFundsEpoch++;
         this.contractEventsEpoch++;
         this.boardingEpoch++;
@@ -2399,7 +2481,9 @@ export class WalletMessageHandler
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
         vtxos: NormalizedExtendedVirtualCoin[];
     }> {
-        if (!this.walletRepository || !this.readonlyWallet) return { snapshot: [], vtxos: [] };
+        const repository = this.walletRepository;
+        const wallet = this.readonlyWallet;
+        if (!repository || !wallet) return { snapshot: [], vtxos: [] };
         const seen = new Set<string>();
         const allVtxos: NormalizedExtendedVirtualCoin[] = [];
 
@@ -2420,28 +2504,25 @@ export class WalletMessageHandler
         // buckets may carry legacy duplicate rows from other contracts; gate
         // each bucket by its owning contract script before deduplication so a
         // wrong-script row never wins the txid:vout race.
-        const manager = await this.readonlyWallet.getContractManager();
+        const addressPromise = wallet.getAddress();
+        void addressPromise.catch(() => undefined);
+        const manager = await wallet.getContractManager();
         const contracts = await manager.getContracts();
-        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
-        for (const contract of contracts) {
-            if (!options.includeRecoveryOnly && isRecoveryOnlyContract(contract)) continue;
-            snapshot.push({
-                contract,
-                vtxos: addVtxos(
-                    offchainRows(
-                        contract,
-                        await getVtxosForContract(this.walletRepository, contract, options),
-                    ),
-                ),
-            });
-        }
-
+        const eligible = contracts.filter(
+            (contract) => options.includeRecoveryOnly || !isRecoveryOnlyContract(contract),
+        );
+        // One read per contract. Merge in repository order so the first row still wins a
+        // duplicate outpoint; folding the lists as they resolve would let a later contract claim it.
+        const listsPromise = Promise.all(
+            eligible.map((contract) => getVtxosForContract(repository, contract, options)),
+        );
+        void listsPromise.catch(() => undefined);
+        const walletAddress = await addressPromise;
         // Also check the wallet's primary address. Decode it to its script
         // and apply the same script gate. Failing to decode the wallet's own
         // address is a structural bug — surfacing the error is safer than
         // silently dropping the primary bucket and zeroing the user's
         // visible balance.
-        const walletAddress = await this.readonlyWallet.getAddress();
         let walletScript: string;
         try {
             walletScript = scriptFromArkAddress(walletAddress);
@@ -2450,17 +2531,26 @@ export class WalletMessageHandler
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
-        // Routed through the same helper as the contract buckets rather than reading the
-        // repository directly, so this bucket normalizes too. Anything left here
-        // is outside every contract row, so it carries no contract to judge it
-        // by — the wallet's own receive address, which is never gated.
-        addVtxos(
-            await getVtxosForContract(
-                this.walletRepository,
+        const [lists, primaryVtxos] = await Promise.all([
+            listsPromise,
+            // Routed through the same helper as the contract buckets rather than reading the
+            // repository directly, so this bucket normalizes too. Anything left here
+            // is outside every contract row, so it carries no contract to judge it
+            // by — the wallet's own receive address, which is never gated.
+            getVtxosForContract(
+                repository,
                 { script: walletScript, address: walletAddress },
                 options,
             ),
-        );
+        ]);
+        const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
+        for (const [i, contract] of eligible.entries()) {
+            snapshot.push({
+                contract,
+                vtxos: addVtxos(offchainRows(contract, lists[i])),
+            });
+        }
+        addVtxos(primaryVtxos);
 
         return { snapshot, vtxos: allVtxos };
     }

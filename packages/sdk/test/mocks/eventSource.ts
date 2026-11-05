@@ -38,6 +38,10 @@ export class MockEventSource {
         this.emit("message", { data });
     }
 
+    emitFailure(data: string) {
+        this.emit("failure", { data });
+    }
+
     emitError(readyState: number) {
         this.readyState = readyState;
         this.emit("error", new Event("error"));

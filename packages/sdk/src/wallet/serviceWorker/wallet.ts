@@ -113,6 +113,8 @@ import {
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
+    RequestGetUnsupportedContracts,
+    ResponseGetUnsupportedContracts,
     RequestSend,
     RequestSendWithDeadline,
     RequestSendWithInputExpiryFloor,
@@ -164,6 +166,8 @@ import {
     RequestGetUsedSigningDescriptors,
     ResponseGetUsedSigningDescriptors,
     RequestAdvanceSigningDescriptorWatermark,
+    RequestGetStoredContractsWithVtxos,
+    ResponseGetStoredContractsWithVtxos,
     DEFAULT_MESSAGE_TAG,
     deserializeAggregateError,
     isSerializedAggregateError,
@@ -274,10 +278,12 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
     GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_STORED_CONTRACTS_WITH_VTXOS: 20_000,
     GET_WATCHED_SCRIPTS: 10_000,
     ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
     GET_ALL_SPENDING_PATHS: 20_000,
+    GET_UNSUPPORTED_CONTRACTS: 20_000,
     GET_ASSET_DETAILS: 20_000,
     GET_EXPIRING_VTXOS: 20_000,
     GET_EXPIRED_BOARDING_UTXOS: 20_000,
@@ -348,10 +354,12 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_SPENDABLE_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
+    "GET_STORED_CONTRACTS_WITH_VTXOS",
     "GET_WATCHED_SCRIPTS",
     "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
+    "GET_UNSUPPORTED_CONTRACTS",
     "GET_ASSET_DETAILS",
     "GET_EXPIRING_VTXOS",
     "RELOAD_WALLET",
@@ -506,18 +514,16 @@ interface ServiceWorkerWalletOptions {
      * @see WalletConfig.lookAheadWindow
      */
     lookAheadWindow?: number;
+    /** @see WalletConfig.oneShotSubmit */
+    oneShotSubmit?: boolean;
     /**
-     * Timelock floors forwarded to the worker wallet. Lowering either below its
+     * Batch expiry floor forwarded to the worker wallet. Lowering it below its
      * per-network default relaxes a fund-safety bound; intended for local
-     * testing. The fast public test networks whose arkd runs below the
-     * mainnet-grade checkpoint floor (signet, mutinynet) are defaulted to their
-     * own advertised value, so neither needs these set.
+     * testing.
      *
      * @see WalletConfig.minBatchExpirySeconds
      */
     minBatchExpirySeconds?: bigint;
-    /** @see WalletConfig.minCheckpointExitDelaySeconds */
-    minCheckpointExitDelaySeconds?: bigint;
     /**
      * Per-request timeout overrides for wallet-updater messages.
      * @see DEFAULT_MESSAGE_TIMEOUTS
@@ -563,8 +569,8 @@ type MessageBusInitConfig = {
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     lookAheadWindow?: number;
+    oneShotSubmit?: boolean;
     minBatchExpirySeconds?: bigint;
-    minCheckpointExitDelaySeconds?: bigint;
     messageTimeouts?: Record<string, number>;
 };
 
@@ -1178,7 +1184,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetBalance).payload;
+            const balance = (response as ResponseGetBalance).payload;
+            return {
+                ...balance,
+                contractLocked: balance.contractLocked ?? balance.gated,
+                deprecatedSignerLocked: balance.deprecatedSignerLocked ?? balance.pendingRecovery,
+            };
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
         }
@@ -1445,6 +1456,27 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
+            async getStoredContractsWithVtxos(
+                filter?: GetContractsFilter,
+            ): Promise<ContractWithVtxos[]> {
+                const message: RequestGetStoredContractsWithVtxos = {
+                    type: "GET_STORED_CONTRACTS_WITH_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { filter },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    // The worker may have started a background catch-up sync.
+                    await refreshSyncState();
+                    return (response as ResponseGetStoredContractsWithVtxos).payload.contracts;
+                } catch (cause) {
+                    throw new Error(`Failed to get stored contracts with vtxos: ${cause}`, {
+                        cause,
+                    });
+                }
+            },
+
             async watchScript(
                 script: string | string[],
                 options?: { label?: string },
@@ -1629,6 +1661,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 }
             },
 
+            async getUnsupportedContracts(): Promise<Contract[]> {
+                const message: RequestGetUnsupportedContracts = {
+                    type: "GET_UNSUPPORTED_CONTRACTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetUnsupportedContracts).payload.contracts;
+                } catch (cause) {
+                    throw new Error(`Failed to get unsupported contracts: ${cause}`, { cause });
+                }
+            },
+
             onContractEvent(callback: ContractEventCallback): () => void {
                 const messageHandler = (event: MessageEvent) => {
                     const response = event.data as WalletUpdaterResponse;
@@ -1787,6 +1833,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        public readonly oneShotSubmit?: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1839,6 +1886,7 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
+            options.oneShotSubmit,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 
@@ -1850,8 +1898,8 @@ export class ServiceWorkerWallet
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
+            oneShotSubmit: options.oneShotSubmit,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
-            minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
         });
     }
 

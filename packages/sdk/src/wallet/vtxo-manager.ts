@@ -22,7 +22,7 @@ import {
 } from "./vtxo";
 import {
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     OnchainCosignRejectedError,
     SettlementEvent,
 } from "../providers/ark";
@@ -56,7 +56,7 @@ import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 /**
  * Outpoints (`txid:vout`) of VTXOs whose contract signer is past its cutoff (`EXPIRED`) and that
  * the server has not swept yet. The operator will not co-sign them, so `getBalance` buckets them
- * under `pendingRecovery` and coin selection skips them (a send would fail at submit); they
+ * under `deprecatedSignerLocked` and coin selection skips them (a send would fail at submit); they
  * recover once swept and re-settled under the active signer.
  *
  * Pure + offline: classifies against a cached {@link SignerSet}, never a fresh GetInfo.
@@ -90,7 +90,7 @@ export function selectPendingRecoveryOutpoints(
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     network: Network;
     /**
      * Descriptor-aware signer: routes each input to the identity or its per-index descriptor
@@ -416,13 +416,13 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Default behavior: virtual output renewal at 3 days, boarding sweep enabled, polling every minute
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  * });
  *
  * // Custom expiry threshold of 24 hours
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *   },
@@ -431,7 +431,7 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Explicitly disable
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: false,
  * });
  * ```
@@ -481,7 +481,7 @@ export interface SettlementConfig {
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 259_200,
  *     boardingUtxoSweep: true,
@@ -816,7 +816,7 @@ export interface DeprecatedSignerMigrationReport {
  * `Wallet`; absent on watch-only or mock wallets.
  */
 interface MigrationCapableWallet {
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
@@ -963,7 +963,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *      // Seconds before virtual output expiry to trigger renewal
  *      vtxoThreshold: 259_200, // 3 days
@@ -1142,14 +1142,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```
      */
     async recoverVtxos(eventCallback?: (event: SettlementEvent) => void): Promise<string> {
-        const allVtxos = await this.wallet.getVtxos({
-            withRecoverable: true,
-            withUnrolled: false,
-        });
+        const [allVtxos, now] = await Promise.all([
+            this.wallet.getVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+            }),
+            fetchTimeHeight(this.wallet),
+        ]);
 
         const dustAmount = getDustAmount(this.wallet);
-
-        const now = await fetchTimeHeight(this.wallet);
         let { vtxosToRecover } = getRecoverableWithSubdust(allVtxos, dustAmount, now);
 
         if (vtxosToRecover.length === 0) {
@@ -1299,13 +1300,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         includesSubdust: boolean;
         vtxoCount: number;
     }> {
-        const allVtxos = await this.wallet.getVtxos({
-            withRecoverable: true,
-            withUnrolled: false,
-        });
+        const infoProvider = this.getInfoProvider();
+        const [allVtxos, now, info, arkAddress] = await Promise.all([
+            this.wallet.getVtxos({
+                withRecoverable: true,
+                withUnrolled: false,
+            }),
+            fetchTimeHeight(this.wallet),
+            infoProvider?.getInfo(),
+            this.wallet.getAddress(),
+        ]);
 
         const dustAmount = getDustAmount(this.wallet);
-        const now = await fetchTimeHeight(this.wallet);
 
         let { vtxosToRecover, includesSubdust } = getRecoverableWithSubdust(
             allVtxos,
@@ -1328,15 +1334,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         // Priced exactly as `recoverVtxos` prices what it settles; batch caps not applied (see
-        // the JSDoc).
-        const info = await this.getInfoProvider()?.getInfo();
+        // the JSDoc). `info` and the address were fetched with the coin list.
         const estimator = new Estimator(info?.fees.intentFee ?? {});
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
-        const priced = deductOffchainOutputFee(
-            subtotalOf(payable, net),
-            estimator,
-            await this.wallet.getAddress(),
-        );
+        const priced = deductOffchainOutputFee(subtotalOf(payable, net), estimator, arkAddress);
         // A flat output fee can outweigh the inputs; recovery refuses that rather
         // than settling it, so report nothing recoverable instead of a negative.
         const recoverable = priced > 0n ? priced : 0n;
@@ -1420,9 +1421,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             if (recoveryScripts.length === 0) return;
 
             // Scope the VTXO sync to just the imported contracts.
-            const recoveryContracts = await cm.getContractsWithVtxos({ script: recoveryScripts });
-
-            const info = await this.getInfoProvider()?.getInfo();
+            const infoProvider = this.getInfoProvider();
+            const [recoveryContracts, info] = await Promise.all([
+                cm.getContractsWithVtxos({ script: recoveryScripts }),
+                infoProvider?.getInfo(),
+            ]);
             const dustAmount = getDustAmount(wallet);
 
             for (const { contract, vtxos } of recoveryContracts) {
@@ -1559,7 +1562,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *  identity,
-     *  arkProvider: new RestArkProvider(),
+     *  operatorProvider: new RestOperatorProvider(),
      *  settlementConfig: {
      *      vtxoThreshold: 86_400 // 24 hours
      *  },
@@ -1594,14 +1597,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return [];
         }
 
-        const vtxos = await this.wallet.getSpendableVtxos({
+        // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
+        const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
+        // Start the coin read before a tip fetch. A caller-supplied tip is already in hand, so
+        // it is not wrapped in Promise.all — that would add a tick and overlap nothing.
+        const vtxosPromise = this.wallet.getSpendableVtxos({
             withRecoverable: true,
             genericallySpendableOnly: true,
         });
-
-        // Not `??`: a runtime `null` must still reach isVtxoExpiringSoon's default guard.
-        const threshold = thresholdMs !== undefined ? thresholdMs : this.configuredThresholdMs();
         const tip = now ?? (await fetchTimeHeight(this.wallet));
+        const vtxos = await vtxosPromise;
 
         await this.warnHeldExpiring(threshold, tip);
         return getExpiringAndRecoverableVtxos(vtxos, threshold, getDustAmount(this.wallet), tip);
@@ -1893,7 +1898,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   operatorProvider: new RestOperatorProvider(),
      *   settlementConfig: {
      *     boardingUtxoSweep: true,
      *   },
@@ -2030,8 +2035,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // The refresh may trigger a rotation off the emit; let it settle so counts come from one
         // signer epoch.
         await wallet.settleServerInfoChanges?.();
-        const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
-        const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
+        const [{ reports: vtxoReports }, { reports: boardingReports }] = await Promise.all([
+            this.classifyDeprecatedSignerContracts(info),
+            this.classifyDeprecatedSignerBoarding(info),
+        ]);
         return mergeSignerReports(vtxoReports, boardingReports);
     }
 
@@ -2068,8 +2075,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Own signer neither active nor advertised deprecated: never rotate or migrate
         // automatically, but still surface holdings under other deprecated signers.
         if (walletClass.status === "UNKNOWN_SIGNER") {
-            const { reports: vtxoReports } = await this.classifyDeprecatedSignerContracts(info);
-            const { reports: boardingReports } = await this.classifyDeprecatedSignerBoarding(info);
+            const [{ reports: vtxoReports }, { reports: boardingReports }] = await Promise.all([
+                this.classifyDeprecatedSignerContracts(info),
+                this.classifyDeprecatedSignerBoarding(info),
+            ]);
             return {
                 // True only if a second rotation landed inside the drain, leaving us on a signer
                 // newer than `info` (a drained rotation otherwise classifies CURRENT).
@@ -2086,16 +2095,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Classify AFTER any rotation, so the just-deprecated former receive/boarding contracts
         // are included.
-        const {
-            reports: vtxoReports,
-            migratable: vtxoMigratable,
-            expired: vtxoExpired,
-        } = await this.classifyDeprecatedSignerContracts(info);
-        const {
-            reports: boardingReports,
-            migratable: boardingMigratable,
-            expired: boardingExpired,
-        } = await this.classifyDeprecatedSignerBoarding(info);
+        const [
+            { reports: vtxoReports, migratable: vtxoMigratable, expired: vtxoExpired },
+            { reports: boardingReports, migratable: boardingMigratable, expired: boardingExpired },
+        ] = await Promise.all([
+            this.classifyDeprecatedSignerContracts(info),
+            this.classifyDeprecatedSignerBoarding(info),
+        ]);
 
         const reports = mergeSignerReports(vtxoReports, boardingReports);
 
@@ -2619,17 +2625,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().onchainProvider;
     }
 
-    private getArkProvider() {
+    private getOperatorProvider() {
         return this.getSweepWallet().arkProvider;
     }
 
     /**
-     * Unlike {@link getArkProvider}, doesn't require boarding-sweep capability. Undefined when no
+     * Unlike {@link getOperatorProvider}, doesn't require boarding-sweep capability. Undefined when no
      * provider is wired, which callers treat as "no limit".
      */
-    private getInfoProvider(): ArkProvider | undefined {
+    private getInfoProvider(): OperatorProvider | undefined {
         // Narrow cast, so an incompatible future IWallet.arkProvider is a type error here.
-        return (this.wallet as { arkProvider?: ArkProvider }).arkProvider;
+        return (this.wallet as { arkProvider?: OperatorProvider }).arkProvider;
     }
 
     private getNetwork() {
@@ -2966,7 +2972,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const dustAmount = getDustAmount(this.wallet);
 
-        const info = await this.getArkProvider().getInfo();
+        const info = await this.getOperatorProvider().getInfo();
         const { fees, vtxoMaxAmount } = info;
         const estimator = new Estimator(fees.intentFee);
 

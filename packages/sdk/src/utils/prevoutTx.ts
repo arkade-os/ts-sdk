@@ -143,8 +143,13 @@ export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Pr
     if (pending.length === 0) return;
 
     const resolved = new Map<string, Uint8Array>();
-    for (const txid of new Set(pending.map((p) => p.txid))) {
-        resolved.set(txid, await source.getRawTransaction(txid));
+    const txids = [...new Set(pending.map((p) => p.txid))];
+    // Same failure as the old loop: the first txid's rejection, in request order.
+    const fetched = await Promise.allSettled(txids.map((txid) => source.getRawTransaction(txid)));
+    for (let i = 0; i < fetched.length; i++) {
+        const result = fetched[i];
+        if (result.status === "rejected") throw result.reason;
+        resolved.set(txids[i], result.value);
     }
     for (const { index, txid } of pending) {
         setArkPsbtField(tx, index, PrevoutTxField, resolved.get(txid)!);

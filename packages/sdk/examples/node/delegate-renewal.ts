@@ -26,7 +26,7 @@ import {
     InMemoryContractRepository,
     EsploraProvider,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     RestDelegateProvider,
     SingleKey,
     Wallet,
@@ -37,7 +37,7 @@ import {
 // default, so we polyfill it.
 (globalThis as any).EventSource = EventSource;
 
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_URL = "http://localhost:3000/api";
 const DELEGATE_SERVER_URL = "http://localhost:7012";
 
@@ -84,7 +84,7 @@ async function main() {
     log("Creating wallet with settlement + delegation enabled (in-memory storage)...");
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_SERVER_URL),
+        operatorProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),

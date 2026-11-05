@@ -87,8 +87,11 @@ const CLTV_OFFSET_SECONDS = 8n;
  */
 const nirWithoutReceiverProgram = (refundLocktime: bigint) =>
     ({
-        version: 0,
-        params: ["server", "sender"],
+        version: 1,
+        params: [
+            { name: "server", type: "pubkey" },
+            { name: "sender", type: "pubkey" },
+        ],
         functions: {
             refund: {
                 tapscript: { signers: ["$server"], cltv: refundLocktime },

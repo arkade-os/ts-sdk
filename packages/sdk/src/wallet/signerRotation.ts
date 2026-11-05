@@ -42,7 +42,7 @@ export interface SignerSet {
      * Deprecated signers (x-only hex) → cutoff; `0n` means none advertised (→ `DUE_NOW`).
      *
      * Read-only: the wallet hands out its live `_deprecatedSigners`, which drives coin selection
-     * and the pendingRecovery balance bucket. Never write through it.
+     * and the `deprecatedSignerLocked` balance bucket. Never write through it.
      */
     deprecated: ReadonlyMap<string, bigint>;
 }

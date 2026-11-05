@@ -1290,6 +1290,47 @@ describe("ContractManager", () => {
 
             expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
         });
+
+        it("skips an unannotatable contract's outpoints and still refreshes the rest", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const localManager = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            await localManager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            const brokenScript = "ef".repeat(34);
+            await repository.saveContract({
+                type: "no-such-handler",
+                params: {},
+                script: brokenScript,
+                address: "broken",
+                state: "active",
+                createdAt: 1,
+            });
+            const good = createMockVtxo({ txid: "aa".repeat(32), script: TEST_DEFAULT_SCRIPT });
+            const broken = createMockVtxo({ txid: "bb".repeat(32), script: brokenScript });
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [good, broken] });
+
+            await localManager.refreshOutpoints([
+                { txid: good.txid, vout: 0 },
+                { txid: broken.txid, vout: 0 },
+            ]);
+
+            expect((await collectVtxos(walletRepo, "address")).map((v) => v.txid)).toEqual([
+                good.txid,
+            ]);
+            expect(await collectVtxos(walletRepo, "broken")).toEqual([]);
+        });
     });
 
     describe("refreshVtxos cursor handling", () => {

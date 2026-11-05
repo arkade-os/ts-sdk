@@ -35,8 +35,13 @@ const payTo = [
 ] as arkade.AsmToken[];
 
 const program = {
-    version: 0,
-    params: ["receiver", "amount", "server", "user"],
+    version: 1,
+    params: [
+        { name: "receiver", type: "pubkey" },
+        { name: "amount", type: "int" },
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+    ],
     functions: {
         covenant: {
             tapscript: { signers: ["$user"] },

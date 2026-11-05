@@ -43,6 +43,7 @@ import {
     type ContractTapscripts,
 } from "../wallet/utils";
 import { UnannotatableInputError } from "./spendability";
+import { UnsupportedProgramVersionError } from "../arkade/program";
 import { ContractFilter, ContractRepository, IntentRepository } from "../repositories";
 import { reconcileIntents, type IntentReconciliationDeps } from "../wallet/intentReconciliation";
 import {
@@ -96,6 +97,11 @@ type TapscriptMemo = Map<
 >;
 const TAPSCRIPT_MEMO_MAX_ENTRIES = 1024;
 
+/** Deriving a contract's script is pure in this key, so memoized verdicts are keyed by it. */
+function contractKey(contract: Contract): string {
+    return `${contract.type}\u0000${contract.script}\u0000${JSON.stringify(contract.params)}`;
+}
+
 /**
  * Which of `vtxos`' contracts this runtime can annotate, with the tapscripts built along the way
  * and a reason for each that it cannot.
@@ -108,16 +114,23 @@ function annotatableIn(
     scriptToContract: ReadonlyMap<string, Contract>,
     vtxos: readonly { script: string }[],
     memo?: TapscriptMemo,
-): { scripts: Set<string>; cache: ContractTapscriptCache; failures: Map<string, string> } {
+): {
+    scripts: Set<string>;
+    cache: ContractTapscriptCache;
+    failures: Map<string, string>;
+    /** Rows in a program version this SDK cannot read, as `script → { key, reason }`. */
+    unsupported: Map<string, { key: string; reason: string }>;
+} {
     const scripts = new Set<string>();
     const cache: ContractTapscriptCache = new Map();
     const failures = new Map<string, string>();
+    const unsupported = new Map<string, { key: string; reason: string }>();
     for (const script of new Set(vtxos.map((vtxo) => vtxo.script))) {
         const contract = scriptToContract.get(script);
         if (!contract) continue; // not ours; dropped by the caller's filter
         try {
             // Pure in (type, params) under one handler; a swapped or removed handler must re-derive.
-            const key = `${contract.type}\u0000${script}\u0000${JSON.stringify(contract.params)}`;
+            const key = contractKey(contract);
             const handler = contractHandlers.get(contract.type);
             const hit = memo?.get(script);
             let tapscripts: ContractTapscripts;
@@ -138,13 +151,32 @@ function annotatableIn(
             cache.set(script, tapscripts); // aliases the memo; extendVtxoFromContract clones before use
             scripts.add(script);
         } catch (err) {
-            failures.set(
-                script,
-                `'${contract.type}' at ${script}: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            const reason = `'${contract.type}' at ${script}: ${err instanceof Error ? err.message : String(err)}`;
+            if (err instanceof UnsupportedProgramVersionError) {
+                unsupported.set(script, { key: contractKey(contract), reason });
+            } else {
+                failures.set(script, reason);
+            }
         }
     }
-    return { scripts, cache, failures };
+    return { scripts, cache, failures, unsupported };
+}
+
+/**
+ * Sync paths pass the contracts they fetched for rather than re-reading the repository: a row
+ * deleted while the indexer fetch was in flight would otherwise throw on annotation.
+ */
+function annotateAgainst(
+    vtxos: VirtualCoin[],
+    byScript: Map<string, Contract>,
+    // Per-contract memo: rebuilding the taproot tree per VTXO dominates long histories (#521).
+    tapscripts: ContractTapscriptCache = new Map(),
+): NormalizedExtendedVirtualCoin[] {
+    // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
+    // into forfeit construction and repository writes.
+    return vtxos.map((vtxo) =>
+        extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscripts),
+    );
 }
 
 /**
@@ -308,8 +340,13 @@ export interface IContractManager extends Disposable {
      * older than `vtxoSyncMaxAgeMs` is requested in the background (skipped while the lazy boot
      * runs); check {@link getSyncState} before trusting the result. For display, never coin
      * selection.
+     *
+     * The read itself never waits, but reaching the manager can: without `lazyInitialization`
+     * its construction runs the boot sync, and a read racing it (a worker still handling
+     * `INIT_WALLET`) waits for that. Through the service worker, {@link getSyncState} is cached
+     * right after the read, so it usually reports `syncing` until the next proxy call refreshes it.
      */
-    getStoredContractsWithVtxos?(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
+    getStoredContractsWithVtxos(filter?: GetContractsFilter): Promise<ContractWithVtxos[]>;
 
     /**
      * Settles when the `lazyInitialization` boot (look-ahead drain, reconcile, watcher start)
@@ -403,6 +440,14 @@ export interface IContractManager extends Disposable {
 
     /** All possible spending paths for a contract; empty if the contract or handler is unknown. */
     getAllSpendingPaths(options: GetAllSpendingPathsOptions): Promise<PathSelection[]>;
+
+    /**
+     * Rows whose program version this SDK cannot read. They are kept but not synced, spent or
+     * exited, and do not degrade {@link getSyncState}. Recover one with an SDK that reads its
+     * version, or call {@link createContract} with current params for the same script, which
+     * replaces the row in place.
+     */
+    getUnsupportedContracts(): Promise<Contract[]>;
 
     /** Subscribe to contract events. @returns Unsubscribe function */
     onContractEvent(callback: ContractEventCallback): () => void;
@@ -839,6 +884,12 @@ export class ContractManager implements IContractManager {
     /** Contracts a sync could not annotate, as `script → reason`. */
     private annotationFailures = new Map<string, string>();
 
+    /**
+     * Rows in a program version this SDK cannot read, as `script → contractKey`. Kept out of
+     * {@link annotationFailures}: they are expected after an upgrade, so they must not degrade sync.
+     */
+    private unsupportedContracts = new Map<string, string>();
+
     private annotationDegradedReason(): string | undefined {
         if (this.annotationFailures.size === 0) return undefined;
         return `cannot annotate ${this.annotationFailures.size} contract(s), their vtxos are not being synced — ${[...this.annotationFailures.values()].join("; ")}`;
@@ -851,11 +902,40 @@ export class ContractManager implements IContractManager {
     private recordAnnotationFailures(
         annotated: ReadonlySet<string>,
         failures: ReadonlyMap<string, string>,
+        unsupported: ReadonlyMap<string, { key: string; reason: string }>,
     ): void {
-        for (const script of annotated) this.annotationFailures.delete(script);
+        for (const script of annotated) {
+            this.annotationFailures.delete(script);
+            this.unsupportedContracts.delete(script);
+        }
         for (const [script, reason] of failures) {
+            this.unsupportedContracts.delete(script);
             this.annotationFailures.set(script, reason);
             console.warn(`[contracts] cannot annotate contract ${reason}; skipping its vtxos`);
+        }
+        for (const [script, { key, reason }] of unsupported) {
+            this.annotationFailures.delete(script);
+            if (this.unsupportedContracts.get(script) === key) continue; // warned already
+            this.unsupportedContracts.set(script, key);
+            console.warn(`[contracts] cannot annotate contract ${reason}; skipping its vtxos`);
+        }
+    }
+
+    /**
+     * Whether `contract` is in a program version this SDK cannot read. Memoized per
+     * {@link contractKey}, so a re-created row is never answered from its predecessor's verdict.
+     */
+    private isUnsupported(contract: Contract): boolean {
+        const key = contractKey(contract);
+        if (this.unsupportedContracts.get(contract.script) === key) return true;
+        if (this.tapscriptMemo.get(contract.script)?.key === key) return false;
+        try {
+            contractHandlers.get(contract.type)?.createScript(contract.params);
+            return false;
+        } catch (err) {
+            if (!(err instanceof UnsupportedProgramVersionError)) return false;
+            this.unsupportedContracts.set(contract.script, key);
+            return true;
         }
     }
 
@@ -1318,7 +1398,13 @@ export class ContractManager implements IContractManager {
 
         const [existing] = await this.getContracts({ script: params.script });
         if (existing) {
-            if (existing.type === params.type) return { contract: existing, persisted: false };
+            if (existing.type === params.type) {
+                if (!this.isUnsupported(existing)) return { contract: existing, persisted: false };
+                return {
+                    contract: await this.replaceUnsupported(existing, params),
+                    persisted: true,
+                };
+            }
             // Equal-delay default/boarding collision: FIRST-WINS on type (NArk's script-keyed
             // dedup), so the watcher's registered type stays authoritative. The one script
             // now holds coins of both layers, so only the scope widens.
@@ -1341,6 +1427,41 @@ export class ContractManager implements IContractManager {
 
         await this.config.contractRepository.saveContract(contract);
         return { contract, persisted: true };
+    }
+
+    /**
+     * Overwrite a row this SDK cannot read with `params`, already verified to lock its script. One
+     * write, so the script never goes without a row. The row's history (`createdAt`, `state`,
+     * `watch`) survives, as do its `label` and `metadata` unless the caller passes new ones. The
+     * first writer's generic-spend gate holds: a closed one stays closed, and an open one stays
+     * open unless the caller sets the flag explicitly.
+     */
+    private async replaceUnsupported(
+        existing: Contract,
+        params: CreateContractParams,
+    ): Promise<Contract> {
+        // `register()` passes absent options as explicit `undefined`; they must not erase the row's.
+        const label = params.label ?? existing.label;
+        const given = params.metadata ?? existing.metadata;
+        const wasOpen = existing.metadata?.genericallySpendable === true;
+        const metadata =
+            wasOpen && given?.genericallySpendable === undefined
+                ? { ...given, genericallySpendable: true }
+                : given?.genericallySpendable === true && !wasOpen
+                  ? { ...given, genericallySpendable: false }
+                  : given;
+        const { watch: _, label: _label, metadata: _metadata, ...rest } = params;
+        const contract: Contract = {
+            ...rest,
+            ...(label !== undefined && { label }),
+            ...(metadata !== undefined && { metadata }),
+            ...(existing.watch !== undefined && { watch: existing.watch }),
+            createdAt: existing.createdAt,
+            state: existing.state,
+        };
+        await this.config.contractRepository.saveContract(contract);
+        this.unsupportedContracts.delete(contract.script);
+        return contract;
     }
 
     /**
@@ -1536,6 +1657,12 @@ export class ContractManager implements IContractManager {
         return await collectContracts(this.config.contractRepository, dbFilter);
     }
 
+    /** @inheritdoc */
+    async getUnsupportedContracts(): Promise<Contract[]> {
+        const contracts = await this.getContracts();
+        return contracts.filter((contract) => this.isUnsupported(contract));
+    }
+
     async getContractsWithVtxos(
         filter?: GetContractsFilter,
         pageSize?: number,
@@ -1621,13 +1748,7 @@ export class ContractManager implements IContractManager {
             byScript.set(contract.script, contract);
         }
 
-        // Per-contract memo: rebuilding the taproot tree per VTXO dominates long histories (#521).
-        const tapscriptCache: ContractTapscriptCache = tapscripts ?? new Map();
-        // `vtxos` is caller-supplied, so normalize before annotating: the annotated coins flow on
-        // into forfeit construction and repository writes.
-        return vtxos.map((vtxo) =>
-            extendVirtualCoinForContract(normalizeVtxo(vtxo), byScript, tapscriptCache),
-        );
+        return annotateAgainst(vtxos, byScript, tapscripts);
     }
 
     /** @inheritdoc */
@@ -1638,11 +1759,12 @@ export class ContractManager implements IContractManager {
         const contracts = await collectContracts(this.config.contractRepository, {
             script: Array.from(new Set(vtxos.map((vtxo) => vtxo.script))),
         });
-        const { scripts, failures } = annotatableIn(
+        const { scripts, failures, unsupported } = annotatableIn(
             new Map(contracts.map((contract) => [contract.script, contract])),
             vtxos,
             this.tapscriptMemo,
         );
+        for (const [script, { reason }] of unsupported) failures.set(script, reason);
         const orphans = vtxos.filter(
             (vtxo) => !scripts.has(vtxo.script) && !failures.has(vtxo.script),
         );
@@ -1697,8 +1819,12 @@ export class ContractManager implements IContractManager {
         });
         if (asking.length === 0) return refused;
 
-        const tip = await this.currentChainTip();
-        const walletDescriptorValue = await walletDescriptor?.();
+        // Chain tip and the wallet descriptor are independent reads. Every spend and settle
+        // waits on this, so they share one round trip instead of two.
+        const [tip, walletDescriptorValue] = await Promise.all([
+            this.currentChainTip(),
+            walletDescriptor?.(),
+        ]);
         // Per INPUT: a CSV timelock runs from THIS coin's confirmation, so two vtxos on one
         // contract can disagree about the same leaf.
         for (const vtxo of asking) {
@@ -1948,10 +2074,17 @@ export class ContractManager implements IContractManager {
             script: scripts,
         });
         const scriptToContract = new Map(contracts.map((c) => [c.script, c]));
-        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const {
+            scripts: annotatable,
+            cache,
+            failures,
+            unsupported,
+        } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
+        this.recordAnnotationFailures(annotatable, failures, unsupported);
+        const owned = vtxos.filter((v) => annotatable.has(v.script));
         if (owned.length === 0) return;
 
-        const annotated = await this.annotateVtxos(owned);
+        const annotated = annotateAgainst(owned, scriptToContract, cache);
         const byAddress = new Map<string, ExtendedVirtualCoin[]>();
         for (const vtxo of annotated) {
             const contract = scriptToContract.get(vtxo.script);
@@ -2385,10 +2518,11 @@ export class ContractManager implements IContractManager {
             scripts: annotatable,
             cache,
             failures,
+            unsupported,
         } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
-        this.recordAnnotationFailures(annotatable, failures);
+        this.recordAnnotationFailures(annotatable, failures, unsupported);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
-        const annotated = await this.annotateVtxos(owned, cache);
+        const annotated = annotateAgainst(owned, scriptToContract, cache);
 
         const byContract = new Map<string, ExtendedContractVtxo[]>();
         // So a just-promoted script saves against its row, not the synthetic watcher object.
@@ -2510,10 +2644,11 @@ export class ContractManager implements IContractManager {
             scripts: annotatable,
             cache,
             failures,
+            unsupported,
         } = annotatableIn(scriptToContract, vtxos, this.tapscriptMemo);
-        this.recordAnnotationFailures(annotatable, failures);
+        this.recordAnnotationFailures(annotatable, failures, unsupported);
         const owned = vtxos.filter((v) => annotatable.has(v.script));
-        const annotated = await this.annotateVtxos(owned, cache);
+        const annotated = annotateAgainst(owned, scriptToContract, cache);
         for (const vtxo of annotated) {
             result.get(vtxo.script)!.push({
                 ...vtxo,

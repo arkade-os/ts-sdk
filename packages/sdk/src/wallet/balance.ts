@@ -15,27 +15,33 @@ export interface OffchainBalance {
     /**
      * VTXOs under a contract {@link BalanceCapabilities.isGenericallySpendable} refuses (VHTLC
      * lockup, unmarked `arkade` program, unregistered handler type). In `settled`/`preconfirmed`
-     * and `total`, never in `available`. Takes precedence over {@link intentLocked}: the gate is
+     * and `total`, never in `available`. Takes precedence over {@link pendingSettlement}: the gate is
      * durable while an intent lock clears on its own.
      */
-    gated: number;
+    contractLocked: number;
     /**
-     * Funds committed to an in-flight (non-terminal) intent and not {@link gated}; they return to
-     * `available` when the intent terminates. Zero when the caller can't tell (no intent
+     * Funds committed to an in-flight (non-terminal) intent and not {@link contractLocked}; they
+     * return to `available` when the intent terminates. Zero when the caller can't tell (no intent
      * repository, or its read fails), so it under-reports into `available` rather than
      * misattributing. Worker and main-thread figures come from different reads and may differ.
      */
-    intentLocked: number;
-    /** Held by `reserveVtxos` and neither gated nor intent-locked; never in `available`. */
+    pendingSettlement: number;
+    /**
+     * Held by `reserveVtxos` and neither {@link contractLocked} nor {@link pendingSettlement};
+     * never in `available`.
+     */
     reserved: number;
     recoverable: number;
-    pendingRecovery: number;
+    deprecatedSignerLocked: number;
     /**
      * Already unilaterally exited: onchain behind its CSV, movable only by `completeUnroll`.
      * Never `available` or `recoverable` (a batch cannot lift an onchain output), but in `total`.
      */
     unrolled: number;
-    /** `settled + preconfirmed + recoverable + pendingRecovery + unrolled` (disjoint buckets). */
+    /**
+     * `settled + preconfirmed + recoverable + deprecatedSignerLocked + unrolled` (disjoint
+     * buckets).
+     */
     total: number;
     assets: Asset[];
     availableAssets: Asset[];
@@ -81,11 +87,11 @@ export function computeOffchainBalance(
     let settled = 0;
     let preconfirmed = 0;
     let available = 0;
-    let gated = 0;
-    let intentLocked = 0;
+    let contractLocked = 0;
+    let pendingSettlement = 0;
     let reserved = 0;
     let recoverable = 0;
-    let pendingRecovery = 0;
+    let deprecatedSignerLocked = 0;
     let unrolled = 0;
     const owned = new Map<string, bigint>();
     const spendable = new Map<string, bigint>();
@@ -114,7 +120,7 @@ export function computeOffchainBalance(
         // counts each VTXO once; the gate applies to `available` only, since a gated coin dropped
         // from `recoverable` would also fail `canSpendOffchain` and land in no bucket.
         if (isPendingRecovery(vtxo)) {
-            pendingRecovery += vtxo.value;
+            deprecatedSignerLocked += vtxo.value;
             continue;
         }
         if (canRecoverOnchain(vtxo, now)) {
@@ -128,11 +134,12 @@ export function computeOffchainBalance(
         } else {
             settled += vtxo.value;
         }
-        // `settled + preconfirmed` splits exactly four ways. Gate before lock: see `gated`.
+        // `settled + preconfirmed` splits exactly four ways. Gate before lock: see
+        // `contractLocked`.
         if (!isGenericallySpendable(vtxo)) {
-            gated += vtxo.value;
+            contractLocked += vtxo.value;
         } else if (!isUnlocked(vtxo)) {
-            intentLocked += vtxo.value;
+            pendingSettlement += vtxo.value;
         } else if (isReserved?.(vtxo)) {
             reserved += vtxo.value;
         } else {
@@ -154,13 +161,13 @@ export function computeOffchainBalance(
         settled,
         preconfirmed,
         available,
-        gated,
-        intentLocked,
+        contractLocked,
+        pendingSettlement,
         reserved,
         recoverable,
-        pendingRecovery,
+        deprecatedSignerLocked,
         unrolled,
-        total: settled + preconfirmed + recoverable + pendingRecovery + unrolled,
+        total: settled + preconfirmed + recoverable + deprecatedSignerLocked + unrolled,
         assets: toAssets(owned),
         availableAssets: toAssets(spendable),
     };
@@ -191,14 +198,18 @@ export function toWalletBalance(
         settled: offchain.settled,
         preconfirmed: offchain.preconfirmed,
         available: offchain.available,
-        gated: offchain.gated,
-        intentLocked: offchain.intentLocked,
+        contractLocked: offchain.contractLocked,
+        pendingSettlement: offchain.pendingSettlement,
         reserved: offchain.reserved,
         recoverable: offchain.recoverable,
-        pendingRecovery: offchain.pendingRecovery,
+        deprecatedSignerLocked: offchain.deprecatedSignerLocked,
         unrolled: offchain.unrolled,
         total: totalBoarding + offchain.total,
         assets: offchain.assets,
         availableAssets: offchain.availableAssets,
+        // Deprecated aliases, so code written against older releases still reads a value.
+        gated: offchain.contractLocked,
+        intentLocked: offchain.pendingSettlement,
+        pendingRecovery: offchain.deprecatedSignerLocked,
     };
 }

@@ -143,6 +143,7 @@ export {
     // wallet can follow the doc without re-implementing the chunk/page loop.
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    toOffchainInputFeeParams,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -178,6 +179,7 @@ import {
     type ArkadeCashUnclaimedVtxo,
     type ArkadeCashVtxoRef,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -238,11 +240,13 @@ import type {
     Unspent as ElectrumUnspent,
 } from "./providers/electrum";
 import {
+    RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
     OnchainCosignUnsupportedError,
     OnchainCosignRejectedError,
     OnchainCosignAmbiguousError,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
@@ -263,7 +267,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
-import { CachingArkProvider } from "./providers/cachingArk";
+import { CachingOperatorProvider, CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -290,6 +294,7 @@ import {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     ArkTxInput,
     OffchainTx,
     VerifyServerSignatures,
@@ -333,6 +338,7 @@ import {
     NetworkName,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
+    DEFAULT_ARKADE_EMULATOR_URL,
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
@@ -356,6 +362,7 @@ import {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
 } from "./providers/indexer";
 import {
     RestEmulatorProvider,
@@ -438,16 +445,7 @@ import {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
 } from "./wallet/batchExpiry";
 import type { BatchExpiryPolicy } from "./wallet/batchExpiry";
-import {
-    assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-} from "./wallet/checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -473,6 +471,7 @@ import type {
 import { ChainedTxType } from "./repositories/virtualTxRepository";
 import type {
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
@@ -502,6 +501,8 @@ export { collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+// Also at the root, so `import { Arkade }` works without the namespace.
+export { Arkade } from "./arkade";
 export * from "./extension/emulator";
 
 // BIP21 codec (reused by the payment rails) + the modular payment router.
@@ -539,7 +540,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
-import type { ArkadeContractParams } from "./arkade/program";
+import type { ArkadeService } from "./arkade/service";
+import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -679,7 +681,9 @@ export {
     ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
+    RestOperatorProvider,
     RestArkProvider,
+    CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
     OnchainCosignUnsupportedError,
@@ -753,6 +757,7 @@ export {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     waitForIncomingFunds,
     AbortError,
     VtxoReservedError,
@@ -780,12 +785,14 @@ export {
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
+    DEFAULT_ARKADE_EMULATOR_URL,
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
@@ -862,13 +869,6 @@ export {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
     type BatchExpiryPolicy,
     assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isSubdust,
     getSequence,
@@ -896,6 +896,7 @@ export {
     outpointReasons,
     logExcludedVtxos,
     UnannotatableInputError,
+    UnsupportedProgramVersionError,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -931,6 +932,7 @@ export type {
     NewAddressType,
     WalletConfig,
     WalletMode,
+    ArkadeService,
     // Referenced by WalletMode: consumers need these to name or implement
     // a provider they pass to the wallet.
     DescriptorProvider,
@@ -991,6 +993,7 @@ export type {
     ConnectorTreeNode,
     // Provider types
     OnchainProvider,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     FeeInfo,
@@ -1017,6 +1020,7 @@ export type {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
     // Network types
     Network,
     NetworkName,
@@ -1153,6 +1157,7 @@ export type {
     // Repositories
     ManagedConnection,
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
