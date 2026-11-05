@@ -40,8 +40,12 @@ const explorer = new EsploraProvider(ESPLORA_API_URL);
 
 // No $server signer: the emulator's onchain endpoint refuses leaves containing it.
 const covenantProgram = {
-    version: 0,
-    params: ["receiver", "amount", "user"],
+    version: 1,
+    params: [
+        { name: "receiver", type: "pubkey" },
+        { name: "amount", type: "int" },
+        { name: "user", type: "pubkey" },
+    ],
     functions: {
         spend: {
             tapscript: { signers: ["$user"] },
