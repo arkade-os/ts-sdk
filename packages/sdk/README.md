@@ -1228,7 +1228,7 @@ SDK uses IndexedDB repositories with the default database name.
 #### Paged repository reads
 
 Collection repositories expose `getVtxosPage`, `getVtxosForScriptPage`, `getUtxosPage`,
-`getTransactionHistoryPage`, `getContractsPage`, and `getIntentsPage`.
+`getTransactionHistoryPage`, `getContractsPage`, and `getBatchRegistrationsPage`.
 Each accepts `{ limit, after? }` and returns
 `{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
 Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;

@@ -177,6 +177,13 @@ export function intentRepositoryConformance(
             }
         });
 
+        it("saves and pages through the batch registration methods", async () => {
+            const r = await make();
+            await r.saveBatchRegistration(intent("a"));
+            const page = await r.getBatchRegistrationsPage(undefined, { limit: 10 });
+            expect(page.items).toHaveLength(1);
+        });
+
         it("clear empties the store", async () => {
             const r = await make();
             await r.saveIntent(intent("a"));

@@ -33,7 +33,7 @@ const indexerReturning = (vtxos: VirtualCoin[]): IntentReconcilerIndexer => ({
 });
 
 const seed = async (repo: InMemoryIntentRepository, i: ArkIntent) => {
-    await repo.saveIntent(i);
+    await repo.saveBatchRegistration(i);
     return repo;
 };
 
@@ -151,7 +151,7 @@ describe("reconcileIntents", () => {
 
     it("is a no-op (no throw) when the intent store read fails", async () => {
         const repo = new InMemoryIntentRepository();
-        vi.spyOn(repo, "getIntentsPage").mockRejectedValueOnce(new Error("db corrupt"));
+        vi.spyOn(repo, "getBatchRegistrationsPage").mockRejectedValueOnce(new Error("db corrupt"));
         const getVtxos = vi.fn();
 
         await expect(
@@ -162,21 +162,21 @@ describe("reconcileIntents", () => {
 
     it("reconciles a mixed batch in one pass with a single indexer round-trip", async () => {
         const repo = new InMemoryIntentRepository();
-        await repo.saveIntent(
+        await repo.saveBatchRegistration(
             intent({
                 intentTxId: "done",
                 state: "waiting_for_batch",
                 intentVtxos: [{ txid: "a", vout: 0 }],
             }),
         );
-        await repo.saveIntent(
+        await repo.saveBatchRegistration(
             intent({
                 intentTxId: "stale",
                 state: "waiting_to_submit",
                 intentVtxos: [{ txid: "b", vout: 0 }],
             }),
         );
-        await repo.saveIntent(
+        await repo.saveBatchRegistration(
             intent({
                 intentTxId: "live",
                 state: "waiting_for_batch",

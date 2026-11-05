@@ -1180,7 +1180,9 @@ describe("Wallet", () => {
         it("wipes intents once none is pending", async () => {
             const intentRepository = new InMemoryIntentRepository();
             const { wallet } = await createReadonlyTestWallet({ intentRepository });
-            await intentRepository.saveIntent(storedIntent({ state: "batch_succeeded" }));
+            await intentRepository.saveBatchRegistration(
+                storedIntent({ state: "batch_succeeded" }),
+            );
 
             await wallet.clear();
 
@@ -1190,7 +1192,7 @@ describe("Wallet", () => {
         it("keeps pending intents a readonly wallet cannot release", async () => {
             const intentRepository = new InMemoryIntentRepository();
             const { wallet } = await createReadonlyTestWallet({ intentRepository });
-            await intentRepository.saveIntent(storedIntent());
+            await intentRepository.saveBatchRegistration(storedIntent());
 
             await wallet.clear();
 
@@ -1206,7 +1208,7 @@ describe("Wallet", () => {
 
             it("releases pending intents from the server, then wipes them", async () => {
                 const intentRepository = new InMemoryIntentRepository();
-                await intentRepository.saveIntent(storedIntent());
+                await intentRepository.saveBatchRegistration(storedIntent());
                 const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
                 await clearIntents(intentRepository, deleteIntent);
@@ -1220,7 +1222,7 @@ describe("Wallet", () => {
 
             it("keeps every intent when one release fails", async () => {
                 const intentRepository = new InMemoryIntentRepository();
-                await intentRepository.saveIntent(storedIntent());
+                await intentRepository.saveBatchRegistration(storedIntent());
                 await intentRepository.saveIntent(
                     storedIntent({ intentTxId: "i2", intentVtxos: [{ txid: "w", vout: 0 }] }),
                 );

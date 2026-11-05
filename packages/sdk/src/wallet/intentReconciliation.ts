@@ -167,7 +167,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
                 intentTxIds: [intent.intentTxId],
             });
             if (!fresh || fresh.state !== intent.state) continue;
-            await deps.intentRepository.saveIntent(next);
+            await deps.intentRepository.saveBatchRegistration(next);
         } catch (e) {
             console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
         }

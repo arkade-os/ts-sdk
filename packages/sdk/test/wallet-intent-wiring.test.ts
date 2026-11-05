@@ -23,8 +23,8 @@ describe("settle intent persistence contract", () => {
             partialForfeits: [],
             intentVtxos: [{ txid: "v", vout: 0 }],
         };
-        await repo.saveIntent(base);
-        await repo.saveIntent({ ...base, state: "waiting_for_batch" });
+        await repo.saveBatchRegistration(base);
+        await repo.saveBatchRegistration({ ...base, state: "waiting_for_batch" });
 
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
 
@@ -35,7 +35,7 @@ describe("settle intent persistence contract", () => {
             commitmentTxid: "ctx",
         } as never);
         expect(next).toBeDefined();
-        if (next) await repo.saveIntent(next);
+        if (next) await repo.saveBatchRegistration(next);
 
         const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");

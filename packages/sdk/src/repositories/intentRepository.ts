@@ -77,13 +77,17 @@ export type IntentPageFilter = IntentFilter;
 export interface IntentRepository extends AsyncDisposable {
     readonly version: 1;
     clear(): Promise<void>;
-    /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
-    saveIntent(intent: ArkIntent): Promise<void>;
-    /** Bounded intents in `intentTxId` order, not chronological order; `after` is exclusive. */
-    getIntentsPage(
+    /** Upsert by primary key; implementation sets `updatedAt = Date.now()`. */
+    saveBatchRegistration(intent: ArkIntent): Promise<void>;
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent: IntentRepository["saveBatchRegistration"];
+    /** Bounded registrations in primary key order, not chronological order; `after` is exclusive. */
+    getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>>;
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage: IntentRepository["getBatchRegistrationsPage"];
     /**
      * Outpoints held by NON-terminal intents — `waiting_to_submit`,
      * `waiting_for_batch`, and `batch_in_progress` — to exclude from spendable
@@ -101,9 +105,9 @@ export interface IntentRepository extends AsyncDisposable {
 
 /** Collects in `intentTxId` order; sort by `createdAt` for chronological display. */
 export const collectIntents = (
-    repository: Pick<IntentRepository, "getIntentsPage">,
+    repository: Pick<IntentRepository, "getBatchRegistrationsPage">,
     filter?: IntentPageFilter,
-) => collectPages((page: PageRequest) => repository.getIntentsPage(filter, page));
+) => collectPages((page: PageRequest) => repository.getBatchRegistrationsPage(filter, page));
 
 /**
  * Enforce the "intentId unique when present" contract for backends without a

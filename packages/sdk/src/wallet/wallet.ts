@@ -4499,7 +4499,7 @@ export class Wallet
             if (existing && isTerminalIntentState(existing.state)) {
                 return;
             }
-            await repo.saveIntent({
+            await repo.saveBatchRegistration({
                 ...(existing ?? {}),
                 intentTxId,
                 registerProof: intent.proof,
