@@ -1890,6 +1890,7 @@ describe("ReadonlyWallet", () => {
                 expect(dispose).toHaveBeenCalledTimes(1);
                 expect(startWatching).toHaveBeenCalledTimes(1);
                 expect(stopWatching).toHaveBeenCalledTimes(1);
+                await expect(wallet.getContractManager()).resolves.toBeInstanceOf(ContractManager);
             } finally {
                 failing.mockRestore();
                 dispose.mockRestore();
@@ -1918,6 +1919,7 @@ describe("ReadonlyWallet", () => {
             });
         try {
             await expect(wallet.getContractManager()).rejects.toBe(failure);
+            await expect(wallet.getContractManager()).resolves.toBeInstanceOf(ContractManager);
         } finally {
             createContracts.mockRestore();
             dispose.mockRestore();
