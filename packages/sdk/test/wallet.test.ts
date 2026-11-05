@@ -1842,6 +1842,25 @@ describe("ReadonlyWallet", () => {
         );
     });
 
+    const startupWallet = (identity: ReadonlySingleKey) =>
+        ReadonlyWallet.create({
+            identity,
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+            } as Partial<ArkProvider> as ArkProvider,
+            indexerProvider: {
+                getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                getSubscription: async function* () {},
+            } as Partial<IndexerProvider> as IndexerProvider,
+            onchainProvider: {} as OnchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
     it.each([
         [
             "registering the baseline contracts",
@@ -1860,23 +1879,7 @@ describe("ReadonlyWallet", () => {
         async (_, fail) => {
             const key = SingleKey.fromRandomBytes();
             const identity = ReadonlySingleKey.fromPublicKey(await key.compressedPublicKey());
-            const wallet = await ReadonlyWallet.create({
-                identity,
-                arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
-                } as Partial<ArkProvider> as ArkProvider,
-                indexerProvider: {
-                    getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
-                    subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
-                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
-                    getSubscription: async function* () {},
-                } as Partial<IndexerProvider> as IndexerProvider,
-                onchainProvider: {} as OnchainProvider,
-                storage: {
-                    walletRepository: new InMemoryWalletRepository(),
-                    contractRepository: new InMemoryContractRepository(),
-                },
-            });
+            const wallet = await startupWallet(identity);
             const failure = new Error("start-up failed");
             const failing = fail(failure, identity);
             const dispose = vi.spyOn(ContractManager.prototype, "dispose");
@@ -1896,6 +1899,31 @@ describe("ReadonlyWallet", () => {
             }
         },
     );
+
+    it("keeps the start-up error when disposing the failed manager also rejects", async () => {
+        const key = SingleKey.fromRandomBytes();
+        const wallet = await startupWallet(
+            ReadonlySingleKey.fromPublicKey(await key.compressedPublicKey()),
+        );
+        const failure = new Error("start-up failed");
+        const createContracts = vi
+            .spyOn(ContractManager.prototype, "createContracts")
+            .mockRejectedValueOnce(failure);
+        const realDispose = ContractManager.prototype.dispose;
+        const dispose = vi
+            .spyOn(ContractManager.prototype, "dispose")
+            .mockImplementationOnce(function (this: ContractManager) {
+                void realDispose.call(this);
+                return Promise.reject(new Error("boot failed too"));
+            });
+        try {
+            await expect(wallet.getContractManager()).rejects.toBe(failure);
+        } finally {
+            createContracts.mockRestore();
+            dispose.mockRestore();
+            await wallet.dispose();
+        }
+    });
 
     it("should query balance with ReadonlyWallet", async () => {
         const privateKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
