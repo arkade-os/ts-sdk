@@ -51,7 +51,7 @@ function makeEmulatorExtensionOutput(
 }
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI.
 const ESPLORA_URL = "http://localhost:3000/api";
 const FUNDING_SATS = 1_000_000;
@@ -321,8 +321,8 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
     /** Connect an Arkade client bound to the given signing identity. */
