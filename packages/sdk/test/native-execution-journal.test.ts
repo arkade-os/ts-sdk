@@ -3,6 +3,7 @@ import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { createHash } from "node:crypto";
 import { NativeExecutionJournal } from "../src/arkade/executionJournal";
+import { RestIndexerProvider } from "../src/providers/indexer";
 import { buildOffchainTx, type EmulatorSubmitProposal } from "../src/utils/arkTransaction";
 import { Transaction } from "../src/utils/transaction";
 import { VtxoScript } from "../src/script/base";
@@ -360,6 +361,43 @@ describe("NativeExecutionJournal receipts", () => {
 });
 
 describe("NativeExecutionJournal observation", () => {
+    it.each(["observe", "reconcile"] as const)(
+        "rejects wire-bounded replies that expand beyond journal policy through %s",
+        async (method) => {
+            const f = await observationFixture();
+            const limit = 4 * 1024 * 1024;
+            const padding = new Array(200_000).fill("1e20").join(",");
+            const wire = `{"txs":${JSON.stringify(f.txs)},"padding":[${padding}]}`;
+            expect(Buffer.byteLength(wire)).toBeLessThan(limit);
+            const fetch = vi
+                .spyOn(globalThis, "fetch")
+                .mockImplementation(async () => new Response(wire));
+            const provider = new RestIndexerProvider(`https://indexer.test/${crypto.randomUUID()}`);
+            const txids = [f.tx.checkpoints[0].id, f.record.operationId];
+            const reply = await provider.getVirtualTxs(txids, {
+                pageIndex: 0,
+                pageSize: 2,
+                maxResponseBytes: limit,
+            });
+            expect(reply.txs).toEqual(f.txs);
+            expect(JSON.stringify(reply).length).toBeGreaterThan(limit);
+            const indexer = {
+                getVtxos: f.indexer.getVtxos,
+                getVirtualTxs: provider.getVirtualTxs.bind(provider),
+            };
+            const before = await f.repo.getWalletState();
+            const update = vi.spyOn(f.repo.atomicWalletState!, "update");
+            expect((await f.journal[method](source, indexer))?.state).toBe("unknown");
+            expect(update).not.toHaveBeenCalled();
+            expect(await f.repo.getWalletState()).toEqual(before);
+            expect(await f.journal.getReceipt(source)).toBeUndefined();
+            expect(await f.journal.get(source)).toEqual(f.record);
+            await expect(f.journal.admit(source, f.request)).rejects.toThrow("occupied");
+            fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ txs: f.txs })));
+            expect((await f.journal[method](source, indexer))?.state).toBe("reconciled");
+        },
+    );
+
     it.each(
         (["observe", "reconcile"] as const).flatMap((method) =>
             (["vtxos", "txs"] as const).flatMap((field) =>
