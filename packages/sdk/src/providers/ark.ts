@@ -178,7 +178,7 @@ export type ArkadeInfo = OperatorInfo;
  * noted): NArk calls this `ArkServerInfo`, reads it via `GetServerInfoAsync`
  * on the *transport*, and caches it in a dedicated `CachingClientTransport`.
  * This SDK names it for the operator and hangs the
- * read off the wallet (`getOperatorInfo()`), because here the wallet is the one
+ * read off the wallet, because here the wallet is the one
  * object every consumer already holds and — in the service-worker model — the
  * only side that has a transport at all; the page has no provider to hang it
  * on. The `CachingClientTransport`-style memo lives at this layer instead, as
