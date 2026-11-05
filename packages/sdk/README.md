@@ -1312,16 +1312,16 @@ For React Native apps using Realm, pass your Realm instance directly:
 import {
   RealmWalletRepository,
   RealmContractRepository,
-  ArkRealmSchemas,
-  ARK_REALM_SCHEMA_VERSION,
-  runArkRealmMigrations,
+  ArkadeRealmSchemas,
+  ARKADE_REALM_SCHEMA_VERSION,
+  runArkadeRealmMigrations,
 } from '@arkade-os/sdk/repositories/realm'
 
 const realm = await Realm.open({
-  schema: [...ArkRealmSchemas, ...yourSchemas],
-  schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+  schema: [...ArkadeRealmSchemas, ...yourSchemas],
+  schemaVersion: Math.max(ARKADE_REALM_SCHEMA_VERSION, yourSchemaVersion),
   onMigration: (oldRealm, newRealm) => {
-    runArkRealmMigrations(oldRealm, newRealm)
+    runArkadeRealmMigrations(oldRealm, newRealm)
     // your own migrations
   },
 })

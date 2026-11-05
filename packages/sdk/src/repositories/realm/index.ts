@@ -5,6 +5,10 @@ export { RealmVirtualTxRepository } from "./virtualTxRepository";
 export { ChainedTxType } from "../virtualTxRepository";
 export type { VirtualTx, VirtualTxRepository, VtxoBranch } from "../virtualTxRepository";
 export {
+    ArkadeRealmSchemas,
+    ArkadeExperimentalRealmSchemas,
+    ARKADE_REALM_SCHEMA_VERSION,
+    runArkadeRealmMigrations,
     ArkRealmSchemas,
     ArkExperimentalRealmSchemas,
     ARK_REALM_SCHEMA_VERSION,

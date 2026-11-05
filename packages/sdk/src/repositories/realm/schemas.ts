@@ -1,8 +1,8 @@
 /**
  * Realm object schemas for the Arkade wallet.
  *
- * All schema names are prefixed with "Ark" to avoid collisions with
- * other Realm schemas in the consuming application.
+ * All object names are prefixed with "Ark" to avoid collisions with other Realm
+ * schemas in the consuming application. These names are persisted, so they stay.
  *
  * Since `realm` is a peer dependency (not installed in this package),
  * schemas are defined as plain JS objects conforming to Realm's
@@ -12,7 +12,7 @@
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { legacyVtxoFacts } from "../legacyVtxoFacts";
 
-export const ArkVtxoSchema = {
+export const ArkadeVtxoSchema = {
     name: "ArkVtxo",
     primaryKey: "pk",
     properties: {
@@ -43,12 +43,12 @@ export const ArkVtxoSchema = {
         // scriptPubKey (hex) locking this VTXO, indexed so contract-scoped
         // queries can resolve ownership without touching address mapping.
         // Required as of schema v2; legacy rows are backfilled from `address`
-        // during migration (see `runArkRealmMigrations`).
+        // during migration (see `runArkadeRealmMigrations`).
         script: { type: "string", indexed: true },
     },
 } as const;
 
-export const ArkUtxoSchema = {
+export const ArkadeUtxoSchema = {
     name: "ArkUtxo",
     primaryKey: "pk",
     properties: {
@@ -67,7 +67,7 @@ export const ArkUtxoSchema = {
     },
 } as const;
 
-export const ArkTransactionSchema = {
+export const ArkadeTransactionSchema = {
     name: "ArkTransaction",
     primaryKey: "pk",
     properties: {
@@ -84,7 +84,7 @@ export const ArkTransactionSchema = {
     },
 } as const;
 
-export const ArkWalletStateSchema = {
+export const ArkadeWalletStateSchema = {
     name: "ArkWalletState",
     primaryKey: "key",
     properties: {
@@ -94,7 +94,7 @@ export const ArkWalletStateSchema = {
     },
 } as const;
 
-export const ArkContractSchema = {
+export const ArkadeContractSchema = {
     name: "ArkContract",
     primaryKey: "script",
     properties: {
@@ -111,7 +111,7 @@ export const ArkContractSchema = {
     },
 } as const;
 
-export const ArkIntentSchema = {
+export const ArkadeProofSchema = {
     name: "ArkIntent",
     primaryKey: "intentTxId",
     properties: {
@@ -135,7 +135,7 @@ export const ArkIntentSchema = {
     },
 } as const;
 
-export const ArkVirtualTxSchema = {
+export const ArkadeTxSchema = {
     name: "ArkVirtualTx",
     primaryKey: "txid",
     properties: {
@@ -146,7 +146,7 @@ export const ArkVirtualTxSchema = {
     },
 } as const;
 
-export const ArkVtxoBranchSchema = {
+export const ArkadeVtxoBranchSchema = {
     name: "ArkVtxoBranch",
     primaryKey: "pk",
     properties: {
@@ -163,31 +163,31 @@ export const ArkVtxoBranchSchema = {
  * All Realm schemas needed by the Arkade wallet repositories.
  * Pass this array to your Realm configuration's `schema` property.
  */
-export const ArkRealmSchemas = [
-    ArkVtxoSchema,
-    ArkUtxoSchema,
-    ArkTransactionSchema,
-    ArkWalletStateSchema,
-    ArkContractSchema,
+export const ArkadeRealmSchemas = [
+    ArkadeVtxoSchema,
+    ArkadeUtxoSchema,
+    ArkadeTransactionSchema,
+    ArkadeWalletStateSchema,
+    ArkadeContractSchema,
 ];
 
 /**
  * @experimental Schemas for the inert intent/virtualtx persistence layer.
  *
- * Deliberately kept OUT of {@link ArkRealmSchemas} and {@link
- * ARK_REALM_SCHEMA_VERSION} so upgrading the SDK never migrates an existing
+ * Deliberately kept OUT of {@link ArkadeRealmSchemas} and {@link
+ * ARKADE_REALM_SCHEMA_VERSION} so upgrading the SDK never migrates an existing
  * consumer's Realm. A consumer opting in must register these schemas and bump
  * their own `schemaVersion` themselves:
  *
  * ```ts
- * schema: [...ArkRealmSchemas, ...ArkExperimentalRealmSchemas],
- * schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION + 1, yourSchemaVersion),
+ * schema: [...ArkadeRealmSchemas, ...ArkadeExperimentalRealmSchemas],
+ * schemaVersion: Math.max(ARKADE_REALM_SCHEMA_VERSION + 1, yourSchemaVersion),
  * ```
  */
-export const ArkExperimentalRealmSchemas = [
-    ArkIntentSchema,
-    ArkVirtualTxSchema,
-    ArkVtxoBranchSchema,
+export const ArkadeExperimentalRealmSchemas = [
+    ArkadeProofSchema,
+    ArkadeTxSchema,
+    ArkadeVtxoBranchSchema,
 ];
 
 /**
@@ -198,10 +198,10 @@ export const ArkExperimentalRealmSchemas = [
  *
  * ```ts
  * await Realm.open({
- *     schema: [...ArkRealmSchemas, ...yourSchemas],
- *     schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+ *     schema: [...ArkadeRealmSchemas, ...yourSchemas],
+ *     schemaVersion: Math.max(ARKADE_REALM_SCHEMA_VERSION, yourSchemaVersion),
  *     onMigration: (oldRealm, newRealm) => {
- *         runArkRealmMigrations(oldRealm, newRealm);
+ *         runArkadeRealmMigrations(oldRealm, newRealm);
  *         // your own migrations
  *     },
  * });
@@ -210,7 +210,7 @@ export const ArkExperimentalRealmSchemas = [
  * History:
  *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
  *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
- *     the owning Ark address during migration.
+ *     the owning address during migration.
  *   - v3: ArkContract.watch added (nullable). No data migration: a row
  *     without one reads as `watched`, which is the coverage every
  *     existing contract has today.
@@ -219,13 +219,13 @@ export const ArkExperimentalRealmSchemas = [
  *     `isSwept`, `isPreconfirmed`, `commitmentTxIdsJson`, `expiresAt`,
  *     `expiresAtHeight` — backfilled from it during migration.
  *
- * The intent/virtualtx schemas ({@link ArkExperimentalRealmSchemas}) are NOT
+ * The intent/virtualtx schemas ({@link ArkadeExperimentalRealmSchemas}) are NOT
  * counted here: they are experimental and inert, so they never move the
- * advertised version on their own. `runArkRealmMigrations` still carries the
+ * advertised version on their own. `runArkadeRealmMigrations` still carries the
  * intent-schema migration steps (guarded per-schema) for consumers who opt in
  * and bump their own version.
  */
-export const ARK_REALM_SCHEMA_VERSION = 5;
+export const ARKADE_REALM_SCHEMA_VERSION = 5;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.
@@ -237,7 +237,7 @@ export const ARK_REALM_SCHEMA_VERSION = 5;
  * Arkade v1→v2 script backfill when the row has never been populated.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
+export function runArkadeRealmMigrations(oldRealm: any, newRealm: any): void {
     // v4 → v5: the canonical facts used to live inside `virtualStatusJson`, which v4 drops. Realm
     // deletes a removed property from the new realm, so the old one is the only place left to read
     // it from — and without the copy a swept row comes back `isSwept: false`, spendable, until the
@@ -279,7 +279,7 @@ export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
     // ArkVirtualTx.hex was renamed to psbt (both hold the same serialized tx
     // payload). A rename is drop-old + add-new, so the value would be lost
     // unless we copy it across. The step is versioned by the consumer's own
-    // counter, not by ARK_REALM_SCHEMA_VERSION: these schemas are opt-in and
+    // counter, not by ARKADE_REALM_SCHEMA_VERSION: these schemas are opt-in and
     // never move it. Guard on the old schema actually defining ArkVirtualTx —
     // a realm that never opted in doesn't have it, and reading objects of an
     // unknown type throws.
@@ -296,3 +296,12 @@ export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
         }
     }
 }
+
+/** @deprecated Use {@link ArkadeRealmSchemas}. */
+export const ArkRealmSchemas = ArkadeRealmSchemas;
+/** @deprecated Use {@link ArkadeExperimentalRealmSchemas}. */
+export const ArkExperimentalRealmSchemas = ArkadeExperimentalRealmSchemas;
+/** @deprecated Use {@link ARKADE_REALM_SCHEMA_VERSION}. */
+export const ARK_REALM_SCHEMA_VERSION = ARKADE_REALM_SCHEMA_VERSION;
+/** @deprecated Use {@link runArkadeRealmMigrations}. */
+export const runArkRealmMigrations = runArkadeRealmMigrations;

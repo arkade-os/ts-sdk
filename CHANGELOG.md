@@ -99,6 +99,13 @@ style and have not been backfilled.
   resolver is exported as `arkade.resolveArkadeService`, and `Arkade` itself is
   now exported from the package root as well as from the `arkade` namespace.
 
+- **Realm schema exports take the `Arkade` prefix.** `ArkRealmSchemas`,
+  `ArkExperimentalRealmSchemas`, `ARK_REALM_SCHEMA_VERSION` and
+  `runArkRealmMigrations` become `ArkadeRealmSchemas`,
+  `ArkadeExperimentalRealmSchemas`, `ARKADE_REALM_SCHEMA_VERSION` and
+  `runArkadeRealmMigrations`. The old names stay as deprecated aliases, and
+  Realm object names on disk do not change.
+
 - **`ArkadeContract.on` and `getVtxos`.** `await contract.on("vtxo_received" |
   "vtxo_spent" | "connection_reset", cb)` registers the contract and reports its
   activity from subscription on, returning a handle with `off()`. Coins that
