@@ -265,12 +265,14 @@ export type StorageConfig = {
     /** Contract-state repository implementation. */
     contractRepository: ContractRepository;
     /**
-     * Optional intent-lifecycle repository. Opt-in: when present, the wallet
-     * persists settlement intents and excludes intent-locked VTXOs from
+     * Optional batch registration repository. Opt-in: when present, the wallet
+     * persists batch registrations and excludes the outputs they lock from
      * spendable balance. Absent ⇒ those code paths are no-ops. Only one wallet
-     * instance may settle against it: reconciliation deletes from the server any
-     * pending intent that instance is not settling itself.
+     * instance may settle against it: reconciliation deletes from the operator
+     * any pending batch registration that instance is not settling itself.
      */
+    batchRegistrationRepository?: IntentRepository;
+    /** @deprecated Use {@link batchRegistrationRepository}. */
     intentRepository?: IntentRepository;
     /**
      * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received

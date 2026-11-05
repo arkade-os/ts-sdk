@@ -42,7 +42,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
 
         // Simulates settle()'s catch after Batch.join already succeeded.
         await persistIntentSnapshot.call(
-            { intentRepository: repo },
+            { batchRegistrationRepository: repo },
             "i1",
             "cancelled",
             {},
@@ -63,7 +63,14 @@ describe("persistIntentSnapshot terminal stickiness", () => {
         const repo = new InMemoryIntentRepository();
         await repo.saveIntent(terminalIntent("batch_failed"));
 
-        await persistIntentSnapshot.call({ intentRepository: repo }, "i1", "cancelled", {}, {}, []);
+        await persistIntentSnapshot.call(
+            { batchRegistrationRepository: repo },
+            "i1",
+            "cancelled",
+            {},
+            {},
+            [],
+        );
 
         expect((await collectIntents(repo, { intentTxIds: ["i1"] }))[0].state).toBe("batch_failed");
     });
@@ -71,7 +78,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
     it("is a no-op when no intent repository is configured", async () => {
         await expect(
             persistIntentSnapshot.call(
-                { intentRepository: undefined },
+                { batchRegistrationRepository: undefined },
                 "i1",
                 "cancelled",
                 {},

@@ -224,6 +224,13 @@ style and have not been backfilled.
   where it armed a timer of `undefined` and timed every such message out at once; the
   message bus rejects such keys outright.
 
+- **`storage.intentRepository` is renamed `batchRegistrationRepository`.** The
+  rename covers `ContractManagerConfig`, the `MessageBus` option, and the
+  `Wallet` property. `ContractManagerConfig.intentReconciliation` is renamed
+  `batchRegistrationReconciliation`, and its `deleteIntent` becomes
+  `deleteBatchRegistration`. The old keys still work and the new ones win when
+  both are set. `Wallet.intentRepository` stays as a deprecated accessor.
+
 - **Worker `GET_VTXOS` matches the wallet's filter defaults.** Omitted
   `withRecoverable` now includes swept and expired outputs, and raw VTXO reads
   no longer hide subdust outputs. Explicit filter flags, spent-output

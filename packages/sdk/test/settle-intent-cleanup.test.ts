@@ -79,7 +79,7 @@ describe("Wallet settlement cleanup with SQLite intent locks", () => {
         const wallet: any = {
             network: "mutinynet",
             arkProvider: provider,
-            intentRepository: repository,
+            batchRegistrationRepository: repository,
             _addPendingSpends: vi.fn(),
             _removePendingSpends: vi.fn(),
             _settlingOutpoints: new Set<string>(),

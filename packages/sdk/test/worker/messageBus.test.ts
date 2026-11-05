@@ -1399,11 +1399,16 @@ describe("MessageBus default buildServices", () => {
         arkServer: { url: "https://ark.example.test" },
     } as never;
 
-    const buildServices = async (intentRepository?: IntentRepository) => {
+    const buildServices = async (
+        repositories: {
+            batchRegistrationRepository?: IntentRepository;
+            intentRepository?: IntentRepository;
+        } = {},
+    ) => {
         const bus = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [], ...(intentRepository ? { intentRepository } : {}) },
+            { messageHandlers: [], ...repositories },
         );
         const create = vi
             .spyOn(Wallet, "create")
@@ -1414,16 +1419,18 @@ describe("MessageBus default buildServices", () => {
         return storage;
     };
 
-    it("hands the configured intentRepository to the worker's wallet", async () => {
+    it("hands the configured repository to the worker's wallet", async () => {
         // Without this the worker builds an intent-repo-less wallet: no
         // persisted intents, no reconciliation on restart, and intent-locked
         // VTXOs counted as available — silently unlike a main-thread wallet.
-        const intentRepository = new InMemoryIntentRepository();
-        expect(await buildServices(intentRepository)).toMatchObject({ intentRepository });
+        const repository = new InMemoryIntentRepository();
+        const expected = { batchRegistrationRepository: repository };
+        expect(await buildServices(expected)).toMatchObject(expected);
+        expect(await buildServices({ intentRepository: repository })).toMatchObject(expected);
     });
 
     it("leaves it unset when none is configured", async () => {
-        expect(await buildServices()).not.toHaveProperty("intentRepository");
+        expect(await buildServices()).not.toHaveProperty("batchRegistrationRepository");
     });
 
     it("hands the configured onchainProvider factory to both wallet kinds", async () => {

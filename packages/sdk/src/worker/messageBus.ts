@@ -125,16 +125,18 @@ type Options = {
      */
     messageTimeoutOverrides?: Record<string, number>;
     /**
-     * Optional intent-lifecycle repository, handed to the worker's wallet as
-     * `storage.intentRepository`. Same opt-in as a main-thread wallet: without
-     * it the worker persists no settlement intent, reconciles none on restart,
-     * and counts intent-locked VTXOs as available. Pass the same repository the
-     * main thread uses so both sides read one intent state, but settle from one
-     * side only: reconciliation deletes from the server any pending intent the
-     * worker's wallet is not settling itself.
+     * Optional batch registration repository, handed to the worker's wallet as
+     * `storage.batchRegistrationRepository`. Same opt-in as a main-thread wallet:
+     * without it the worker persists no batch registration, reconciles none on
+     * restart, and counts the outputs they lock as available. Pass the same
+     * repository the main thread uses so both sides read one state, but settle
+     * from one side only: reconciliation deletes from the operator any pending
+     * batch registration the worker's wallet is not settling itself.
      *
      * Ignored when `buildServices` is supplied — that override owns `storage`.
      */
+    batchRegistrationRepository?: IntentRepository;
+    /** @deprecated Use {@link batchRegistrationRepository}. */
     intentRepository?: IntentRepository;
     /** The worker wallet's onchain provider, per network: an instance cannot cross `postMessage`.
      * Called on every init and never closed, so return one instance per network. Defaults to
@@ -229,7 +231,7 @@ export class MessageBus {
     private pendingInitCount = 0;
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
-    private readonly intentRepository?: IntentRepository;
+    private readonly batchRegistrationRepository?: IntentRepository;
     private readonly onchainProvider?: (network: NetworkName) => OnchainProvider;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
     private broadcastQueue: ResponseEnvelope[] = [];
@@ -246,6 +248,7 @@ export class MessageBus {
             tickIntervalMs = 10_000,
             messageTimeoutMs = 30_000,
             messageTimeoutOverrides = {},
+            batchRegistrationRepository,
             intentRepository,
             onchainProvider,
             debug = false,
@@ -255,7 +258,7 @@ export class MessageBus {
         assertTimerMs("tickIntervalMs", tickIntervalMs);
         assertTimerMs("messageTimeoutMs", messageTimeoutMs);
         assertTimeoutMap("messageTimeoutOverrides", messageTimeoutOverrides);
-        this.intentRepository = intentRepository;
+        this.batchRegistrationRepository = batchRegistrationRepository ?? intentRepository;
         this.onchainProvider = onchainProvider;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
@@ -537,7 +540,9 @@ export class MessageBus {
         const storage = {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
-            ...(this.intentRepository && { intentRepository: this.intentRepository }),
+            ...(this.batchRegistrationRepository && {
+                batchRegistrationRepository: this.batchRegistrationRepository,
+            }),
         };
         const delegateProvider = config.delegateUrl
             ? new RestDelegateProvider(config.delegateUrl)

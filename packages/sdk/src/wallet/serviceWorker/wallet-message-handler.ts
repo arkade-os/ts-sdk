@@ -1979,7 +1979,10 @@ export class WalletMessageHandler
         const gated = gatedFrom(snapshot);
         const unlocked = new Set(
             (
-                await spendableVtxosExcludingLocked(allVtxos, this.readonlyWallet?.intentRepository)
+                await spendableVtxosExcludingLocked(
+                    allVtxos,
+                    this.readonlyWallet?.batchRegistrationRepository,
+                )
             ).map((vtxo) => `${vtxo.txid}:${vtxo.vout}`),
         );
 

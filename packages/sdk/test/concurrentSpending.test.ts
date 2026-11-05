@@ -250,7 +250,7 @@ describe("concurrentSpending", () => {
             boardingTapscript: { options: { serverPubKey: new Uint8Array(32).fill(2) } },
             getBoardingUtxosForSigners: async () => [{ coins: [spending, locked, free] }],
             _pendingSpendOutpoints: new Set([`${spending.txid}:0`]),
-            intentRepository: {
+            batchRegistrationRepository: {
                 getLockedVtxoOutpoints: async () => [{ txid: locked.txid, vout: 0 }],
             },
             getBoardingUtxos: () => (Wallet.prototype as any).getBoardingUtxos.call(thisArg),

@@ -1114,7 +1114,10 @@ describe("Wallet", () => {
             };
         }
 
-        async function createReadonlyTestWallet(storage?: { intentRepository?: IntentRepository }) {
+        async function createReadonlyTestWallet(storage?: {
+            batchRegistrationRepository?: IntentRepository;
+            intentRepository?: IntentRepository;
+        }) {
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
@@ -1197,10 +1200,25 @@ describe("Wallet", () => {
             expect(await intentIds(intentRepository)).toEqual(["i1"]);
         });
 
+        it("takes the repository under either storage key, and the new key wins", async () => {
+            const repository = new InMemoryIntentRepository();
+            const { wallet: fromOldKey } = await createReadonlyTestWallet({
+                intentRepository: repository,
+            });
+            expect(fromOldKey.batchRegistrationRepository).toBe(repository);
+            expect(fromOldKey.intentRepository).toBe(repository);
+
+            const { wallet } = await createReadonlyTestWallet({
+                batchRegistrationRepository: repository,
+                intentRepository: new InMemoryIntentRepository(),
+            });
+            expect(wallet.batchRegistrationRepository).toBe(repository);
+        });
+
         describe("clearIntents with a release-capable wallet", () => {
             const clearIntents = (intentRepository: IntentRepository, deleteIntent: any) =>
                 (ReadonlyWallet.prototype as any).clearIntents.call({
-                    intentRepository,
+                    batchRegistrationRepository: intentRepository,
                     intentReconciliationConfig: () => ({ deleteIntent }),
                 });
 

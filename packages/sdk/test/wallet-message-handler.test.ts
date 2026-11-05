@@ -1765,7 +1765,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 commitmentsToIgnore: new Set(),
             }),
             dustAmount: 546n,
-            ...(intents ? { intentRepository: intents } : {}),
+            ...(intents ? { batchRegistrationRepository: intents } : {}),
             pendingRecoveryOutpoints: vi.fn().mockResolvedValue(new Set<string>()),
             pendingRecoveryOutpointsIn: vi.fn().mockReturnValue(new Set<string>()),
             getContractManager: vi.fn().mockResolvedValue({

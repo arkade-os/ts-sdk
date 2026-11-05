@@ -1148,7 +1148,7 @@ const bus = new MessageBus(walletRepo, contractRepo, {
   // wallet. Omit it and the worker persists no settlement intent, reconciles
   // none on restart, and counts intent-locked VTXOs as available
   // (`pendingSettlement` stays 0).
-  intentRepository: new IndexedDBIntentRepository(),
+  batchRegistrationRepository: new IndexedDBIntentRepository(),
 })
 
 bus.start()

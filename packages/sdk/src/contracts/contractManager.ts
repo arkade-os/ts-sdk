@@ -563,12 +563,19 @@ export interface ContractManagerConfig {
     walletRepository: WalletRepository;
 
     /**
-     * When present, the online sync reconciles persisted non-terminal settlement intents against
+     * When present, the online sync reconciles persisted non-terminal batch registrations against
      * indexer state (crash recovery) on boot and reconnect; see {@link reconcileIntents}.
      */
+    batchRegistrationRepository?: IntentRepository;
+    /** @deprecated Use {@link batchRegistrationRepository}. */
     intentRepository?: IntentRepository;
 
-    /** Lets the reconciliation release stale intents from arkd; see {@link IntentReconciliationDeps}. */
+    /** Lets the reconciliation release stale batch registrations from the operator. */
+    batchRegistrationReconciliation?: {
+        deleteBatchRegistration?: IntentReconciliationDeps["deleteIntent"];
+        isOutpointInFlight?: IntentReconciliationDeps["isOutpointInFlight"];
+    };
+    /** @deprecated Use {@link batchRegistrationReconciliation}. */
     intentReconciliation?: Pick<IntentReconciliationDeps, "deleteIntent" | "isOutpointInFlight">;
 
     /**
@@ -1024,11 +1031,17 @@ export class ContractManager implements IContractManager {
      * sync invariant, so failures are logged.
      */
     private async reconcileStaleIntents(): Promise<void> {
-        if (!this.config.intentRepository) return;
+        const repository = this.config.batchRegistrationRepository ?? this.config.intentRepository;
+        if (!repository) return;
+        const reconciliation = this.config.batchRegistrationReconciliation;
         try {
             await reconcileIntents({
                 ...this.config.intentReconciliation,
-                intentRepository: this.config.intentRepository,
+                ...(reconciliation && {
+                    deleteIntent: reconciliation.deleteBatchRegistration,
+                    isOutpointInFlight: reconciliation.isOutpointInFlight,
+                }),
+                intentRepository: repository,
                 indexerProvider: this.config.indexerProvider,
             });
         } catch (e) {
