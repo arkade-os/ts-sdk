@@ -1,7 +1,7 @@
 import { Outpoint } from "../wallet";
 import { collectPages, type PageRequest, type PageResult } from "./page";
 
-export type ArkIntentState =
+export type BatchRegistrationState =
     | "waiting_to_submit"
     | "waiting_for_batch"
     | "batch_in_progress"
@@ -9,9 +9,9 @@ export type ArkIntentState =
     | "batch_succeeded"
     | "cancelled";
 
-/** Every intent state, in lifecycle order. Single source of truth so a new
+/** Every registration state, in lifecycle order. Single source of truth so a new
  *  state is handled by every state-derived helper (terminal/non-terminal). */
-export const ALL_INTENT_STATES: readonly ArkIntentState[] = [
+export const ALL_INTENT_STATES: readonly BatchRegistrationState[] = [
     "waiting_to_submit",
     "waiting_for_batch",
     "batch_in_progress",
@@ -20,14 +20,14 @@ export const ALL_INTENT_STATES: readonly ArkIntentState[] = [
     "cancelled",
 ];
 
-export const INTENT_TERMINAL_STATES: ReadonlySet<ArkIntentState> = new Set([
+export const BATCH_REGISTRATION_TERMINAL_STATES: ReadonlySet<BatchRegistrationState> = new Set([
     "batch_failed",
     "batch_succeeded",
     "cancelled",
 ]);
 
-export function isTerminalIntentState(s: ArkIntentState): boolean {
-    return INTENT_TERMINAL_STATES.has(s);
+export function isTerminalBatchRegistrationState(s: BatchRegistrationState): boolean {
+    return BATCH_REGISTRATION_TERMINAL_STATES.has(s);
 }
 
 export interface ArkIntent {
@@ -65,7 +65,7 @@ export interface IntentFilter {
     intentIds?: string[];
     /** Intents whose `intentVtxos` intersect any of these outpoints. */
     containingInputs?: Outpoint[];
-    states?: ArkIntentState[];
+    states?: BatchRegistrationState[];
     /** Intents valid at this ms-epoch instant (null bounds = open). */
     validAt?: number;
     /** Substring match over intentId, batchId, commitmentTransactionId. */
@@ -74,8 +74,8 @@ export interface IntentFilter {
 
 export type IntentPageFilter = IntentFilter;
 
-export interface IntentRepository extends AsyncDisposable {
-    readonly version: 1;
+export interface BatchRegistrationRepository extends AsyncDisposable {
+    readonly version: 2;
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;
@@ -85,7 +85,7 @@ export interface IntentRepository extends AsyncDisposable {
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>>;
     /**
-     * Outpoints held by NON-terminal intents — `waiting_to_submit`,
+     * Outpoints held by NON-terminal registrations — `waiting_to_submit`,
      * `waiting_for_batch`, and `batch_in_progress` — to exclude from spendable
      * balance. Terminal states never lock.
      *
@@ -94,12 +94,12 @@ export interface IntentRepository extends AsyncDisposable {
      * offline-first and reads this set as its single source of coin locking, so
      * it must also hold inputs already committed to an in-progress batch. NArk
      * excludes `BatchInProgress` here but protects those inputs through its
-     * active-intent services instead.
+     * own services instead.
      */
     getLockedVtxoOutpoints(): Promise<Outpoint[]>;
 }
 
-/** Collects in `intentTxId` order; sort by `createdAt` for chronological display. */
+/** @deprecated Use {@link collectBatchRegistrations}. */
 export const collectIntents = (
     repository: Pick<IntentRepository, "getIntentsPage">,
     filter?: IntentPageFilter,
@@ -144,3 +144,14 @@ export function intentMatchesFilter(i: ArkIntent, f: IntentFilter): boolean {
     }
     return true;
 }
+
+/** @deprecated Use {@link BatchRegistrationState}. */
+export type ArkIntentState = BatchRegistrationState;
+/** @deprecated Use {@link BatchRegistrationRepository}. */
+export type IntentRepository = BatchRegistrationRepository;
+/** @deprecated Use {@link isTerminalBatchRegistrationState}. */
+export const isTerminalIntentState = isTerminalBatchRegistrationState;
+/** @deprecated Use {@link BATCH_REGISTRATION_TERMINAL_STATES}. */
+export const INTENT_TERMINAL_STATES = BATCH_REGISTRATION_TERMINAL_STATES;
+/** Collects in primary key order; sort by `createdAt` for chronological display. */
+export const collectBatchRegistrations = collectIntents;

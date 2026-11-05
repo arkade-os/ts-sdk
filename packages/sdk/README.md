@@ -1135,7 +1135,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
-  IndexedDBIntentRepository,
+  IndexedDBBatchRegistrationRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -1236,7 +1236,7 @@ Limits must be 1–500. History pages are ordered by `(createdAt, transaction ke
 by their script and intent transaction ID. Filters must stay the same across
 pages. Repository collection reads use pages directly; `collectVtxos`,
 `collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
-`collectIntents` traverse all pages when a complete snapshot is required.
+`collectBatchRegistrations` traverse all pages when a complete snapshot is required.
 Wallet spending paths consume every VTXO or UTXO page before coin selection.
 In `@arkade-os/swap`, RFQ page `since` values use Unix seconds instead.
 
@@ -1254,7 +1254,7 @@ do {
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, `IntentRepository`,
+`WalletRepository`, `ContractRepository`, `BatchRegistrationRepository`,
 `VirtualTxRepository`, and `AssetSwapRepository` (in `@arkade-os/swap`) each
 declare a `readonly version` field with a literal type. All built-in
 implementations set this to the current version. If you maintain a custom

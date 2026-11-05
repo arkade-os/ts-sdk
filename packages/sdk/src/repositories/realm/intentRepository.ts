@@ -4,7 +4,7 @@ import {
     ArkIntentState,
     assertIntentIdUnique,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
     isTerminalIntentState,
 } from "../intentRepository";
@@ -34,8 +34,8 @@ function toIntent(o: any): ArkIntent {
     };
 }
 
-export class RealmIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+export class RealmBatchRegistrationRepository implements BatchRegistrationRepository {
+    readonly version = 2 as const;
     constructor(private readonly realm: RealmLike) {}
 
     async clear(): Promise<void> {
@@ -104,3 +104,8 @@ export class RealmIntentRepository implements IntentRepository {
 
     async [Symbol.asyncDispose](): Promise<void> {}
 }
+
+/** @deprecated Use {@link RealmBatchRegistrationRepository}. */
+export const RealmIntentRepository = RealmBatchRegistrationRepository;
+/** @deprecated Use {@link RealmBatchRegistrationRepository}. */
+export type RealmIntentRepository = RealmBatchRegistrationRepository;

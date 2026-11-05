@@ -3,9 +3,9 @@ import {
     ArkIntent,
     ArkIntentState,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
-    isTerminalIntentState,
+    isTerminalBatchRegistrationState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
@@ -32,8 +32,8 @@ interface IntentRow {
     intent_vtxos_json: string;
 }
 
-export class SQLiteIntentRepository implements IntentRepository {
-    readonly version = 1 as const;
+export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepository {
+    readonly version = 2 as const;
     private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
@@ -180,7 +180,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         const rows = await this.db.all<IntentRow>(`SELECT * FROM ${this.t}`);
         const out: Outpoint[] = [];
         for (const r of rows) {
-            if (isTerminalIntentState(r.state as ArkIntentState)) continue;
+            if (isTerminalBatchRegistrationState(r.state as ArkIntentState)) continue;
             for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
@@ -210,3 +210,8 @@ function rowToIntent(r: IntentRow): ArkIntent {
         intentVtxos: JSON.parse(r.intent_vtxos_json),
     };
 }
+
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export const SQLiteIntentRepository = SQLiteBatchRegistrationRepository;
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export type SQLiteIntentRepository = SQLiteBatchRegistrationRepository;

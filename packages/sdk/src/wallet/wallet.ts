@@ -122,7 +122,7 @@ import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
-import { isTerminalIntentState } from "../repositories/intentRepository";
+import { isTerminalBatchRegistrationState } from "../repositories/intentRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { wrapHandlerWithIntentPersistence } from "./intentPersistenceHandler";
@@ -4496,7 +4496,7 @@ export class Wallet
             const existing = (await collectIntents(repo, { intentTxIds: [intentTxId] }))[0];
             // Terminal is sticky: a later step throwing into settle()'s catch passes "cancelled",
             // which must not clobber a `batch_succeeded` whose money already moved.
-            if (existing && isTerminalIntentState(existing.state)) {
+            if (existing && isTerminalBatchRegistrationState(existing.state)) {
                 return;
             }
             await repo.saveIntent({
