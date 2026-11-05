@@ -36,6 +36,12 @@ describe("readSseFrames", () => {
         expect(await framesOf(["event:\ndata: a\n\n"])).toEqual([{ event: "message", data: "a" }]);
     });
 
+    it("strips only the first space from an event name", async () => {
+        expect(await framesOf(["event:  failure \ndata: a\n\n"])).toEqual([
+            { event: " failure ", data: "a" },
+        ]);
+    });
+
     it.each([
         ["LF line endings", ["data: a\ndata: b\n\n"]],
         ["CR line endings", ["data: a\rdata: b\r\r"]],

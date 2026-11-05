@@ -20,7 +20,7 @@ export async function* readSseFrames(
                 let event = "message";
                 const data: string[] = [];
                 for (const line of block.split("\n")) {
-                    if (line.startsWith("event:")) event = line.slice(6).trim();
+                    if (line.startsWith("event:")) event = line.slice(6).replace(/^ /, "");
                     else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
                 }
                 const joined = data.join("\n");
