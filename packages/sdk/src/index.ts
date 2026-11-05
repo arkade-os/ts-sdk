@@ -251,14 +251,17 @@ import type {
     Unspent as ElectrumUnspent,
 } from "./providers/electrum";
 import {
+    RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -273,7 +276,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
-import { CachingArkProvider } from "./providers/cachingArk";
+import { CachingOperatorProvider, CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -332,7 +335,7 @@ import {
     type RawTxSource,
     type WithPrevTx,
 } from "./utils/prevoutTx";
-import { Intent, type IntentCoin } from "./intent";
+import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
@@ -451,16 +454,7 @@ import {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
 } from "./wallet/batchExpiry";
 import type { BatchExpiryPolicy } from "./wallet/batchExpiry";
-import {
-    assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-} from "./wallet/checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -486,6 +480,7 @@ import type {
 import { ChainedTxType } from "./repositories/virtualTxRepository";
 import type {
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
@@ -693,7 +688,9 @@ export {
     ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
+    RestOperatorProvider,
     RestArkProvider,
+    CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
     FetchError,
@@ -826,7 +823,8 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    // Intent proof
+    // Proof
+    Proof,
     Intent,
     // BIP-322 message signing
     BIP322,
@@ -874,13 +872,6 @@ export {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
     type BatchExpiryPolicy,
     assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isSubdust,
     getSequence,
@@ -970,6 +961,7 @@ export type {
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
+    ProofInput,
     IntentCoin,
     VerifyServerSignatures,
     TapLeaves,
@@ -1005,12 +997,14 @@ export type {
     ConnectorTreeNode,
     // Provider types
     OnchainProvider,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     FeeInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -1166,6 +1160,7 @@ export type {
     // Repositories
     ManagedConnection,
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,

@@ -487,18 +487,16 @@ interface ServiceWorkerWalletOptions {
      * @see WalletConfig.lookAheadWindow
      */
     lookAheadWindow?: number;
+    /** @see WalletConfig.oneShotSubmit */
+    oneShotSubmit?: boolean;
     /**
-     * Timelock floors forwarded to the worker wallet. Lowering either below its
+     * Batch expiry floor forwarded to the worker wallet. Lowering it below its
      * per-network default relaxes a fund-safety bound; intended for local
-     * testing. The fast public test networks whose arkd runs below the
-     * mainnet-grade checkpoint floor (signet, mutinynet) are defaulted to their
-     * own advertised value, so neither needs these set.
+     * testing.
      *
      * @see WalletConfig.minBatchExpirySeconds
      */
     minBatchExpirySeconds?: bigint;
-    /** @see WalletConfig.minCheckpointExitDelaySeconds */
-    minCheckpointExitDelaySeconds?: bigint;
     /**
      * Per-request timeout overrides for wallet-updater messages.
      * @see DEFAULT_MESSAGE_TIMEOUTS
@@ -544,8 +542,8 @@ type MessageBusInitConfig = {
     walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     lookAheadWindow?: number;
+    oneShotSubmit?: boolean;
     minBatchExpirySeconds?: bigint;
-    minCheckpointExitDelaySeconds?: bigint;
     messageTimeouts?: Record<string, number>;
 };
 
@@ -1159,7 +1157,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetBalance).payload;
+            const balance = (response as ResponseGetBalance).payload;
+            return {
+                ...balance,
+                contractLocked: balance.contractLocked ?? balance.gated,
+                deprecatedSignerLocked: balance.deprecatedSignerLocked ?? balance.pendingRecovery,
+            };
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
         }
@@ -1803,6 +1806,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
+        public readonly oneShotSubmit?: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
         this.identity = identity;
@@ -1855,6 +1859,7 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
+            options.oneShotSubmit,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 
@@ -1866,8 +1871,8 @@ export class ServiceWorkerWallet
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
             lookAheadWindow: options.lookAheadWindow,
+            oneShotSubmit: options.oneShotSubmit,
             minBatchExpirySeconds: options.minBatchExpirySeconds,
-            minCheckpointExitDelaySeconds: options.minCheckpointExitDelaySeconds,
         });
     }
 

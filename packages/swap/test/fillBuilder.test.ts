@@ -30,7 +30,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     const mod = await importOriginal<typeof import("@arkade-os/sdk")>();
     return {
         ...mod,
-        RestArkProvider: class {
+        RestOperatorProvider: class {
             async getInfo() {
                 return {
                     signerPubkey: `02${hex.encode(SERVER_KEY)}`,

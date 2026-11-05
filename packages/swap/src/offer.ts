@@ -12,7 +12,7 @@ import { concatBytes } from "@scure/btc-signer/utils.js";
 import {
     ASSET_CARRIER_SATS as SDK_ASSET_CARRIER_SATS,
     ArkAddress,
-    RestArkProvider,
+    RestOperatorProvider,
     RestEmulatorProvider,
     RestIndexerProvider,
     arkade,
@@ -115,7 +115,7 @@ type SwapProgramBinding = {
  * because the closure is conditional and `csv.type` is a literal in the artifact format (only
  * `csv.value` resolves a `$param`); the declarative form would need six drift-prone files.
  */
-function withExitClosure(
+export function withExitClosure(
     program: ReturnType<typeof arkade.parseArtifact>,
     exit: RelativeTimelock | undefined,
 ): ReturnType<typeof arkade.parseArtifact> {
@@ -547,7 +547,7 @@ export async function restoreOfferCoverage(
 
 /**
  * The exit delay from the server's scalar `unilateralExitDelay`, with arkd's own threshold: below
- * 512 it is blocks, otherwise seconds. A missing value arrives as `0` (`RestArkProvider` defaults
+ * 512 it is blocks, otherwise seconds. A missing value arrives as `0` (`RestOperatorProvider` defaults
  * it) and is refused: an offer claiming an exit it does not have is worse than one that never did.
  */
 function serverExitDelay(delay: bigint): RelativeTimelock {
@@ -923,6 +923,7 @@ export async function prepareOfferCancel(
         // for offers created before registration existed
         contractManager,
         // no `network`: the row lookup is by script and the payout comes from wallet.getAddress()
+        oneShotSubmit: wallet.oneShotSubmit,
     });
 
     // the offer's own keys, not the client's, so the script matches the funded address exactly
@@ -1089,7 +1090,7 @@ export async function connectFillContract(
     const { swapAddress, emulator, emulatorPubkey } = opts;
     const contractManager = await wallet.getContractManager();
     const client = await arkade.Arkade.connect({
-        arkade: new RestArkProvider(arkServerUrl),
+        arkade: new RestOperatorProvider(arkServerUrl),
         indexer: new RestIndexerProvider(arkServerUrl),
         identity: wallet.identity,
         contractManager,

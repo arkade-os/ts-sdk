@@ -19,7 +19,7 @@ import type { ExtensionPacket } from "../../src/extension";
 import { beforeEachFaucet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const CONTRACT_AMOUNT = 10_000;
 const ASSET_AMOUNT = 1_000n;
 
@@ -82,8 +82,8 @@ const liquidationProgram = {
 
 describe("liquidation (oracle-signed asset burn)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
 

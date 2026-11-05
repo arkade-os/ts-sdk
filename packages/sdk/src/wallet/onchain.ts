@@ -19,7 +19,7 @@ import { DUST_AMOUNT } from "./utils";
  *
  * @example
  * ```typescript
- * const wallet = await OnchainWallet.create(identity, 'mainnet');
+ * const wallet = await OnchainWallet.create(identity, 'bitcoin');
  * const balance = await wallet.getBalance();
  * const txid = await wallet.send({
  *   address: 'bc1...',

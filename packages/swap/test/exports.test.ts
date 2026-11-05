@@ -128,6 +128,7 @@ const CURATED_ROOT: readonly string[] = [
     "AuctionProvenance",
     "MarketBackend",
     "Market",
+    "MarketLeg",
     "RankedBid",
     "ResolvedEndpoint",
     "RouteResolution",

@@ -41,6 +41,49 @@ it("forwards an offchain change fee cap through the worker request", async () =>
     });
 });
 
+it("normalizes renamed balance buckets from service-worker payloads", async () => {
+    const payload = {
+        total: 100,
+        contractLocked: 0,
+        deprecatedSignerLocked: 25,
+        gated: 10,
+        pendingRecovery: 20,
+        boarding: { confirmed: 5, unconfirmed: 0, total: 5 },
+    };
+    const sendMessage = vi.fn().mockResolvedValue({ payload });
+    const proxy = { messageTag: DEFAULT_MESSAGE_TAG, sendMessage };
+
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...payload,
+        contractLocked: 0,
+        deprecatedSignerLocked: 25,
+    });
+
+    const legacyContractPayload = { ...payload, contractLocked: undefined };
+    sendMessage.mockResolvedValue({ payload: legacyContractPayload });
+
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...legacyContractPayload,
+        contractLocked: payload.gated,
+        deprecatedSignerLocked: payload.deprecatedSignerLocked,
+    });
+
+    const legacySignerPayload = { ...payload, deprecatedSignerLocked: undefined };
+    sendMessage.mockResolvedValue({ payload: legacySignerPayload });
+
+    await expect(
+        ServiceWorkerReadonlyWallet.prototype.getBalance.call(proxy as any),
+    ).resolves.toEqual({
+        ...legacySignerPayload,
+        contractLocked: payload.contractLocked,
+        deprecatedSignerLocked: payload.pendingRecovery,
+    });
+});
+
 // Errors cross the harness through the REAL structured-clone algorithm, so
 // its fidelity is the platform's problem, not a hand-maintained simulation's.
 // A stub that copied `name` verbatim once certified a fix the browser would
@@ -1952,7 +1995,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
     // Structured clone carries the bigints through postMessage untouched, so the
     // worker hands `Wallet.create` the same floors the page asked for.
-    it("ServiceWorkerWallet.create forwards the timelock floor overrides to the worker init config", async () => {
+    it("ServiceWorkerWallet.create forwards the batch expiry floor override to the worker init config", async () => {
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
@@ -1963,16 +2006,14 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             arkServer: { url: "https://ark.test" },
             identity,
             minBatchExpirySeconds: 3_600n,
-            minCheckpointExitDelaySeconds: 2_048n,
             storage: storage(),
         });
 
         const { config } = getInitializeMessage(serviceWorker);
         expect(config.minBatchExpirySeconds).toBe(3_600n);
-        expect(config.minCheckpointExitDelaySeconds).toBe(2_048n);
     });
 
-    it("ServiceWorkerWallet.create omits the timelock floor overrides when unset", async () => {
+    it("ServiceWorkerWallet.create omits the batch expiry floor override when unset", async () => {
         const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
@@ -1987,7 +2028,6 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
 
         const { config } = getInitializeMessage(serviceWorker);
         expect(config.minBatchExpirySeconds).toBeUndefined();
-        expect(config.minCheckpointExitDelaySeconds).toBeUndefined();
     });
 
     it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {

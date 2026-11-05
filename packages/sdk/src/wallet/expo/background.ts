@@ -21,7 +21,7 @@ import type { TaskProcessor } from "../../worker/expo/taskRunner";
 import type { TaskItem } from "../../worker/expo/taskQueue";
 import { runTasks, createTaskDependencies } from "../../worker/expo/taskRunner";
 import { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "../../worker/expo/processors";
-import { ExpoArkProvider } from "../../providers/expoArk";
+import { ExpoOperatorProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
 import { getRandomId } from "../utils";
 
@@ -98,7 +98,7 @@ export function defineExpoBackgroundTask(
             }
 
             const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
-            const arkProvider = new ExpoArkProvider(config.arkServerUrl);
+            const arkProvider = new ExpoOperatorProvider(config.arkServerUrl);
 
             const deps = createTaskDependencies({
                 walletRepository,
