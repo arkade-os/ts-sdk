@@ -97,7 +97,7 @@ async function main() {
         },
     });
 
-    log(`Wallet ready — Ark address: ${wallet.arkAddress.encode()}`);
+    log(`Wallet ready, address: ${wallet.arkAddress.encode()}`);
     log("The VtxoManager is now polling and subscribed to vtxo_received events.");
 
     const boardingAddress = await wallet.getBoardingAddress();

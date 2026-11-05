@@ -70,8 +70,8 @@ async function main() {
     console.log("Chain tip:", chainTip);
 
     // offchain paths:
-    //   update: (Alice + Bob + Ark Server)
-    //   refund: (Alice + Ark Server at chainTip + 10 blocks)
+    //   update: (Alice + Bob + operator)
+    //   refund: (Alice + operator at chainTip + 10 blocks)
     //
     // onchain paths:
     //   unilateralUpdate: (Alice + Bob after 1 block)

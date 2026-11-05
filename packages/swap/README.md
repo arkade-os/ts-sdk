@@ -216,7 +216,7 @@ Native does not, so install `react-native-get-random-values` (or `expo-crypto`) 
 before this package. `crypto.subtle` is unused. `EventSource` and `WebSocket` are needed only by
 the watch and relay transports, each of which takes an injected implementation.
 
-The client takes no server URL. Server info, Arkade chain reads and broadcast are all derived
+The client takes no operator URL. Operator info, Arkade chain reads and broadcast are all derived
 from the wallet, which is the single place that knows which operator it speaks to. The onchain
 corridor is the exception: `IWallet` carries no L1 provider, so it reads bitcoin from Esplora at
 `ESPLORA_URL[network]`. Point it elsewhere with
