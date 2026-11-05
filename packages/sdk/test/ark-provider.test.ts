@@ -204,6 +204,16 @@ describe("RestArkProvider.getInfo transaction limits", () => {
         expect(info.maxOpReturnOutputs).toBe(3n);
     });
 
+    it("copies the operator's fees.intentFee to both batch fee keys", async () => {
+        const batchFee = { offchainInput: "1" };
+        const info = await infoResponse({
+            fees: { intentFee: batchFee, txFeeRate: "2" },
+            scheduledSession: {},
+        });
+        expect(info.fees).toEqual({ batchFee, intentFee: batchFee, txFeeRate: "2" });
+        expect(info.scheduledSession?.fees).toEqual({ batchFee: {}, intentFee: {}, txFeeRate: "" });
+    });
+
     it("leaves them undefined when the operator advertises neither", async () => {
         // 0n would read as a weight budget of nothing and OP_RETURN forbidden,
         // which an older arkd is not saying.

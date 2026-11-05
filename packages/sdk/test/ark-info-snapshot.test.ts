@@ -41,13 +41,17 @@ function makeArkInfo(overrides: Partial<ArkadeInfo> = {}): ArkadeInfo {
         deprecatedSigners: [{ cutoffDate: 1_700_000_000n, pubkey: "02" + "ab".repeat(32) }],
         digest: "digest-abc",
         dust: 1000n,
-        fees: { intentFee: { offchainInput: "1", onchainOutput: "2" }, txFeeRate: "3" },
+        fees: {
+            batchFee: { offchainInput: "1", onchainOutput: "2" },
+            intentFee: { offchainInput: "1", onchainOutput: "2" },
+            txFeeRate: "3",
+        },
         forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
         forfeitPubkey: serverKeyHex,
         network: "mutinynet",
         scheduledSession: {
             duration: 10n,
-            fees: { intentFee: {}, txFeeRate: "0" },
+            fees: { batchFee: {}, intentFee: {}, txFeeRate: "0" },
             nextEndTime: 20n,
             nextStartTime: 15n,
             period: 30n,
@@ -143,6 +147,15 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
         const hydrated = hydrateArkInfo(parseStoredArkInfoSnapshot(raw));
         expect(hydrated.maxTxWeight).toBeUndefined();
         expect(hydrated.maxOpReturnOutputs).toBeUndefined();
+    });
+
+    it("fills in batchFee on a snapshot that carries only intentFee", () => {
+        const raw = JSON.parse(JSON.stringify(serializeArkInfoSnapshot(makeArkInfo(), 1)));
+        delete raw.arkInfo.fees.batchFee;
+        delete raw.arkInfo.scheduledSession.fees.batchFee;
+        const hydrated = hydrateArkInfo(parseStoredArkInfoSnapshot(raw));
+        expect(hydrated.fees.batchFee).toEqual({ offchainInput: "1", onchainOutput: "2" });
+        expect(hydrated.scheduledSession?.fees.batchFee).toEqual({});
     });
 });
 

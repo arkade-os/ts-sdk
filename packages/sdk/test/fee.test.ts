@@ -3,9 +3,10 @@ import { readFileSync, readdirSync } from "fs";
 import { createRequire } from "module";
 import { dirname, join } from "path";
 import {
+    batchFeeConfig,
     Estimator,
     toOffchainInputFeeParams,
-    type IntentFeeConfig,
+    type BatchFeeConfig,
     type OffchainInput,
     type OnchainInput,
     type FeeOutput,
@@ -76,7 +77,7 @@ describe("Estimator", () => {
         describe("Invalid", () => {
             for (const testCase of invalidTestData.invalidConfigs) {
                 it(testCase.name, () => {
-                    const config: IntentFeeConfig = {
+                    const config: BatchFeeConfig = {
                         offchainInput: testCase.config.offchainInputProgram,
                         onchainInput: testCase.config.onchainInputProgram,
                         offchainOutput: testCase.config.offchainOutputProgram,
@@ -245,7 +246,7 @@ describe("Estimator", () => {
             describe(fixture.name, () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
-                        const config: IntentFeeConfig = {
+                        const config: BatchFeeConfig = {
                             offchainInput: fixture.offchainInputProgram,
                             onchainInput: fixture.onchainInputProgram,
                             offchainOutput: fixture.offchainOutputProgram,
@@ -285,6 +286,17 @@ describe("Estimator", () => {
 // any bare `eval(` token. cel-js < 8 shipped an interpreter method literally named
 // `eval`, which the Estimator pulls into every consumer bundle. The pin must stay on
 // a cel-js version whose shipped sources contain no bare `eval(` token.
+describe("batchFeeConfig", () => {
+    const batchFee = { offchainInput: "1" };
+    const intentFee = { offchainInput: "2" };
+
+    it("prefers batchFee and falls back to the deprecated intentFee", () => {
+        expect(batchFeeConfig({ batchFee, intentFee })).toBe(batchFee);
+        expect(batchFeeConfig({ intentFee })).toBe(intentFee);
+        expect(batchFeeConfig()).toEqual({});
+    });
+});
+
 describe("@marcbachmann/cel-js SES/Snap compatibility (issue #580)", () => {
     it("resolved cel-js ships no bare eval( token", () => {
         const require = createRequire(import.meta.url);

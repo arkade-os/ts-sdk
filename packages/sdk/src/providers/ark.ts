@@ -1,6 +1,7 @@
 import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
+import type { BatchFeeConfig } from "../arkfee/types";
 import { Vtxo } from "./indexer";
 import type { Outpoint } from "../wallet";
 import { eventSourceIterator, isEventSourceError } from "./utils";
@@ -142,8 +143,19 @@ export interface ScheduledSession {
 }
 
 export interface FeeInfo {
+    batchFee: BatchFeeConfig;
+    /** @deprecated Use {@link batchFee}. It holds the same value. */
     intentFee: IntentFeeConfig;
     txFeeRate: string;
+}
+
+/** {@link FeeInfo} as a caller supplies it: either batch fee key is accepted. */
+export type FeeInfoInput = Pick<FeeInfo, "txFeeRate"> &
+    Partial<Pick<FeeInfo, "batchFee" | "intentFee">>;
+
+function toFeeInfo(fees?: { intentFee?: IntentFeeConfig; txFeeRate?: string }): FeeInfo {
+    const batchFee = fees?.intentFee ?? {};
+    return { batchFee, intentFee: batchFee, txFeeRate: fees?.txFeeRate ?? "" };
 }
 
 export interface PendingTx {
@@ -556,10 +568,7 @@ export class RestArkProvider implements ArkProvider {
                 })) ?? [],
             digest: fromServer.digest ?? "",
             dust: BigInt(fromServer.dust ?? 0),
-            fees: {
-                intentFee: fromServer.fees?.intentFee ?? {},
-                txFeeRate: fromServer?.fees?.txFeeRate ?? "",
-            },
+            fees: toFeeInfo(fromServer.fees),
             forfeitAddress: fromServer.forfeitAddress ?? "",
             forfeitPubkey: fromServer.forfeitPubkey ?? "",
             network: fromServer.network ?? "",
@@ -570,7 +579,7 @@ export class RestArkProvider implements ArkProvider {
                           nextStartTime: BigInt(fromServer.scheduledSession.nextStartTime ?? 0),
                           nextEndTime: BigInt(fromServer.scheduledSession.nextEndTime ?? 0),
                           period: BigInt(fromServer.scheduledSession.period ?? 0),
-                          fees: fromServer.scheduledSession.fees ?? {},
+                          fees: toFeeInfo(fromServer.scheduledSession.fees),
                       }
                     : undefined,
             serviceStatus: fromServer.serviceStatus ?? {},

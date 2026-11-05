@@ -259,6 +259,7 @@ import {
     TreeTxEvent,
     TreeSignatureEvent,
     ScheduledSession,
+    FeeInfoInput,
     FeeInfo,
 } from "./providers/ark";
 import { CachingArkProvider } from "./providers/cachingArk";
@@ -980,6 +981,7 @@ export type {
     OnchainProvider,
     ArkProvider,
     SettlementEvent,
+    FeeInfoInput,
     FeeInfo,
     ArkadeInfo,
     SignedIntent,

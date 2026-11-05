@@ -1,6 +1,6 @@
 import { Environment, ParseResult } from "@marcbachmann/cel-js";
 import { IntentOffchainInputEnv, IntentOnchainInputEnv, IntentOutputEnv } from "./celenv.js";
-import { IntentFeeConfig, OffchainInput, OnchainInput, FeeOutput, FeeAmount } from "./types.js";
+import { BatchFeeConfig, OffchainInput, OnchainInput, FeeOutput, FeeAmount } from "./types.js";
 
 /**
  * Estimator evaluates CEL expressions to calculate fees for Arkade intents
@@ -15,7 +15,7 @@ export class Estimator {
      * Creates a new Estimator with the given config
      * @param config - Configuration containing CEL programs for fee calculation
      */
-    constructor(readonly config: IntentFeeConfig) {
+    constructor(readonly config: BatchFeeConfig) {
         this.intentOffchainInput = config.offchainInput
             ? parseProgram(config.offchainInput, IntentOffchainInputEnv)
             : undefined;

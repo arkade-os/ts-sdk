@@ -22,12 +22,27 @@ export class FeeAmount {
     }
 }
 
-export interface IntentFeeConfig {
+export interface BatchFeeConfig {
     offchainInput?: string;
     onchainInput?: string;
     offchainOutput?: string;
     onchainOutput?: string;
 }
+
+/** @deprecated Use {@link BatchFeeConfig}. */
+export type IntentFeeConfig = BatchFeeConfig;
+
+/**
+ * The batch fee config in `fees`, read from the deprecated `intentFee` key only
+ * when `batchFee` is absent.
+ *
+ * `batchFee` wins when both keys are set, so `{ ...info.fees, intentFee: x }`
+ * has no effect here. Override `batchFee` instead.
+ */
+export const batchFeeConfig = (fees?: {
+    batchFee?: BatchFeeConfig;
+    intentFee?: BatchFeeConfig;
+}): BatchFeeConfig => fees?.batchFee ?? fees?.intentFee ?? {};
 
 export type VtxoType = "recoverable" | "vtxo" | "note";
 

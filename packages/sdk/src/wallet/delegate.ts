@@ -6,6 +6,8 @@ import {
     Asset,
     decodeTapscript,
     DelegateInfo,
+    BatchFeeConfig,
+    batchFeeConfig,
     Estimator,
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -249,7 +251,7 @@ async function delegate(
     const { fees, dust, forfeitAddress, network } = arkInfo;
 
     const delegateAtSeconds = delegateAt.getTime() / 1000;
-    const estimator = estimatorAt(fees.intentFee, delegateAt);
+    const estimator = estimatorAt(batchFeeConfig(fees), delegateAt);
 
     let amount = 0n;
     for (const coin of vtxos) {
@@ -480,12 +482,12 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
     );
 }
 
-function estimatorAt(intentFee: ArkadeInfo["fees"]["intentFee"], at: Date): Estimator {
+function estimatorAt(batchFee: BatchFeeConfig, at: Date): Estimator {
     // replace now() function with the delegation timestamp
     const now = `double(${at.getTime() / 1000})`;
     return new Estimator({
-        ...intentFee,
-        offchainInput: intentFee.offchainInput?.replace("now()", now),
-        offchainOutput: intentFee.offchainOutput?.replace("now()", now),
+        ...batchFee,
+        offchainInput: batchFee.offchainInput?.replace("now()", now),
+        offchainOutput: batchFee.offchainOutput?.replace("now()", now),
     });
 }

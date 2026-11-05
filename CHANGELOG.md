@@ -45,6 +45,15 @@ style and have not been backfilled.
   itself, such as a test mock, must set the new fields and the aliases. The
   service-worker `GET_BALANCE` payload carries both names. The `"gated"`
   transaction history tag is unchanged.
+- **`IntentFeeConfig` is renamed `BatchFeeConfig`, and `FeeInfo` gains
+  `batchFee`.** `FeeInfo.intentFee` stays as a deprecated key with the same
+  value, and `IntentFeeConfig` stays as a deprecated alias. An object typed as
+  `FeeInfo` must set both keys. Functions that take fees accept the new
+  `FeeInfoInput`, which needs only one. When both keys are set, `batchFee` wins,
+  so `{ ...info.fees, intentFee: x }` has no effect: override `batchFee`. The
+  operator's `fees.intentFee` and stored snapshots do not change. The new
+  `batchFeeConfig(fees)` reads either key.
+
 - **`@arkade-os/swap`: `JSON.stringify` on a `Market` now throws.** The new
   `legs[].limits` hold `bigint`s, as atomic amounts do elsewhere in the client.
   `Quote.market` is unchanged, since a `CardMarketRef` goes into durable records,

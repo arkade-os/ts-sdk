@@ -14,7 +14,7 @@ function fakeInfo(digest: string): ArkadeInfo {
         deprecatedSigners: [],
         digest,
         dust: 0n,
-        fees: { intentFee: {} as never, txFeeRate: "" },
+        fees: { batchFee: {}, intentFee: {}, txFeeRate: "" },
         forfeitAddress: "",
         forfeitPubkey: "",
         network: "regtest",

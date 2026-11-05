@@ -38,7 +38,7 @@ import { hex } from "@scure/base";
 import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { Estimator } from "../arkfee";
+import { batchFeeConfig, Estimator } from "../arkfee";
 import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
@@ -1186,7 +1186,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
         // `info` is undefined only with no ark provider wired, which prices as zero (gross).
-        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(info?.fees));
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const capped = capSettlementBatch(byValueDescending(payable), vtxoMaxAmount);
         // Against the pre-pricing count on purpose: fee pricing OR the cap narrowing the batch
@@ -1324,7 +1324,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Priced exactly as `recoverVtxos` prices what it settles; batch caps not applied (see
         // the JSDoc). `info` and the address were fetched with the coin list.
-        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(info?.fees));
         const { payable, net } = priceSettlementInputs(vtxosToRecover, estimator);
         const priced = deductOffchainOutputFee(subtotalOf(payable, net), estimator, arkAddress);
         // A flat output fee can outweigh the inputs; recovery refuses that rather
@@ -1467,7 +1467,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // server's intent-size and per-output limits, highest-value first; the
         // overflow recovers next cycle. `info` is undefined only with no ark
         // provider wired, which prices as zero.
-        const estimator = new Estimator(info?.fees.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(info?.fees));
         const { payable, net } = priceSettlementInputs(recoverable, estimator);
         const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
         const batch =
@@ -1715,7 +1715,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const info = await this.getInfoProvider()?.getInfo();
             const vtxoMaxAmount = info?.vtxoMaxAmount ?? -1n;
 
-            const estimator = new Estimator(info?.fees.intentFee ?? {});
+            const estimator = new Estimator(batchFeeConfig(info?.fees));
             const { payable, net } = priceSettlementInputs(vtxos, estimator);
             vtxos = payable;
             if (vtxos.length === 0) {
@@ -2924,7 +2924,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const info = await this.getArkProvider().getInfo();
         const { fees, vtxoMaxAmount } = info;
-        const estimator = new Estimator(fees.intentFee);
+        const estimator = new Estimator(batchFeeConfig(fees));
 
         let totalAmount = 0n;
 

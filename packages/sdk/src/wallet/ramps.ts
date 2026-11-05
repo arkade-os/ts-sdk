@@ -1,7 +1,7 @@
 import { ExtendedCoin, IWallet } from ".";
 import { toOffchainInputFeeParams, type NormalizedExtendedVirtualCoin } from "./vtxo";
-import { ArkadeInfo, FeeInfo, SettlementEvent } from "../providers/ark";
-import { Estimator } from "../arkfee";
+import { ArkadeInfo, FeeInfoInput, SettlementEvent } from "../providers/ark";
+import { batchFeeConfig, Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
@@ -134,10 +134,10 @@ function picksCovering(wallet: IWallet): boolean {
  *  a silent drop would spend a subset of the caller's choice. */
 function filterOffboardInputs(
     vtxos: readonly NormalizedExtendedVirtualCoin[],
-    feeInfo: FeeInfo,
+    feeInfo: FeeInfoInput,
     named: boolean,
 ): { inputs: NormalizedExtendedVirtualCoin[]; subtotal: bigint } {
-    const estimator = new Estimator(feeInfo?.intentFee ?? {});
+    const estimator = new Estimator(batchFeeConfig(feeInfo));
     const inputs: NormalizedExtendedVirtualCoin[] = [];
     let subtotal = 0n;
 
@@ -194,7 +194,7 @@ function assertChangeSettleable(
  * @example
  * ```typescript
  * const ramps = new Ramps(wallet);
- * const feeInfo = { intentFee: {}, txFeeRate: '1' };
+ * const feeInfo = { batchFee: {}, txFeeRate: '1' };
  * await ramps.onboard(feeInfo); // onboard all boarding inputs
  * await ramps.offboard('bc1q...', feeInfo); // collaboratively exit all virtual outputs to an onchain address
  * ```
@@ -220,13 +220,13 @@ export class Ramps {
      * @see IWallet.settle
      * @example
      * ```typescript
-     * const feeInfo = { intentFee: {}, txFeeRate: '1' };
+     * const feeInfo = { batchFee: {}, txFeeRate: '1' };
      * const ramps = new Ramps(wallet);
      * await ramps.onboard(feeInfo);
      * ```
      */
     async onboard(
-        feeInfo: FeeInfo,
+        feeInfo: FeeInfoInput,
         boardingUtxos?: ExtendedCoin[],
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void,
@@ -234,7 +234,7 @@ export class Ramps {
         boardingUtxos = boardingUtxos ?? (await getSelectableBoardingUtxos(this.wallet));
 
         // Calculate input fees and filter out boarding inputs where fee >= value.
-        const estimator = new Estimator(feeInfo?.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(feeInfo));
         const filteredBoardingUtxos: ExtendedCoin[] = [];
         let totalAmount = 0n;
 
@@ -338,14 +338,14 @@ export class Ramps {
      * @see IWallet.settle
      * @example
      * ```typescript
-     * const feeInfo = { intentFee: {}, txFeeRate: '1' };
+     * const feeInfo = { batchFee: {}, txFeeRate: '1' };
      * const ramps = new Ramps(wallet);
      * await ramps.offboard('bc1q...', feeInfo);
      * ```
      */
     async offboard(
         destinationAddress: string,
-        feeInfo: FeeInfo,
+        feeInfo: FeeInfoInput,
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void,
         vtxos?: NormalizedExtendedVirtualCoin[],
@@ -399,7 +399,7 @@ export class Ramps {
      */
     async offboardExact(params: {
         destinationAddress: string;
-        feeInfo: FeeInfo;
+        feeInfo: FeeInfoInput;
         /** Sats the destination receives, exactly. */
         amount: bigint;
         eventCallback?: (event: SettlementEvent) => void;
@@ -446,7 +446,7 @@ export class Ramps {
         });
     }
 
-    private async offboardInputs(feeInfo: FeeInfo, vtxos?: NormalizedExtendedVirtualCoin[]) {
+    private async offboardInputs(feeInfo: FeeInfoInput, vtxos?: NormalizedExtendedVirtualCoin[]) {
         const named = vtxos !== undefined;
         if (vtxos) reportUngatedInputs(this.wallet, vtxos);
         const spendable =
@@ -457,7 +457,7 @@ export class Ramps {
                 genericallySpendableOnly: true,
             }));
 
-        const estimator = new Estimator(feeInfo?.intentFee ?? {});
+        const estimator = new Estimator(batchFeeConfig(feeInfo));
         return { estimator, ...filterOffboardInputs(spendable, feeInfo, named) };
     }
 

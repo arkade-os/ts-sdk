@@ -26,7 +26,7 @@ const arkInfo = (): ArkadeInfo => ({
     deprecatedSigners: [],
     digest: "d",
     dust: 1000n,
-    fees: { intentFee: {}, txFeeRate: "0" },
+    fees: { batchFee: {}, intentFee: {}, txFeeRate: "0" },
     forfeitAddress: BTC_ADDR,
     forfeitPubkey: SERVER_KEY,
     network: "mutinynet",
