@@ -1717,7 +1717,7 @@ describe("buildTransactionHistory", () => {
         });
 
         // A scan per coin takes ~3s here.
-        it("builds the history in linear time", async () => {
+        it("builds the history without a per-VTXO rescan", async () => {
             const { vtxos } = lifetime(4000);
             const start = performance.now();
             await buildTransactionHistoryImpl(vtxos, [], new Set());
