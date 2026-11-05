@@ -229,6 +229,11 @@ style and have not been backfilled.
   no longer hide subdust outputs. Explicit filter flags, spent-output
   exclusions, and the separate spendability-gated accessor are unchanged.
 
+- **`ArkProvider` is renamed `OperatorProvider`.** `RestArkProvider`,
+  `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
+  `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
+  alias. Passing both `operatorProvider` and `arkProvider` throws.
+
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
   boarding coins; it now throws `WalletNotInitializedError`, like

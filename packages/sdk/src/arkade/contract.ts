@@ -57,7 +57,7 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network, NetworkName } from "../networks";
 import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
-import type { ArkadeInfo, ArkProvider } from "../providers/ark";
+import type { ArkadeInfo, OperatorProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
 import type { Identity } from "../identity";
@@ -267,7 +267,7 @@ export type CallableFunctions = Record<
 // --- Arkade client ---------------------------------------------------------
 
 /** What {@link Arkade} needs from the Arkade server; see {@link ArkadeConnectOptions.arkade}. */
-export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
+export type ArkadeServerProvider = Pick<OperatorProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
 
 /** Fields shared by both forms of {@link ArkadeConnectOptions}. */
 interface ArkadeConnectCommonOptions {
@@ -1184,7 +1184,7 @@ export class ArkadeTransactionBuilder {
         );
         return {
             txid: res.arkTxid,
-            // Required by ArkadeBroadcaster; RestArkProvider.submitTx rejects a response without it.
+            // Required by ArkadeBroadcaster; RestOperatorProvider.submitTx rejects a response without it.
             signedArkTx: res.finalArkTx!,
             signedCheckpointTxs: res.signedCheckpointTxs,
         };

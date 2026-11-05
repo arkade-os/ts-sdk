@@ -32,7 +32,7 @@ const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
 
 `Wallet.create` also accepts short spellings: `service` in place of the
-`arkProvider`/`indexerProvider`/`onchainProvider` trio, `mode` for `walletMode` and
+`operatorProvider`/`indexerProvider`/`onchainProvider` trio, `mode` for `walletMode` and
 `settlement` for `settlementConfig`. Setting both spellings of one field throws.
 
 ### Read-Only Wallets (Watch-Only)
@@ -220,28 +220,28 @@ await wallet.send({ address: 'ark1q...', amount: 1000 })
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
 
-### Ark Provider Caching
+### Operator Provider Caching
 
-`RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
-with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
+`RestOperatorProvider.getInfo()` fetches current operator parameters on every call. Wrap it
+with `CachingOperatorProvider` when you reuse that response for fee, signer, or limit lookups:
 
 ```typescript
-import { CachingArkProvider, RestArkProvider, Wallet } from '@arkade-os/sdk'
+import { CachingOperatorProvider, RestOperatorProvider, Wallet } from '@arkade-os/sdk'
 
-const arkProvider = new CachingArkProvider(
-  new RestArkProvider('https://arkade.computer'),
+const operatorProvider = new CachingOperatorProvider(
+  new RestOperatorProvider('https://arkade.computer'),
   60_000, // optional TTL in milliseconds; defaults to 60 seconds
 )
 
-const wallet = await Wallet.create({ identity, arkProvider })
+const wallet = await Wallet.create({ identity, operatorProvider })
 ```
 
-Only `getInfo()` is cached; all other Ark provider methods pass through. The cache expires
-after the TTL and updates when the inner provider reports server-info changes, including
-signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
+Only `getInfo()` is cached; all other provider methods pass through. The cache expires
+after the TTL and updates when the inner provider reports operator info changes, including
+signer rotation. Wrapping `RestOperatorProvider` preserves its `serverUrl`, so `Wallet.create`
 can still derive the default indexer URL. Expired refresh failures propagate;
 wallet boot fallback lives in the persisted ArkInfo snapshot. Call `dispose()` if the
-inner provider outlives the wrapper, to drop its server-info subscription.
+inner provider outlives the wrapper, to drop its operator info subscription.
 
 ### Onchain Providers
 
@@ -822,7 +822,7 @@ exit waits for its batch swap queues until that batch swap finalizes, and an exi
 spends every spendable VTXO. Opt in to let spends overlap on disjoint VTXOs:
 
 ```typescript
-const wallet = await Wallet.create({ identity, arkProvider, concurrentSpending: true })
+const wallet = await Wallet.create({ identity, operatorProvider, concurrentSpending: true })
 ```
 
 With `concurrentSpending`:
@@ -1415,13 +1415,13 @@ For React Native and Expo applications where standard EventSource and fetch stre
 
 ```typescript
 import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
-import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
+import { ExpoOperatorProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
 
 const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 const wallet = await Wallet.create({
   identity: identity,
-  arkProvider: new ExpoArkProvider('https://arkade.computer'), // For settlement events and transactions streaming
+  operatorProvider: new ExpoOperatorProvider('https://arkade.computer'), // For settlement events and transactions streaming
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and virtual output state updates
 })
 
@@ -1431,9 +1431,9 @@ const balance = await wallet.getBalance()
 const address = await wallet.getAddress()
 ```
 
-Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
+Both ExpoOperatorProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
 
-- **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
+- **ExpoOperatorProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and virtual output state updates using expo/fetch for JSON streaming
 
 For persistence in Expo/React Native, use the SQLite repository with `expo-sqlite`:
@@ -1451,7 +1451,7 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkProvider: new ExpoArkProvider('https://arkade.computer'),
+  operatorProvider: new ExpoOperatorProvider('https://arkade.computer'),
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
@@ -1476,7 +1476,7 @@ global.crypto.getRandomValues = Crypto.getRandomValues;
 
 // Now import the SDK
 import { Wallet, MnemonicIdentity } from '@arkade-os/sdk';
-import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
+import { ExpoOperatorProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
 ```
 
 This is required for MuSig2 settlements and cryptographic operations.

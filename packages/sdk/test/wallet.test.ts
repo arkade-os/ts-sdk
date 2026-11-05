@@ -94,7 +94,7 @@ describe("Wallet", () => {
                         contractRepository: new InMemoryContractRepository(),
                     },
                 }),
-            ).rejects.toThrow(/indexerProvider is required when arkProvider is provided/);
+            ).rejects.toThrow(/indexerProvider is required when operatorProvider is provided/);
         });
 
         it("has the delegate and server-info requests in flight together", async () => {

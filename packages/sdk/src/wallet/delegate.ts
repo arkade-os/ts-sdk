@@ -2,7 +2,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     Asset,
     decodeTapscript,
     DelegateInfo,
@@ -70,7 +70,7 @@ export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
         readonly delegateProvider: DelegateProvider,
-        readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
+        readonly arkInfoProvider: Pick<OperatorProvider, "getInfo">,
         readonly identity: Identity,
     ) {}
 
