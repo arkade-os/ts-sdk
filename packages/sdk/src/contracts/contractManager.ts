@@ -2297,10 +2297,12 @@ export class ContractManager implements IContractManager {
                 // e.g. an evicted or reorged funding tx; must not block saving new coins.
                 console.warn(`[contracts] outspends lookup failed for ${key}`, e);
             }
-            // A coin the explorer listed before and no longer does is gone, spent or evicted. An
+            // A coin the explorer listed before and no longer does is gone, spent or evicted, even
+            // when outspends lags it (Electrum answers unspent if it finds no spender). An
             // indexer-written unrolled VTXO may not be indexed yet, so it needs a seen spend.
-            if (outspend ? !outspend.spent : !isExplorerCoin(row)) continue;
-            const spentBy = outspend?.txid ?? pending[key]?.spender ?? row.spentBy ?? "";
+            if (!isExplorerCoin(row) && !outspend?.spent) continue;
+            const seenSpender = outspend?.spent ? outspend.txid : undefined;
+            const spentBy = seenSpender || pending[key]?.spender || row.spentBy || "";
             spent.push({ ...row, isSpent: true, spentBy });
             delete pending[key];
         }

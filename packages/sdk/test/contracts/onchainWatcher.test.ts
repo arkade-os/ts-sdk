@@ -157,6 +157,46 @@ describe("ContractManager.syncOnchain", () => {
         manager.dispose();
     });
 
+    it("drops a listed coin the explorer no longer returns even if outspends says unspent", async () => {
+        const getCoins = vi
+            .fn()
+            .mockResolvedValueOnce([coin])
+            .mockResolvedValueOnce([])
+            .mockResolvedValue([coin]);
+        const { manager, walletRepository } = await setup(getCoins, [
+            { spent: false, txid: "" },
+            { spent: false, txid: "" },
+        ]);
+        await manager.syncOnchain();
+
+        await manager.syncOnchain();
+        let [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: "" });
+
+        // A coin the explorer lists again was only missing from one snapshot.
+        await manager.syncOnchain();
+        [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: false, spentBy: "" });
+        manager.dispose();
+    });
+
+    it("names the pending spender of a vanished coin whose outspends says unspent", async () => {
+        const getCoins = vi.fn().mockResolvedValueOnce([coin]).mockResolvedValue([]);
+        const { manager, walletRepository } = await setup(getCoins, [
+            { spent: false, txid: "" },
+            { spent: false, txid: "" },
+        ]);
+        await manager.syncOnchain();
+        await manager.markOnchainSpendPending([{ txid: coin.txid, vout: 1 }], spender);
+
+        await manager.syncOnchain();
+
+        const [row] = await collectScriptVtxos(walletRepository, boarding.script);
+        expect(row).toMatchObject({ isSpent: true, spentBy: spender });
+        expect(await pendingOf(walletRepository)).toEqual({});
+        manager.dispose();
+    });
+
     it("keeps an indexer-written unrolled row the explorer has not indexed yet", async () => {
         const { manager, walletRepository, onchainProvider } = await setup(async () => []);
         await saveVtxosForContract(walletRepository, boarding, [

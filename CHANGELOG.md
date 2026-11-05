@@ -256,6 +256,13 @@ style and have not been backfilled.
   boarding rows its contract had filtered out, counting them in both `boarding`
   and `unrolled`; that read now runs only for a script no contract owns.
 
+- **An onchain coin the explorer stops listing is dropped even if outspends lags.**
+  The onchain sync kept such a coin unspent whenever its outspends lookup
+  answered unspent, which Electrum does when it finds no spender (a Fulcrum
+  history past `max_history`, an evicted spender). Explorer-stored coins now
+  follow the address snapshot; a coin listed again reads as unspent on the next
+  sync. Unrolled VTXOs the indexer wrote still need a seen spend.
+
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
   identity key read before it, rejected after `ContractManager.create()` had
