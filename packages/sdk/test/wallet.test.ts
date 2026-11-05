@@ -12,6 +12,8 @@ import {
     OnchainWallet,
     RestArkProvider,
     ReadonlyWallet,
+    ContractManager,
+    ContractWatcher,
     Batch,
     DefaultVtxo,
     DelegateVtxo,
@@ -1838,6 +1840,91 @@ describe("ReadonlyWallet", () => {
             `${DEFAULT_ARKADE_SERVER_URL}/v1/info`,
             expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
+    });
+
+    const startupWallet = (identity: ReadonlySingleKey) =>
+        ReadonlyWallet.create({
+            identity,
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+            } as Partial<ArkProvider> as ArkProvider,
+            indexerProvider: {
+                getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                getSubscription: async function* () {},
+            } as Partial<IndexerProvider> as IndexerProvider,
+            onchainProvider: {} as OnchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+    it.each([
+        [
+            "registering the baseline contracts",
+            (failure: Error, _identity: ReadonlySingleKey) =>
+                vi
+                    .spyOn(ContractManager.prototype, "createContracts")
+                    .mockRejectedValueOnce(failure),
+        ],
+        [
+            "reading the identity key",
+            (failure: Error, identity: ReadonlySingleKey) =>
+                vi.spyOn(identity, "xOnlyPublicKey").mockRejectedValueOnce(failure),
+        ],
+    ])(
+        "disposes a contract manager whose start-up fails after it began watching (%s)",
+        async (_, fail) => {
+            const key = SingleKey.fromRandomBytes();
+            const identity = ReadonlySingleKey.fromPublicKey(await key.compressedPublicKey());
+            const wallet = await startupWallet(identity);
+            const failure = new Error("start-up failed");
+            const failing = fail(failure, identity);
+            const dispose = vi.spyOn(ContractManager.prototype, "dispose");
+            const startWatching = vi.spyOn(ContractWatcher.prototype, "startWatching");
+            const stopWatching = vi.spyOn(ContractWatcher.prototype, "stopWatching");
+            try {
+                await expect(wallet.getContractManager()).rejects.toBe(failure);
+                expect(dispose).toHaveBeenCalledTimes(1);
+                expect(startWatching).toHaveBeenCalledTimes(1);
+                expect(stopWatching).toHaveBeenCalledTimes(1);
+                await expect(wallet.getContractManager()).resolves.toBeInstanceOf(ContractManager);
+            } finally {
+                failing.mockRestore();
+                dispose.mockRestore();
+                startWatching.mockRestore();
+                stopWatching.mockRestore();
+                await wallet.dispose();
+            }
+        },
+    );
+
+    it("keeps the start-up error when disposing the failed manager also rejects", async () => {
+        const key = SingleKey.fromRandomBytes();
+        const wallet = await startupWallet(
+            ReadonlySingleKey.fromPublicKey(await key.compressedPublicKey()),
+        );
+        const failure = new Error("start-up failed");
+        const createContracts = vi
+            .spyOn(ContractManager.prototype, "createContracts")
+            .mockRejectedValueOnce(failure);
+        const realDispose = ContractManager.prototype.dispose;
+        const dispose = vi
+            .spyOn(ContractManager.prototype, "dispose")
+            .mockImplementationOnce(function (this: ContractManager) {
+                void realDispose.call(this);
+                return Promise.reject(new Error("boot failed too"));
+            });
+        try {
+            await expect(wallet.getContractManager()).rejects.toBe(failure);
+            await expect(wallet.getContractManager()).resolves.toBeInstanceOf(ContractManager);
+        } finally {
+            createContracts.mockRestore();
+            dispose.mockRestore();
+            await wallet.dispose();
+        }
     });
 
     it("should query balance with ReadonlyWallet", async () => {
