@@ -750,7 +750,8 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxos(opts?: GetVtxosOptions): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
-        assertResponseLimit(opts?.maxResponseBytes);
+        const maxResponseBytes = opts?.maxResponseBytes;
+        assertResponseLimit(maxResponseBytes);
         const hasScripts = (opts?.scripts?.length ?? 0) > 0;
         const hasOutpoints = (opts?.outpoints?.length ?? 0) > 0;
 
@@ -803,6 +804,7 @@ export class RestIndexerProvider implements IndexerProvider {
             for (;;) {
                 const { vtxos, page } = await this.fetchVtxosPage({
                     ...(opts as GetVtxosOptions),
+                    maxResponseBytes,
                     pageIndex,
                     pageSize: DEFAULT_VTXO_PAGE_SIZE,
                 });
