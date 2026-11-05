@@ -101,6 +101,9 @@ describe("RestArkProvider.cosignOnchainTx", () => {
         ["an unstructured 400", () => new Response("bad request", { status: 400 })],
         ["a FetchError", () => new FetchError("down", { url: "http://ark" })],
         ["a raw fetch rejection", () => new TypeError("network")],
+        ["a 2xx without a txid", () => okJson({})],
+        ["a 2xx with an empty txid", () => okJson({ txid: "" })],
+        ["a non-JSON 2xx", () => new Response("ok", { status: 200 })],
     ])("maps %s to OnchainCosignAmbiguousError", async (_name, make) => {
         const { err } = cosignWith(make());
         expect(await err).toBeInstanceOf(OnchainCosignAmbiguousError);

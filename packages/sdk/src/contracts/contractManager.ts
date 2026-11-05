@@ -481,11 +481,12 @@ export interface IContractManager extends Disposable {
      * Record `txid` as the pending spender of stored onchain coins. A sync confirms it once the
      * coin is spent, or releases it if still unspent `ONCHAIN_PENDING_RELEASE_BLOCKS` later.
      * `skipUnknown` marks the stored coins and logs the rest instead of rejecting them all.
+     * `height` starts the release countdown; without it the chain tip is fetched.
      */
     markOnchainSpendPending?(
         outpoints: Outpoint[],
         txid: string,
-        options?: { skipUnknown?: boolean },
+        options?: { skipUnknown?: boolean; height?: number },
     ): Promise<void>;
 
     /**
@@ -2142,7 +2143,7 @@ export class ContractManager implements IContractManager {
     markOnchainSpendPending(
         outpoints: Outpoint[],
         txid: string,
-        options?: { skipUnknown?: boolean },
+        options?: { skipUnknown?: boolean; height?: number },
     ): Promise<void> {
         return this.inOnchainOrder(async () => {
             const { onchainProvider } = this.config;
@@ -2160,7 +2161,7 @@ export class ContractManager implements IContractManager {
                 console.warn(`[contracts] ${message}; marking the rest pending`);
             }
 
-            const { height } = await onchainProvider.getChainTip();
+            const height = options?.height ?? (await onchainProvider.getChainTip()).height;
             // State first: an entry without a marked row releases harmlessly.
             await this.updatePendingSpends((pending) => {
                 for (const v of rows) {

@@ -241,6 +241,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **An onchain cosign that may have broadcast is never treated as failed.**
+  A 2xx reply from arkd without a `txid` came back as `undefined`, so
+  `Ramps.offboardExact` fell through to a batch payment after arkd may already
+  have paid; it now raises `OnchainCosignAmbiguousError`. Separately, marking
+  the spent coins pending fetched the chain tip again after submitting, and a
+  failure there left them unmarked and selectable; the preflight tip is reused.
+
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
   identity key read before it, rejected after `ContractManager.create()` had

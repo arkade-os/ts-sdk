@@ -4817,7 +4817,8 @@ export class Wallet
         )) as Transaction;
         const markPending = async (txid: string) => {
             try {
-                await manager.markOnchainSpendPending(spent, txid);
+                // The preflight tip: a fresh fetch failing here would leave the spend unmarked.
+                await manager.markOnchainSpendPending(spent, txid, { height: tip.height });
             } catch (e) {
                 console.error(`cosignOnchainTx: ${txid} broadcast but not marked pending`, e);
             }

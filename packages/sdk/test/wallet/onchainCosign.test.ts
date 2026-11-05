@@ -558,6 +558,28 @@ describe("wallet.cosignOnchainTx", () => {
         await expect(wallet.cosignOnchainTx(tx)).resolves.toBe(COSIGNED);
     });
 
+    it("marks the spend pending when the chain tip is unreachable after submit", async () => {
+        const {
+            wallet,
+            arkProvider,
+            onchainProvider,
+            walletRepository,
+            boardingCoin,
+            boardingScriptHex,
+            externalScript,
+        } = await makeWallet();
+        arkProvider.cosignOnchainTx.mockImplementation(async () => {
+            onchainProvider.getChainTip.mockRejectedValue(new Error("explorer down"));
+            return COSIGNED;
+        });
+        const tx = new Transaction({ version: 2 });
+        tx.addInput({ txid: hex.decode(boardingCoin.txid), index: boardingCoin.vout });
+        tx.addOutput({ script: externalScript, amount: 40_000n });
+        await expect(wallet.cosignOnchainTx(tx)).resolves.toBe(COSIGNED);
+        const [row] = await collectScriptVtxos(walletRepository, boardingScriptHex);
+        expect(row.spentBy).toBe(COSIGNED);
+    });
+
     it("syncs first so an owned coin not yet stored is signed", async () => {
         const { wallet, arkProvider, walletRepository, boardingCoin, boardingScriptHex } =
             await makeWallet();

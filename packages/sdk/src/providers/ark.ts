@@ -686,7 +686,13 @@ export class RestOperatorProvider implements OperatorProvider {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ tx: psbtB64 }),
             });
-            if (response.ok) return (await response.json()).txid;
+            if (response.ok) {
+                // Thrown here so a malformed success reads as ambiguous: arkd may have broadcast.
+                const { txid } = await response.json();
+                if (typeof txid !== "string" || !txid)
+                    throw new Error("cosign response has no txid");
+                return txid;
+            }
             text = await response.text();
         } catch (e) {
             if (e instanceof DigestMismatchError) throw e;
