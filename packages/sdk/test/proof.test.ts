@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Intent, Proof, TAG_PROOF } from "../src/proof";
+import { craftToSpendTx, Intent, Proof, TAG_PROOF } from "../src/proof";
 import { Transaction } from "../src/utils/transaction";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -186,5 +186,19 @@ describe("deprecated Intent names", () => {
         expect(asset.AssetInput.createIntent).toBe(asset.AssetInput.createProof);
         expect(asset.AssetInputType.Intent).toBe(asset.AssetInputType.Proof);
         expect(TAG_PROOF).toBe("ark-intent-proof-message");
+    });
+
+    it("sign a to_spend transaction built with that tag", () => {
+        const script = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(1)]);
+        const input = {
+            txid: new Uint8Array(32),
+            index: 0,
+            witnessUtxo: { script, amount: 1000n },
+        };
+        const toSpend = craftToSpendTx("tag", script, "ark-intent-proof-message");
+
+        const proof = Proof.create("tag", [input]);
+
+        expect(hex.encode(proof.getInput(0).txid!)).toBe(toSpend.id);
     });
 });

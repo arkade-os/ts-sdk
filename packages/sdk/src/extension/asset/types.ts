@@ -4,7 +4,7 @@ export const ASSET_ID_SIZE = 34;
 export enum AssetInputType {
     Unspecified = 0,
     Local = 1,
-    /** @deprecated Use {@link Proof}. */
+    /** @deprecated Use {@link AssetInputType.Proof}. */
     Intent = 2,
     Proof = 2,
 }

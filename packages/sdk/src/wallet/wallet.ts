@@ -4506,7 +4506,7 @@ export class Wallet
                 registerProof: intent.proof,
                 registerProofMessage: Proof.encodeMessage(intent.message),
                 deleteProof: deleteIntent.proof,
-                deleteProofMessage: Proof.encodeMessage(deleteIntent.message),
+                deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
                 intentVtxos: inputs.map((i) => ({
                     txid: i.txid,
                     vout: i.vout,
