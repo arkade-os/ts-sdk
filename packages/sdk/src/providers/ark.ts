@@ -11,9 +11,9 @@ import {
     type EventSourceFactory,
 } from "./eventSource";
 import {
-    ArkErrorName,
-    isArkError,
-    maybeArkError,
+    OperatorErrorName,
+    isOperatorError,
+    maybeOperatorError,
     throwIfHttpUnavailable,
     toProviderUnavailable,
 } from "./errors";
@@ -462,16 +462,16 @@ export class RestArkProvider implements ArkProvider {
         }
         // Only arkd's *structured* digest error counts: a grpc-gateway
         // ErrorDetails whose name is DIGEST_MISMATCH (arkd's X-Digest guard,
-        // v0.9.9-rc.1 #1104), parsed via the shared maybeArkError. A raw
+        // v0.9.9-rc.1 #1104), parsed via the shared maybeOperatorError. A raw
         // substring match would let an unrelated error body that merely mentions
         // the token trigger a spurious refresh + signer rotation.
-        const arkError = maybeArkError(new Error(body));
+        const operatorError = maybeOperatorError(new Error(body));
         // A structured arkd error means the operator is up and deliberately
         // rejecting the request — terminal, even when grpc-gateway renders it as a
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
-        if (!arkError) throwIfHttpUnavailable(response, "arkade");
-        if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
+        if (!operatorError) throwIfHttpUnavailable(response, "arkade");
+        if (!isOperatorError(operatorError, OperatorErrorName.DIGEST_MISMATCH)) return response;
         // arkd rejected this request because our cached server info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
@@ -1274,6 +1274,6 @@ function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
 
 function handleError(errorText: string, defaultMessage: string): never {
     const error = new Error(errorText);
-    const arkError = maybeArkError(error);
-    throw arkError ?? new Error(defaultMessage);
+    const operatorError = maybeOperatorError(error);
+    throw operatorError ?? new Error(defaultMessage);
 }

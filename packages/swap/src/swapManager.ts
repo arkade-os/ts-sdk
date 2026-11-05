@@ -21,11 +21,11 @@
  */
 import { hex } from "@scure/base";
 import {
-    ArkErrorName,
+    OperatorErrorName,
     assertTimerMs,
-    isArkError,
+    isOperatorError,
     isContractVtxoEvent,
-    maybeArkError,
+    maybeOperatorError,
     type ContractEvent,
     type IContractManager,
     type VHTLC,
@@ -1508,8 +1508,8 @@ export class RfqSwapManager {
             this.emitAction(swap, "claimLockup");
         } catch (error) {
             // Lost the race to another holder of P (covclaimd): step 1 of the next pass reads that claim and settles.
-            const ark = isArkError(error) ? error : maybeArkError(error);
-            if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) {
+            const operatorError = isOperatorError(error) ? error : maybeOperatorError(error);
+            if (isOperatorError(operatorError, OperatorErrorName.VTXO_ALREADY_SPENT)) {
                 if (swap.claimFailure !== undefined) {
                     delete swap.claimFailure;
                     this.touch(swap);
@@ -1905,8 +1905,8 @@ export class RfqSwapManager {
             // stale read still lists (after a restart, or from a second refunder), or by the
             // solver. Neither is a failure; the next pass reads afresh, and step 1 settles a
             // solver spend.
-            const ark = isArkError(error) ? error : maybeArkError(error);
-            if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) return;
+            const operatorError = isOperatorError(error) ? error : maybeOperatorError(error);
+            if (isOperatorError(operatorError, OperatorErrorName.VTXO_ALREADY_SPENT)) return;
             // UNWRAPPED, so `instanceof` works: `LockupNeedsRecoveryError` names the
             // outpoints to recover, and after recovery the next pass succeeds.
             this.emitFailed(swap, error);

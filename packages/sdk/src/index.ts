@@ -409,6 +409,10 @@ import type {
     ExitDataSource,
 } from "./wallet/exit";
 import {
+    OperatorError,
+    OperatorErrorName,
+    isOperatorError,
+    maybeOperatorError,
     ArkError,
     ArkErrorName,
     isArkError,
@@ -829,6 +833,10 @@ export {
     sequenceToTimelock,
     toXOnly,
     // Errors
+    OperatorError,
+    OperatorErrorName,
+    isOperatorError,
+    maybeOperatorError,
     ArkError,
     ArkErrorName,
     isArkError,

@@ -1,6 +1,6 @@
 import { FetchError } from "../utils/fetch";
 
-export class ArkError extends Error {
+export class OperatorError extends Error {
     constructor(
         readonly code: number,
         readonly message: string,
@@ -12,11 +12,11 @@ export class ArkError extends Error {
 }
 
 /**
- * Structured arkd error `name`s the SDK branches on, centralized so call sites don't
+ * Structured operator error `name`s the SDK branches on, centralized so call sites don't
  * hardcode string literals. Not an exhaustive mirror of the server's codes — only the
  * ones the SDK acts on.
  */
-export const ArkErrorName = {
+export const OperatorErrorName = {
     DIGEST_MISMATCH: "DIGEST_MISMATCH",
     VTXO_ALREADY_SPENT: "VTXO_ALREADY_SPENT",
     INVALID_TX_FILTER: "INVALID_TX_FILTER",
@@ -31,18 +31,18 @@ export const ArkErrorName = {
     INVALID_INTENT_PROOF: "INVALID_INTENT_PROOF",
 } as const;
 
-export type ArkErrorName = (typeof ArkErrorName)[keyof typeof ArkErrorName];
+export type OperatorErrorName = (typeof OperatorErrorName)[keyof typeof OperatorErrorName];
 
 /**
- * Type guard for a structured {@link ArkError}, optionally narrowing to a cataloged
- * {@link ArkErrorName}; for an uncataloged name, add it there or compare `err.name` after the
+ * Type guard for a structured {@link OperatorError}, optionally narrowing to a cataloged
+ * {@link OperatorErrorName}; for an uncataloged name, add it there or compare `err.name` after the
  * one-argument form.
  *
  * @example
- * if (isArkError(maybeArkError(err), ArkErrorName.DIGEST_MISMATCH)) { ... }
+ * if (isOperatorError(maybeOperatorError(err), OperatorErrorName.DIGEST_MISMATCH)) { ... }
  */
-export function isArkError(error: unknown, name?: ArkErrorName): error is ArkError {
-    return error instanceof ArkError && (name === undefined || error.name === name);
+export function isOperatorError(error: unknown, name?: OperatorErrorName): error is OperatorError {
+    return error instanceof OperatorError && (name === undefined || error.name === name);
 }
 
 /**
@@ -57,7 +57,7 @@ export type ProviderKind = "arkade" | "indexer";
 /**
  * A remote provider (Arkade operator or its indexer) is temporarily unreachable: transport
  * failure, timeout, or a 5xx/429. Retryable, unlike terminal config/auth/schema errors, which
- * stay a plain `Error`/{@link ArkError}. The low-level error is kept as {@link Error.cause}.
+ * stay a plain `Error`/{@link OperatorError}. The low-level error is kept as {@link Error.cause}.
  */
 export class ProviderUnavailableError extends Error {
     /** Always `true`: this error type only ever wraps retryable conditions. */
@@ -92,7 +92,7 @@ export class ServerResponseMismatchError extends Error {
  * Status alone can't classify arkd: behind grpc-gateway, gRPC INTERNAL becomes HTTP 500, so a 500
  * whose `body` decodes to a structured arkd error (e.g. `INTERNAL_ERROR (0): ...already
  * registered by another intent`) is a terminal rejection that must reach the caller as an
- * {@link ArkError}, never be retried; such a body returns without throwing. NArk parity:
+ * {@link OperatorError}, never be retried; such a body returns without throwing. NArk parity:
  * BuildVersionHandler branches on body content, not status.
  */
 export function throwIfHttpUnavailable(
@@ -100,7 +100,7 @@ export function throwIfHttpUnavailable(
     kind: ProviderKind,
     body?: string,
 ): void {
-    if (body !== undefined && maybeArkError(new Error(body))) return;
+    if (body !== undefined && maybeOperatorError(new Error(body))) return;
     if (response.status === 429 || response.status >= 500) {
         throw new ProviderUnavailableError(
             `${kind} unavailable: ${response.status} ${response.statusText}`,
@@ -121,11 +121,11 @@ export function toProviderUnavailable(err: unknown, kind: ProviderKind): unknown
 }
 
 /**
- * Try to convert an error to an ArkError class, returning undefined if the error is not an ArkError
+ * Try to convert an error to an OperatorError class, returning undefined if the error is not an OperatorError
  * @param error - The error to parse
- * @returns The parsed ArkError, or undefined if the error is not an ArkError
+ * @returns The parsed OperatorError, or undefined if the error is not an OperatorError
  */
-export function maybeArkError(error: any): ArkError | undefined {
+export function maybeOperatorError(error: any): OperatorError | undefined {
     try {
         if (!(error instanceof Error)) return undefined;
         const decoded = JSON.parse(error.message);
@@ -152,7 +152,7 @@ export function maybeArkError(error: any): ArkError | undefined {
                     metadata = details.metadata;
                 }
 
-                return new ArkError(code, message, name, metadata);
+                return new OperatorError(code, message, name, metadata);
             }
         }
 
@@ -161,7 +161,7 @@ export function maybeArkError(error: any): ArkError | undefined {
         // as "NAME (code): human message" (no metadata on this path).
         if (typeof decoded.message === "string") {
             const m = decoded.message.match(/^([A-Z][A-Z0-9_]*) \((\d+)\): ([\s\S]*)$/);
-            if (m) return new ArkError(Number(m[2]), m[3], m[1]);
+            if (m) return new OperatorError(Number(m[2]), m[3], m[1]);
         }
 
         return undefined;
@@ -173,3 +173,16 @@ export function maybeArkError(error: any): ArkError | undefined {
 function isMetadata(value: any): value is Record<string, string> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/** @deprecated Use {@link OperatorError}. */
+export const ArkError = OperatorError;
+/** @deprecated Use {@link OperatorError}. */
+export type ArkError = OperatorError;
+/** @deprecated Use {@link OperatorErrorName}. */
+export const ArkErrorName = OperatorErrorName;
+/** @deprecated Use {@link OperatorErrorName}. */
+export type ArkErrorName = OperatorErrorName;
+/** @deprecated Use {@link isOperatorError}. */
+export const isArkError = isOperatorError;
+/** @deprecated Use {@link maybeOperatorError}. */
+export const maybeArkError = maybeOperatorError;

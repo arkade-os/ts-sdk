@@ -198,6 +198,10 @@ style and have not been backfilled.
 
 ### Changed
 
+- **`ArkError` is renamed `OperatorError`.** `ArkErrorName`, `isArkError` and
+  `maybeArkError` take the matching names. Every old name stays as a deprecated
+  alias, and `error.name` values from the operator do not change.
+
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
 
