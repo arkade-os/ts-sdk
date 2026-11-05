@@ -8,6 +8,7 @@ import {
     RestOperatorProvider,
     SingleKey,
     Wallet,
+    type IndexerProvider,
     type OperatorProvider,
 } from "../src";
 import { ExpoArkProvider, ExpoOperatorProvider } from "../src/adapters/expo";
@@ -32,6 +33,20 @@ describe("Wallet.create provider key", () => {
         await expect(
             Wallet.create({ identity, operatorProvider: provider, storage }),
         ).rejects.toThrow(/indexerProvider is required when operatorProvider is provided/);
+    });
+
+    it("makes its boot read through operatorProvider", async () => {
+        const stop = new Error("stop");
+        const getInfo = vi.fn().mockRejectedValue(stop);
+        await expect(
+            Wallet.create({
+                identity,
+                operatorProvider: { getInfo } as unknown as OperatorProvider,
+                indexerProvider: {} as IndexerProvider,
+                storage,
+            }),
+        ).rejects.toBe(stop);
+        expect(getInfo).toHaveBeenCalledOnce();
     });
 
     it("rejects both spellings", async () => {
