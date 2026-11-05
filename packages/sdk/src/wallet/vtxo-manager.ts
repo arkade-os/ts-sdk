@@ -19,7 +19,7 @@ import {
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
+import { ArkadeInfo, OperatorProvider, SettlementEvent } from "../providers/ark";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { Contract, ExtendedContractVtxo } from "../contracts/types";
@@ -83,7 +83,7 @@ export function selectPendingRecoveryOutpoints(
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     network: Network;
     /**
      * Descriptor-aware signer: routes each input to the identity or its per-index descriptor
@@ -405,13 +405,13 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Default behavior: virtual output renewal at 3 days, boarding sweep enabled, polling every minute
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  * });
  *
  * // Custom expiry threshold of 24 hours
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *   },
@@ -420,7 +420,7 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Explicitly disable
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: false,
  * });
  * ```
@@ -470,7 +470,7 @@ export interface SettlementConfig {
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 259_200,
  *     boardingUtxoSweep: true,
@@ -805,7 +805,7 @@ export interface DeprecatedSignerMigrationReport {
  * `Wallet`; absent on watch-only or mock wallets.
  */
 interface MigrationCapableWallet {
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
@@ -952,7 +952,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *      // Seconds before virtual output expiry to trigger renewal
  *      vtxoThreshold: 259_200, // 3 days
@@ -1551,7 +1551,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *  identity,
-     *  arkProvider: new RestArkProvider(),
+     *  operatorProvider: new RestOperatorProvider(),
      *  settlementConfig: {
      *      vtxoThreshold: 86_400 // 24 hours
      *  },
@@ -1857,7 +1857,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   operatorProvider: new RestOperatorProvider(),
      *   settlementConfig: {
      *     boardingUtxoSweep: true,
      *   },
@@ -2583,17 +2583,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().onchainProvider;
     }
 
-    private getArkProvider() {
+    private getOperatorProvider() {
         return this.getSweepWallet().arkProvider;
     }
 
     /**
-     * Unlike {@link getArkProvider}, doesn't require boarding-sweep capability. Undefined when no
+     * Unlike {@link getOperatorProvider}, doesn't require boarding-sweep capability. Undefined when no
      * provider is wired, which callers treat as "no limit".
      */
-    private getInfoProvider(): ArkProvider | undefined {
+    private getInfoProvider(): OperatorProvider | undefined {
         // Narrow cast, so an incompatible future IWallet.arkProvider is a type error here.
-        return (this.wallet as { arkProvider?: ArkProvider }).arkProvider;
+        return (this.wallet as { arkProvider?: OperatorProvider }).arkProvider;
     }
 
     private getNetwork() {
@@ -2922,7 +2922,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const dustAmount = getDustAmount(this.wallet);
 
-        const info = await this.getArkProvider().getInfo();
+        const info = await this.getOperatorProvider().getInfo();
         const { fees, vtxoMaxAmount } = info;
         const estimator = new Estimator(fees.intentFee);
 

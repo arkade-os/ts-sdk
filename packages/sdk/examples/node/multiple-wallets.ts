@@ -17,7 +17,7 @@ import {
     InMemoryContractRepository,
     EsploraProvider,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
     Ramps,
@@ -61,7 +61,7 @@ async function main() {
     // In-memory wallet
     const bobWallet = await Wallet.create({
         identity: bob,
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
         // No background renewal/boarding settlement: the example settles explicitly.
         settlementConfig: false,
@@ -82,7 +82,7 @@ async function main() {
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
         // No background renewal/boarding settlement: the example settles explicitly.
         settlementConfig: false,

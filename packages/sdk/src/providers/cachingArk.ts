@@ -3,7 +3,7 @@ import { Intent } from "../intent";
 import { assertNonNegativeMs } from "../utils/time";
 import {
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     PendingTx,
     SettlementEvent,
     SignedIntent,
@@ -17,12 +17,12 @@ type ServerInfoEventSource = Partial<{
 }>;
 
 /**
- * Decorates an {@link ArkProvider}, caching {@link ArkProvider.getInfo} for
+ * Decorates an {@link OperatorProvider}, caching {@link OperatorProvider.getInfo} for
  * `ttlMs` (default 60s). Other provider methods pass through.
  * Expired-cache refresh failures propagate; persisted wallet boot fallback
  * lives in `arkInfoSnapshot`.
  */
-export class CachingArkProvider implements ArkProvider {
+export class CachingOperatorProvider implements OperatorProvider {
     private cached?: ArkadeInfo;
     private expiresAt = 0;
     private inflight?: Promise<ArkadeInfo>;
@@ -31,7 +31,7 @@ export class CachingArkProvider implements ArkProvider {
     private readonly unsubscribe: () => void;
 
     constructor(
-        private readonly inner: ArkProvider,
+        private readonly inner: OperatorProvider,
         private readonly ttlMs: number = DEFAULT_TTL_MS,
     ) {
         assertNonNegativeMs("ttlMs", ttlMs);
@@ -124,3 +124,8 @@ export class CachingArkProvider implements ArkProvider {
         return (this.inner as ServerInfoEventSource).onServerInfoChanged?.(listener) ?? (() => {});
     }
 }
+
+/** @deprecated Use {@link CachingOperatorProvider}. */
+export const CachingArkProvider = CachingOperatorProvider;
+/** @deprecated Use {@link CachingOperatorProvider}. */
+export type CachingArkProvider = CachingOperatorProvider;

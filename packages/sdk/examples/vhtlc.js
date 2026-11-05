@@ -15,7 +15,7 @@ import {
     VHTLC,
     setArkPsbtField,
     ConditionWitness,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     buildOffchainTx,
     networks,
@@ -114,7 +114,7 @@ async function main() {
     await fundAddress(address, fundAmount);
 
     // Get the virtual coins for the VHTLC address
-    const arkProvider = new RestArkProvider("http://localhost:7070");
+    const arkProvider = new RestOperatorProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
         scripts: [hex.encode(vhtlcScript.pkScript)],

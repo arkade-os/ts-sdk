@@ -24,7 +24,7 @@ import { fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
 /**
- * Thrown by {@link RestArkProvider} when arkd rejects a request with
+ * Thrown by {@link RestOperatorProvider} when arkd rejects a request with
  * `DIGEST_MISMATCH` — the client's cached server info was stale (e.g. an
  * operator signer rotation). By the time this surfaces the provider has already
  * refreshed its info and fired `onServerInfoChanged`; the caller should rebuild
@@ -179,7 +179,7 @@ export type ServiceStatus = Record<string, string>;
  * object every consumer already holds and — in the service-worker model — the
  * only side that has a transport at all; the page has no provider to hang it
  * on. The `CachingClientTransport`-style memo lives at this layer instead, as
- * `CachingArkProvider`.
+ * `CachingOperatorProvider`.
  */
 export interface ArkadeInfo {
     boardingExitDelay: bigint;
@@ -280,7 +280,7 @@ export interface SweepTxNotification extends TxNotification {
 }
 
 /**
- * One frame of {@link ArkProvider.getTransactionsStream}. Exactly one arm is
+ * One frame of {@link OperatorProvider.getTransactionsStream}. Exactly one arm is
  * set; an unrecognized frame is dropped rather than yielded.
  */
 export interface TxNotificationEvent {
@@ -289,7 +289,7 @@ export interface TxNotificationEvent {
     sweepTx?: SweepTxNotification;
 }
 
-export interface ArkProvider {
+export interface OperatorProvider {
     /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkadeInfo>;
 
@@ -357,16 +357,16 @@ function advertisedLimit(fromServer: unknown): bigint | undefined {
 }
 
 /**
- * REST-based Arkade provider implementation.
+ * REST-based operator provider implementation.
  *
  * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.ArkService
  * @example
  * ```typescript
- * const provider = new RestArkProvider('https://arkade.computer');
+ * const provider = new RestOperatorProvider('https://arkade.computer');
  * const info = await provider.getInfo();
  * ```
  */
-export class RestArkProvider implements ArkProvider {
+export class RestOperatorProvider implements OperatorProvider {
     /** Overrides {@link configureEventSource} for this provider's streams. */
     protected readonly eventSource?: EventSourceFactory;
 
@@ -1277,3 +1277,10 @@ function handleError(errorText: string, defaultMessage: string): never {
     const arkError = maybeArkError(error);
     throw arkError ?? new Error(defaultMessage);
 }
+
+/** @deprecated Use {@link OperatorProvider}. */
+export type ArkProvider = OperatorProvider;
+/** @deprecated Use {@link RestOperatorProvider}. */
+export const RestArkProvider = RestOperatorProvider;
+/** @deprecated Use {@link RestOperatorProvider}. */
+export type RestArkProvider = RestOperatorProvider;

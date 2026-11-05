@@ -17,11 +17,11 @@ import {
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
     PendingTx,
-    RestArkProvider,
+    RestOperatorProvider,
     SettlementEvent,
     SignedIntent,
     TreeNoncesEvent,
@@ -250,9 +250,9 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
     return { recipients: args as [Recipient, ...Recipient[]] };
 }
 
-// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
+// Built-in and decorated OperatorProvider implementations may expose `serverUrl`.
 // The interface does not require it, so custom providers can return undefined.
-export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
+export function extractOperatorProviderUrl(provider: OperatorProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
@@ -833,7 +833,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
         /** Narrowed so a readonly wallet can't grow a `submitTx` use; `Wallet` re-widens it. */
-        protected readonly arkProvider: Pick<ArkProvider, "getInfo">,
+        protected readonly arkProvider: Pick<OperatorProvider, "getInfo">,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -1015,26 +1015,30 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Shared setup for ReadonlyWallet.create() and Wallet.create(). */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
+        if (config.operatorProvider && config.arkProvider) {
+            throw new Error("Pass either `operatorProvider` or `arkProvider`, not both");
+        }
+        const callerProvider = config.operatorProvider ?? config.arkProvider;
         if (
             config.service &&
-            (config.arkProvider || config.indexerProvider || config.onchainProvider)
+            (callerProvider || config.indexerProvider || config.onchainProvider)
         ) {
             throw new Error(
-                "Pass either `service` or `arkProvider`/`indexerProvider`/`onchainProvider`, not both",
+                "Pass either `service` or `operatorProvider`/`indexerProvider`/`onchainProvider`, not both",
             );
         }
         const arkProvider =
-            config.arkProvider ||
-            new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
+            callerProvider ||
+            new RestOperatorProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
         if (!indexerProvider && !config.service) {
-            const derived = extractArkProviderUrl(arkProvider);
-            // Refuse to pair a caller's own ark provider with the public default: the wallet would
+            const derived = extractOperatorProviderUrl(arkProvider);
+            // Refuse to pair a caller's own operator provider with the public default: the wallet would
             // read its VTXOs from a server that has never seen them, and report phantom coins and
             // missed receipts rather than an error.
-            if (!derived && config.arkProvider) {
+            if (!derived && callerProvider) {
                 throw new Error(
-                    "indexerProvider is required when arkProvider is provided without a discoverable serverUrl",
+                    "indexerProvider is required when operatorProvider is provided without a discoverable serverUrl",
                 );
             }
             indexerProvider = new RestIndexerProvider(derived ?? DEFAULT_ARKADE_SERVER_URL);
@@ -2370,14 +2374,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * // Create a wallet with providers
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
  *
  * // Use custom providers and/or URLs (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
+ *   operatorProvider: new ExpoOperatorProvider('https://arkade.computer'),
  *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
  *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
@@ -3300,7 +3304,7 @@ export class Wallet
     }
 
     /** Public here; `ReadonlyWallet` keeps it protected so a readonly view can't submit. */
-    declare readonly arkProvider: ArkProvider;
+    declare readonly arkProvider: OperatorProvider;
 
     /**
      * Broadcast access bound to this wallet's server, so a plugin needs only the wallet. Not on
@@ -3319,7 +3323,7 @@ export class Wallet
         identity: Identity,
         network: Network,
         onchainProvider: OnchainProvider,
-        arkProvider: ArkProvider,
+        arkProvider: OperatorProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -3471,7 +3475,7 @@ export class Wallet
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   operatorProvider: new RestOperatorProvider(),
      * });
      * ```
      */
@@ -3583,7 +3587,7 @@ export class Wallet
         }
         wallet.refreshDeprecatedSigners(setup.info);
         // Re-derive signer-dependent state when the provider refetches info on DIGEST_MISMATCH.
-        // Duck-typed: only RestArkProvider implements it.
+        // Duck-typed: only RestOperatorProvider implements it.
         {
             const ap = setup.arkProvider as Partial<{
                 onServerInfoChanged(
@@ -4344,7 +4348,7 @@ export class Wallet
                 }
 
                 if (!this.arkProvider) {
-                    throw new Error("Arkade provider not configured");
+                    throw new Error("Operator provider not configured");
                 }
 
                 // Bound the expiry before confirming, so a rejected round is
@@ -5922,7 +5926,7 @@ export class Wallet
 
     /**
      * Build an offchain transaction from the given inputs and outputs,
-     * sign it, submit to the Arkade provider, and finalize.
+     * sign it, submit to the operator provider, and finalize.
      *
      * Signs whatever it is handed, ungated — see {@link settle} for the trade.
      *
