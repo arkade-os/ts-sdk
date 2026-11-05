@@ -150,9 +150,10 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
     });
 
     it("fills in batchFee on a snapshot that carries only intentFee", () => {
-        const raw = JSON.parse(JSON.stringify(serializeArkInfoSnapshot(makeArkInfo(), 1)));
-        delete raw.arkInfo.fees.batchFee;
-        delete raw.arkInfo.scheduledSession.fees.batchFee;
+        const info = makeArkInfo();
+        delete (info.fees as Partial<ArkadeInfo["fees"]>).batchFee;
+        delete (info.scheduledSession!.fees as Partial<ArkadeInfo["fees"]>).batchFee;
+        const raw = JSON.parse(JSON.stringify(serializeArkInfoSnapshot(info, 1)));
         const hydrated = hydrateArkInfo(parseStoredArkInfoSnapshot(raw));
         expect(hydrated.fees.batchFee).toEqual({ offchainInput: "1", onchainOutput: "2" });
         expect(hydrated.scheduledSession?.fees.batchFee).toEqual({});
