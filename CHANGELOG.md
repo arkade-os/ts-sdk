@@ -58,11 +58,12 @@ style and have not been backfilled.
   creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
   `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
   the passkey syncs to. Both return the identity, the words (for the app to offer as a
-  backup) and the credential id. The derivation follows Breez's seedless-restore spec:
-  a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF salt as UTF-8
-  bytes, and the first 16 bytes of the PRF output are the BIP39 entropy, so the same
-  passkey and label give the same words in any app that follows the spec; each label
-  is a separate wallet. A passkey is used once right after creation and refused
+  backup) and the credential id. The derivation follows Breez's seedless-restore
+  implementation: a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF
+  salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
+  the BIP39 entropy (the spec text's `BIP39(root_key)` would give 24 words; Breez's SDK
+  uses 12), so the same passkey and label give the same words as a Breez wallet; each
+  label is a separate wallet. A passkey is used once right after creation and refused
   (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it gives
   no 32-byte secret or one different from the secret it returned at creation (an
   authenticator that returns none at creation has nothing to compare against). The

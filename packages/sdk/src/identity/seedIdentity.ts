@@ -67,7 +67,9 @@ export type MnemonicOptions = SeedIdentityOptions & {
 
 /**
  * Where a passkey-derived identity comes from. Each `label` is a separate wallet on the same
- * passkey; its UTF-8 bytes are the PRF salt. Defaults to {@link DEFAULT_PASSKEY_LABEL}.
+ * passkey; its UTF-8 bytes are the PRF salt, unnormalized as in Breez's provider, so an app taking
+ * non-ASCII labels from users should normalize them (NFC) itself. Defaults to
+ * {@link DEFAULT_PASSKEY_LABEL}.
  */
 export interface PasskeySource {
     client?: WebAuthnClient;
@@ -382,8 +384,8 @@ export class MnemonicIdentity extends SeedIdentity {
     /**
      * Creates a passkey and derives an identity from its PRF secret. The words are the backup: the
      * passkey re-derives them on any device it syncs to, so whoever controls that passkey (and its
-     * sync account) can sign. The derivation follows Breez's seedless-restore spec, so the same
-     * passkey and label give the same words in any app that follows it.
+     * sync account) can sign. The derivation follows Breez's seedless-restore implementation, so
+     * the same passkey and label give the same words as a Breez wallet.
      *
      * @example
      * ```typescript

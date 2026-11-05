@@ -28,7 +28,7 @@ export class PasskeyUnconfirmed extends PrfUnavailable {
     name = "PasskeyUnconfirmed";
 }
 
-/** The label of a passkey's first wallet, as in Breez's seedless-restore spec. */
+/** The label of a passkey's first wallet, as in Breez's seedless-restore implementation. */
 export const DEFAULT_PASSKEY_LABEL = "Default";
 
 type Bytes = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
@@ -203,8 +203,10 @@ export async function evaluatePrf(o: {
 }
 
 /**
- * Twelve BIP39 words from a PRF secret's first 16 bytes, as Breez's seedless-restore spec derives
- * them: a seedless-restore app evaluating the same passkey with the same salt gets the same words.
+ * Twelve BIP39 words from a PRF secret's first 16 bytes, as Breez's SDK derives them
+ * (`prf_to_mnemonic`): a Breez wallet using the same passkey and salt gets the same words. The
+ * seedless-restore spec text says `BIP39(root_key)`, which over all 32 bytes would be 24 words;
+ * this follows the shipped implementation instead.
  */
 export const mnemonicFromPrf = (prfSecret: Uint8Array): string =>
     entropyToMnemonic(secret(prfSecret).slice(0, 16), wordlist);

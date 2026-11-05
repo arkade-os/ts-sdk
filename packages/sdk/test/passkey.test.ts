@@ -84,6 +84,21 @@ describe("passkey identity", () => {
         expect(work.mnemonic).not.toBe(made.mnemonic);
     });
 
+    it("uses a label's bytes as given, without Unicode normalization, as Breez's provider does", async () => {
+        const client = new FakeAuthenticator();
+        const made = await MnemonicIdentity.createPasskey({ rp, userName: "a", client });
+        const words = async (label: string) =>
+            (
+                await MnemonicIdentity.fromPasskey({
+                    rpId: rp.id,
+                    credentialIds: [made.credentialId],
+                    label,
+                    client,
+                })
+            ).mnemonic;
+        expect(await words("café")).not.toBe(await words("café"));
+    });
+
     it("turns a PRF secret into words exactly as BIP39 turns its first 16 bytes", () => {
         const prf = new Uint8Array(32).fill(0xff, 16);
         expect(mnemonicFromPrf(prf)).toBe(
