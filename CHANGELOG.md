@@ -88,8 +88,8 @@ style and have not been backfilled.
 
 - **`Arkade.connect` takes a `service` and can own its contract manager.**
   `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
-  contractRepository } })` resolves the operator, indexer, esplora and the mainnet
-  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ operatorUrl,
+  contractRepository } })` resolves the mainnet operator, its cosigner that
+  emulates Arkade Script (new `DEFAULT_ARKADE_EMULATOR_URL`), indexer and esplora; `{ operatorUrl,
   emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
   without `emulatorUrl`. A `{ network }` service whose operator reports another
   network throws. `storage` builds a session-scoped manager (in-memory VTXO
@@ -200,6 +200,12 @@ style and have not been backfilled.
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
+
+- **Doc comments and two error messages describe the emulator as part of the operator.**
+  The SDK no longer presents it as a separate cosigner. `MissingCorridorDep` on an
+  unpinned network now names the key of the operator's cosigner that emulates Arkade
+  Script, and the VHTLC v2 error for two different emulator pubkeys rewords its second
+  clause. Code that matches either message must update.
 
 - **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
   A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin

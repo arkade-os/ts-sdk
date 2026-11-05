@@ -85,7 +85,7 @@ export interface Offer {
     makerPkScript: Uint8Array;
     /** Maker's x-only key (32 bytes) — the cancel path's `user` signer. */
     makerPublicKey: Uint8Array;
-    /** Covenant co-signer (emulator) x-only key (32 bytes). */
+    /** X-only key (32 bytes) of the operator's cosigner that emulates Arkade Script. */
     emulatorPubkey: Uint8Array;
     /** Partial-fill numerator. Reserved wire space in V1: carried through the
      * codec so an offer that sets it decodes, never interpreted here. */

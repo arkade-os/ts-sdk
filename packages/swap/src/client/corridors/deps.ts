@@ -47,8 +47,8 @@ export interface CorridorBase {
     readonly network: Network;
     /** The operator's signer set, for the rotation-aware recipient check. */
     readonly signerSet: SignerSet;
-    /** Covenant co-signer override, 33-byte compressed hex. Required on `testnet` and `signet`, which
-     * `EMULATOR_PUBKEYS` does not pin. */
+    /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
+     * compressed hex. Required on `testnet` and `signet`, which `EMULATOR_PUBKEYS` does not pin. */
     readonly emulatorPubkey?: string;
     /** For hosts without a global `fetch`, and for tests. */
     readonly fetchImpl?: typeof fetch;
@@ -209,8 +209,8 @@ const emulatorPubkeyFor = (base: CorridorBase): string => {
     } catch {
         throw new MissingCorridorDep(
             "arkade",
-            `covenant co-signer key (none is pinned for ${base.networkName}; ` +
-                "pass emulatorPubkey)",
+            "key for the operator's cosigner that emulates Arkade Script " +
+                `(none is pinned for ${base.networkName}; pass emulatorPubkey)`,
         );
     }
 };

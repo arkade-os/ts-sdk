@@ -68,7 +68,8 @@ export interface SwapClientConfig {
     /** Dependency overrides only: they never enable a route or pick a solver. */
     readonly corridors?: CorridorOverrides;
     readonly policy?: SwapPolicy;
-    /** Covenant co-signer override, 33-byte compressed hex. */
+    /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
+     * compressed hex. */
     readonly emulatorPubkey?: string;
     /** Overrides the wallet's own connection; for tests and a second operator. */
     readonly operator?: SwapOperator;
