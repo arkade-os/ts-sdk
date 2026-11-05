@@ -2181,6 +2181,44 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(history.payload.transactions).toEqual([]);
     });
 
+    it("GET_BALANCE counts a both-scoped primary contract's boarding coins once", async () => {
+        setupHandler([
+            {
+                type: "default",
+                scope: "both",
+                params: {},
+                script: TEST_DEFAULT_SCRIPT,
+                address: TEST_DEFAULT_ARK_ADDRESS,
+            },
+        ]);
+        const boardingRow = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 70000,
+            script: TEST_DEFAULT_SCRIPT,
+            isSpent: false,
+            isUnrolled: true,
+            status: { confirmed: true, fromExplorer: true },
+        });
+        const unrolled = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            script: TEST_DEFAULT_SCRIPT,
+            isSpent: false,
+            isUnrolled: true,
+        });
+        await walletRepo.saveVtxosForScript(
+            { script: TEST_DEFAULT_SCRIPT, address: TEST_DEFAULT_ARK_ADDRESS },
+            [boardingRow, unrolled],
+        );
+
+        const balance = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+        // The boarding row is reported through getBoardingUtxos, not as unrolled.
+        expect(balance).toMatchObject({ payload: { unrolled: 50000, total: 50000 } });
+    });
+
     it("GET_BALANCE reports an unrolled swept VTXO as unrolled, not recoverable", async () => {
         setupHandler();
         const settled = createMockExtendedVtxo({

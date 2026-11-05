@@ -2531,17 +2531,22 @@ export class WalletMessageHandler
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
+        // A contract row already answered for this script, layer-filtered or skipped on purpose;
+        // reading it again would re-add the rows it dropped (a `both` contract's boarding coins).
+        const primaryHasContract = contracts.some((contract) => contract.script === walletScript);
         const [lists, primaryVtxos] = await Promise.all([
             listsPromise,
             // Routed through the same helper as the contract buckets rather than reading the
             // repository directly, so this bucket normalizes too. Anything left here
             // is outside every contract row, so it carries no contract to judge it
             // by — the wallet's own receive address, which is never gated.
-            getVtxosForContract(
-                repository,
-                { script: walletScript, address: walletAddress },
-                options,
-            ),
+            primaryHasContract
+                ? []
+                : getVtxosForContract(
+                      repository,
+                      { script: walletScript, address: walletAddress },
+                      options,
+                  ),
         ]);
         const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
         for (const [i, contract] of eligible.entries()) {

@@ -248,6 +248,14 @@ style and have not been backfilled.
   the spent coins pending fetched the chain tip again after submitting, and a
   failure there left them unmarked and selectable; the preflight tip is reused.
 
+- **A `both`-scoped contract's unrolled VTXOs are no longer swept or double-counted.**
+  With equal boarding and exit delays, one script holds boarding coins and
+  unrolled VTXOs. The automatic cosign sweep took the unrolled ones too,
+  re-boarding a user's exit and restarting its timelock; it now takes explorer
+  rows only. The service worker's read of the wallet's own address re-added the
+  boarding rows its contract had filtered out, counting them in both `boarding`
+  and `unrolled`; that read now runs only for a script no contract owns.
+
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
   identity key read before it, rejected after `ContractManager.create()` had

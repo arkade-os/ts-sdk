@@ -657,11 +657,19 @@ describe("wallet.getOnchainSweepInputs", () => {
 });
 
 describe("needsOnchainSweep", () => {
-    const coin = { status: { confirmed: true, block_height: 100 } } as any;
+    const coin = { status: { confirmed: true, block_height: 100, fromExplorer: true } } as any;
 
     it("never takes an unrolled coin of an offchain-scoped contract", () => {
         const contract = { type: "default", scope: "offchain" } as any;
         expect(needsOnchainSweep(coin, contract, { height: 100, time: 0 })).toBe(false);
+    });
+
+    it("takes a both-scoped contract's boarding coin but never its unrolled VTXO", () => {
+        const contract = { type: "default", scope: "both", params: { csvTimelock: "1008" } } as any;
+        const unrolled = { status: { confirmed: true, block_height: 100 } } as any;
+        const tip = { height: 1108 - 50, time: 0 };
+        expect(needsOnchainSweep(coin, contract, tip)).toBe(true);
+        expect(needsOnchainSweep(unrolled, contract, tip)).toBe(false);
     });
 
     it("caps the renew window at 144 blocks on a 1008-block CSV", () => {
@@ -679,7 +687,9 @@ describe("needsOnchainSweep", () => {
 
     it("measures a seconds CSV's renew window and margin in seconds", () => {
         const T = 1_700_000_000;
-        const timed = { status: { confirmed: true, block_height: 100, block_time: T } } as any;
+        const timed = {
+            status: { confirmed: true, block_height: 100, block_time: T, fromExplorer: true },
+        } as any;
         const sequence = timelockToSequence({ type: "seconds", value: 604_672n });
         const contract = {
             type: "default",
