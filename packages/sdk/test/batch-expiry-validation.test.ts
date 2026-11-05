@@ -16,7 +16,7 @@ import type { SignerSession } from "../src/tree/signingSession";
 import type { ArkProvider, BatchStartedEvent } from "../src/providers/ark";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
-import type { Intent } from "../src/intent";
+import type { Proof } from "../src/proof";
 
 const INTENT_ID = "intent-123";
 const SIGNER_XONLY = "11".repeat(32);
@@ -159,7 +159,7 @@ describe("createArkadeBatchHandler batch expiry", () => {
             [],
             {} as unknown as Identity,
             "signed-proof",
-            {} as unknown as Intent.RegisterMessage,
+            {} as unknown as Proof.RegisterMessage,
             session,
             arkProvider,
             {} as unknown as EmulatorProvider,

@@ -205,6 +205,16 @@ style and have not been backfilled.
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
 
+- **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
+  A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin
+  outputs, its signature proves the user controls them, and its message says what
+  to do with them. `Proof` is both a namespace and a type, so
+  `const proof: Proof = Proof.create(...)` compiles. `IntentCoin` is now
+  `ProofInput`, `SignedIntent` is `SignedProof`, `AssetInputType.Intent` is
+  `AssetInputType.Proof`, and `AssetInput.createIntent` is
+  `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
+  `ark-intent-proof-message` tag does not change, because the operator verifies it.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
@@ -233,12 +243,24 @@ style and have not been backfilled.
   no longer hide subdust outputs. Explicit filter flags, spent-output
   exclusions, and the separate spendability-gated accessor are unchanged.
 
+- **`ArkProvider` is renamed `OperatorProvider`.** `RestArkProvider`,
+  `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
+  `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
+  alias. Passing both `operatorProvider` and `arkProvider` throws.
+
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
   boarding coins; it now throws `WalletNotInitializedError`, like
   `GET_VTXOS`. (#943)
 
 ### Bug Fixes
+
+- **A failed contract-manager start-up no longer leaves its watcher running.**
+  `getContractManager()` dropped a manager whose baseline registration, or the
+  identity key read before it, rejected after `ContractManager.create()` had
+  started its watcher. Nothing held the manager any more, so its event stream
+  and failsafe polling outlived the failure. The start-up now disposes it
+  before the rejection reaches the caller, which can retry as before.
 
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor

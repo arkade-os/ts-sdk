@@ -28,7 +28,7 @@ import {
     type Asset,
     type IContractManager,
     type Identity,
-    type ArkProvider,
+    type OperatorProvider,
     type Network,
     RestIndexerProvider,
     Transaction,
@@ -92,9 +92,9 @@ export async function awaitRfqResolution(
 /**
  * What a push needs from the operator: the broadcast pair, plus the info read that supplies
  * `checkpointTapscript`. Narrow so a wallet's own connection satisfies it (see
- * {@link walletOperator}) and no second connection is opened; a full `ArkProvider` also fits.
+ * {@link walletOperator}) and no second connection is opened; a full `OperatorProvider` also fits.
  */
-export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+export type SwapOperator = Pick<OperatorProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /**
  * A wallet's own connection, as a {@link SwapOperator}. The broadcaster is resolved lazily and

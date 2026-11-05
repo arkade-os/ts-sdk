@@ -31,7 +31,7 @@ import type { AttestingRfqTransport } from "../../src/client/transport";
 import { encodeInvoice } from "../helpers/bolt11";
 
 // Defaults are CI's stack; the overrides let it run against a namespaced one.
-const OPERATOR_URL = process.env.ARK_SERVER_URL ?? "http://localhost:7070";
+const OPERATOR_URL = process.env.OPERATOR_URL ?? "http://localhost:7070";
 const ESPLORA_API_URL = process.env.ESPLORA_URL ?? "http://localhost:3000/api";
 const arkdExec = `docker exec -t ${process.env.REGTEST_CONTAINER_PREFIX ?? ""}arkd`;
 const BTC_ADDR = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";

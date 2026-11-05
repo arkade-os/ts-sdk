@@ -14,7 +14,7 @@ import { SigHash, OutScript, Address } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 
 import type { Identity } from "../identity";
-import type { ArkProvider } from "../providers/ark";
+import type { OperatorProvider } from "../providers/ark";
 import type { EmulatorProvider, ConnectorTreeNode } from "../providers/emulator";
 import type { Network } from "../networks";
 import type { ExtendedCoin, Recipient } from "../wallet";
@@ -42,7 +42,7 @@ import {
 } from "../wallet/validation";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
-import { Intent } from "../intent";
+import { Proof } from "../proof";
 import { isSubdust, isVirtualCoin, requiresForfeit } from "../wallet";
 import { toXOnly } from "../utils/keys";
 import type { ExtendedVirtualCoin } from "../wallet";
@@ -77,9 +77,9 @@ export function createArkadeBatchHandler(
     inputs: ArkadeBatchInput[],
     signer: Identity,
     signedProof: string,
-    message: Intent.RegisterMessage,
+    message: Proof.RegisterMessage,
     session: SignerSession,
-    arkProvider: ArkProvider,
+    arkProvider: OperatorProvider,
     emulator: EmulatorProvider,
     network: Network,
     /**
@@ -314,7 +314,7 @@ export function createArkadeBatchHandler(
             }
 
             // Sign boarding inputs on the commitment tx
-            // The emulator already knows the arkade scripts from the intent proof,
+            // The emulator already knows the arkade scripts from the proof,
             // so we don't modify the commitment tx outputs (which would change the txid).
             if (boardingIndices.length > 0) {
                 commitmentPsbt = await signer.sign(commitmentPsbt, boardingIndices);

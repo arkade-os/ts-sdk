@@ -11,7 +11,7 @@
  * global `fetch` with their transport-error type unchanged.
  */
 
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { baseFetch } from "../utils/fetch";
 
 export interface EmulatorInfo {
@@ -31,7 +31,7 @@ export interface EmulatorProvider {
     submitFinalization(
         intent: {
             proof: string;
-            message: Intent.RegisterMessage;
+            message: Proof.RegisterMessage;
         },
         forfeits: string[],
         connectorTree: ConnectorTreeNode[] | null,
@@ -150,7 +150,7 @@ export class RestEmulatorProvider implements EmulatorProvider {
     async submitFinalization(
         intent: {
             proof: string;
-            message: Intent.RegisterMessage;
+            message: Proof.RegisterMessage;
         },
         forfeits: string[],
         connectorTree: ConnectorTreeNode[] | null,
