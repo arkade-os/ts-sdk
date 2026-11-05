@@ -3,7 +3,7 @@ import type { OperatorInfo } from "../providers/ark";
 import { toXOnly } from "../utils/keys";
 
 /**
- * Classification of a contract's server signer against a fresh {@link OperatorInfo} snapshot.
+ * Classification of a contract's operator signer against a fresh {@link OperatorInfo} snapshot.
  * Always derived at read time from `params.serverPubKey` and the advertised signer set; no
  * stale-key metadata is persisted.
  *
@@ -11,16 +11,16 @@ import { toXOnly } from "../utils/keys";
  * - `MIGRATABLE`: signer deprecated, cutoff not passed; cooperative migration still possible.
  * - `DUE_NOW`: signer deprecated with no cutoff (arkd advertises `0n`); migrate immediately.
  * - `EXPIRED`: signer deprecated, cutoff passed; cooperative migration closed. NOT stranded:
- *   the server sweeps the batch at expiry and the swept VTXO recovers into the active signer via
- *   the normal recovery settle. Unilateral exit stays an opt-in escape hatch.
+ *   the operator sweeps the batch at expiry and the swept output recovers into the active
+ *   signer via the normal recovery settle. Unilateral exit stays an opt-in escape hatch.
  * - `UNKNOWN_SIGNER`: neither active nor advertised deprecated; the SDK does not migrate these.
  */
 export type SignerStatus = "CURRENT" | "MIGRATABLE" | "DUE_NOW" | "EXPIRED" | "UNKNOWN_SIGNER";
 
-/** Result of classifying one contract's server signer. */
+/** Result of classifying one contract's operator signer. */
 export interface SignerClassification {
     status: SignerStatus;
-    /** The contract's server signer, normalized to x-only (32-byte) hex. */
+    /** The contract's operator signer, normalized to x-only (32-byte) hex. */
     signerPubKey: string;
     /** Absolute cutoff (Unix seconds), present only when advertised for this deprecated signer. */
     cutoffDate?: bigint;
@@ -32,7 +32,7 @@ export interface SignerClassification {
 }
 
 /**
- * The server's signer set, pre-normalized to x-only hex, built once per pass via
+ * The operator's signer set, pre-normalized to x-only hex, built once per pass via
  * {@link signerSetFromInfo}.
  */
 export interface SignerSet {
@@ -48,7 +48,7 @@ export interface SignerSet {
 }
 
 /**
- * Normalize a server signer pubkey hex to the lowercase x-only (32-byte) form of
+ * Normalize a signer pubkey hex to the lowercase x-only (32-byte) form of
  * `params.serverPubKey`; arkd may advertise signers compressed (33 bytes).
  */
 export function toXOnlySignerHex(pubkeyHex: string): string {
@@ -57,7 +57,7 @@ export function toXOnlySignerHex(pubkeyHex: string): string {
     throw new Error(`invalid signer pubkey length: expected 32 or 33 bytes, got ${bytes.length}`);
 }
 
-/** Build the {@link SignerSet} from a server-info snapshot, skipping empty deprecated pubkeys. */
+/** Build the {@link SignerSet} from the operator's info, skipping empty deprecated pubkeys. */
 export function signerSetFromInfo(info: OperatorInfo): SignerSet {
     const active = toXOnlySignerHex(info.signerPubkey);
     const deprecated = new Map<string, bigint>();
@@ -69,7 +69,7 @@ export function signerSetFromInfo(info: OperatorInfo): SignerSet {
 }
 
 /**
- * Classify a contract's server signer against a pre-built {@link SignerSet}.
+ * Classify a contract's operator signer against a pre-built {@link SignerSet}.
  *
  * @param contractServerPubKeyHex - the contract's `params.serverPubKey`
  * @param nowSeconds - current Unix time in seconds, compared against the cutoff

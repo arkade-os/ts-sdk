@@ -901,7 +901,7 @@ const SEQUENCE_GRANULARITY_SECONDS = 512;
  * How long the sender's SOLO refund opens after the receiver's claim, seconds.
  *
  * The window a preimage-holding claimant has to finish before the funder can take the money back;
- * sized (reasoned, not measured) for the worst case, a full unilateral exit with the server gone.
+ * sized (reasoned, not measured) for the worst case, a full unilateral exit with the operator gone.
  * Mirrors `SOLO_REFUND_HEADROOM_SECONDS` in the reference solver's `src/core/timelocks.ts`: the
  * two must move together or a trader derives an address the solver never quoted. A multiple of
  * the BIP68 granularity so the encoded timelock equals this number.
@@ -910,7 +910,7 @@ export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
 
 /** The solver's unilateral-claim delay, derived from the Arkade operator's reported
  * exit delay exactly as the reference solver derives it — both sides read the
- * SAME server, so the derivation (not a quote field) is what keeps the two
+ * SAME operator, so the derivation (not a quote field) is what keeps the two
  * scripts identical. */
 export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number => {
     if (
@@ -938,7 +938,7 @@ export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number =
     );
 };
 
-/** VHTLC's `unilateralRefund` tier: sender + receiver, no server — LEVEL with
+/** VHTLC's `unilateralRefund` tier: sender + receiver, no operator — LEVEL with
  * `claimDelay`, not above it. Neither party can spend a two-signature leaf
  * alone, so separating it buys no safety and would only eat into the headroom that matters. */
 export const unilateralRefundDelay = (claimDelay: number): number => claimDelay;
@@ -999,10 +999,10 @@ const suiteVhtlc = (
  * the trader never needs to see `P`.
  *
  * Nine leaves unless `legacy`: VHTLC's six plus the emulator-covenant suite —
- * `nonInteractiveClaim` (server + emulator, pays the solver's `receiverPkScript`),
- * `nonInteractiveRefund` (server + solver + emulator, pays the trader's `refundPkScript`, no
+ * `nonInteractiveClaim` (operator, pays the solver's `receiverPkScript`),
+ * `nonInteractiveRefund` (operator + solver, pays the trader's `refundPkScript`, no
  * timelock or trader signature; see {@link VHTLC.Options.nonInteractiveParameters}), and
- * `nonInteractiveRefundWithoutReceiver` (server + emulator after `refundLocktime`).
+ * `nonInteractiveRefundWithoutReceiver` (operator after `refundLocktime`).
  */
 export function lightningSendContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
@@ -1013,7 +1013,7 @@ export function lightningSendContract(params: {
     operatorPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info; all three unilateral
+    /** From {@link unilateralClaimDelay} over the trader's OWN operator info; all three unilateral
      * tiers derive from it. */
     claimDelay: number;
     /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
@@ -1529,8 +1529,8 @@ export async function requestArkadeSwap(
 export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
-/** The covenant terms the trader's OWN live server info supplies. */
-const serverTerms = (info: OperatorInfo, emulatorPubkey: string | undefined) => {
+/** The covenant terms the trader's OWN live operator info supplies. */
+const operatorTerms = (info: OperatorInfo, emulatorPubkey: string | undefined) => {
     const network = networkFromOperatorInfo(info);
     return {
         operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
@@ -1845,7 +1845,7 @@ export async function requestOnchainSend(
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
-        ...serverTerms(info, params.emulatorPubkey),
+        ...operatorTerms(info, params.emulatorPubkey),
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
         senderPubkey,
@@ -2037,7 +2037,7 @@ export function lightningReceiveContract(params: {
     operatorPubkey: Uint8Array;
     /** `sha256(P)`, hex — the trader's OWN preimage hash. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info. */
+    /** From {@link unilateralClaimDelay} over the trader's OWN operator info. */
     claimDelay: number;
     /** Emulator x-only key — see {@link requestLightningSend}'s parameter. */
     emulatorPubkey: Uint8Array;
@@ -2303,7 +2303,7 @@ export async function requestLightningReceive(
         paymentHash,
         payoutPubkey,
         payoutAddress,
-        ...serverTerms(info, params.emulatorPubkey),
+        ...operatorTerms(info, params.emulatorPubkey),
     });
     const now = Math.floor(Date.now() / 1000);
     const { payDeadline } = verifyReceiveInvoice({
@@ -2487,7 +2487,7 @@ export async function requestOnchainReceive(
         payoutPubkey,
         payoutAddress,
         refundPubkey: params.refundPubkey,
-        ...serverTerms(info, params.emulatorPubkey),
+        ...operatorTerms(info, params.emulatorPubkey),
         l1Network: l1NetworkFromArk(info.network),
     });
     assertFundable({

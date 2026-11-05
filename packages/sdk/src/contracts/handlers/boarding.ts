@@ -8,7 +8,7 @@ import { rotatedReceiveMetadata } from "./helpers";
 
 /**
  * Typed parameters for boarding contracts: the `default` shape, with `csvTimelock` carrying the
- * server's boarding-exit delay (`OperatorInfo.boardingExitDelay`) instead of the unilateral-exit
+ * operator's boarding-exit delay (`OperatorInfo.boardingExitDelay`) instead of the unilateral-exit
  * delay.
  */
 export type BoardingContractParams = DefaultContractParams;
@@ -21,7 +21,7 @@ export type BoardingContractParams = DefaultContractParams;
  * {@link Discoverable.discoverAt} probes the **on-chain** UTXO set at the P2TR address, not the
  * Ark indexer, and no-ops when `deps.boardingTimelock` / `deps.onchainNetwork` are absent.
  *
- * Default/boarding collision: a script owns exactly one repository row. A sound server keeps
+ * Default/boarding collision: a script owns exactly one repository row. The operator should keep
  * boardingExitDelay > unilateralExitDelay (equal delays expose it to a double-spend); if they
  * coincide the two scripts are byte-identical. Discovery still emits `type: "boarding"` and the
  * row is resolved first-wins in {@link ContractManager.upsertContract}; the scan probes boarding
