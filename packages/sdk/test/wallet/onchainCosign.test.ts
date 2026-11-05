@@ -138,7 +138,7 @@ describe("wallet.sendOnchain", () => {
         expect(row.spentBy).toBe(COSIGNED);
     });
 
-    it("keeps the coin out of SDK picks while arkd is cosigning it", async () => {
+    it("excludes coins being spent onchain from selections, but still lists them", async () => {
         const { wallet, arkProvider, boardingCoin } = await makeWallet();
         let release!: () => void;
         const gate = new Promise<void>((resolve) => {
