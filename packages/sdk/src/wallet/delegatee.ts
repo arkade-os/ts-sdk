@@ -31,7 +31,7 @@ export interface DelegateeWatchRegistration {
     delegation: DelegateeDelegation;
 }
 
-/** What the manager needs of a wallet: its key, its server, its coins and a way to send. */
+/** What the manager needs of a wallet: its key, its operator, its coins and a way to send. */
 export type DelegateeWallet = Pick<
     IWallet,
     "identity" | "getAddress" | "getSpendableVtxos" | "send" | "getContractManager"
@@ -219,12 +219,12 @@ export class DelegateeManagerImpl implements IDelegateeManager {
             this.wallet.getAddress(),
             this.wallet.identity.compressedPublicKey(),
         ]);
-        // the watch address commits to the service's server key, so it must be the wallet's
+        // the watch address commits to the service's operator key, so it must be the wallet's
         const { hrp, serverPubKey } = ArkAddress.decode(address);
-        const server = hex.encode(serverPubKey);
-        if (info.serverPubkey.slice(2).toLowerCase() !== server) {
+        const operator = hex.encode(serverPubKey);
+        if (info.serverPubkey.slice(2).toLowerCase() !== operator) {
             throw new Error(
-                `delegatee server key ${info.serverPubkey} is not the wallet's server ${server}`,
+                `delegatee operator key ${info.serverPubkey} is not the wallet's operator ${operator}`,
             );
         }
         const keys = {

@@ -949,7 +949,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * With a delegatee configured, the wallet's own delegatee contracts (newest renewal and
-     * boarding rows for its key and current server, registered active and not expired) are its default addresses: receiving, change
+     * boarding rows for its key and current operator, registered active and not expired) are its default addresses: receiving, change
      * and settlement land in delegated coins. Without one, the defaults are the wallet's own and
      * the delegatee rows stay watched, so their coins still count and spend. Read from the
      * contract repository, so it follows registrations made through any wallet front-end.
@@ -959,7 +959,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let boarding: string | undefined;
         if (this.delegateeProvider) {
             const owner = hex.encode(await this.identity.xOnlyPublicKey());
-            const server = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
+            const operator = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
             const nowSeconds = Math.floor(Date.now() / 1000);
             const rows = (
                 await collectContracts(this.contractRepository, { type: ["delegatee"] })
@@ -979,7 +979,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 try {
                     if (
                         c.params.owner?.slice(2).toLowerCase() !== owner ||
-                        toXOnlySignerHex(c.params.serverPubKey) !== server
+                        toXOnlySignerHex(c.params.serverPubKey) !== operator
                     )
                         continue;
                     const script = DelegateeContractHandler.createScript(c.params);
@@ -3093,7 +3093,7 @@ export class Wallet
         const [currentBoardingRow] = boardingRows;
 
         // Build the new tapscripts locally from the wallet's own receive script, never from a
-        // delegatee contract standing in for it, preserving every option but the server key
+        // delegatee contract standing in for it, preserving every option but the operator key
         // (mirrors `rebuildTapscript`, swapping serverPubKey). Delegatee rows stay under the old
         // signer: their coins follow the deprecated-signer migration back to the wallet's own
         // contracts, and delegation turns off until re-registered under the new signer.
@@ -3109,7 +3109,7 @@ export class Wallet
                   });
         if (this.defaultContractScript !== hex.encode(this._offchainTapscript.pkScript)) {
             console.warn(
-                "Server signer rotated: delegatee registrations stay under the old signer and will be migrated; re-register to keep delegating",
+                "Operator signer rotated: delegatee registrations stay under the old signer and will be migrated; re-register to keep delegating",
             );
         }
         const newBoarding = new DefaultVtxo.Script({

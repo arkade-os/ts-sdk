@@ -692,14 +692,14 @@ style and have not been backfilled.
   locally from the owner key, the `DelegationParams` and the service's keys
   (`watchDelegateeContracts`), so a restored wallet finds its delegated coins
   without asking the service; the manager refuses a registration whose
-  address the service derives differently, or whose server key is not the
+  address the service derives differently, or whose operator key is not the
   wallet's. While an active, unexpired delegation is registered,
   `getAddress()` answers the renewal address and `getBoardingAddress()` the
   delegatee's boarding address; `receiveTapscript` still names the wallet's
   own script. The new `DelegateeContractHandler` (`type: "delegatee"`)
   offers only the owner's forfeit and CSV exit leaves, never the covenant
   leaf, and the VTXO manager's expiry renewal skips delegated coins the
-  service is responsible for. A server signer rotation logs that delegatee
+  service is responsible for. An operator signer rotation logs that delegatee
   registrations stay under the old signer. Covered by a new regtest profile,
   `sdk-delegatee`, running the delegatee daemon with seconds-typed arkd
   timelocks. A `pubkey` constructor value reaches a covenant as its x-only
