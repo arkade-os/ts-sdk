@@ -184,7 +184,7 @@ export const VHTLCV2ContractHandler: ContractHandler<VHTLCV2ContractParams, VHTL
         ) {
             throw new Error(
                 "emulator covenant params name two different emulator pubkeys: the suite " +
-                    "derives both covenant cosigners from ONE key, so this row cannot be " +
+                    "derives both covenants from ONE key, so this row cannot be " +
                     "rebuilt as a group",
             );
         }
