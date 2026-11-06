@@ -14,13 +14,13 @@ import {
     beforeEachFaucet,
     createTestIdentity,
     faucetOffchain,
-    getServerInfo,
+    getOperatorInfo,
     rotateArkdSigner,
     ROTATE_SIGNER_HOOK_TIMEOUT_MS,
     waitFor,
 } from "./utils";
 
-const arkUrl = "http://localhost:7070";
+const operatorUrl = "http://localhost:7070";
 
 /**
  * End-to-end proof of the client-side server-info digest mechanism
@@ -84,7 +84,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
      * (pinned to its boot signer `A`) can fund.
      */
     const resetToBaselineSigner = async (): Promise<void> => {
-        const info = await getServerInfo(arkUrl);
+        const info = await getOperatorInfo(operatorUrl);
         const onA = norm(info.signerPubkey) === (await xonly(A_SEC));
         if (onA && info.deprecatedSigners.length === 0) return;
         await rotateArkdSigner({ activeSignerPriv: A_SEC, deprecatedSigners: [] });
@@ -93,7 +93,7 @@ describe("server-info digest mismatch across a real signer rotation", () => {
     const makeWallet = async (): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(),
-            arkProvider: new RestArkProvider(arkUrl),
+            arkProvider: new RestArkProvider(operatorUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
                 pollingInterval: 2000,

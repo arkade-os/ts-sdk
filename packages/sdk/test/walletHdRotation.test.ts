@@ -1822,7 +1822,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         await wallet.dispose();
     });
 
-    // The proof is chunked at MAX_INPUTS_PER_INTENT, but an interrupted send
+    // The proof is chunked at MAX_INPUTS_PER_PROOF, but an interrupted send
     // spent whatever it spent: its checkpoints are matched against every VTXO
     // of the run, not just the chunk whose proof surfaced the tx.
     it("finalizes a pending tx whose input falls in a later proof chunk", async () => {

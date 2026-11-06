@@ -1,5 +1,6 @@
 import { Transaction } from "./utils/transaction";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
+export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
@@ -239,14 +240,18 @@ import type {
     Unspent as ElectrumUnspent,
 } from "./providers/electrum";
 import {
+    RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -261,7 +266,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
-import { CachingArkProvider } from "./providers/cachingArk";
+import { CachingOperatorProvider, CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -320,12 +325,13 @@ import {
     type RawTxSource,
     type WithPrevTx,
 } from "./utils/prevoutTx";
-import { Intent, type IntentCoin } from "./intent";
+import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     Network,
@@ -686,7 +692,9 @@ export {
     ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
+    RestOperatorProvider,
     RestArkProvider,
+    CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
     FetchError,
@@ -788,6 +796,7 @@ export {
     ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
@@ -823,7 +832,8 @@ export {
     BATCH_REGISTRATION_TERMINAL_STATES,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    // Intent proof
+    // Proof
+    Proof,
     Intent,
     // BIP-322 message signing
     BIP322,
@@ -960,6 +970,7 @@ export type {
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
+    ProofInput,
     IntentCoin,
     VerifyServerSignatures,
     TapLeaves,
@@ -995,12 +1006,15 @@ export type {
     ConnectorTreeNode,
     // Provider types
     OnchainProvider,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,

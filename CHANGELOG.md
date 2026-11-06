@@ -52,6 +52,12 @@ style and have not been backfilled.
   but a superset: a `Market` can still be used as a ref, but a ref no longer
   assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
 
+### Features
+
+- **Export `TreeSignerSession` for custom identities.** External `Identity`
+  implementations can use the existing session without an internal SDK import.
+  Class and factory TSDoc cover key isolation and nonce/session lifetime.
+
 ### Added
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
@@ -88,8 +94,8 @@ style and have not been backfilled.
 
 - **`Arkade.connect` takes a `service` and can own its contract manager.**
   `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
-  contractRepository } })` resolves the operator, indexer, esplora and the mainnet
-  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ operatorUrl,
+  contractRepository } })` resolves the mainnet operator, its cosigner that
+  emulates Arkade Script (new `DEFAULT_ARKADE_EMULATOR_URL`), indexer and esplora; `{ operatorUrl,
   emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
   without `emulatorUrl`. A `{ network }` service whose operator reports another
   network throws. `storage` builds a session-scoped manager (in-memory VTXO
@@ -170,6 +176,13 @@ style and have not been backfilled.
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
 
+- **`OperatorInfo` replaces `ArkadeInfo`.** `networkFromArkadeInfo` becomes
+  `networkFromOperatorInfo`, and `liveArkadeInfo` in `@arkade-os/swap/advanced`
+  becomes `liveOperatorInfo`. The old names stay as deprecated aliases.
+  `ArkadeInfo` is now a type alias, so code that adds fields to it with
+  `declare module` must add them to `OperatorInfo` instead. Comments in the
+  changed files now say the operator instead of the server.
+
 - **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
   takes a plan that returns piece amounts against the already-priced subtotal,
   per-piece output fee, per-output ceiling and dust floor. A plan that claims
@@ -200,6 +213,22 @@ style and have not been backfilled.
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
+
+- **Doc comments and two error messages describe the emulator as part of the operator.**
+  The SDK no longer presents it as a separate cosigner. `MissingCorridorDep` on an
+  unpinned network now names the key of the operator's cosigner that emulates Arkade
+  Script, and the VHTLC v2 error for two different emulator pubkeys rewords its second
+  clause. Code that matches either message must update.
+
+- **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
+  A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin
+  outputs, its signature proves the user controls them, and its message says what
+  to do with them. `Proof` is both a namespace and a type, so
+  `const proof: Proof = Proof.create(...)` compiles. `IntentCoin` is now
+  `ProofInput`, `SignedIntent` is `SignedProof`, `AssetInputType.Intent` is
+  `AssetInputType.Proof`, and `AssetInput.createIntent` is
+  `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
+  `ark-intent-proof-message` tag does not change, because the operator verifies it.
 
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
@@ -236,12 +265,52 @@ style and have not been backfilled.
   no longer hide subdust outputs. Explicit filter flags, spent-output
   exclusions, and the separate spendability-gated accessor are unchanged.
 
+- **`ArkProvider` is renamed `OperatorProvider`.** `RestArkProvider`,
+  `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
+  `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
+  alias. Passing both `operatorProvider` and `arkProvider` throws.
+
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
   boarding coins; it now throws `WalletNotInitializedError`, like
   `GET_VTXOS`. (#943)
 
+- **Ark SSE streams send the SDK version headers.** `getEventStream` and
+  `getTransactionsStream` now send `X-Build-Version` and `X-SDK-VERSION`, like
+  every other Ark server call. A browser `EventSource` cannot set request
+  headers, so these streams reached arkd without them: arkd could not tie an
+  open stream to an SDK version, and its build-version guard did not apply.
+  With no factory configured, streams now open over `fetch`; the global
+  `EventSource` is used only where `fetch` cannot stream, and a factory from
+  `configureEventSource` or the `eventSource` option still wins.
+  `EventSourceFactory` takes the headers as an optional second argument; a
+  factory that ignores it keeps working but sends no headers. Indexer
+  subscriptions send none, because the indexer can be another origin. Like
+  the native `EventSource`, the `fetch` transport accepts LF, CR and CRLF line
+  endings, reads fields line by line as the spec does, and fails a response
+  that is not a 200 `text/event-stream`. It does not reconnect by itself, as
+  the callers already do.
+  In Node, streams no longer need the `eventsource` package or
+  `--experimental-eventsource`.
+
 ### Bug Fixes
+
+- **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
+  SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
+  `getEventStream` and `getTransactionsStream` took a refused stream's status
+  for an unknown message, and reconnected at once into the same refusal when
+  arkd closed the stream. Expo streams now read frames through the same SSE
+  reader as the `fetch` transport: a `failure` event throws the stream failure
+  on every Expo stream, as on the other transports, and `ExpoIndexerProvider`
+  no longer detects it from the data. Other named events are ignored, a
+  frame's `data:` lines form one message, and CR line endings are accepted.
+
+- **A failed contract-manager start-up no longer leaves its watcher running.**
+  `getContractManager()` dropped a manager whose baseline registration, or the
+  identity key read before it, rejected after `ContractManager.create()` had
+  started its watcher. Nothing held the manager any more, so its event stream
+  and failsafe polling outlived the failure. The start-up now disposes it
+  before the rejection reaches the caller, which can retry as before.
 
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
@@ -1034,6 +1103,14 @@ style and have not been backfilled.
   writes into the caller's object.
 
 ### Performance
+
+- **Transaction history stops rescanning the VTXO list per VTXO.**
+  `buildTransactionHistory` rescanned every VTXO the wallet ever held, spent
+  ones included, two to four times per VTXO. Refreshes made it worse, because
+  they leave no row to stop the rescan. The cost grew with the square of a
+  list that only grows: on Hermes, `getTransactionHistory` blocked the JS
+  thread for 3–4 s. The builder now indexes the VTXOs once per call, and a
+  9k-VTXO history takes ~30 ms instead of ~3 s. Output is unchanged.
 
 - **A wallet registers its baseline contracts in one batch.**
   `initializeContractManager` created each baseline contract (the default,

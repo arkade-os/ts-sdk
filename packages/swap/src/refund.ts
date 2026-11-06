@@ -10,8 +10,8 @@
  *
  * | leaf                              | needs                        | timelock |
  * |-----------------------------------|------------------------------|----------|
- * | `refund`                          | trader + solver + server     | none     |
- * | `refundWithoutReceiver`           | trader + server              | CLTV     |
+ * | `refund`                          | trader + solver + operator   | none     |
+ * | `refundWithoutReceiver`           | trader + operator            | CLTV     |
  * | `unilateralRefund`                | trader + solver              | CSV      |
  * | `unilateralRefundWithoutReceiver` | trader alone                 | CSV, longest |
  *
@@ -28,7 +28,7 @@ import {
     type Asset,
     type IContractManager,
     type Identity,
-    type ArkProvider,
+    type OperatorProvider,
     type Network,
     RestIndexerProvider,
     Transaction,
@@ -39,7 +39,7 @@ import {
     Extension,
     getArkPsbtFields,
     isVtxoSpent,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     signAndSubmitOffchainTx,
     scriptFromTapLeafScript,
     toXOnly,
@@ -92,9 +92,9 @@ export async function awaitRfqResolution(
 /**
  * What a push needs from the operator: the broadcast pair, plus the info read that supplies
  * `checkpointTapscript`. Narrow so a wallet's own connection satisfies it (see
- * {@link walletOperator}) and no second connection is opened; a full `ArkProvider` also fits.
+ * {@link walletOperator}) and no second connection is opened; a full `OperatorProvider` also fits.
  */
-export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+export type SwapOperator = Pick<OperatorProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /**
  * A wallet's own connection, as a {@link SwapOperator}. The broadcaster is resolved lazily and
@@ -411,7 +411,7 @@ export const assertNoneSwept = (
 };
 
 /**
- * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a degenerate or
+ * The checkpoint outputs' operator-claim leaf, validated through the SDK's gate: a degenerate or
  * wrong-key script lets the operator sweep an in-flight checkpoint before it settles.
  *
  * `network` pins the exit-delay check to what the CALLER resolved — without it the type bound
@@ -428,7 +428,7 @@ export const operatorUnrollScript = async (
     const info = await operator.getInfo();
     return assertValidServerUnrollScript(
         info.checkpointTapscript,
-        network ?? networkFromArkadeInfo(info),
+        network ?? networkFromOperatorInfo(info),
         toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
     );
 };
@@ -481,8 +481,8 @@ export const lockupInputs = (
  * Build, sign, and push the `refundWithoutReceiver` spend: return the largest funded
  * outputs at the lockup to the trader's refund address.
  *
- * The leaf is `CLTV(refundLocktime) + <sender> + <server>`: no emulator (it co-signs only the
- * covenant leaves), so the tx is submitted SIGNED. One aggregate output, since this leaf has no
+ * The leaf is `CLTV(refundLocktime) + <sender> + <operator>`: not a covenant leaf, so the tx
+ * is submitted SIGNED. One aggregate output, since this leaf has no
  * covenant requiring index-aligned outputs.
  *
  * `refundPkScript` defaults to the contract's committed `senderPkScript` (the trader's quote-time
@@ -547,7 +547,7 @@ export async function pushRefundWithoutReceiver(
 // ── Refund timing ────────────────────────────────────────────────────────────
 
 /**
- * How long past `refundLocktime` to keep retrying the push before surfacing the server's refusal.
+ * How long past `refundLocktime` to keep retrying the push before surfacing the operator's refusal.
  * Two hours: MTP (BIP-113) lags wall clock by about an hour, plus room for a slow block. Mirror
  * of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes of the same margin.
  */
