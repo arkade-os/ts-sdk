@@ -244,6 +244,22 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(sentInputs[0].value).toBe(5000);
     });
 
+    it("migrates VTXOs at delegatee contracts, whose server key is stored compressed", async () => {
+        const contract = makeContract("02" + DEP_DUE, "delegatee");
+        const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
+            contractsWithVtxos: [{ contract, vtxos: [makeVtxo(contract.script, 7000)] }],
+        });
+        const manager = newManager(wallet);
+
+        const report = await manager.migrateDeprecatedSignerVtxos();
+
+        expect(report.vtxos?.migrated).toHaveLength(1);
+        expect(report.vtxos?.migrated[0].signerPubKey).toBe(DEP_DUE);
+        const inputs = sendSelectedVtxosToSelf.mock.calls[0][0] as ExtendedContractVtxo[];
+        expect(inputs.map((v) => v.value)).toEqual([7000]);
+    });
+
     it("orders migration inputs by value, highest first", async () => {
         const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [
@@ -1037,6 +1053,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
         getDelegateManager: vi.fn().mockResolvedValue(undefined),
         getContractManager: vi.fn().mockResolvedValue({
             getContractsWithVtxos,
+            getContracts: vi.fn().mockResolvedValue([]),
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         }),

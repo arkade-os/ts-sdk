@@ -190,7 +190,7 @@ export interface OnchainSendSwap extends RfqSwapCommon {
  * - **No trader-side refund.** Every non-claim leaf is the solver's; an unclaimed swap is
  *   lost when the solver reclaims at {@link RfqSwapCommon.refundLocktime}.
  * - **The claim is the whole swap, on a deadline**, and the trader must be online:
- *   covclaimd cannot claim this covenant today.
+ *   unless `P` was sealed to delegatee.
  */
 export interface LightningReceiveSwap extends RfqSwapCommon {
     kind: "lightning_receive";
@@ -203,6 +203,9 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
      * false, which would delete the value gate rather than fail it.
      */
     expectedAmount: number;
+    /** `P` was sealed to delegatee, which claims the lockup: this manager only claims on
+     * {@link RfqSwapManager.claim}. */
+    delegateeClaims?: true;
     /** Our Arkade claim's txid, once submitted. Set from the callback's return
      * and never from a chain read — the chain's answer is `settled`. */
     claimTxid?: string;
@@ -658,7 +661,7 @@ const notify = <T extends (...args: never[]) => void>(
  * `refunded` the solver reclaiming an unclaimed lockup. And on the receive arm:
  *
  * - **A claim is matched by its preimage, never by our txid**, so a claim that lands
- *   without us (e.g. covclaimd) is still `settled`.
+ *   without us (e.g. delegatee) is still `settled`.
  * - **`LockupFate.fate === "claimed"` maps to state `settled`, never `claimed`**: the
  *   state `claimed` only means we submitted something.
  *
@@ -720,6 +723,7 @@ export class RfqSwapManager {
     private readonly dirty = new Set<string>();
     /** Race guard: one action at a time per swap. */
     private readonly inProgress = new Set<string>();
+    private readonly forcedClaims = new Set<string>();
     private activePolls = 0;
     private readonly pollWaiters = new Set<() => void>();
 
@@ -1081,6 +1085,25 @@ export class RfqSwapManager {
         await this.pollMany([...this.monitored.values()]);
     }
 
+    /**
+     * Claim a `claimable` lightning receive now, even when delegatee is the one meant to.
+     *
+     * @throws if the swap is not monitored, or is not a claimable lightning receive.
+     */
+    async claim(rfqId: string): Promise<void> {
+        const swap = this.monitored.get(rfqId);
+        if (!swap) throw new Error(`swap ${rfqId} is not monitored`);
+        if (swap.kind !== "lightning_receive" || swap.state !== "claimable") {
+            throw new Error(`swap ${rfqId} is not claimable`);
+        }
+        this.forcedClaims.add(rfqId);
+        try {
+            await this.pollSwap(swap);
+        } finally {
+            this.forcedClaims.delete(rfqId);
+        }
+    }
+
     private async pollMany(swaps: readonly RfqSwap[]): Promise<void> {
         for (let i = 0; i < swaps.length; i += RfqSwapManager.POLL_CONCURRENCY) {
             await Promise.allSettled(
@@ -1418,7 +1441,7 @@ export class RfqSwapManager {
                 this.emitFailed(swap, error);
                 return;
             }
-            return this.claimIfFunded(swap, vtxos);
+            return this.claimIfFunded(swap, vtxos, this.forcedClaims.has(swap.rfqId));
         }
 
         // Past the window: keep watching so step 1 can end the swap on chain evidence (the
@@ -1448,6 +1471,7 @@ export class RfqSwapManager {
     private async claimIfFunded(
         swap: ReceiveLockupSwap,
         vtxos: readonly LockupVtxo[],
+        force = false,
     ): Promise<void> {
         if (vtxos.length === 0) return this.unblock(swap);
 
@@ -1492,6 +1516,7 @@ export class RfqSwapManager {
 
         this.setState(swap, "claimable");
         if (!this.config.enableAutoActions) return;
+        if (swap.kind === "lightning_receive" && swap.delegateeClaims && !force) return;
 
         try {
             const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {
@@ -1507,7 +1532,7 @@ export class RfqSwapManager {
             this.setState(swap, "claimed");
             this.emitAction(swap, "claimLockup");
         } catch (error) {
-            // Lost the race to another holder of P (covclaimd): step 1 of the next pass reads that claim and settles.
+            // Lost the race to another holder of P (delegatee): step 1 of the next pass reads that claim and settles.
             const ark = isArkError(error) ? error : maybeArkError(error);
             if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) {
                 if (swap.claimFailure !== undefined) {

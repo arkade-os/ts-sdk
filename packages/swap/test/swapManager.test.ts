@@ -2257,6 +2257,51 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
+    it("leaves a delegatee-sealed receive claimable without claiming it", async () => {
+        const s = spies();
+        const swap = receiveSwap({ delegateeClaims: true });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+
+        expect(swap.state).toBe("claimable");
+        expect(s.lockupClaims).toHaveLength(0);
+    });
+
+    it("claim() pushes the claim of a delegatee-sealed receive", async () => {
+        const s = spies();
+        const swap = receiveSwap({ delegateeClaims: true });
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: s,
+        });
+        await pass(m, swap);
+        await m.claim(RFQ_ID);
+
+        expect(s.lockupClaims).toHaveLength(1);
+        expect(swap.state).toBe("claimed");
+        expect(swap.claimTxid).toBe(CLAIM_TXID);
+    });
+
+    it("claim() refuses a swap that is not a claimable receive", async () => {
+        const m = manager({
+            indexer: fundedIndexer(),
+            contracts: fundedContracts(),
+            now: BEFORE_DEADLINE,
+            spies: spies(),
+        });
+        await expect(m.claim("unknown")).rejects.toThrow(/not monitored/);
+        const swap = receiveSwap({ delegateeClaims: true });
+        await m.addSwap(swap);
+        await expect(m.claim(RFQ_ID)).rejects.toThrow(/not claimable/);
+    });
+
     it("overfunding is fine; the gate is a floor", async () => {
         const s = spies();
         const swap = receiveSwap();
@@ -2457,7 +2502,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     it("settles on a hash-verified spend made by a txid that is not ours", async () => {
         // `nonInteractiveClaim` is pinned to the trader's own payout script, so
         // a claim that lands without us still pays us. Matching on the txid we
-        // submitted would turn that success into an anomaly the day covclaimd
+        // submitted would turn that success into an anomaly the day delegatee
         // starts working.
         const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
         expect(spend.txid).not.toBe(CLAIM_TXID);

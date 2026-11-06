@@ -45,8 +45,15 @@ export namespace DefaultVtxo {
         readonly forfeitScript: string;
         readonly exitScript: string;
 
-        /** Create the default virtual output script with one forfeit path and one exit path. */
-        constructor(readonly options: Options) {
+        /**
+         * Create the default virtual output script with one forfeit path and one exit path.
+         * @param extraLeaves leaves after forfeit and exit, e.g. a delegatee's renewal covenant
+         * leaf, which keeps the wallet's paths and adds one it never signs.
+         */
+        constructor(
+            readonly options: Options,
+            extraLeaves: Bytes[] = [],
+        ) {
             const { pubKey, serverPubKey, csvTimelock } = options;
 
             const forfeitScript = MultisigTapscript.encode({
@@ -58,7 +65,7 @@ export namespace DefaultVtxo {
                 pubkeys: [pubKey],
             }).script;
 
-            super([forfeitScript, exitScript]);
+            super([forfeitScript, exitScript, ...extraLeaves]);
 
             this.forfeitScript = hex.encode(forfeitScript);
             this.exitScript = hex.encode(exitScript);

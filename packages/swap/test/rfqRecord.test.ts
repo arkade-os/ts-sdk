@@ -276,7 +276,10 @@ describe("an onchain-send record carries its L1 half", () => {
         const rebuilt = rebuildRfqSwap(record, SEND_LOCKUP.params);
 
         expect(rebuilt.kind).toBe("onchain_send");
-        const onchain = rebuilt as { htlc: { address: string }; minConfirmations: number };
+        const onchain = rebuilt as {
+            htlc: { address: string };
+            minConfirmations: number;
+        };
         // the contract the request derived, not merely a well-formed one
         expect(onchain.htlc.address).toBe(L1_HTLC.address);
         expect(onchain.minConfirmations).toBe(2);
@@ -288,7 +291,11 @@ describe("an onchain-send record carries its L1 half", () => {
         // the case nothing else catches: every input stays well formed, the
         // rebuild succeeds, and the address it produces is one nobody funded.
         const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
-        const swapped = { ...record.profile, claimKey: L1.refundKey, refundKey: L1.claimKey };
+        const swapped = {
+            ...record.profile,
+            claimKey: L1.refundKey,
+            refundKey: L1.claimKey,
+        };
         expect(() => rebuildRfqSwap({ ...record, profile: swapped }, SEND_LOCKUP.params)).toThrow(
             /not this swap's/,
         );
@@ -323,10 +330,33 @@ describe("an onchain-send record carries its L1 half", () => {
         const record = createRfqSwapRecord(onchainOrigin, onchainSwap());
         expect(() =>
             rebuildRfqSwap(
-                { ...record, profile: { ...record.profile, network: "signet" } },
+                {
+                    ...record,
+                    profile: { ...record.profile, network: "signet" },
+                },
                 SEND_LOCKUP.params,
             ),
         ).toThrow(/unknown L1 network/);
+    });
+
+    it("carries delegateeClaims from the swap through the record and back", () => {
+        const swap = {
+            ...swapOf(receiveOrigin),
+            delegateeClaims: true,
+        } as LightningReceiveSwap;
+        const record = createRfqSwapRecord(receiveOrigin, swap);
+        expect(record.profile.delegateeClaims).toBe(true);
+
+        const rebuilt = rebuildRfqSwap(record, RECEIVE_LOCKUP.params) as LightningReceiveSwap;
+        expect(rebuilt.delegateeClaims).toBe(true);
+        expect(
+            (
+                rebuildRfqSwap(
+                    createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin)),
+                    RECEIVE_LOCKUP.params,
+                ) as LightningReceiveSwap
+            ).delegateeClaims,
+        ).toBeUndefined();
     });
 
     it("carries the fill outpoint and our claim through the mutable half", () => {
@@ -339,7 +369,10 @@ describe("an onchain-send record carries its L1 half", () => {
                 claimTxid: "cd".repeat(32),
             }),
         );
-        expect(record.profile.funding).toEqual({ txid: "ab".repeat(32), vout: 1 });
+        expect(record.profile.funding).toEqual({
+            txid: "ab".repeat(32),
+            vout: 1,
+        });
         expect(record.profile.claimTxid).toBe("cd".repeat(32));
 
         const rebuilt = rebuildRfqSwap(record, SEND_LOCKUP.params) as {
@@ -393,7 +426,10 @@ describe("the origin and the live swap must be one swap", () => {
         // `lockupAddress` — so a disagreement here restores a swap watching a
         // covenant this one never had, and only these two functions ever hold
         // both halves.
-        const wrongLockup = { ...sendOrigin, lockupAddress: RECEIVE_LOCKUP.address };
+        const wrongLockup = {
+            ...sendOrigin,
+            lockupAddress: RECEIVE_LOCKUP.address,
+        };
         expect(() => createRfqSwapRecord(wrongLockup, swapOf(sendOrigin))).toThrow(
             /not the same swap/,
         );
@@ -547,7 +583,10 @@ describe("rfqSwapOriginOf", () => {
 describe("the spend that ended the swap", () => {
     it("round-trips through the record and back onto the live swap", () => {
         const spends = ["ab".repeat(32), "cd".repeat(32)];
-        const swap = { ...swapOf(sendOrigin, "settled"), lockupSpendTxids: spends };
+        const swap = {
+            ...swapOf(sendOrigin, "settled"),
+            lockupSpendTxids: spends,
+        };
         const record = createRfqSwapRecord(sendOrigin, swap);
         expect(record.lockupSpendTxids).toEqual(spends);
         expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).lockupSpendTxids).toEqual(spends);
@@ -570,7 +609,10 @@ describe("the preimage that settled a send", () => {
     const PREIMAGE_HEX = "11".repeat(32);
 
     it("round-trips through the record and back onto the live swap", () => {
-        const swap = { ...swapOf(sendOrigin, "settled"), settlementPreimageHex: PREIMAGE_HEX };
+        const swap = {
+            ...swapOf(sendOrigin, "settled"),
+            settlementPreimageHex: PREIMAGE_HEX,
+        };
         const record = createRfqSwapRecord(sendOrigin, swap);
         expect(record.settlementPreimageHex).toBe(PREIMAGE_HEX);
         expect(rebuildRfqSwap(record, paramsOf(sendOrigin)).settlementPreimageHex).toBe(
@@ -629,7 +671,10 @@ describe("a record written under the old txid names", () => {
         // gets blocked instead of drained.
         const record = createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin, "claimed"));
         const { claimTxid: _current, ...profile } = record.profile;
-        const stored = { ...record, profile: { ...profile, claimArkTxid: "ab".repeat(32) } };
+        const stored = {
+            ...record,
+            profile: { ...profile, claimArkTxid: "ab".repeat(32) },
+        };
 
         const rebuilt = rebuildRfqSwap(stored, paramsOf(receiveOrigin)) as LightningReceiveSwap;
         expect(rebuilt.claimTxid).toBe("ab".repeat(32));

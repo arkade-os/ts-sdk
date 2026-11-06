@@ -23,7 +23,6 @@ import {
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
-import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
@@ -152,6 +151,8 @@ export type CorridorRfqPreparation =
           readonly contractParams: LightningReceiveContractParams;
           readonly secrets: ProvisionedClaimSecret;
           readonly payoutAddress: string;
+          /** `P` was sealed to delegatee. */
+          readonly delegateeClaims?: true;
           /** What the solver's lockup must carry — the claim refuses less. */
           readonly expectedAmount: bigint;
           /** Last moment the hold invoice can be paid, unix seconds. */
@@ -260,19 +261,19 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
 };
 
 /**
- * Who the claim packet is sealed to, or `undefined` where no covclaimd is deployed (then no
+ * Who the claim packet is sealed to, or `undefined` where no delegatee is configured (then no
  * packet is sent and claiming before `refund_locktime` is the trader's job).
  *
  * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
- * and covclaimd would silently claim nothing.
+ * and delegatee would silently claim nothing.
  */
 const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
-    const configured = deps.covclaimd?.pubkey;
+    const configured = deps.delegatee?.encryptionPubkey;
     if (configured === undefined) return undefined;
     const key = hex.decode(configured);
     if (key.length !== 33) {
         throw new Error(
-            `the covclaimd deployment key must be 33-byte compressed hex, got ${key.length} bytes`,
+            `the delegatee encryption key must be 33-byte compressed hex, got ${key.length} bytes`,
         );
     }
     return key;
@@ -665,17 +666,9 @@ const quoteLightningReceive = async (
     const paymentHash = hex.encode(secrets.paymentHash);
     const lightning = input.corridors.get("lightning").deps;
     const sealTo = sealingKey(lightning);
-    // Only an exact-out BTC take names, in the sats covclaimd compares, what the lockup must carry.
-    // Anything else would go unbound, and covclaimd would claim dust and hand the solver `P`.
-    const sealsAmount = pinned.on === "take" && input.legs.take.assetId === BTC_ASSET_ID;
-    const binds = bindsClaimAmount();
     const claimPacket =
-        sealTo !== undefined && (!binds || sealsAmount)
-            ? await sealClaimPacket({
-                  preimage: secrets.preimage,
-                  covclaimdPubkey: sealTo,
-                  minAmount: binds ? pinned.value : undefined,
-              })
+        sealTo !== undefined
+            ? await sealClaimPacket({ preimage: secrets.preimage, encryptionPubkey: sealTo })
             : undefined;
 
     const wire = await input.transport.requestQuote(
@@ -767,6 +760,7 @@ const quoteLightningReceive = async (
             contractParams: derived.contractParams,
             secrets,
             payoutAddress,
+            ...(claimPacket ? { delegateeClaims: true as const } : {}),
             expectedAmount: parsed.take,
             payDeadline,
         },
@@ -936,7 +930,7 @@ const quoteOnchainSend = async (
  * boarding address, so refunded coins can board again (NArk's
  * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice). No claim packet is sealed: an
  * unclaimed lockup only means the solver reclaims it and the trader refunds L1, so nothing is lost
- * without covclaimd.
+ * without delegatee.
  */
 const quoteOnchainReceive = async (
     input: RfqQuoteInput,

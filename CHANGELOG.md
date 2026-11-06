@@ -211,6 +211,12 @@ style and have not been backfilled.
 
 ### Changed
 
+- **The pre-signed delegator API is deprecated.** `DelegateProvider`,
+  `RestDelegateProvider`, `DelegateInfo`, `DelegateOptions`,
+  `IDelegateManager` and the worker's `delegateUrl` keep working for
+  existing integrations; new ones should delegate through the covenant-based
+  `DelegateeProvider` and `delegateeUrl`.
+
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
 
@@ -681,6 +687,31 @@ style and have not been backfilled.
   `min_amount` support to deploy, and the call stays the same when it does.
 
 ### Features
+
+- **Covenant-based delegation to a delegatee service.** `delegateeUrl` on
+  `Wallet.create`, `ReadonlyWallet.create` and the worker's `INIT_WALLET`
+  (or a `DelegateeProvider`, `RestDelegateeProvider` over REST) gives the
+  wallet a `getDelegateeManager()`. The manager registers the wallet's key
+  under the service's bundled `renewal` and `boarding` templates
+  (`registerRenewal`, `registerBoarding`) and `delegateVtxos` moves the
+  wallet's generically spendable coins, assets included, to the renewal
+  address and retires its own receive contracts. Both contracts derive
+  locally from the owner key, the `DelegationParams` and the service's keys
+  (`watchDelegateeContracts`), so a restored wallet finds its delegated coins
+  without asking the service; the manager refuses a registration whose
+  address the service derives differently, or whose server key is not the
+  wallet's. While an active, unexpired delegation is registered,
+  `getAddress()` answers the renewal address and `getBoardingAddress()` the
+  delegatee's boarding address; `receiveTapscript` still names the wallet's
+  own script. The new `DelegateeContractHandler` (`type: "delegatee"`)
+  offers only the owner's forfeit and CSV exit leaves, never the covenant
+  leaf, and the VTXO manager's expiry renewal skips delegated coins the
+  service is responsible for. A server signer rotation logs that delegatee
+  registrations stay under the old signer. Covered by a new regtest profile,
+  `sdk-delegatee`, running the delegatee daemon with seconds-typed arkd
+  timelocks. A `pubkey` constructor value reaches a covenant as its x-only
+  key, as the service derives it since delegatee 7f3adff; the bundled
+  templates' addresses are unchanged.
 
 - **`@arkade-os/swap`: `client.markets()` reports each market's limits per leg.**
   A UI had no way to show a market's min and max, or explain an out-of-range

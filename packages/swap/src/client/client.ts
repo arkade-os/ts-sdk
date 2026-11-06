@@ -135,6 +135,14 @@ export interface SwapClient {
     recover(swapId: AssetSwapId): Promise<RecoveryResult>;
 
     /**
+     * Claim a funded lightning receive now, instead of waiting for delegatee.
+     *
+     * @throws {SwapDriveRefusedError} under `drive: "readonly"`, for an unknown swap, and for a
+     *   swap that is not a claimable lightning receive.
+     */
+    claim(swapId: AssetSwapId): Promise<void>;
+
+    /**
      * Cancel an asset swap: take back an unfilled offer's deposit (HTLC corridor swaps exit by claim
      * or refund). Cancel races a fill: an already-spent deposit answers `filled` rather than
      * throwing; a spend the rebuild cannot classify is `needs_recovery`.
@@ -541,6 +549,10 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
         recover: async (id) => {
             ensureLive("recover");
             return driving().recover(quoteIdOfSwapId(id));
+        },
+        claim: async (id) => {
+            ensureLive("claim");
+            return driving().claim(quoteIdOfSwapId(id));
         },
     };
 

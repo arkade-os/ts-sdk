@@ -1,117 +1,125 @@
 /**
- * ClaimPacket sealing. The pinned vector below is no longer provisional:
- * covclaimd's `preimage.Decrypt` recovers 32 x 0x07 from it, so these bytes are
- * confirmed against the reference implementation rather than against ourselves.
- * TLV framing is covered separately in `claimPacketCodec.test.ts`.
+ * ClaimPacket sealing to delegatee. The scheme matches delegatee's
+ * `pkg/template/ecies`; TLV framing is covered in `claimPacketCodec.test.ts`.
  */
 import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
-import { sealClaimPacket } from "../src/claimPacket";
+import { gcm } from "@noble/ciphers/aes.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+
+import { DELEGATEE_CLAIM_TEMPLATE_ID, sealClaimPacket } from "../src/claimPacket";
 import {
+    ciphertextOf,
     claimPacketHex,
     openClaimPacket,
     sealClaimPacketDeterministic,
 } from "./helpers/claimPacket";
 
 const PREIMAGE = new Uint8Array(32).fill(7);
-const COVCLAIMD_SK = new Uint8Array(32).fill(0x22);
-const COVCLAIMD_PK = secp256k1.getPublicKey(COVCLAIMD_SK, true);
+const RECIPIENT_SK = new Uint8Array(32).fill(0x22);
+const RECIPIENT_PK = secp256k1.getPublicKey(RECIPIENT_SK, true);
 
-const MIN_AMOUNT = 50_000n;
-
-const deterministic = (minAmount?: bigint) =>
+const deterministic = () =>
     sealClaimPacketDeterministic(
         {
             preimage: PREIMAGE,
-            covclaimdPubkey: COVCLAIMD_PK,
-            minAmount,
+            encryptionPubkey: RECIPIENT_PK,
         },
         new Uint8Array(32).fill(0x11),
         new Uint8Array(12).fill(0x0a),
     );
 
+const sealedValue = (packet: string) => ciphertextOf(packet);
+
 describe("sealClaimPacket", () => {
     it("produces the pinned wire bytes for the fixed ephemeral key and nonce", async () => {
         const packet = await deterministic();
-        expect(claimPacketHex(packet.ciphertext)).toBe(
-            "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa" + // ephPub(33)
-                "0a0a0a0a0a0a0a0a0a0a0a0a" + // nonce(12)
+        expect(hex.encode(sealedValue(packet.packet))).toBe(
+            "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa" +
+                "0a0a0a0a0a0a0a0a0a0a0a0a" +
                 "14ec375e22b0f016fb127e4740e9599f6b07d04bd040751d9fade4c5427b9787" +
-                "915a33390ddb0d72093c69eff4d6a335", // ciphertext ‖ GCM tag
+                "50ce62b0260bb392ad65b3396ed6dfa1",
         );
     });
 
-    /**
-     * § 7.1.2: a client sends `0x01` ciphertext and `0x03` covclaimd_pub_key,
-     * and omits `0x02` arkade_script for the solver to append. The `0x03` TLV
-     * is REQUIRED — covclaimd's extension filter selects on it, so without one
-     * the solver refuses to stamp and the swap falls back to the Reveal API.
-     */
-    it("frames the packet shape as TLV 0x01 + 0x03, and omits 0x02", async () => {
+    it("seals with the template id as additional data", async () => {
+        const { packet } = await deterministic();
+        const value = sealedValue(packet);
+        const ephPub = value.subarray(0, 33);
+        const nonce = value.subarray(33, 45);
+        const sharedX = secp256k1.getSharedSecret(RECIPIENT_SK, ephPub, true).subarray(1);
+        const key = hkdf(
+            sha256,
+            sharedX,
+            ephPub,
+            new TextEncoder().encode("covclaimd/preimage/v1"),
+            32,
+        );
+        const aad = new Uint8Array([
+            ...ephPub,
+            ...new TextEncoder().encode(DELEGATEE_CLAIM_TEMPLATE_ID),
+        ]);
+        expect(hex.encode(gcm(key, nonce, aad).decrypt(value.subarray(45)))).toBe(
+            hex.encode(PREIMAGE),
+        );
+        expect(() => gcm(key, nonce, ephPub).decrypt(value.subarray(45))).toThrow();
+    });
+
+    it("binds the ciphertext to the template id", async () => {
+        const sealed = await sealClaimPacketDeterministic(
+            { preimage: PREIMAGE, encryptionPubkey: RECIPIENT_PK, templateId: "other" },
+            new Uint8Array(32).fill(0x11),
+            new Uint8Array(12).fill(0x0a),
+        );
+        await expect(openClaimPacket(sealed.packet, RECIPIENT_SK)).rejects.toThrow();
+        const opened = await openClaimPacket(sealed.packet, RECIPIENT_SK, "other");
+        expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
+    });
+
+    it("frames the packet as TLV 0x01 + 0x03, and omits 0x02", async () => {
         const sealed = await deterministic();
         const raw = base64.decode(sealed.packet);
-        const ct = base64.decode(sealed.ciphertext);
+        const ct = sealedValue(sealed.packet);
 
         // type(1) ‖ length(2 BE) ‖ value, twice
         expect(raw[0]).toBe(0x01);
         expect((raw[1]! << 8) | raw[2]!).toBe(ct.length);
-        expect(hex.encode(raw.subarray(3, 3 + ct.length))).toBe(hex.encode(ct));
 
         const at = 3 + ct.length;
         expect(raw[at]).toBe(0x03);
         expect((raw[at + 1]! << 8) | raw[at + 2]!).toBe(33);
-        expect(hex.encode(raw.subarray(at + 3, at + 36))).toBe(hex.encode(COVCLAIMD_PK));
+        expect(hex.encode(raw.subarray(at + 3, at + 36))).toBe(hex.encode(RECIPIENT_PK));
 
-        // nothing else — 0x02 is the funder's to add
+        // 0x02 is the funder's to add
         expect(raw.length).toBe(at + 36);
     });
 
-    /**
-     * The solver tells the shapes apart BY LENGTH ALONE: 93 decoded is the bare
-     * ciphertext, anything else is parsed as TLV. A packet that landed on 93
-     * would be read as the legacy shape and never stamped — which is exactly
-     * the bug this shape exists to fix.
-     */
-    it("cannot be mistaken for the bare ciphertext", async () => {
-        const sealed = await deterministic();
-        expect(base64.decode(sealed.ciphertext).length).toBe(93);
-        expect(base64.decode(sealed.packet).length).toBeGreaterThan(93);
-    });
-
-    it("round-trips: covclaimd's key recovers exactly P", async () => {
+    it("round-trips: the recipient key recovers exactly P", async () => {
         const packet = await deterministic();
-        const opened = await openClaimPacket(packet.ciphertext, COVCLAIMD_SK);
+        const opened = await openClaimPacket(packet.packet, RECIPIENT_SK);
         expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
     });
 
     it("authenticates: a tampered ciphertext refuses to open", async () => {
         const packet = await deterministic();
-        const bytes = hex.decode(claimPacketHex(packet.ciphertext));
+        const bytes = hex.decode(claimPacketHex(packet.packet));
         bytes[50] ^= 0x01;
-        await expect(openClaimPacket(base64.encode(bytes), COVCLAIMD_SK)).rejects.toThrow();
+        await expect(openClaimPacket(base64.encode(bytes), RECIPIENT_SK)).rejects.toThrow();
     });
 
     it("rejects malformed inputs", async () => {
         await expect(
-            sealClaimPacket({
-                preimage: PREIMAGE.slice(1),
-                covclaimdPubkey: COVCLAIMD_PK,
-            }),
+            sealClaimPacket({ preimage: PREIMAGE.slice(1), encryptionPubkey: RECIPIENT_PK }),
         ).rejects.toThrow(/32 bytes/);
         await expect(
-            sealClaimPacket({
-                preimage: PREIMAGE,
-                covclaimdPubkey: COVCLAIMD_PK.slice(1),
-            }),
+            sealClaimPacket({ preimage: PREIMAGE, encryptionPubkey: RECIPIENT_PK.slice(1) }),
         ).rejects.toThrow(/compressed/);
         await expect(
             sealClaimPacketDeterministic(
-                {
-                    preimage: PREIMAGE,
-                    covclaimdPubkey: COVCLAIMD_PK,
-                },
+                { preimage: PREIMAGE, encryptionPubkey: RECIPIENT_PK },
                 new Uint8Array(32).fill(0x11),
                 new Uint8Array(11),
             ),
@@ -129,66 +137,19 @@ describe("sealClaimPacket", () => {
                 expect(globalThis.crypto.subtle).toBeUndefined();
                 return await sealClaimPacket({
                     preimage: PREIMAGE,
-                    covclaimdPubkey: COVCLAIMD_PK,
+                    encryptionPubkey: RECIPIENT_PK,
                 });
             } finally {
                 vi.unstubAllGlobals();
             }
         })();
-        const opened = await openClaimPacket(packet.ciphertext, COVCLAIMD_SK);
+        const opened = await openClaimPacket(packet.packet, RECIPIENT_SK);
         expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
     });
 
     it("fresh randomness per packet: two seals of the same P differ", async () => {
-        const a = await sealClaimPacket({
-            preimage: PREIMAGE,
-            covclaimdPubkey: COVCLAIMD_PK,
-        });
-        const b = await sealClaimPacket({
-            preimage: PREIMAGE,
-            covclaimdPubkey: COVCLAIMD_PK,
-        });
-        expect(a.ciphertext).not.toBe(b.ciphertext);
-    });
-});
-
-describe("sealClaimPacket with minAmount", () => {
-    it("produces the pinned wire bytes for the fixed ephemeral key and nonce", async () => {
-        const sealed = await deterministic(MIN_AMOUNT);
-        const ciphertext =
-            "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa" +
-            "0a0a0a0a0a0a0a0a0a0a0a0a" +
-            "14ec375e22b0f016fb127e4740e9599f6b07d04bd040751d9fade4c5427b9787" +
-            "0d1f1c805165f490f5a6cfcabdb4f346";
-        expect(claimPacketHex(sealed.ciphertext)).toBe(ciphertext);
-        expect(claimPacketHex(sealed.packet)).toBe(
-            "01005d" +
-                ciphertext +
-                "030021" +
-                hex.encode(COVCLAIMD_PK) +
-                "040008" +
-                "000000000000c350",
-        );
-    });
-
-    it("opens with the bound amount", async () => {
-        const sealed = await deterministic(MIN_AMOUNT);
-        const opened = await openClaimPacket(sealed.ciphertext, COVCLAIMD_SK, MIN_AMOUNT);
-        expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
-    });
-
-    it("refuses to open with another amount, or with the amount stripped", async () => {
-        const { ciphertext } = await deterministic(MIN_AMOUNT);
-        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK, MIN_AMOUNT - 1n)).rejects.toThrow();
-        await expect(openClaimPacket(ciphertext, COVCLAIMD_SK)).rejects.toThrow();
-    });
-
-    it("rejects an amount outside [1, 2^64-1]", async () => {
-        const seal = (minAmount: bigint) =>
-            sealClaimPacket({ preimage: PREIMAGE, covclaimdPubkey: COVCLAIMD_PK, minAmount });
-        for (const minAmount of [0n, -1n, 2n ** 64n, 50_000 as unknown as bigint]) {
-            await expect(seal(minAmount)).rejects.toThrow(/minAmount/);
-        }
-        await expect(seal(2n ** 64n - 1n)).resolves.toHaveProperty("packet");
+        const a = await sealClaimPacket({ preimage: PREIMAGE, encryptionPubkey: RECIPIENT_PK });
+        const b = await sealClaimPacket({ preimage: PREIMAGE, encryptionPubkey: RECIPIENT_PK });
+        expect(a.packet).not.toBe(b.packet);
     });
 });

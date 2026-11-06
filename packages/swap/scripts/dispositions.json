@@ -64,7 +64,7 @@
         "railAvailable",
         "receiverExact",
         "RfqSwapState",
-        "SEALED_CIPHERTEXT_LENGTH",
+        "DELEGATEE_CLAIM_TEMPLATE_ID",
         "SWAP_ROUTER_PRIORITY",
         "SwapContractRegistry",
         "swapHandle",

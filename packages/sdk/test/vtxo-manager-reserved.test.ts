@@ -45,6 +45,7 @@ describe("VtxoManager and a concurrent spend", () => {
                     return () => {};
                 }),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+                getContracts: vi.fn().mockResolvedValue([]),
             }),
             settle: vi.fn().mockRejectedValue(reserved()),
             dustAmount: 1000n,
@@ -87,6 +88,7 @@ describe("VtxoManager and a concurrent spend", () => {
             getContractManager: vi.fn().mockResolvedValue({
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
                 refreshOutpoints: vi.fn().mockResolvedValue(undefined),
+                getContracts: vi.fn().mockResolvedValue([]),
             }),
             settle: vi.fn().mockRejectedValue(reserved()),
             dustAmount: 330n,
@@ -148,6 +150,9 @@ describe("VtxoManager and a held VTXO due for renewal", () => {
         const wallet = {
             getSpendableVtxos: vi.fn().mockResolvedValue([]),
             getHeldVtxos: vi.fn().mockResolvedValue([due, later]),
+            getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
+            }),
             dustAmount: 1000n,
         } as any;
         const manager = new VtxoManager(wallet, false);
@@ -175,6 +180,9 @@ describe("VtxoManager and a held VTXO due for renewal", () => {
         const wallet = {
             getSpendableVtxos: vi.fn().mockResolvedValue([vtxo]),
             getHeldVtxos: vi.fn().mockRejectedValue(new Error("store offline")),
+            getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
+            }),
             dustAmount: 1000n,
         } as any;
         const manager = new VtxoManager(wallet, false);

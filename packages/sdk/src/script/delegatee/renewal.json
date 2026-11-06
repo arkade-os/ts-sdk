@@ -1,0 +1,57 @@
+{
+    "format": "template/v1",
+    "type": "intent",
+    "variables": {
+        "owner": "pubkey",
+        "exit_delay": "int",
+        "renewal_window": "int",
+        "max_fee": "int"
+    },
+    "inputs": [
+        {
+            "name": "funds",
+            "schedule": {
+                "before_expiry_seconds": "<renewal_window>"
+            },
+            "contract": {
+                "definition": {
+                    "artifact": "041af65d5443fceebd149c44d9a0b646edae24399ae3dff6c5f82b878826dda5"
+                },
+                "arguments": {
+                    "owner": "<owner>",
+                    "exitDelay": "<exit_delay>",
+                    "renewalWindow": "<renewal_window>",
+                    "maxFee": "<max_fee>"
+                }
+            },
+            "spend": {
+                "function": "renew",
+                "leaf": "renew"
+            }
+        }
+    ],
+    "outputs": [
+        {
+            "name": "renewed",
+            "index": 0,
+            "value": {
+                "from": "funds"
+            },
+            "locking": {
+                "from": "funds"
+            },
+            "assets": [
+                {
+                    "from": "funds"
+                }
+            ]
+        }
+    ],
+    "fees": {
+        "from": "funds",
+        "max": "<max_fee>"
+    },
+    "packets": {
+        "output_index": 1
+    }
+}
