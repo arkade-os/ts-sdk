@@ -183,6 +183,8 @@ const balance = await readonlyWallet.getBalance()
 - Coin type 0 for mainnet, 1 for testnet
 - Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
+For custom `Identity` implementations, see [`TreeSignerSession`](./src/tree/signingSession.ts).
+
 ### Batch Signing for Browser Wallets
 
 Arkade send transactions require N+1 PSBT signatures (N checkpoints + 1 main tx). With local identities like `SingleKey` or `SeedIdentity` this is invisible, but browser wallet extensions (Xverse, UniSat, OKX, etc.) show a confirmation popup per signature. The `BatchSignableIdentity` interface lets wallet providers reduce N+1 popups to a single batch confirmation.
@@ -1506,7 +1508,7 @@ import { arkade, Arkade, ArkAddress } from '@arkade-os/sdk'
 
 const program = arkade.programFromArtifact(artifactJson)
 const client = await Arkade.connect({
-  service: { network: 'bitcoin' }, // operator, indexer, esplora, and covenant cosigner
+  service: { network: 'bitcoin' }, // operator, indexer and esplora
   identity: wallet.identity,
   contractManager: await wallet.getContractManager(),
 })

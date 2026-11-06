@@ -12,7 +12,7 @@ import type { SwapOperator } from "../refund";
 import { walletOperator } from "../refund";
 import { corridorSet, type CorridorSet } from "./corridors/registry";
 import {
-    liveArkadeInfo,
+    liveOperatorInfo,
     resolveCorridorBase,
     type CorridorBase,
     type CorridorOverrides,
@@ -68,7 +68,8 @@ export interface SwapClientConfig {
     /** Dependency overrides only: they never enable a route or pick a solver. */
     readonly corridors?: CorridorOverrides;
     readonly policy?: SwapPolicy;
-    /** Covenant co-signer override, 33-byte compressed hex. */
+    /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
+     * compressed hex. */
     readonly emulatorPubkey?: string;
     /** Overrides the wallet's own connection; for tests and a second operator. */
     readonly operator?: SwapOperator;
@@ -383,7 +384,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
             // live: a snapshot could bind the tree to a signer key the operator no longer co-signs
             // for; an unreachable operator is `OperatorUnreachable` here, before funding
-            const info = await liveArkadeInfo(wallet, { requireLive: true });
+            const info = await liveOperatorInfo(wallet, { requireLive: true });
             const rendezvous = market.card.discovery_pubkey;
             if (rendezvous === undefined) {
                 // unreachable: `eligibleMarkets` drops a corridor card with no rendezvous, and an asset card without one prices from its feed
