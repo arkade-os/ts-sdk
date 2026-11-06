@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkNote, Intent, MultisigTapscript, VtxoScript, type IntentCoin } from "../src";
+import {
+    ArkNote,
+    CSVMultisigTapscript,
+    MultisigTapscript,
+    Proof,
+    VtxoScript,
+    type ProofInput,
+} from "../src";
 import { contractHandlers } from "../src/contracts/handlers";
 import type { Contract } from "../src/contracts/types";
 import {
@@ -14,11 +21,15 @@ import { deriveContractTapscripts } from "../src/wallet/utils";
 import { createMockUtxo, createMockVtxo } from "./repositories/helpers";
 
 const key = (seed: number) => schnorr.getPublicKey(new Uint8Array(32).fill(seed));
-const script = new VtxoScript([
-    MultisigTapscript.encode({ pubkeys: [key(1), key(2)] }).script,
-    MultisigTapscript.encode({ pubkeys: [key(3), key(4)] }).script,
-]);
-const [leafA, leafB] = script.leaves;
+const multisig = MultisigTapscript.encode({ pubkeys: [key(1), key(2)] }).script;
+// Timelocked, so the proof input's sequence shows which leaf it was built from.
+const csvMultisig = CSVMultisigTapscript.encode({
+    timelock: { type: "blocks", value: 144n },
+    pubkeys: [key(3)],
+}).script;
+const script = new VtxoScript([multisig, csvMultisig]);
+const leafA = script.findLeaf(hex.encode(multisig));
+const leafB = script.findLeaf(hex.encode(csvMultisig));
 
 const coin = {
     txid: hex.encode(new Uint8Array(32).fill(5)),
@@ -27,23 +38,26 @@ const coin = {
     tapTree: script.encode(),
     forfeitTapLeafScript: leafA,
     proofTapLeafScript: leafA,
-} as unknown as IntentCoin;
+} as unknown as ProofInput;
 
-const signedLeaf = (input: IntentCoin) =>
-    Intent.create("msg", [input]).getInput(1).tapLeafScript?.[0];
+const proofInput = (input: ProofInput) => Proof.create("msg", [input]).getInput(1);
 
 describe("proofTapLeafScript", () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    it("signs the leaf a coin carries", () => {
-        expect(signedLeaf(coin)?.[1]).toEqual(leafA[1]);
-        expect(signedLeaf({ ...coin, proofTapLeafScript: leafB })?.[1]).toEqual(leafB[1]);
+    it("builds the proof input from the leaf a coin carries", () => {
+        expect(proofInput(coin).tapLeafScript?.[0][1]).toEqual(leafA[1]);
+        const input = proofInput({ ...coin, proofTapLeafScript: leafB });
+        expect(input.tapLeafScript?.[0][1]).toEqual(leafB[1]);
+        expect(input.sequence).toBe(144);
     });
 
-    it("signs the leaf a caller set with the deprecated key", () => {
-        expect(signedLeaf({ ...coin, intentTapLeafScript: leafB })?.[1]).toEqual(leafB[1]);
+    it("builds the proof input from the leaf a caller set with the deprecated key", () => {
+        const input = proofInput({ ...coin, intentTapLeafScript: leafB });
+        expect(input.tapLeafScript?.[0][1]).toEqual(leafB[1]);
+        expect(input.sequence).toBe(144);
     });
 
     it("stores the leaf under the old key and reads it back under the new one", () => {
