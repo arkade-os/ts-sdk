@@ -15,7 +15,7 @@ import "../shared/limits.ark";
 contract Vault(pubkey owner, int minimum, int unused) {
   function withdraw(int amount) {
     require(Limits.atLeast(amount, minimum));
-    require(tx.outputs[0].value >= amount);
+    require(tx.outputs[0].value >= amount, "output below amount");
   }
   function ownerWithdraw(signature ownerSig) tapscript {
     require(older(serverExitDelay));
@@ -35,10 +35,20 @@ const key = (byte: number) => schnorr.getPublicKey(new Uint8Array(32).fill(byte)
 
 describe("@arkade-os/sdk/compiler", () => {
     it("compiles a multi-file project into the Program programFromArtifact reads", async () => {
-        const { program, artifact, diagnostics } = await compile({ entry: ENTRY, files: FILES });
+        const { program, artifact, debug, diagnostics } = await compile({
+            entry: ENTRY,
+            files: FILES,
+        });
         const raw = await compileRaw({ entry: ENTRY, files: FILES });
 
-        expect(program).toEqual(programFromArtifact(raw.artifact!));
+        expect(program).toEqual(programFromArtifact(raw.artifact!, raw.debug!));
+        expect(debug).toEqual(raw.debug);
+        const sourceMap = raw.debug!.functions.withdraw.sourceMap;
+        expect(sourceMap).toContainEqual(
+            expect.objectContaining({ message: "output below amount" }),
+        );
+        expect(program.functions.withdraw.arkadeScript?.sourceMap).toEqual(sourceMap);
+        expect(program.functions.ownerWithdraw.arkadeScript?.sourceMap).toEqual(sourceMap);
         expect(artifact.source?.files).toEqual(FILES);
         expect(artifact.functions.map((g) => [g.name, g.leaves.map((l) => l.name)])).toEqual([
             ["withdraw", ["withdraw", "ownerWithdraw"]],
@@ -67,6 +77,15 @@ describe("@arkade-os/sdk/compiler", () => {
             "ownerWithdraw",
             "unilateral",
         ]);
+    });
+
+    it("leaves the debug file out with debug: false", async () => {
+        const { program, debug } = await compile({ entry: ENTRY, files: FILES }, { debug: false });
+        const raw = await compileRaw({ entry: ENTRY, files: FILES });
+
+        expect(debug).toBeUndefined();
+        expect(program).toEqual(programFromArtifact(raw.artifact!));
+        expect(program.functions.withdraw.arkadeScript?.sourceMap).toBeUndefined();
     });
 
     it("rejects invalid source with every located diagnostic", async () => {

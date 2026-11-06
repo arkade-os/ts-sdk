@@ -1548,6 +1548,8 @@ try {
 
 Warnings come back in `diagnostics`, and source errors reject with `CompileError`. The result's `artifact` is the compiler's raw output, with the source bundle, compiler version and fingerprint. CommonJS callers can `require('@arkade-os/sdk/compiler')`, which loads the ESM-only compiler through `import()` on the first call. In a browser, the bundler must emit the compiler's WASM asset; see the `@arkade-os/compiler` README.
 
+By default the result also carries `debug`, the compiler's debug file, and each covenant in `program` carries its `sourceMap`: the `asm` range of each statement, its line and column in the entry file, and its `require()` message when it has one. Pass `{ debug: false }` to leave both out. A file written by `arkadec --debug` attaches the same way through `arkade.programFromArtifact(artifact, debug)`, which refuses a file whose fingerprint does not match the artifact's. Source maps live in memory only: `stringifyArtifact` does not write them, so a restored contract has none.
+
 #### HD look-ahead window
 
 HD wallets (`walletMode: 'hd'`, or an explicit HD `DescriptorProvider`) also watch a band of *unused* offchain receive scripts around their allocation watermark, so a payment to an address that some other party issued from the same seed — a merchant backend such as BTCPay Server, or the .NET SDK driving the same wallet — arrives without the user calling `restore()`. `lookAheadWindow` (default `20`) is the per-side width of that band: the wallet watches `[watermark - N, watermark + N]`. Speculative entries are subscription-only; they become contract rows, and enter balances, only once funded.

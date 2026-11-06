@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
-import { programFromArtifact, type ContractArtifact } from "../src/arkade/artifact";
+import {
+    programFromArtifact,
+    type ContractArtifact,
+    type ContractDebugInfo,
+} from "../src/arkade/artifact";
 import {
     ArkadeProgramScript,
     parseArtifact,
@@ -1010,4 +1014,79 @@ describe("reading an arkadec artifact", () => {
     ] as [string, unknown, RegExp][])("refuses %s", (_label, art, pattern) => {
         expect(() => programFromArtifact(art as never)).toThrow(pattern);
     });
+});
+
+describe("reading a debug file", () => {
+    const covenant = demo({
+        fingerprint: "sha256:aa",
+        functions: [
+            {
+                name: "spend",
+                arkade: { inputs: [], asm: ["OP_1", "OP_VERIFY", "OP_1"] },
+                leaves: [collab("spend")],
+            },
+        ],
+    });
+    const debugFile = (extra: Record<string, unknown> = {}): ContractDebugInfo =>
+        ({
+            formatVersion: 1,
+            artifactFingerprint: "sha256:aa",
+            functions: {
+                spend: { sourceMap: [{ asm: [0, 2], start: [4, 5], end: [4, 30], message: "m" }] },
+            },
+            ...extra,
+        }) as ContractDebugInfo;
+
+    it("puts each covenant's source map on its arkade segment", () => {
+        const program = programFromArtifact(covenant, debugFile());
+        expect(program.functions.spend.arkadeScript?.sourceMap).toEqual(
+            debugFile().functions.spend.sourceMap,
+        );
+    });
+
+    it.each([
+        [
+            "another build's file",
+            covenant,
+            debugFile({ artifactFingerprint: "sha256:bb" }),
+            /fingerprint/,
+        ],
+        [
+            "a file without a fingerprint",
+            covenant,
+            debugFile({ artifactFingerprint: undefined }),
+            /fingerprint/,
+        ],
+        [
+            "an artifact without a fingerprint",
+            { ...covenant, fingerprint: undefined },
+            debugFile(),
+            /fingerprint/,
+        ],
+        [
+            "an unknown format version",
+            covenant,
+            debugFile({ formatVersion: 2 }),
+            /debug format version 2/,
+        ],
+        [
+            "a map for a group with no covenant",
+            covenant,
+            debugFile({ functions: { other: { sourceMap: [] } } }),
+            /no covenant 'other'/,
+        ],
+        [
+            "a range past the covenant's asm",
+            covenant,
+            debugFile({
+                functions: { spend: { sourceMap: [{ asm: [2, 4], start: [1, 1], end: [1, 2] }] } },
+            }),
+            /range/,
+        ],
+    ] as [string, ContractArtifact, ContractDebugInfo, RegExp][])(
+        "refuses %s",
+        (_label, art, debug, pattern) => {
+            expect(() => programFromArtifact(art, debug)).toThrow(pattern);
+        },
+    );
 });

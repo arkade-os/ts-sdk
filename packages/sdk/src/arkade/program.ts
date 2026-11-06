@@ -154,6 +154,23 @@ export interface ArkadeSegment {
     asm: AsmToken[];
     /** The arkade-script witness stack (e.g. an output index). */
     witness?: WitnessRef[];
+    /**
+     * Where each statement's tokens in `asm` came from, read from the compiler's debug file.
+     * ponytail: in memory only; stringifyArtifact does not write it, so a restored contract has
+     * none. Persist it if apps need source positions after a restore.
+     */
+    sourceMap?: SourceRange[];
+}
+
+/** One statement's tokens in a covenant's `asm` and its place in the entry file. */
+export interface SourceRange {
+    /** Half-open `[start, end)` indexes into the covenant's `asm`. */
+    asm: [number, number];
+    /** 1-based `[line, column]` in the entry file, with UTF-16 columns. */
+    start: [number, number];
+    end: [number, number];
+    /** The `require()` message, when it has one. */
+    message?: string;
 }
 
 /** One named spending path. */

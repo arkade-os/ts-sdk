@@ -16,6 +16,7 @@ import {
     type InputDef,
     type Program,
     type SignerRef,
+    type SourceRange,
     type TapscriptSegment,
     type WitnessRef,
 } from "./program";
@@ -60,6 +61,15 @@ export interface ContractArtifact {
     constructorInputs: ArtifactParameter[];
     structs?: ArtifactStruct[];
     functions: ArtifactGroup[];
+    fingerprint?: string;
+}
+
+/** The compiler's debug file: each covenant's source map, keyed by spend group. */
+export interface ContractDebugInfo {
+    formatVersion: number;
+    /** The {@link ContractArtifact.fingerprint} of the build that wrote it. */
+    artifactFingerprint?: string;
+    functions: Record<string, { sourceMap: SourceRange[] }>;
 }
 
 /** Native result structs, in the field order the compiler flattens them. */
@@ -130,6 +140,52 @@ export function isContractArtifact(value: unknown): value is ContractArtifact {
 
 function fail(detail: string): never {
     throw new Error(`programFromArtifact: ${detail}`);
+}
+
+const isPair = (value: unknown): value is [number, number] =>
+    Array.isArray(value) && value.length === 2 && value.every((n) => Number.isInteger(n) && n >= 0);
+
+/** The source maps of `debug`, keyed by spend group; refuses a file from another build. */
+function sourceMaps(
+    artifact: ContractArtifact,
+    debug: ContractDebugInfo,
+): Map<string, SourceRange[]> {
+    if (!isRecord(debug) || !isRecord(debug.functions)) fail("debug file needs a functions object");
+    if (debug.formatVersion !== 1) {
+        fail(`unsupported debug format version ${debug.formatVersion}; expected 1`);
+    }
+    // A map from another build names the wrong statements, so an unverifiable pairing is refused too.
+    if (artifact.fingerprint === undefined || debug.artifactFingerprint !== artifact.fingerprint) {
+        fail(
+            `debug file fingerprint ${debug.artifactFingerprint ?? "(missing)"} does not match the artifact's ${artifact.fingerprint ?? "(missing)"}`,
+        );
+    }
+    const maps = new Map<string, SourceRange[]>();
+    for (const [name, entry] of Object.entries(debug.functions)) {
+        const asm = artifact.functions.find((group) => isRecord(group) && group.name === name)
+            ?.arkade?.asm;
+        if (!Array.isArray(asm)) fail(`debug file maps no covenant '${name}'`);
+        if (!isRecord(entry) || !Array.isArray(entry.sourceMap)) {
+            fail(`debug file: covenant '${name}' needs a sourceMap array`);
+        }
+        for (const range of entry.sourceMap) {
+            if (
+                !isRecord(range) ||
+                !isPair(range.asm) ||
+                !isPair(range.start) ||
+                !isPair(range.end) ||
+                range.asm[0] > range.asm[1] ||
+                range.asm[1] > asm.length ||
+                (range.message !== undefined && typeof range.message !== "string")
+            ) {
+                fail(
+                    `debug file: covenant '${name}' has a malformed range ${JSON.stringify(range)}`,
+                );
+            }
+        }
+        maps.set(name, entry.sourceMap);
+    }
+    return maps;
 }
 
 function claim(seen: Set<string>, name: string, kind: string): void {
@@ -354,8 +410,14 @@ function parseLeaf(
     };
 }
 
-/** Adds `server`, and one param per child-output placeholder for the caller to bind to that output key. */
-export function programFromArtifact(artifact: ContractArtifact): Program {
+/**
+ * Adds `server`, and one param per child-output placeholder for the caller to bind to that output key.
+ * With the build's `debug` file, each covenant segment also carries its `sourceMap`.
+ */
+export function programFromArtifact(
+    artifact: ContractArtifact,
+    debug?: ContractDebugInfo,
+): Program {
     if (!isContractArtifact(artifact)) {
         fail(
             "expected a complete arkadec artifact with contractName, constructorInputs, and non-empty functions",
@@ -364,6 +426,7 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
     if (artifact.formatVersion !== undefined && artifact.formatVersion !== 1) {
         fail(`unsupported artifact format version ${artifact.formatVersion}; expected 1`);
     }
+    const maps = debug === undefined ? undefined : sourceMaps(artifact, debug);
 
     const structs = artifact.structs ?? [];
     const structNames = new Set<string>();
@@ -404,11 +467,13 @@ export function programFromArtifact(artifact: ContractArtifact): Program {
         const covenantInputs = (group.arkade?.inputs ?? []).flatMap((input) =>
             flatten(input, structs),
         );
+        const sourceMap = maps?.get(group.name);
         const arkadeScript = group.arkade
             ? {
                   asm: group.arkade.asm.map((token) => asmToken(token, instantiations)),
                   // Covenant witness is reverse declaration order.
                   witness: covenantInputs.map((field) => field.name as WitnessRef).reverse(),
+                  ...(sourceMap ? { sourceMap } : {}),
               }
             : undefined;
 

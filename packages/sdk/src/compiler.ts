@@ -7,20 +7,28 @@
 
 import type {
     CompileInput,
-    CompileOptions,
+    CompileOptions as CompilerOptions,
     CompilerArtifact,
+    DebugInfo,
     Diagnostic,
 } from "@arkade-os/compiler";
 
 import { programFromArtifact } from "./arkade/artifact";
 import type { Program } from "./arkade/program";
 
-export type { CompileInput, CompileOptions, CompilerArtifact, Diagnostic };
+export type { CompileInput, CompilerArtifact, DebugInfo, Diagnostic };
+
+export interface CompileOptions extends CompilerOptions {
+    /** Return the debug file and put its source maps on `program`. Defaults to `true`. */
+    debug?: boolean;
+}
 
 export interface CompileOutput {
     program: Program;
     /** The compiler's artifact, carrying the source bundle, compiler version and fingerprint. */
     artifact: CompilerArtifact;
+    /** The debug file: each covenant's source map. Absent with `debug: false`. */
+    debug?: DebugInfo;
     /** Warnings; errors reject with {@link CompileError}. */
     diagnostics: Diagnostic[];
 }
@@ -65,11 +73,16 @@ export async function compile(
         }
         throw error;
     }
-    const result = await compiler.compile(input, options);
+    const { debug = true, ...compilerOptions } = options ?? {};
+    const result = await compiler.compile(input, compilerOptions);
     if (result.artifact === null) throw new CompileError(result.diagnostics);
+    // ponytail: the compiler always builds the debug file; it will take an option to skip it soon,
+    // until then `debug: false` only drops it.
+    const kept = debug ? result.debug : undefined;
     return {
-        program: programFromArtifact(result.artifact),
+        program: programFromArtifact(result.artifact, kept),
         artifact: result.artifact,
+        ...(kept ? { debug: kept } : {}),
         diagnostics: result.diagnostics,
     };
 }
