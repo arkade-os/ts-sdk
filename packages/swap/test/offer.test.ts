@@ -111,6 +111,16 @@ describe("swap offer", () => {
         }
     });
 
+    it("selects the previous tree for a fresh derivation when asked", () => {
+        const [offer] = goldens[0];
+        const current = offerContract(offer, operatorPubkey);
+        const previous = offerContract(offer, operatorPubkey, "previous");
+        expect(hex.encode(offerContract(offer, operatorPubkey, "current").pkScript)).toBe(
+            hex.encode(current.pkScript),
+        );
+        expect(hex.encode(previous.pkScript)).not.toBe(hex.encode(current.pkScript));
+    });
+
     it.each([31, 33])("rejects a %s-byte asset txid in the bundled v1 program", (length) => {
         const {
             program,

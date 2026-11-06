@@ -38,6 +38,7 @@ import {
     type RfqQuote,
 } from "../src/rfq";
 import { CHF_ID, USD_ID } from "./fixtures";
+import { ASSET_SWAP_V2, ASSET_SWAP_V3, offerGenerationFor } from "../src/program";
 import { asset } from "@arkade-os/sdk";
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
@@ -519,6 +520,31 @@ describe("requests", () => {
             maker_pk_script: hex.encode(makerPkScript),
             maker_public_key: hex.encode(makerPublicKey),
         });
+    });
+
+    it("adds covenant_versions only when the trader advertises them", () => {
+        const base = {
+            rfqId: RFQ_ID,
+            wantAsset: asset.AssetId.fromString(USD_ID),
+            amount: 5000,
+            makerPkScript: p2tr(key(5)),
+            makerPublicKey: key(1),
+        };
+        const plain = arkadeSwapRequest(base) as Record<string, unknown>;
+        expect("covenant_versions" in plain).toBe(false);
+        const advertised = arkadeSwapRequest({
+            ...base,
+            covenantVersions: [ASSET_SWAP_V3, ASSET_SWAP_V2],
+        }) as Record<string, unknown>;
+        expect(advertised.covenant_versions).toEqual([ASSET_SWAP_V3, ASSET_SWAP_V2]);
+        expect(advertised.profile).toEqual(plain.profile);
+    });
+
+    it("maps a negotiated covenant to a generation, defaulting to the previous tree", () => {
+        expect(offerGenerationFor(ASSET_SWAP_V3)).toBe("current");
+        expect(offerGenerationFor(ASSET_SWAP_V2)).toBe("previous");
+        expect(offerGenerationFor(undefined)).toBe("previous");
+        expect(offerGenerationFor("asset-swap-v999")).toBe("previous");
     });
 
     it("mirrors the wire's pair-length cap for asset-to-asset", () => {
