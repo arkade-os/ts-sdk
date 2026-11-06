@@ -3,7 +3,8 @@ import { describe, it, expect } from "vitest";
 import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
 import { applySettlementEventToIntent } from "../src/wallet/intentStateReducer";
 import { SettlementEventType } from "../src/providers/ark";
-import type { ArkIntent } from "../src/repositories/intentRepository";
+import type { ArkIntent, IntentRepository } from "../src/repositories/intentRepository";
+import { InMemoryContractRepository, InMemoryWalletRepository, SingleKey, Wallet } from "../src";
 
 // Exercises the persist + event-reduce contract the settle() path relies on:
 // waiting_to_submit -> waiting_for_batch -> (BatchFinalized) batch_succeeded,
@@ -42,5 +43,24 @@ describe("settle intent persistence contract", () => {
         expect(done.commitmentTransactionId).toBe("ctx");
         expect(done.batchId).toBe("batch-1");
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
+    });
+});
+
+describe("wallet setup", () => {
+    it("rejects a repository that has only the old method names", async () => {
+        const intentRepository = {
+            saveIntent: async () => {},
+            getIntentsPage: async () => ({ items: [] }),
+        } as unknown as IntentRepository;
+        await expect(
+            Wallet.create({
+                identity: SingleKey.fromRandomBytes(),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                    intentRepository,
+                },
+            }),
+        ).rejects.toThrow("`saveBatchRegistration`");
     });
 });

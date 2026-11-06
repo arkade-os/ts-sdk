@@ -245,8 +245,9 @@ style and have not been backfilled.
 - **`IntentRepository` methods are named after batch registrations.**
   `saveIntent` becomes `saveBatchRegistration`, and `getIntentsPage` becomes
   `getBatchRegistrationsPage`. The SDK calls the new names, so a custom
-  repository must add them. The old names stay on the interface and on the
-  InMemory, IndexedDB, SQLite and Realm classes as deprecated methods.
+  repository must add them, and creating a wallet with a repository that lacks
+  them now throws. The old names stay on the interface and on the InMemory,
+  IndexedDB, SQLite and Realm classes as deprecated methods.
   `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
   object passed to it must have that method.
 
