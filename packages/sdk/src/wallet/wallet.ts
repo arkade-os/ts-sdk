@@ -17,13 +17,14 @@ import {
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
     PendingTx,
-    RestArkProvider,
+    RestOperatorProvider,
     SettlementEvent,
     SignedIntent,
+    SignedProof,
     TreeNoncesEvent,
     TreeSigningStartedEvent,
 } from "../providers/ark";
@@ -108,7 +109,7 @@ import { Transaction } from "../utils/transaction";
 import {
     byValueDescending,
     DEFAULT_SETTLEMENT_CONFIG,
-    MAX_INPUTS_PER_INTENT,
+    MAX_INPUTS_PER_PROOF,
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
@@ -116,7 +117,7 @@ import {
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { ArkadeCash } from "../arkadeCash";
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
@@ -222,7 +223,7 @@ import {
     MissingSigningDescriptorError,
 } from "./signingErrors";
 
-// Build per-input jobs for an intent proof. Index 0 of the proof is a
+// Build per-input jobs for a proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
 // coin[0]'s pkScript, so we map it to the same source contract as
 // coin[0]; coins 0..N-1 then map to proof inputs 1..N.
@@ -250,9 +251,9 @@ function asSendParams(args: [SendParams] | [Recipient, ...Recipient[]]): SendPar
     return { recipients: args as [Recipient, ...Recipient[]] };
 }
 
-// Built-in and decorated ArkProvider implementations may expose `serverUrl`.
+// Built-in and decorated OperatorProvider implementations may expose `serverUrl`.
 // The interface does not require it, so custom providers can return undefined.
-export function extractArkProviderUrl(provider: ArkProvider): string | undefined {
+export function extractOperatorProviderUrl(provider: OperatorProvider): string | undefined {
     const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
     return typeof serverUrl === "string" && serverUrl.length > 0 ? serverUrl : undefined;
 }
@@ -833,7 +834,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
         /** Narrowed so a readonly wallet can't grow a `submitTx` use; `Wallet` re-widens it. */
-        protected readonly arkProvider: Pick<ArkProvider, "getInfo">,
+        protected readonly arkProvider: Pick<OperatorProvider, "getInfo">,
         readonly indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -1015,26 +1016,30 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /** Shared setup for ReadonlyWallet.create() and Wallet.create(). */
     protected static async setupWalletConfig(config: ReadonlyWalletConfig, pubKey: Uint8Array) {
+        if (config.operatorProvider && config.arkProvider) {
+            throw new Error("Pass either `operatorProvider` or `arkProvider`, not both");
+        }
+        const callerProvider = config.operatorProvider ?? config.arkProvider;
         if (
             config.service &&
-            (config.arkProvider || config.indexerProvider || config.onchainProvider)
+            (callerProvider || config.indexerProvider || config.onchainProvider)
         ) {
             throw new Error(
-                "Pass either `service` or `arkProvider`/`indexerProvider`/`onchainProvider`, not both",
+                "Pass either `service` or `operatorProvider`/`indexerProvider`/`onchainProvider`, not both",
             );
         }
         const arkProvider =
-            config.arkProvider ||
-            new RestArkProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
+            callerProvider ||
+            new RestOperatorProvider(config.service ? arkadeServiceUrl(config.service) : undefined);
         let indexerProvider = config.indexerProvider;
         if (!indexerProvider && !config.service) {
-            const derived = extractArkProviderUrl(arkProvider);
-            // Refuse to pair a caller's own ark provider with the public default: the wallet would
+            const derived = extractOperatorProviderUrl(arkProvider);
+            // Refuse to pair a caller's own operator provider with the public default: the wallet would
             // read its VTXOs from a server that has never seen them, and report phantom coins and
             // missed receipts rather than an error.
-            if (!derived && config.arkProvider) {
+            if (!derived && callerProvider) {
                 throw new Error(
-                    "indexerProvider is required when arkProvider is provided without a discoverable serverUrl",
+                    "indexerProvider is required when operatorProvider is provided without a discoverable serverUrl",
                 );
             }
             indexerProvider = new RestIndexerProvider(derived ?? DEFAULT_ARKADE_SERVER_URL);
@@ -1628,27 +1633,61 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const commitmentsToIgnore = new Set<string>();
         const tapscripts = await this.getBoardingTapscripts(this.watchedBoardingSigners());
 
-        const outspendCache = new Map<
+        // One in-flight promise per provider call. A sequential cache never overlapped the
+        // round trips, and two outputs of one tx would each refetch `/outspends`.
+        const getOne = this.onchainProvider.getTxOutspend?.bind(this.onchainProvider);
+        const listInflight = new Map<
             string,
-            Awaited<ReturnType<typeof this.onchainProvider.getTxOutspends>>
+            ReturnType<typeof this.onchainProvider.getTxOutspends>
         >();
-        const outspendOf = async (txid: string, index: number) => {
-            if (this.onchainProvider.getTxOutspend) {
-                return this.onchainProvider.getTxOutspend(txid, index);
+        const oneInflight = new Map<string, Promise<{ spent: boolean; txid?: string }>>();
+        const outspendOf = (txid: string, index: number) => {
+            if (getOne) {
+                const key = `${txid}:${index}`;
+                let pending = oneInflight.get(key);
+                if (!pending) {
+                    pending = getOne(txid, index);
+                    oneInflight.set(key, pending);
+                }
+                return pending;
             }
-            let statuses = outspendCache.get(txid);
-            if (!statuses) {
-                statuses = await this.onchainProvider.getTxOutspends(txid);
-                outspendCache.set(txid, statuses);
+            let pending = listInflight.get(txid);
+            if (!pending) {
+                pending = this.onchainProvider.getTxOutspends(txid);
+                listInflight.set(txid, pending);
             }
-            return statuses[index];
+            return pending.then((statuses) => statuses[index]);
         };
 
-        for (const tapscript of tapscripts) {
-            const boardingAddress = tapscript.onchainAddress(this.network);
-            const scriptHex = hex.encode(tapscript.pkScript);
-            const txs = await this.onchainProvider.getTransactions(boardingAddress);
+        // Address histories are independent. Merge in tapscript order so a wallet with several
+        // boarding addresses still reports them in the same order as a sequential scan, and so
+        // the first address's failure is still the one thrown.
+        const historyResults = await Promise.allSettled(
+            tapscripts.map(async (tapscript) => {
+                const boardingAddress = tapscript.onchainAddress(this.network);
+                return {
+                    boardingAddress,
+                    scriptHex: hex.encode(tapscript.pkScript),
+                    txs: await this.onchainProvider.getTransactions(boardingAddress),
+                };
+            }),
+        );
+        const histories = historyResults.map((result) => {
+            if (result.status === "rejected") throw result.reason;
+            return result.value;
+        });
 
+        const outputs: {
+            txid: string;
+            vout: number;
+            value: number;
+            confirmed: boolean;
+            blockTime: number;
+            scriptHex: string;
+            commitmentFromVin: string | undefined;
+            spentStatus: Promise<{ spent: boolean; txid?: string } | undefined>;
+        }[] = [];
+        for (const { boardingAddress, scriptHex, txs } of histories) {
             // Fallback spender (commitment) txid from this address history's vins: some Esplora
             // deployments (e.g. mempool.arkade.sh) return `/outspends` `{spent:true}` WITHOUT the
             // txid, which would double-count the resulting VTXO as a phantom receive.
@@ -1662,44 +1701,55 @@ export class ReadonlyWallet implements IReadonlyWallet {
             for (const tx of txs) {
                 for (let i = 0; i < tx.vout.length; i++) {
                     const vout = tx.vout[i];
-                    if (vout.scriptpubkey_address === boardingAddress) {
-                        const spentStatus = await outspendOf(tx.txid, i);
-
-                        // `||` (not `??`) so the electrum provider's `txid: ""` sentinel for
-                        // unspent outputs falls through to the vin lookup.
-                        const commitmentTxid =
-                            spentStatus?.txid || commitmentByOutpoint.get(`${tx.txid}:${i}`);
-                        const spent = Boolean(spentStatus?.spent) || commitmentTxid !== undefined;
-
-                        if (spent && commitmentTxid) {
-                            commitmentsToIgnore.add(commitmentTxid);
-                        }
-
-                        const boardingFacts = {
-                            isSpent: spent,
-                            isSwept: false,
-                            isPreconfirmed: false,
-                            commitmentTxIds: spent && commitmentTxid ? [commitmentTxid] : [],
-                        };
-                        utxos.push({
-                            txid: tx.txid,
-                            vout: i,
-                            value: Number(vout.value),
-                            status: {
-                                confirmed: tx.status.confirmed,
-                                block_time: tx.status.block_time,
-                            },
-                            isUnrolled: true,
-                            ...boardingFacts,
-                            spentBy: "",
-                            createdAt: tx.status.confirmed
-                                ? new Date(tx.status.block_time * 1000)
-                                : new Date(0),
-                            script: scriptHex,
-                        });
-                    }
+                    if (vout.scriptpubkey_address !== boardingAddress) continue;
+                    outputs.push({
+                        txid: tx.txid,
+                        vout: i,
+                        value: Number(vout.value),
+                        confirmed: tx.status.confirmed,
+                        blockTime: tx.status.block_time,
+                        scriptHex,
+                        commitmentFromVin: commitmentByOutpoint.get(`${tx.txid}:${i}`),
+                        spentStatus: outspendOf(tx.txid, i),
+                    });
                 }
             }
+        }
+
+        const spentResults = await Promise.allSettled(outputs.map((output) => output.spentStatus));
+        for (const [i, output] of outputs.entries()) {
+            const spentResult = spentResults[i];
+            if (spentResult.status === "rejected") throw spentResult.reason;
+            const spentStatus = spentResult.value;
+            // `||` (not `??`) so the electrum provider's `txid: ""` sentinel for
+            // unspent outputs falls through to the vin lookup.
+            const commitmentTxid = spentStatus?.txid || output.commitmentFromVin;
+            const spent = Boolean(spentStatus?.spent) || commitmentTxid !== undefined;
+
+            if (spent && commitmentTxid) {
+                commitmentsToIgnore.add(commitmentTxid);
+            }
+
+            const boardingFacts = {
+                isSpent: spent,
+                isSwept: false,
+                isPreconfirmed: false,
+                commitmentTxIds: spent && commitmentTxid ? [commitmentTxid] : [],
+            };
+            utxos.push({
+                txid: output.txid,
+                vout: output.vout,
+                value: output.value,
+                status: {
+                    confirmed: output.confirmed,
+                    block_time: output.blockTime,
+                },
+                isUnrolled: true,
+                ...boardingFacts,
+                spentBy: "",
+                createdAt: output.confirmed ? new Date(output.blockTime * 1000) : new Date(0),
+                script: output.scriptHex,
+            });
         }
 
         const unconfirmedTxs: ArkTransaction[] = [];
@@ -1816,10 +1866,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
         // `saveUtxos` merges, so prune rows the fetch no longer returns: a coin spent elsewhere
         // would otherwise linger for `getStoredBoardingUtxos` to report. Pruning only after the
-        // save leaves the previous snapshot intact if that save fails.
+        // save leaves the previous snapshot intact if that save fails. Reads overlap; writes stay
+        // one address at a time so a shared SQLite connection is not asked to write concurrently.
+        const cachedByAddress = await Promise.all(
+            addresses.map((address) => collectUtxos(this.walletRepository, address)),
+        );
         for (const [i, group] of groups.entries()) {
             const fresh = new Set(group.coins.map((coin) => `${coin.txid}:${coin.vout}`));
-            const cached = await collectUtxos(this.walletRepository, addresses[i]);
+            const cached = cachedByAddress[i];
             const kept = cached.filter((coin) => fresh.has(`${coin.txid}:${coin.vout}`));
             if (kept.length === cached.length) continue;
             await this.walletRepository.deleteUtxos(addresses[i]);
@@ -1844,14 +1898,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending, for SDK
-     * picks. The getter itself lists them: callers that mirror it (the worker's cache and
-     * broadcasts, balances) must not see a settle's inputs vanish, and then stay gone if it fails.
+     * @internal {@link getBoardingUtxos} minus those an in-flight settle is spending or an
+     * unresolved intent locks, for SDK picks. The getter itself lists them: callers that mirror it
+     * (the worker's cache and broadcasts, balances) must not see a settle's inputs vanish, and then
+     * stay gone if it fails.
      */
     async getSelectableBoardingUtxos(): Promise<ExtendedCoin[]> {
-        return (await this.getBoardingUtxos()).filter(
-            (coin) => !this._pendingSpendOutpoints.has(`${coin.txid}:${coin.vout}`),
-        );
+        const [utxos, locked] = await Promise.all([
+            this.getBoardingUtxos(),
+            this.lockedOutpoints(),
+        ]);
+        return utxos.filter((coin) => {
+            const key = `${coin.txid}:${coin.vout}`;
+            return !this._pendingSpendOutpoints.has(key) && !locked.has(key);
+        });
     }
 
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
@@ -1878,6 +1938,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @returns A function that stops the subscriptions
      */
     async notifyIncomingFunds(eventCallback: (coins: IncomingFunds) => void): Promise<() => void> {
+        const cm = this.indexerProvider ? await this.getContractManager() : undefined;
         const arkAddress = await this.getAddress();
 
         let onchainStopFunc: (() => void) | undefined;
@@ -1955,11 +2016,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         await subscribeOnchain();
 
-        if (this.indexerProvider && arkAddress) {
+        if (cm && arkAddress) {
             // Share the ContractWatcher's single subscription instead of
             // opening a second SSE stream.
-            const cm = await this.getContractManager();
-
             // Serialized: parallel `annotateVtxos` could deliver e.g. `vtxo_spent` before its
             // matching `vtxo_received`.
             let annotationQueue: Promise<void> = Promise.resolve();
@@ -2139,22 +2198,31 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 extraSources: capture?.sources,
             });
             onVtxosPersisted = async (_contract, vtxos) => {
-                for (const v of vtxos) {
-                    if (v.isSpent) continue;
-                    await captureExitBranch({
-                        resolver,
-                        repository: virtualTxRepository,
-                        vtxo: { txid: v.txid, vout: v.vout },
-                        value: v.value,
-                        mode: capture?.mode ?? DEFAULT_EXIT_CAPTURE_MODE,
-                        minExitWorthSats: capture?.minExitWorthSats ?? DEFAULT_MIN_EXIT_WORTH_SATS,
-                    }).catch(() => {
-                        // capture is best-effort
-                    });
-                }
+                // Each branch is its own read and write. Shared ancestors merge inside the
+                // repository, so the captures do not have to wait on each other.
+                await Promise.all(
+                    vtxos.map((v) => {
+                        if (v.isSpent) return undefined;
+                        return captureExitBranch({
+                            resolver,
+                            repository: virtualTxRepository,
+                            vtxo: { txid: v.txid, vout: v.vout },
+                            value: v.value,
+                            mode: capture?.mode ?? DEFAULT_EXIT_CAPTURE_MODE,
+                            minExitWorthSats:
+                                capture?.minExitWorthSats ?? DEFAULT_MIN_EXIT_WORTH_SATS,
+                        }).catch(() => {
+                            // capture is best-effort
+                        });
+                    }),
+                );
             };
             onVtxosSpent = (vtxos) => pruneExitBranches(virtualTxRepository, vtxos);
         }
+        // The baseline pubkey is not an input to construction. Asking during create overlaps
+        // the identity round trip with indexer hydration instead of paying it afterwards.
+        const baselinePubkeyPromise = this.identity.xOnlyPublicKey();
+        void baselinePubkeyPromise.catch(() => undefined);
         const manager = await ContractManager.create({
             lazyInitialization: this.lazyInitialization,
             indexerProvider: this.indexerProvider,
@@ -2174,108 +2242,115 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 return { height, time };
             },
         });
-
-        // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
-        // to INDEX 0 (identity x-only key) as the permanent fallback set. Rotated display
-        // contracts are single-timelock at the current delay and tagged WALLET_RECEIVE_SOURCE;
-        // the matrix is deliberately NOT re-registered at rotated keys (it would expand per boot).
-        const baselinePubkey = await this.identity.xOnlyPublicKey();
-        // The matrix also fans the SERVER-signer axis (current + every deprecated signer), so funds
-        // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
-        // by scriptHex.
-        const delegatePubKey =
-            this.offchainTapscript instanceof DelegateVtxo.Script
-                ? this.offchainTapscript.options.delegatePubKey
-                : undefined;
-        const baselineSigners = [
-            this.offchainTapscript.options.serverPubKey,
-            ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
-        ];
-        const seenBaselineScripts = new Set<string>();
-        const baseline: CreateContractParams[] = [];
-        for (const serverPubKey of baselineSigners) {
-            for (const csvTimelock of this.walletContractTimelocks) {
-                const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-                const defaultScript = new DefaultVtxo.Script({
-                    pubKey: baselinePubkey,
-                    serverPubKey,
-                    csvTimelock,
-                });
-                const defaultScriptHex = hex.encode(defaultScript.pkScript);
-
-                if (!seenBaselineScripts.has(defaultScriptHex)) {
-                    seenBaselineScripts.add(defaultScriptHex);
-                    // Persisted before the boarding baseline below, so in the degenerate
-                    // equal-delay collision the index-0 row stays `default` (first-wins).
-                    baseline.push({
-                        type: "default",
-                        params: {
-                            pubKey: hex.encode(defaultScript.options.pubKey),
-                            serverPubKey: hex.encode(serverPubKey),
-                            csvTimelock: csvTimelockStr,
-                        },
-                        script: defaultScriptHex,
-                        address: defaultScript.address(this.network.hrp, serverPubKey).encode(),
-                        state: "active",
-                    });
-                }
-
-                if (delegatePubKey) {
-                    const delegateScript = new DelegateVtxo.Script({
+        try {
+            // Baseline always-active contracts: `walletContractTimelocks` × {default, delegate}, bound
+            // to INDEX 0 (identity x-only key) as the permanent fallback set. Rotated display
+            // contracts are single-timelock at the current delay and tagged WALLET_RECEIVE_SOURCE;
+            // the matrix is deliberately NOT re-registered at rotated keys (it would expand per boot).
+            const baselinePubkey = await baselinePubkeyPromise;
+            // The matrix also fans the SERVER-signer axis (current + every deprecated signer), so funds
+            // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
+            // by scriptHex.
+            const delegatePubKey =
+                this.offchainTapscript instanceof DelegateVtxo.Script
+                    ? this.offchainTapscript.options.delegatePubKey
+                    : undefined;
+            const baselineSigners = [
+                this.offchainTapscript.options.serverPubKey,
+                ...[...this._deprecatedSigners.keys()].map((h) => hex.decode(h)),
+            ];
+            const seenBaselineScripts = new Set<string>();
+            const baseline: CreateContractParams[] = [];
+            for (const serverPubKey of baselineSigners) {
+                for (const csvTimelock of this.walletContractTimelocks) {
+                    const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+                    const defaultScript = new DefaultVtxo.Script({
                         pubKey: baselinePubkey,
                         serverPubKey,
-                        delegatePubKey,
                         csvTimelock,
                     });
-                    const delegateScriptHex = hex.encode(delegateScript.pkScript);
+                    const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
-                    if (seenBaselineScripts.has(delegateScriptHex)) continue;
-                    seenBaselineScripts.add(delegateScriptHex);
-                    baseline.push({
-                        type: "delegate",
-                        params: {
-                            pubKey: hex.encode(delegateScript.options.pubKey),
-                            serverPubKey: hex.encode(serverPubKey),
-                            delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
-                            csvTimelock: csvTimelockStr,
-                        },
-                        script: delegateScriptHex,
-                        address: delegateScript.address(this.network.hrp, serverPubKey).encode(),
-                        state: "active",
-                    });
+                    if (!seenBaselineScripts.has(defaultScriptHex)) {
+                        seenBaselineScripts.add(defaultScriptHex);
+                        // Persisted before the boarding baseline below, so in the degenerate
+                        // equal-delay collision the index-0 row stays `default` (first-wins).
+                        baseline.push({
+                            type: "default",
+                            params: {
+                                pubKey: hex.encode(defaultScript.options.pubKey),
+                                serverPubKey: hex.encode(serverPubKey),
+                                csvTimelock: csvTimelockStr,
+                            },
+                            script: defaultScriptHex,
+                            address: defaultScript.address(this.network.hrp, serverPubKey).encode(),
+                            state: "active",
+                        });
+                    }
+
+                    if (delegatePubKey) {
+                        const delegateScript = new DelegateVtxo.Script({
+                            pubKey: baselinePubkey,
+                            serverPubKey,
+                            delegatePubKey,
+                            csvTimelock,
+                        });
+                        const delegateScriptHex = hex.encode(delegateScript.pkScript);
+
+                        if (seenBaselineScripts.has(delegateScriptHex)) continue;
+                        seenBaselineScripts.add(delegateScriptHex);
+                        baseline.push({
+                            type: "delegate",
+                            params: {
+                                pubKey: hex.encode(delegateScript.options.pubKey),
+                                serverPubKey: hex.encode(serverPubKey),
+                                delegatePubKey: hex.encode(delegateScript.options.delegatePubKey),
+                                csvTimelock: csvTimelockStr,
+                            },
+                            script: delegateScriptHex,
+                            address: delegateScript
+                                .address(this.network.hrp, serverPubKey)
+                                .encode(),
+                            state: "active",
+                        });
+                    }
                 }
             }
-        }
 
-        // Baseline boarding rows, anchored at INDEX 0 (`baselinePubkey`, NOT the possibly-rotated
-        // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
-        // is index-independent. Same signer axis as above; only the signer fans, since the
-        // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
-        // default/delegate one (degenerate equal delays) stays that type via the shared set.
-        const boardingCsvTimelock =
-            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        for (const serverPubKey of baselineSigners) {
-            const baselineBoarding = new DefaultVtxo.Script({
-                pubKey: baselinePubkey,
-                serverPubKey,
-                csvTimelock: boardingCsvTimelock,
-            });
-            const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
-            if (seenBaselineScripts.has(boardingScriptHex)) continue;
-            seenBaselineScripts.add(boardingScriptHex);
-            baseline.push({
-                type: "boarding",
-                params: {
-                    pubKey: hex.encode(baselineBoarding.options.pubKey),
-                    serverPubKey: hex.encode(serverPubKey),
-                    csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
-                },
-                script: boardingScriptHex,
-                address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
-                state: "active",
-            });
+            // Baseline boarding rows, anchored at INDEX 0 (`baselinePubkey`, NOT the possibly-rotated
+            // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
+            // is index-independent. Same signer axis as above; only the signer fans, since the
+            // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
+            // default/delegate one (degenerate equal delays) stays that type via the shared set.
+            const boardingCsvTimelock =
+                this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+            for (const serverPubKey of baselineSigners) {
+                const baselineBoarding = new DefaultVtxo.Script({
+                    pubKey: baselinePubkey,
+                    serverPubKey,
+                    csvTimelock: boardingCsvTimelock,
+                });
+                const boardingScriptHex = hex.encode(baselineBoarding.pkScript);
+                if (seenBaselineScripts.has(boardingScriptHex)) continue;
+                seenBaselineScripts.add(boardingScriptHex);
+                baseline.push({
+                    type: "boarding",
+                    params: {
+                        pubKey: hex.encode(baselineBoarding.options.pubKey),
+                        serverPubKey: hex.encode(serverPubKey),
+                        csvTimelock: timelockToSequence(boardingCsvTimelock).toString(),
+                    },
+                    script: boardingScriptHex,
+                    address: baselineBoarding.address(this.network.hrp, serverPubKey).encode(),
+                    state: "active",
+                });
+            }
+            await manager.createContracts(baseline);
+        } catch (error) {
+            // No caller holds it yet, so nothing else would stop its watcher's stream and polling.
+            await manager.dispose().catch(() => undefined);
+            throw error;
         }
-        await manager.createContracts(baseline);
 
         return manager;
     }
@@ -2307,14 +2382,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * // Create a wallet with providers
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   onchainProvider: new EsploraProvider()
  * });
  *
  * // Use custom providers and/or URLs (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
+ *   operatorProvider: new ExpoOperatorProvider('https://arkade.computer'),
  *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
  *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
@@ -2917,13 +2992,14 @@ export class Wallet
         const manager = await this.getContractManager();
 
         // Carry the current rows' signing metadata so a descriptor-backed owner keeps signing.
-        const [currentOffchainRow] = await manager.getContracts({
-            script: this.defaultContractScript,
-        });
+        // The two scripts are different rows; nothing about one read depends on the other.
         const currentBoardingScript = hex.encode(this._boardingTapscript.pkScript);
-        const [currentBoardingRow] = await manager.getContracts({
-            script: currentBoardingScript,
-        });
+        const [offchainRows, boardingRows] = await Promise.all([
+            manager.getContracts({ script: this.defaultContractScript }),
+            manager.getContracts({ script: currentBoardingScript }),
+        ]);
+        const [currentOffchainRow] = offchainRows;
+        const [currentBoardingRow] = boardingRows;
 
         // Build the new tapscripts locally, preserving every option but the
         // server key (mirrors `rebuildTapscript`, swapping serverPubKey).
@@ -3136,14 +3212,18 @@ export class Wallet
     }
 
     private async _runRestore(gapLimit: number): Promise<void> {
-        const manager = await this.getContractManager();
         // Keyring foreign keys sit outside the derivation tree the gap scan walks, so only the
         // unwrapped HD provider counts. `instanceof` (inside the getter), not duck-typing: a
         // non-HD provider exposing a same-named method would TypeError mid-scan.
         const provider = this._hdProvider;
         const hd = provider !== undefined;
 
-        const staticDescriptor = hd ? undefined : await identityDescriptor(this.identity);
+        // Manager init, the static identity descriptor, and server info do not use each other.
+        const [manager, staticDescriptor, arkInfo] = await Promise.all([
+            this.getContractManager(),
+            hd ? undefined : identityDescriptor(this.identity),
+            this.arkProvider.getInfo(),
+        ]);
         const materialize = (index: number): string =>
             hd ? provider.materializeDescriptorAt(index) : staticDescriptor!;
 
@@ -3154,7 +3234,6 @@ export class Wallet
 
         // Current and deprecated signers from one fresh snapshot so they're mutually consistent
         // (NArk parity), rather than mixing a stale instance signer with fresh history.
-        const arkInfo = await this.arkProvider.getInfo();
         const currentSignerPubKey = toXOnly(hex.decode(arkInfo.signerPubkey), "ark signer key");
         const deprecatedSignerPubKeys = arkInfo.deprecatedSigners.map((s) =>
             toXOnly(hex.decode(s.pubkey), "deprecated signer key"),
@@ -3233,7 +3312,7 @@ export class Wallet
     }
 
     /** Public here; `ReadonlyWallet` keeps it protected so a readonly view can't submit. */
-    declare readonly arkProvider: ArkProvider;
+    declare readonly arkProvider: OperatorProvider;
 
     /**
      * Broadcast access bound to this wallet's server, so a plugin needs only the wallet. Not on
@@ -3252,7 +3331,7 @@ export class Wallet
         identity: Identity,
         network: Network,
         onchainProvider: OnchainProvider,
-        arkProvider: ArkProvider,
+        arkProvider: OperatorProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
         offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
@@ -3273,6 +3352,8 @@ export class Wallet
         lookAheadWindow?: number,
         /** Overrides for the `batchExpiry` bounds; defaults derive from `network`. */
         protected readonly batchExpiryPolicy?: Partial<BatchExpiryPolicy>,
+        /** @see WalletConfig.oneShotSubmit */
+        readonly oneShotSubmit: boolean = true,
     ) {
         super(
             identity,
@@ -3402,7 +3483,7 @@ export class Wallet
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   operatorProvider: new RestOperatorProvider(),
      * });
      * ```
      */
@@ -3500,6 +3581,7 @@ export class Wallet
                     ? { minSeconds: config.minBatchExpirySeconds }
                     : {}),
             },
+            config.oneShotSubmit,
         );
         wallet.lazyInitialization = config.lazyInitialization ?? false;
         wallet._serverInfoSource = setup.serverInfoSource;
@@ -3513,7 +3595,7 @@ export class Wallet
         }
         wallet.refreshDeprecatedSigners(setup.info);
         // Re-derive signer-dependent state when the provider refetches info on DIGEST_MISMATCH.
-        // Duck-typed: only RestArkProvider implements it.
+        // Duck-typed: only RestOperatorProvider implements it.
         {
             const ap = setup.arkProvider as Partial<{
                 onServerInfoChanged(
@@ -3812,7 +3894,7 @@ export class Wallet
         }
 
         // if some of the inputs hold assets, build the asset packet and append as output
-        // in the intent proof tx, there is a "fake" input at index 0
+        // in the proof tx, there is a "fake" input at index 0
         // so the real coin indices are offset by +1
         const assetInputs = new Map<number, Asset[]>();
         for (let i = 0; i < params.inputs.length; i++) {
@@ -3876,7 +3958,7 @@ export class Wallet
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
-        // Client-side intent key: the intent proof's txid (NArk parity).
+        // Client-side key: the proof's txid (NArk parity).
         // Falls back to a deterministic outpoint digest if the special
         // intent PSBT can't be decoded — keeps persistence resilient.
         let intentTxId: string;
@@ -4005,29 +4087,35 @@ export class Wallet
                 );
                 throw error;
             }
-            // Pre-commit failure: release the server intent so the next settle
-            // doesn't hit "duplicated input", and record the cancellation.
+            // Failed deletion leaves the durable input locks for reconciliation to retry.
             const inputIds = params.inputs.map((i) => `${i.txid}:${i.vout}`).join(",");
+            let released = !registering;
             if (registering) {
-                await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
-                    // Nothing held: the server refused the registration, or already dropped it.
-                    if (isNoMatchingIntentsError(e)) return;
-                    console.warn(
-                        `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
-                        e,
-                    );
-                });
+                try {
+                    await this.arkProvider.deleteIntent(deleteIntent);
+                    released = true;
+                } catch (e) {
+                    if (isNoMatchingIntentsError(e)) released = true;
+                    else {
+                        console.warn(
+                            `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                            e,
+                        );
+                    }
+                }
             }
-            await this.persistIntentSnapshot(
-                intentTxId,
-                "cancelled",
-                intent,
-                deleteIntent,
-                params.inputs,
-                {
-                    cancellationReason: error instanceof Error ? error.message : String(error),
-                },
-            );
+            if (released) {
+                await this.persistIntentSnapshot(
+                    intentTxId,
+                    "cancelled",
+                    intent,
+                    deleteIntent,
+                    params.inputs,
+                    {
+                        cancellationReason: error instanceof Error ? error.message : String(error),
+                    },
+                );
+            }
             throw error;
         } finally {
             // Clear first so a synchronous handler firing from abort() never sees stale state.
@@ -4268,7 +4356,7 @@ export class Wallet
                 }
 
                 if (!this.arkProvider) {
-                    throw new Error("Arkade provider not configured");
+                    throw new Error("Operator provider not configured");
                 }
 
                 // Bound the expiry before confirming, so a rejected round is
@@ -4408,8 +4496,8 @@ export class Wallet
     private async persistIntentSnapshot(
         intentTxId: string,
         state: ArkIntentState,
-        intent: SignedIntent<Intent.RegisterMessage>,
-        deleteIntent: SignedIntent<Intent.DeleteMessage>,
+        intent: SignedProof<Proof.RegisterMessage>,
+        deleteIntent: SignedProof<Proof.DeleteMessage>,
         inputs: ExtendedCoin[],
         patch?: Partial<ArkIntent>,
     ): Promise<void> {
@@ -4427,7 +4515,7 @@ export class Wallet
                 ...(existing ?? {}),
                 intentTxId,
                 registerProof: intent.proof,
-                registerProofMessage: Intent.encodeMessage(intent.message),
+                registerProofMessage: Proof.encodeMessage(intent.message),
                 deleteProof: deleteIntent.proof,
                 deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
                 intentVtxos: inputs.map((i) => ({
@@ -4493,8 +4581,8 @@ export class Wallet
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[],
         validAt?: number,
-    ): Promise<SignedIntent<Intent.RegisterMessage>> {
-        const message: Intent.RegisterMessage = {
+    ): Promise<SignedProof<Proof.RegisterMessage>> {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: validAt ? Math.floor(validAt) : 0,
@@ -4502,7 +4590,7 @@ export class Wallet
             cosigners_public_keys: cosignerPubKeys,
         };
 
-        const proof = Intent.create(message, coins, outputs);
+        const proof = Proof.create(message, coins, outputs);
         const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
 
         return {
@@ -4513,13 +4601,13 @@ export class Wallet
 
     async makeDeleteIntentSignature(
         coins: ExtendedCoin[],
-    ): Promise<SignedIntent<Intent.DeleteMessage>> {
-        const message: Intent.DeleteMessage = {
+    ): Promise<SignedProof<Proof.DeleteMessage>> {
+        const message: Proof.DeleteMessage = {
             type: "delete",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, coins, []);
+        const proof = Proof.create(message, coins, []);
         const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
 
         return {
@@ -4530,13 +4618,13 @@ export class Wallet
 
     async makeGetPendingTxIntentSignature(
         coins: ExtendedVirtualCoin[],
-    ): Promise<SignedIntent<Intent.GetPendingTxMessage>> {
-        const message: Intent.GetPendingTxMessage = {
+    ): Promise<SignedProof<Proof.GetPendingTxMessage>> {
+        const message: Proof.GetPendingTxMessage = {
             type: "get-pending-tx",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, coins, []);
+        const proof = Proof.create(message, coins, []);
         const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
 
         return {
@@ -4590,8 +4678,8 @@ export class Wallet
             vtxos = allExtended;
         }
         const batches: ExtendedVirtualCoin[][] = [];
-        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
-            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
+        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_PROOF) {
+            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_PROOF));
         }
 
         const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
@@ -4894,6 +4982,7 @@ export class Wallet
                         ],
                         outputs: [{ script: myPkScript, amount: BigInt(vtxo.value) }],
                         serverUnrollScript,
+                        oneShot: this.oneShotSubmit,
                     });
                     swept += vtxo.value;
                 } catch (error) {
@@ -5181,14 +5270,14 @@ export class Wallet
 
         const identity = cash.identity;
 
-        // Chunked to the server's MAX_INPUTS_PER_INTENT; deduped by arkTxid since a tx can
+        // Chunked to the server's MAX_INPUTS_PER_PROOF; deduped by arkTxid since a tx can
         // surface under two chunks.
         const seenTxids = new Set<string>();
         const pendingTxs: PendingTx[] = [];
-        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_INTENT) {
-            const batch = inputs.slice(i, i + MAX_INPUTS_PER_INTENT);
-            const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
-            const proof = Intent.create(message, batch, []);
+        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_PROOF) {
+            const batch = inputs.slice(i, i + MAX_INPUTS_PER_PROOF);
+            const message: Proof.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
+            const proof = Proof.create(message, batch, []);
             // All inputs incl. index 0 (BIP-322 toSpend, mirroring input 1) are cash inputs;
             // explicit indexes surface a failure instead of shipping a half-signed proof.
             const signedProof = await identity.sign(
@@ -5845,7 +5934,7 @@ export class Wallet
 
     /**
      * Build an offchain transaction from the given inputs and outputs,
-     * sign it, submit to the Arkade provider, and finalize.
+     * sign it, submit to the operator provider, and finalize.
      *
      * Signs whatever it is handed, ungated — see {@link settle} for the trade.
      *
@@ -5993,6 +6082,7 @@ export class Wallet
                             hex.decode(h),
                         ),
                     },
+                    oneShot: this.oneShotSubmit,
                 },
             );
         } finally {

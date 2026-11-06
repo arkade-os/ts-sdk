@@ -56,7 +56,7 @@ describe("selectPendingRecoveryOutpoints", () => {
 
     it("excludes an exited VTXO while keeping its sibling on the same contract", () => {
         // The exit is the user's own doing and `completeUnroll` is its remedy;
-        // reporting it as pendingRecovery would blame the signer rotation.
+        // reporting it as deprecatedSignerLocked would blame the signer rotation.
         const out = selectPendingRecoveryOutpoints(
             [
                 row(EXPIRED_SIGNER, [

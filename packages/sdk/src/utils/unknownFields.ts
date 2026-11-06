@@ -116,7 +116,7 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
 
 /**
  * PrevArkTxField carries the serialized raw bitcoin tx of the previous Ark tx
- * spent by an input. Used by OP_INSPECTINPUTSCRIPTPUBKEY on intent proofs and
+ * spent by an input. Used by OP_INSPECTINPUTSCRIPTPUBKEY on proofs and
  * other contexts where the prevout pkScript must be looked up off-chain.
  *
  * Key: [0xde] || "prevarktx". Value: serialized wire.MsgTx (NOT a PSBT).

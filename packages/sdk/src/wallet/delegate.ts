@@ -2,7 +2,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     Asset,
     decodeTapscript,
     DelegateInfo,
@@ -10,12 +10,12 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     Identity,
-    Intent,
+    Proof,
     isSubdust,
     MultisigTapscript,
     Outpoint,
     Recipient,
-    SignedIntent,
+    SignedProof,
     TapLeafScript,
     Transaction,
     VirtualCoin,
@@ -70,7 +70,7 @@ export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
         readonly delegateProvider: DelegateProvider,
-        readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
+        readonly arkInfoProvider: Pick<OperatorProvider, "getInfo">,
         readonly identity: Identity,
     ) {}
 
@@ -92,9 +92,11 @@ export class DelegateManagerImpl implements IDelegateManager {
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
-        // fetch server and delegate info once, shared across all groups
-        const arkInfo = await this.arkInfoProvider.getInfo();
-        const delegateInfo = await this.delegateProvider.getDelegateInfo();
+        // Server info and delegate info come from different providers and share nothing.
+        const [arkInfo, delegateInfo] = await Promise.all([
+            this.arkInfoProvider.getInfo(),
+            this.delegateProvider.getDelegateInfo(),
+        ]);
 
         // keep only vtxos that can be signed by the delegate. The guard
         // narrows ContractVtxo (with optional taproot fields) to the
@@ -374,9 +376,9 @@ async function makeSignedDelegateIntent(
     cosignerPubKeys: string[],
     validAt: number,
     destinationScript: Bytes,
-): Promise<SignedIntent<Intent.RegisterMessage>> {
+): Promise<SignedProof<Proof.RegisterMessage>> {
     // if some of the inputs hold assets, build the asset packet and append as output
-    // in the intent proof tx, there is a "fake" input at index 0
+    // in the proof tx, there is a "fake" input at index 0
     // so the real coin indices are offset by +1
     const assetInputs = new Map<number, Asset[]>();
     for (let i = 0; i < coins.length; i++) {
@@ -422,7 +424,7 @@ async function makeSignedDelegateIntent(
         outputs.push(Extension.create([assetPacket]).txOut());
     }
 
-    const message: Intent.RegisterMessage = {
+    const message: Proof.RegisterMessage = {
         type: "register",
         onchain_output_indexes: onchainOutputsIndexes,
         valid_at: Math.floor(validAt),
@@ -430,7 +432,7 @@ async function makeSignedDelegateIntent(
         cosigners_public_keys: cosignerPubKeys,
     };
 
-    const proof = Intent.create(message, coins, outputs);
+    const proof = Proof.create(message, coins, outputs);
     const signedProof = await identity.sign(proof);
 
     return {

@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { RestArkProvider } from "../src/providers/ark";
+import { configureEventSource } from "../src/providers/eventSource";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
+
+afterEach(() => configureEventSource(undefined));
 
 describe("RestArkProvider.getEventStream", () => {
     beforeEach(() => {
         MockEventSource.reset();
-        vi.stubGlobal("EventSource", MockEventSource);
+        configureEventSource((url) => new MockEventSource(url));
         // Keep test output focused if a failure path logs while unwinding.
         vi.spyOn(console, "error").mockImplementation(() => {});
     });
@@ -79,7 +82,7 @@ describe("RestArkProvider.getEventStream", () => {
 describe("RestArkProvider.getTransactionsStream", () => {
     beforeEach(() => {
         MockEventSource.reset();
-        vi.stubGlobal("EventSource", MockEventSource);
+        configureEventSource((url) => new MockEventSource(url));
         vi.spyOn(console, "warn").mockImplementation(() => {});
     });
 

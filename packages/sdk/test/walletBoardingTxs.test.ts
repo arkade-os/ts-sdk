@@ -179,4 +179,75 @@ describe("getBoardingTxs — spend status of the boarding output only", () => {
             await wallet.dispose();
         }
     });
+
+    it("asks for every boarding output's spend status without waiting between them", async () => {
+        let boardingAddr = "";
+        const secondTxid = "cc".repeat(32);
+        const txAt = (txid: string) => ({
+            txid,
+            vin: [] as { txid: string; vout: number }[],
+            vout: [{ scriptpubkey_address: "", value: BOARDING_VALUE }],
+            status: { confirmed: true, block_time: 1_763_000_000 },
+        });
+        const fundingTx = txAt(FUNDING_TXID);
+        const secondTx = txAt(secondTxid);
+        let started = 0;
+        let release!: () => void;
+        const bothStarted = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const getTxOutspend = vi.fn(async () => {
+            started += 1;
+            if (started === 2) release();
+            await bothStarted;
+            return { spent: false, txid: "" };
+        });
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx, secondTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends: vi.fn(async () => []),
+        } as unknown as OnchainProvider;
+
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply({ vtxos: [] });
+        });
+
+        const wallet = await Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+            onchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+            secondTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const pending = wallet.getBoardingTxs();
+            const overlapped = await Promise.race([
+                bothStarted.then(() => true),
+                new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+            ]);
+            // Unblock even when the calls were sequential, so the assertion can fail
+            // instead of leaving getBoardingTxs parked on the first output.
+            release();
+            expect(overlapped).toBe(true);
+            await pending;
+            expect(getTxOutspend).toHaveBeenCalledTimes(2);
+        } finally {
+            release();
+            await wallet.dispose();
+        }
+    });
 });

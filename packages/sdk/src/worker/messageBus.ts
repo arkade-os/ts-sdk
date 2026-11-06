@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
-import { ArkProvider, RestArkProvider } from "../providers/ark";
+import { OperatorProvider, RestOperatorProvider } from "../providers/ark";
 import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
@@ -50,7 +50,7 @@ export type ResponseEnvelope = {
     broadcast?: boolean;
 };
 type MessageBusServices = {
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     wallet?: Wallet;
     readonlyWallet: ReadonlyWallet;
 };
@@ -182,6 +182,8 @@ type Initialize = {
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
+        /** @see WalletConfig.oneShotSubmit */
+        oneShotSubmit?: boolean;
         /** @see WalletConfig.minBatchExpirySeconds */
         minBatchExpirySeconds?: bigint;
         /**
@@ -531,7 +533,7 @@ export class MessageBus {
     }
 
     private async buildServices(config: Initialize["config"]): Promise<MessageBusServices> {
-        const arkProvider = new RestArkProvider(config.arkServer.url);
+        const arkProvider = new RestOperatorProvider(config.arkServer.url);
         const storage = {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
@@ -560,6 +562,7 @@ export class MessageBus {
                 lazyInitialization: config.lazyInitialization,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
+                oneShotSubmit: config.oneShotSubmit,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
