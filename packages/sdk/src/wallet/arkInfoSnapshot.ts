@@ -9,11 +9,17 @@ import { updateWalletState } from "../utils/syncCursors";
  * snapshot. Namespaced so it coexists with unrelated settings keys
  * (`hasPendingTx`, `vtxoCursorMigrated`, …).
  *
- * The string is PERSISTED. Renaming the surrounding `ArkInfo*` symbols to
- * `Arkade*` must leave this value alone — changing it orphans every cached
- * snapshot already on disk and silently forces a live-only boot.
+ * The string is PERSISTED. Changing it without a fallback read orphans every
+ * cached snapshot already on disk and silently forces a live-only boot.
  */
-export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
+export const OPERATOR_INFO_SNAPSHOT_KEY = "operatorInfoSnapshot";
+
+/**
+ * Where older SDKs save the snapshot. Read only until a live boot saves the new key.
+ * shortcut: a save leaves this key in place, so an older SDK sharing the store keeps
+ * its cache. Delete the key along with this fallback.
+ */
+const LEGACY_SNAPSHOT_KEY = "arkInfoSnapshot";
 
 /**
  * A JSON-safe, versioned cache of the operator's {@link ArkadeInfo} metadata,
@@ -288,7 +294,8 @@ export async function loadArkInfoSnapshot(
     repo: WalletRepository,
 ): Promise<StoredArkInfoSnapshot | null> {
     const state = await repo.getWalletState();
-    const raw = state?.settings?.[ARK_INFO_SNAPSHOT_KEY];
+    const settings = state?.settings;
+    const raw = settings?.[OPERATOR_INFO_SNAPSHOT_KEY] ?? settings?.[LEGACY_SNAPSHOT_KEY];
     if (raw === undefined || raw === null) return null;
     return parseStoredArkInfoSnapshot(raw);
 }
@@ -309,7 +316,7 @@ export async function saveArkInfoSnapshot(
         ...state,
         settings: {
             ...(state.settings ?? {}),
-            [ARK_INFO_SNAPSHOT_KEY]: snapshot,
+            [OPERATOR_INFO_SNAPSHOT_KEY]: snapshot,
         },
     }));
 }
@@ -364,7 +371,7 @@ export async function resolveArkInfo(
         const snapshot = await loadArkInfoSnapshot(walletRepository);
         if (!snapshot) {
             throw new ProviderUnavailableError(
-                "Arkade server info is unavailable and no cached snapshot exists",
+                "Operator info is unavailable and no cached snapshot exists",
                 { cause: err },
             );
         }
@@ -388,6 +395,6 @@ export async function saveValidatedArkInfoSnapshot(
     try {
         await saveArkInfoSnapshot(repo, info, savedAt);
     } catch (err) {
-        console.warn("Failed to persist Ark info snapshot", err);
+        console.warn("Failed to persist operator info snapshot", err);
     }
 }

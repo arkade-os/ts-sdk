@@ -18,7 +18,7 @@ import { FetchError } from "../src/utils/fetch";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { SingleKey } from "../src/identity/singleKey";
 import {
-    ARK_INFO_SNAPSHOT_KEY,
+    OPERATOR_INFO_SNAPSHOT_KEY,
     MalformedArkInfoSnapshotError,
     hydrateArkInfo,
     loadArkInfoSnapshot,
@@ -207,12 +207,32 @@ describe("loadArkInfoSnapshot / saveArkInfoSnapshot", () => {
         const state = await repo.getWalletState();
         expect(state?.settings?.hasPendingTx).toBe(true);
         expect(state?.lastSyncTime).toBe(42);
-        expect(state?.settings?.[ARK_INFO_SNAPSHOT_KEY]).toBeDefined();
+        expect(state?.settings?.[OPERATOR_INFO_SNAPSHOT_KEY]).toBeDefined();
+    });
+
+    it("persists under a fixed key", () => {
+        expect(OPERATOR_INFO_SNAPSHOT_KEY).toBe("operatorInfoSnapshot");
+    });
+
+    it("reads a snapshot from the old key", async () => {
+        const repo = new InMemoryWalletRepository();
+        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 7);
+        await repo.saveWalletState({ settings: { arkInfoSnapshot: snapshot } });
+        expect(await loadArkInfoSnapshot(repo)).toEqual(snapshot);
+    });
+
+    it("prefers the new key once a save writes it, and leaves the old key", async () => {
+        const repo = new InMemoryWalletRepository();
+        const old = serializeArkInfoSnapshot(makeArkInfo(), 7);
+        await repo.saveWalletState({ settings: { arkInfoSnapshot: old } });
+        await saveArkInfoSnapshot(repo, makeArkInfo(), 8);
+        expect((await loadArkInfoSnapshot(repo))?.savedAt).toBe(8);
+        expect((await repo.getWalletState())?.settings?.arkInfoSnapshot).toEqual(old);
     });
 
     it("throws terminally when the stored snapshot is malformed", async () => {
         const repo = new InMemoryWalletRepository();
-        await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 2 } } });
+        await repo.saveWalletState({ settings: { [OPERATOR_INFO_SNAPSHOT_KEY]: { version: 2 } } });
         await expect(loadArkInfoSnapshot(repo)).rejects.toThrow(MalformedArkInfoSnapshotError);
     });
 });
@@ -270,7 +290,7 @@ describe("resolveArkInfo", () => {
 
     it("surfaces a malformed cache as terminal on retryable failure", async () => {
         const repo = new InMemoryWalletRepository();
-        await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 9 } } });
+        await repo.saveWalletState({ settings: { [OPERATOR_INFO_SNAPSHOT_KEY]: { version: 9 } } });
         await expect(
             resolveArkInfo(failing(new ProviderUnavailableError("503")), repo),
         ).rejects.toThrow(MalformedArkInfoSnapshotError);
