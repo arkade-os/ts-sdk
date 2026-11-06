@@ -1037,8 +1037,10 @@ describe("reading a debug file", () => {
             ...extra,
         }) as ContractDebugInfo;
 
-    it("puts each covenant's source map on its arkade segment", () => {
-        const program = programFromArtifact(covenant, debugFile());
+    it("puts a copy of each covenant's source map on its arkade segment", () => {
+        const debug = debugFile();
+        const program = programFromArtifact(covenant, debug);
+        debug.functions.spend.sourceMap[0].asm[1] = 3;
         expect(program.functions.spend.arkadeScript?.sourceMap).toEqual(
             debugFile().functions.spend.sourceMap,
         );

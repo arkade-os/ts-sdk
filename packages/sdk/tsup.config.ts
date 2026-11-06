@@ -22,6 +22,7 @@ export default defineConfig({
     splitting: true,
     treeshake: true,
     external: [
+        "@arkade-os/compiler",
         "expo",
         "expo-sqlite",
         "expo-task-manager",

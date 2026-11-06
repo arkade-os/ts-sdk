@@ -142,6 +142,8 @@ function fail(detail: string): never {
     throw new Error(`programFromArtifact: ${detail}`);
 }
 
+// Also checks the 1-based `start`/`end` against 0 only: positions are display-only, and a bad one
+// must not fail every `compile()`.
 const isPair = (value: unknown): value is [number, number] =>
     Array.isArray(value) && value.length === 2 && value.every((n) => Number.isInteger(n) && n >= 0);
 
@@ -168,7 +170,7 @@ function sourceMaps(
         if (!isRecord(entry) || !Array.isArray(entry.sourceMap)) {
             fail(`debug file: covenant '${name}' needs a sourceMap array`);
         }
-        for (const range of entry.sourceMap) {
+        const copies = entry.sourceMap.map((range) => {
             if (
                 !isRecord(range) ||
                 !isPair(range.asm) ||
@@ -182,8 +184,9 @@ function sourceMaps(
                     `debug file: covenant '${name}' has a malformed range ${JSON.stringify(range)}`,
                 );
             }
-        }
-        maps.set(name, entry.sourceMap);
+            return { ...range, asm: [...range.asm], start: [...range.start], end: [...range.end] };
+        });
+        maps.set(name, copies as SourceRange[]);
     }
     return maps;
 }
