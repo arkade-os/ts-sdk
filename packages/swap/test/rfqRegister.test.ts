@@ -323,7 +323,7 @@ const vtxo = (script: string, value: number): ExtendedVirtualCoin =>
         isPreconfirmed: false,
         script,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
         tapTree: new Uint8Array(64),
     }) as unknown as ExtendedVirtualCoin;
 

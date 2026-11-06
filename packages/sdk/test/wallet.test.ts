@@ -2491,7 +2491,7 @@ describe("Wallet._settleImpl", () => {
                 createdAt: new Date(),
                 isUnrolled: false,
                 forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-                intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
                 tapTree: new Uint8Array(),
             }) as any;
 
@@ -2801,7 +2801,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
     const annotated = (input: VirtualCoin): any => ({
         ...input,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
         tapTree: new Uint8Array(64),
     });
 
@@ -3033,7 +3033,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const annotatedInput: any = {
             ...input,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
         };
 
@@ -3094,8 +3094,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const expectedForfeit = tapscriptNew.forfeit();
         expect(changeVtxo.forfeitTapLeafScript[0]).toEqual(expectedForfeit[0]);
         expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
-        expect(changeVtxo.intentTapLeafScript[0]).toEqual(expectedForfeit[0]);
-        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
+        expect(changeVtxo.proofTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.proofTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
         // also derives from the snapshot tapscript + server key, not from
@@ -3172,7 +3172,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             value,
             status: { confirmed: true },
             forfeitTapLeafScript: tapscript.forfeit(),
-            intentTapLeafScript: tapscript.forfeit(),
+            proofTapLeafScript: tapscript.forfeit(),
             tapTree: tapscript.encode(),
         }) as ExtendedCoin;
 
@@ -3192,7 +3192,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             expiresAt: new Date(1_700_000_000),
             script,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
         }) as unknown as ExtendedCoin;
 
