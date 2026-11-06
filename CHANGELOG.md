@@ -52,6 +52,12 @@ style and have not been backfilled.
   but a superset: a `Market` can still be used as a ref, but a ref no longer
   assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
 
+### Features
+
+- **Export `TreeSignerSession` for custom identities.** External `Identity`
+  implementations can use the existing session without an internal SDK import.
+  Class and factory TSDoc cover key isolation and nonce/session lifetime.
+
 ### Added
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are

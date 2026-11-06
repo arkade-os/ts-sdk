@@ -1,5 +1,6 @@
 import { Transaction } from "./utils/transaction";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
+export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
