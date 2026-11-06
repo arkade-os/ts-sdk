@@ -2,7 +2,7 @@ import { Outpoint } from "../../wallet";
 import {
     ArkIntent,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
     isTerminalIntentState,
 } from "../intentRepository";
@@ -17,10 +17,10 @@ import {
 } from "./batchesSchema";
 
 /**
- * @experimental Intent persistence is opt-in. Stored in its own database,
- * {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
+ * @experimental Batch registration persistence is opt-in. Stored in its own
+ * database, {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
  */
-export class IndexedDBIntentRepository implements IntentRepository {
+export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRepository {
     readonly version = 1 as const;
     private readonly connection: ManagedConnection;
     constructor(dbName: string = BATCHES_DB_NAME) {
@@ -102,3 +102,8 @@ export class IndexedDBIntentRepository implements IntentRepository {
         await this.connection[Symbol.asyncDispose]();
     }
 }
+
+/** @deprecated Use {@link IndexedDBBatchRegistrationRepository}. */
+export const IndexedDBIntentRepository = IndexedDBBatchRegistrationRepository;
+/** @deprecated Use {@link IndexedDBBatchRegistrationRepository}. */
+export type IndexedDBIntentRepository = IndexedDBBatchRegistrationRepository;
