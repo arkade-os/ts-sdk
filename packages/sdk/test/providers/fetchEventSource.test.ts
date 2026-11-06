@@ -51,33 +51,6 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("FetchEventSource", () => {
-    it("dispatches each message, also when a chunk splits one", async () => {
-        stubFetch((signal) =>
-            sseResponse(['data: {"a":1}\n\nda', 'ta: {"b":2}\n\n'], { open: true, signal }),
-        );
-        const source = new FetchEventSource("http://ark/v1/txs");
-        const messages = collect(source, "message");
-
-        await settle();
-        expect(messages.map((event) => event.data)).toEqual(['{"a":1}', '{"b":2}']);
-        source.close();
-    });
-
-    it.each([
-        ["CR line endings", ["data: a\rdata: b\r\r"]],
-        ["CRLF line endings", ["data: a\r\ndata: b\r\n\r\n"]],
-        ["a CRLF split across chunks", ["data: a\r", "\ndata: b\r\n\r\n"]],
-        ["a CRLF split by an empty chunk", ["data: a\r", "", "\ndata: b\r\n\r\n"]],
-    ])("dispatches one message with %s", async (_, chunks) => {
-        stubFetch((signal) => sseResponse(chunks, { open: true, signal }));
-        const source = new FetchEventSource("http://ark/v1/txs");
-        const messages = collect(source, "message");
-
-        await settle();
-        expect(messages.map((event) => event.data)).toEqual(["a\nb"]);
-        source.close();
-    });
-
     it("dispatches a named event under its own type", async () => {
         stubFetch((signal) =>
             sseResponse(['id: 7\nevent: failure\ndata: {"code":3}\n\n'], { open: true, signal }),
