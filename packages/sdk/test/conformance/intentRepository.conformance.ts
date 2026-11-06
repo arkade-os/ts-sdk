@@ -181,7 +181,9 @@ export function intentRepositoryConformance(
             const r = await make();
             await r.saveBatchRegistration(intent("a"));
             const page = await r.getBatchRegistrationsPage(undefined, { limit: 10 });
-            expect(page.items).toHaveLength(1);
+            expect(page.items).toEqual([
+                expect.objectContaining({ ...intent("a"), updatedAt: expect.any(Number) }),
+            ]);
         });
 
         it("clear empties the store", async () => {
