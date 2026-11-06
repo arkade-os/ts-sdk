@@ -62,13 +62,13 @@ export interface BatchRegistration {
     partialForfeits: string[];
     signerDescriptor?: string;
     /** Inputs locked by this registration. */
-    inputs: Outpoint[];
+    proofInputs: Outpoint[];
 }
 
 export interface BatchRegistrationFilter {
     proofTxIds?: string[];
     registrationIds?: string[];
-    /** Registrations whose `inputs` intersect any of these outpoints. */
+    /** Registrations whose `proofInputs` intersect any of these outpoints. */
     containingInputs?: Outpoint[];
     states?: ArkIntentState[];
     /** Intents valid at this ms-epoch instant (null bounds = open). */
@@ -147,7 +147,7 @@ export function intentMatchesFilter(i: BatchRegistration, f: BatchRegistrationFi
         return false;
     if (f.states && !f.states.includes(i.state)) return false;
     if (f.containingInputs) {
-        const keys = new Set(i.inputs.map((o) => `${o.txid}:${o.vout}`));
+        const keys = new Set(i.proofInputs.map((o) => `${o.txid}:${o.vout}`));
         if (!f.containingInputs.some((o) => keys.has(`${o.txid}:${o.vout}`))) return false;
     }
     if (f.validAt !== undefined) {

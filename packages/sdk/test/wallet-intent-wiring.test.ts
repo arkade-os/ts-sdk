@@ -21,7 +21,7 @@ describe("settle intent persistence contract", () => {
             deleteProof: "dp",
             deleteProofMessage: "dpm",
             partialForfeits: [],
-            inputs: [{ txid: "v", vout: 0 }],
+            proofInputs: [{ txid: "v", vout: 0 }],
         };
         await repo.saveIntent(base);
         await repo.saveIntent({ ...base, state: "waiting_for_batch" });

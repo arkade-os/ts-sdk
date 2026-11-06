@@ -24,7 +24,7 @@ const intent = (id: string): ArkIntent => ({
     deleteProof: "dp",
     deleteProofMessage: "dpm",
     partialForfeits: [],
-    inputs: [{ txid: id, vout: 0 }],
+    proofInputs: [{ txid: id, vout: 0 }],
 });
 
 const vtx = (txid: string): VirtualTx => ({

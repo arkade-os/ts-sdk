@@ -2381,7 +2381,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            inputs: [{ txid: "aa".repeat(32), vout: 0 }],
+            proofInputs: [{ txid: "aa".repeat(32), vout: 0 }],
         });
 
         const response = await updater.handleMessage({

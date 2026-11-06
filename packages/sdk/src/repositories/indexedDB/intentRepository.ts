@@ -18,7 +18,7 @@ import {
 } from "./batchesSchema";
 
 /** A {@link BatchRegistration} as IndexedDB holds it: the store's keyPath and index read these names. */
-type StoredIntent = Omit<BatchRegistration, "proofTxId" | "registrationId" | "inputs"> & {
+type StoredIntent = Omit<BatchRegistration, "proofTxId" | "registrationId" | "proofInputs"> & {
     intentTxId: string;
     intentId?: string;
     intentVtxos: Outpoint[];
@@ -27,13 +27,13 @@ type StoredIntent = Omit<BatchRegistration, "proofTxId" | "registrationId" | "in
 const toStored = ({
     proofTxId,
     registrationId,
-    inputs,
+    proofInputs,
     ...rest
 }: BatchRegistration): StoredIntent => ({
     ...rest,
     intentTxId: proofTxId,
     intentId: registrationId,
-    intentVtxos: inputs,
+    intentVtxos: proofInputs,
 });
 
 const fromStored = ({
@@ -45,7 +45,7 @@ const fromStored = ({
     ...rest,
     proofTxId: intentTxId,
     registrationId: intentId,
-    inputs: intentVtxos,
+    proofInputs: intentVtxos,
 });
 
 /**

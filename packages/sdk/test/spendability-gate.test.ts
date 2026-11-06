@@ -419,7 +419,7 @@ describe("getSpendableVtxos", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            inputs: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
+            proofInputs: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
         });
 
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual([MARKED_SCRIPT]);
@@ -508,7 +508,7 @@ describe("getBalance", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            inputs: [{ txid, vout: 0 }],
+            proofInputs: [{ txid, vout: 0 }],
         });
 
     it("counts gated funds as owned but not as available (D1c)", async () => {
@@ -929,7 +929,7 @@ describe("logUngatedInputs", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            inputs: [{ txid: lockedTxid, vout: 0 }],
+            proofInputs: [{ txid: lockedTxid, vout: 0 }],
         });
 
         const inputs = [

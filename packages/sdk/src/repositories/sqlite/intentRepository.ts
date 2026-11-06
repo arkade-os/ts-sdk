@@ -137,7 +137,7 @@ export class SQLiteIntentRepository implements IntentRepository {
                     intent.cancellationReason ?? null,
                     JSON.stringify(intent.partialForfeits),
                     intent.signerDescriptor ?? null,
-                    JSON.stringify(intent.inputs),
+                    JSON.stringify(intent.proofInputs),
                 ],
             );
         });
@@ -207,6 +207,6 @@ function rowToIntent(r: IntentRow): ArkIntent {
         cancellationReason: r.cancellation_reason ?? undefined,
         partialForfeits: JSON.parse(r.partial_forfeits_json),
         signerDescriptor: r.signer_descriptor ?? undefined,
-        inputs: JSON.parse(r.intent_vtxos_json),
+        proofInputs: JSON.parse(r.intent_vtxos_json),
     };
 }

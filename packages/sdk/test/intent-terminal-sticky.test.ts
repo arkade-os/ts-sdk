@@ -32,7 +32,7 @@ const terminalIntent = (state: ArkIntentState): ArkIntent => ({
     commitmentTransactionId: "ctx",
     batchId: "batch-1",
     partialForfeits: [],
-    inputs: [{ txid: "v", vout: 0 }],
+    proofInputs: [{ txid: "v", vout: 0 }],
 });
 
 describe("persistIntentSnapshot terminal stickiness", () => {

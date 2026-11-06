@@ -24,7 +24,7 @@ it("filters selective intent states in one SQLite page query", async () => {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        inputs: [],
+        proofInputs: [],
     });
     for (let i = 0; i < 200; i++) {
         await repository.saveIntent(makeIntent(`a${String(i).padStart(3, "0")}`, "cancelled"));

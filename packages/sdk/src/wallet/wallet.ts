@@ -4518,7 +4518,7 @@ export class Wallet
                 registerProofMessage: Proof.encodeMessage(intent.message),
                 deleteProof: deleteIntent.proof,
                 deleteProofMessage: Proof.encodeMessage(deleteIntent.message),
-                inputs: inputs.map((i) => ({
+                proofInputs: inputs.map((i) => ({
                     txid: i.txid,
                     vout: i.vout,
                 })),

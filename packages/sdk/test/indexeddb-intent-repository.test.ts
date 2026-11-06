@@ -30,7 +30,7 @@ describe("IndexedDBIntentRepository", () => {
             deleteProof: "dp",
             deleteProofMessage: "dpm",
             partialForfeits: [],
-            inputs: [{ txid: "x", vout: 0 }],
+            proofInputs: [{ txid: "x", vout: 0 }],
         };
         for (const id of ["a", "b", "c"]) await repo.saveIntent({ ...base, proofTxId: id });
         const db = await openDatabase(name, BATCHES_DB_VERSION, initBatchesDatabase);
@@ -79,7 +79,7 @@ describe("IndexedDBIntentRepository", () => {
         expect(read).toMatchObject({
             proofTxId: "a",
             registrationId: "r",
-            inputs: row.intentVtxos,
+            proofInputs: row.intentVtxos,
         });
 
         await repo.saveIntent(read);

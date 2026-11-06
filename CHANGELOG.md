@@ -39,11 +39,11 @@ style and have not been backfilled.
 - **`ArkIntent` is renamed `BatchRegistration`, and its fields follow.**
   `IntentFilter` and `IntentPageFilter` take the matching names, and the three
   old type names stay as deprecated aliases. On the record, `intentTxId` is
-  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is `inputs`.
-  Filters use `proofTxIds` and `registrationIds`. These fields have no alias, so
-  a custom repository must update. Stored data does not change, and no migration
-  runs: backends keep their column and key names on disk and map them at the
-  repository boundary.
+  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is
+  `proofInputs`. Filters use `proofTxIds` and `registrationIds`. These fields
+  have no alias, so a custom repository must update. Stored data does not
+  change, and no migration runs: backends keep their column and key names on
+  disk and map them at the repository boundary.
 
 - **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
   is renamed `deprecatedSignerLocked`.** Each name now says what holds the

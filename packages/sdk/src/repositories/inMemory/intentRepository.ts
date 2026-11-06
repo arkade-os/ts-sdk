@@ -21,7 +21,7 @@ export class InMemoryIntentRepository implements IntentRepository {
         assertIntentIdUnique(intent, this.byId.values());
         this.byId.set(intent.proofTxId, {
             ...intent,
-            inputs: [...intent.inputs],
+            proofInputs: [...intent.proofInputs],
             partialForfeits: [...intent.partialForfeits],
             updatedAt: Date.now(),
         });
@@ -47,7 +47,7 @@ export class InMemoryIntentRepository implements IntentRepository {
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const i of this.byId.values())
-            if (!isTerminalIntentState(i.state)) for (const o of i.inputs) out.push({ ...o });
+            if (!isTerminalIntentState(i.state)) for (const o of i.proofInputs) out.push({ ...o });
         return out;
     }
 
@@ -56,6 +56,6 @@ export class InMemoryIntentRepository implements IntentRepository {
 
 const clone = (i: ArkIntent): ArkIntent => ({
     ...i,
-    inputs: i.inputs.map((o) => ({ ...o })),
+    proofInputs: i.proofInputs.map((o) => ({ ...o })),
     partialForfeits: [...i.partialForfeits],
 });

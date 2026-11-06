@@ -16,7 +16,7 @@ const intent = (proofTxId: string, over: Partial<ArkIntent> = {}): ArkIntent => 
     deleteProof: "dp",
     deleteProofMessage: "dpm",
     partialForfeits: [],
-    inputs: [{ txid: "x", vout: 0 }],
+    proofInputs: [{ txid: "x", vout: 0 }],
     ...over,
 });
 
@@ -63,7 +63,7 @@ export function intentRepositoryConformance(
                     state: "batch_succeeded",
                     registrationId: "srv1",
                     commitmentTransactionId: "ctx",
-                    inputs: [{ txid: "p", vout: 1 }],
+                    proofInputs: [{ txid: "p", vout: 1 }],
                     validFrom: 10,
                     validUntil: 20,
                 }),
@@ -162,7 +162,9 @@ export function intentRepositoryConformance(
                 ["cancelled", false],
             ];
             for (const [state] of cases) {
-                await r.saveIntent(intent(state, { state, inputs: [{ txid: state, vout: 0 }] }));
+                await r.saveIntent(
+                    intent(state, { state, proofInputs: [{ txid: state, vout: 0 }] }),
+                );
             }
             const locked = new Set((await r.getLockedVtxoOutpoints()).map((o) => o.txid));
             for (const [state, shouldLock] of cases) {

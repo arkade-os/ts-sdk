@@ -1173,7 +1173,7 @@ describe("Wallet", () => {
             deleteProof: "dp",
             deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }),
             partialForfeits: [],
-            inputs: [{ txid: "v", vout: 0 }],
+            proofInputs: [{ txid: "v", vout: 0 }],
             ...over,
         });
         const intentIds = async (repo: IntentRepository) =>
@@ -1224,7 +1224,7 @@ describe("Wallet", () => {
                 const intentRepository = new InMemoryIntentRepository();
                 await intentRepository.saveIntent(storedIntent());
                 await intentRepository.saveIntent(
-                    storedIntent({ proofTxId: "i2", inputs: [{ txid: "w", vout: 0 }] }),
+                    storedIntent({ proofTxId: "i2", proofInputs: [{ txid: "w", vout: 0 }] }),
                 );
                 const deleteIntent = vi
                     .fn()

@@ -57,7 +57,7 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
         // Pins the deliberate divergence from NArk EF storage: batch_in_progress
         // is non-terminal, so its inputs stay out of spendable balance.
         const repo = new InMemoryIntentRepository();
-        const base: Omit<ArkIntent, "state" | "inputs"> = {
+        const base: Omit<ArkIntent, "state" | "proofInputs"> = {
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
@@ -70,7 +70,7 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
         await repo.saveIntent({
             ...base,
             state: "batch_in_progress",
-            inputs: [{ txid: "a", vout: 0 }],
+            proofInputs: [{ txid: "a", vout: 0 }],
         });
         expect((await spendableVtxosExcludingLocked(vtxos, repo)).map((v) => v.txid)).toEqual([
             "b",

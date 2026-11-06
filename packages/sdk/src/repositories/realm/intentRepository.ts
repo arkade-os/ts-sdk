@@ -30,7 +30,7 @@ function toIntent(o: any): ArkIntent {
         cancellationReason: o.cancellationReason ?? undefined,
         partialForfeits: JSON.parse(o.partialForfeitsJson),
         signerDescriptor: o.signerDescriptor ?? undefined,
-        inputs: JSON.parse(o.intentVtxosJson),
+        proofInputs: JSON.parse(o.intentVtxosJson),
     };
 }
 
@@ -73,7 +73,7 @@ export class RealmIntentRepository implements IntentRepository {
                     cancellationReason: intent.cancellationReason ?? null,
                     partialForfeitsJson: JSON.stringify(intent.partialForfeits),
                     signerDescriptor: intent.signerDescriptor ?? null,
-                    intentVtxosJson: JSON.stringify(intent.inputs),
+                    intentVtxosJson: JSON.stringify(intent.proofInputs),
                 },
                 "modified",
             );
@@ -100,7 +100,7 @@ export class RealmIntentRepository implements IntentRepository {
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const o of [...this.realm.objects("ArkIntent")].map(toIntent))
-            if (!isTerminalIntentState(o.state)) out.push(...o.inputs);
+            if (!isTerminalIntentState(o.state)) out.push(...o.proofInputs);
         return out;
     }
 

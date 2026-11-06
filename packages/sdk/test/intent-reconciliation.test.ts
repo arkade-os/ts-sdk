@@ -20,7 +20,7 @@ const intent = (over: Partial<ArkIntent>): ArkIntent => ({
     deleteProof: "dp",
     deleteProofMessage: "dpm",
     partialForfeits: [],
-    inputs: [{ txid: "v", vout: 0 }],
+    proofInputs: [{ txid: "v", vout: 0 }],
     ...over,
 });
 
@@ -166,21 +166,21 @@ describe("reconcileIntents", () => {
             intent({
                 proofTxId: "done",
                 state: "waiting_for_batch",
-                inputs: [{ txid: "a", vout: 0 }],
+                proofInputs: [{ txid: "a", vout: 0 }],
             }),
         );
         await repo.saveIntent(
             intent({
                 proofTxId: "stale",
                 state: "waiting_to_submit",
-                inputs: [{ txid: "b", vout: 0 }],
+                proofInputs: [{ txid: "b", vout: 0 }],
             }),
         );
         await repo.saveIntent(
             intent({
                 proofTxId: "live",
                 state: "waiting_for_batch",
-                inputs: [{ txid: "c", vout: 0 }],
+                proofInputs: [{ txid: "c", vout: 0 }],
             }),
         );
         const getVtxos = vi.fn().mockResolvedValue({
@@ -237,7 +237,7 @@ describe("reconcileIntents", () => {
             new InMemoryIntentRepository(),
             intent({
                 state: "waiting_for_batch",
-                inputs: [
+                proofInputs: [
                     { txid: "v", vout: 0 },
                     { txid: "v", vout: 1 },
                 ],
@@ -392,7 +392,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         const repo = await seed(
             new InMemoryIntentRepository(),
             stale({
-                inputs: [
+                proofInputs: [
                     { txid: "v", vout: 0 },
                     { txid: "w", vout: 0 },
                 ],

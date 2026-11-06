@@ -42,7 +42,7 @@ function seededRepo(): InMemoryIntentRepository {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        inputs: [{ txid: "v", vout: 0 }],
+        proofInputs: [{ txid: "v", vout: 0 }],
     };
     void repo.saveIntent(intent);
     return repo;
