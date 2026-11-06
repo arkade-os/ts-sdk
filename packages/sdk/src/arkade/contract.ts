@@ -74,6 +74,7 @@ import {
     submitViaEmulator,
     type ArkTxInput,
     type OffchainTxSubmitProvider,
+    type EmulatorSubmitOptions,
 } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
 import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
@@ -1103,7 +1104,8 @@ export class ArkadeTransactionBuilder {
     }
 
     /** Build, submit and return the finalized transaction. */
-    async send(): Promise<ArkadeSpendResult> {
+    async send(options?: EmulatorSubmitOptions): Promise<ArkadeSpendResult> {
+        const beforeEmulatorSubmit = options?.beforeEmulatorSubmit;
         const client = this.client;
         const userKey = client.userKey;
         for (const { contract, fn } of this.unlockers()) {
@@ -1127,7 +1129,14 @@ export class ArkadeTransactionBuilder {
                 );
             }
         }
+        if (beforeEmulatorSubmit && !this.unlockers().some(({ fn }) => fn.arkadeScript)) {
+            throw new Error("beforeEmulatorSubmit is only supported for covenant spends");
+        }
         const { arkTx, checkpoints, inputs } = await this.assemble();
+        const hasCovenant = inputs.some(({ unlocker }) => unlocker.fn.arkadeScript);
+        if (beforeEmulatorSubmit && !hasCovenant) {
+            throw new Error("beforeEmulatorSubmit is only supported for covenant spends");
+        }
 
         const userInputs = this.userInputIndexes(inputs);
 
@@ -1149,7 +1158,7 @@ export class ArkadeTransactionBuilder {
             }
         });
 
-        if (inputs.some(({ unlocker }) => unlocker.fn.arkadeScript)) {
+        if (hasCovenant) {
             // Covenant path: the emulator runs the arkade script, adds the remaining
             // co-signatures (incl. the contract checkpoint) and finalizes with arkd.
             if (!client.emulator) {
@@ -1157,6 +1166,7 @@ export class ArkadeTransactionBuilder {
             }
             return submitViaEmulator(client.emulator, { arkTx, checkpoints }, client.identity, {
                 inputIndexes: userInputs,
+                beforeEmulatorSubmit,
             });
         }
 

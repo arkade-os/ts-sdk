@@ -1,0 +1,188 @@
+{
+    "formatVersion": 1,
+    "contractName": "TimedSavings",
+    "constructorInputs": [
+        {
+            "name": "owner",
+            "type": "pubkey"
+        },
+        {
+            "name": "payout",
+            "type": "bytes32"
+        },
+        {
+            "name": "releaseAt",
+            "type": "int"
+        },
+        {
+            "name": "exitSequence",
+            "type": "int"
+        }
+    ],
+    "functions": [
+        {
+            "name": "release",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "OP_INSPECTNUMINPUTS",
+                    "1",
+                    "OP_NUMEQUALVERIFY",
+                    "OP_INSPECTNUMOUTPUTS",
+                    "3",
+                    "OP_NUMEQUALVERIFY",
+                    "<releaseAt>",
+                    "OP_CHECKTIME",
+                    "OP_VERIFY",
+                    "1",
+                    "<payout>",
+                    "0",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_SWAP",
+                    "OP_2SWAP",
+                    "OP_ROT",
+                    "OP_EQUALVERIFY",
+                    "OP_NUMEQUALVERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_NUMEQUALVERIFY",
+                    "1",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "0",
+                    "OP_NUMEQUALVERIFY",
+                    "2",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "0",
+                    "OP_NUMEQUAL"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "release",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<releaseAt>",
+                        "OP_CHECKLOCKTIMEVERIFY",
+                        "OP_DROP",
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:release>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "renew",
+            "arkade": {
+                "inputs": [],
+                "asm": [
+                    "<releaseAt>",
+                    "OP_CHECKTIME",
+                    "OP_NOT",
+                    "OP_VERIFY",
+                    "OP_INSPECTVERSION",
+                    "2",
+                    "OP_NUMEQUALVERIFY",
+                    "OP_INSPECTNUMINPUTS",
+                    "2",
+                    "OP_NUMEQUALVERIFY",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "1",
+                    "OP_NUMEQUALVERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+                    "OP_SWAP",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTSCRIPTPUBKEY",
+                    "OP_SWAP",
+                    "OP_ROT",
+                    "OP_EQUALVERIFY",
+                    "OP_NUMEQUALVERIFY",
+                    "0",
+                    "OP_INSPECTOUTPUTVALUE",
+                    "OP_PUSHCURRENTINPUTINDEX",
+                    "OP_INSPECTINPUTVALUE",
+                    "OP_NUMEQUAL"
+                ]
+            },
+            "leaves": [
+                {
+                    "name": "renew",
+                    "witness": [
+                        {
+                            "name": "serverSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        },
+                        {
+                            "name": "emulatorSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64",
+                            "injected": true
+                        }
+                    ],
+                    "asm": [
+                        "<SERVER_KEY>",
+                        "OP_CHECKSIGVERIFY",
+                        "<EMULATOR_KEY:renew>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "unilateral",
+            "leaves": [
+                {
+                    "name": "unilateral",
+                    "witness": [
+                        {
+                            "name": "ownerSig",
+                            "type": "signature",
+                            "encoding": "schnorr-64"
+                        }
+                    ],
+                    "asm": [
+                        "<exitSequence>",
+                        "OP_CHECKSEQUENCEVERIFY",
+                        "OP_DROP",
+                        "<owner>",
+                        "OP_CHECKSIG"
+                    ]
+                }
+            ]
+        }
+    ],
+    "source": {
+        "entry": "timed-savings.ark",
+        "files": {
+            "timed-savings.ark": "contract TimedSavings(pubkey owner, bytes32 payout, int releaseAt, int exitSequence) {\n  function release() {\n    require(tx.numInputs == 1, \"one position\");\n    require(tx.numOutputs == 3, \"payout extension and anchor\");\n    require(checkTime(releaseAt), \"still locked\");\n    ScriptPubKey destination = { program: payout, version: 1 };\n    require(tx.outputs[0].script == destination, \"committed payout\");\n    require(tx.outputs[0].value == tx.input.current.value, \"preserve principal\");\n    require(tx.outputs[1].value == 0, \"zero value extension\");\n    require(tx.outputs[2].value == 0, \"zero value anchor\");\n  }\n\n  function release(signature serverSig, signature emulatorSig) tapscript {\n    require(after(releaseAt));\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n\n  function renew() {\n    require(!checkTime(releaseAt), \"mature savings must release\");\n    require(tx.version == 2, \"batch intent\");\n    require(tx.numInputs == 2, \"message and position\");\n    require(this.activeInputIndex == 1, \"position index\");\n    require(tx.outputs[0].script == tx.input.current.script, \"same contract\");\n    require(tx.outputs[0].value == tx.input.current.value, \"preserve principal\");\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(exitSequence));\n    require(checkSig(ownerSig, owner));\n  }\n}\n"
+        }
+    },
+    "compiler": {
+        "name": "arkadec",
+        "version": "0.1.0",
+        "options": {
+            "optimize": true
+        }
+    },
+    "updatedAt": "2026-10-30T22:44:20.339079600+00:00",
+    "fingerprint": "sha256:f7d0a9ad903114e23f96be577a874d1794c50a3c99f816b66bd5d47904e1e495"
+}
