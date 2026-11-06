@@ -13,7 +13,7 @@ import {
     getNetwork,
     resolveEmulatorPubkey,
     signerSetFromInfo,
-    type ArkadeInfo,
+    type OperatorInfo,
     type IWallet,
     type Network,
     type NetworkName,
@@ -47,8 +47,8 @@ export interface CorridorBase {
     readonly network: Network;
     /** The operator's signer set, for the rotation-aware recipient check. */
     readonly signerSet: SignerSet;
-    /** Covenant co-signer override, 33-byte compressed hex. Required on `testnet` and `signet`, which
-     * `EMULATOR_PUBKEYS` does not pin. */
+    /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
+     * compressed hex. Required on `testnet` and `signet`, which `EMULATOR_PUBKEYS` does not pin. */
     readonly emulatorPubkey?: string;
     /** For hosts without a global `fetch`, and for tests. */
     readonly fetchImpl?: typeof fetch;
@@ -209,8 +209,8 @@ const emulatorPubkeyFor = (base: CorridorBase): string => {
     } catch {
         throw new MissingCorridorDep(
             "arkade",
-            `covenant co-signer key (none is pinned for ${base.networkName}; ` +
-                "pass emulatorPubkey)",
+            "key for the operator's cosigner that emulates Arkade Script " +
+                `(none is pinned for ${base.networkName}; pass emulatorPubkey)`,
         );
     }
 };
@@ -307,10 +307,10 @@ export function resolveCorridorDeps(
  * service-worker boundary is a bare `Error`). Covenant derivations read live, since a snapshot can
  * bind a signer key the operator no longer co-signs for; `resolve()` takes the offline fallback.
  */
-export const liveArkadeInfo = async (
+export const liveOperatorInfo = async (
     wallet: IWallet,
     opts: { requireLive?: boolean } = {},
-): Promise<ArkadeInfo> => {
+): Promise<OperatorInfo> => {
     const requireLive = opts.requireLive ?? true;
     try {
         return await wallet.getArkadeInfo({ requireLive });
@@ -324,6 +324,9 @@ export const liveArkadeInfo = async (
     }
 };
 
+/** @deprecated Use {@link liveOperatorInfo}. */
+export const liveArkadeInfo = liveOperatorInfo;
+
 /**
  * The one operator read, made once for all three corridors. `getNetwork` stays fail-closed: an
  * unknown network name is not "unreachable", and resolving it to mainnet params is what it prevents.
@@ -335,10 +338,10 @@ export const resolveCorridorBase = async (input: {
     fetchImpl?: typeof fetch;
     /** The client's storage, threaded so the arkade dep can default to it. */
     repository?: AssetSwapRepository;
-    /** Defaults to `true` — see {@link liveArkadeInfo}. */
+    /** Defaults to `true` — see {@link liveOperatorInfo}. */
     requireLive?: boolean;
 }): Promise<CorridorBase> => {
-    const info = await liveArkadeInfo(input.wallet, { requireLive: input.requireLive });
+    const info = await liveOperatorInfo(input.wallet, { requireLive: input.requireLive });
     const networkName = info.network as NetworkName;
     return {
         wallet: input.wallet,

@@ -1,4 +1,6 @@
 import { baseFetch, fetch } from "../utils/fetch";
+import { readSseFrames } from "./sseFrames";
+import { streamFailureError } from "./utils";
 
 /**
  * Dynamically imports expo/fetch, falling back to {@link baseFetch}.
@@ -73,41 +75,20 @@ export async function* sseStreamIterator<T>(
             throw new Error("Response body is null");
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
+        for await (const { event, data } of readSseFrames(response.body)) {
+            if (abortSignal?.aborted) break;
+            if (event === "failure") throw streamFailureError(data);
+            if (event !== "message" || !data.trim()) continue;
 
-        while (!abortSignal?.aborted) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-
-            for (let i = 0; i < lines.length - 1; i++) {
-                const line = lines[i].trim();
-                if (!line) continue;
-
-                if (line.startsWith("data:")) {
-                    const jsonStr = line.substring(5).trim();
-                    if (!jsonStr) continue;
-
-                    try {
-                        const data = JSON.parse(jsonStr);
-                        const parsed = parseData(data);
-                        if (parsed !== null) {
-                            yield parsed;
-                        }
-                    } catch (parseError) {
-                        console.error("Failed to parse SSE data:", parseError);
-                        throw parseError;
-                    }
+            try {
+                const parsed = parseData(JSON.parse(data));
+                if (parsed !== null) {
+                    yield parsed;
                 }
+            } catch (parseError) {
+                console.error("Failed to parse SSE data:", parseError);
+                throw parseError;
             }
-
-            buffer = lines[lines.length - 1];
         }
     } finally {
         abortSignal?.removeEventListener("abort", cleanup);

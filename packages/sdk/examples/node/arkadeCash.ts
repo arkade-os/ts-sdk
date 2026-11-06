@@ -24,14 +24,14 @@ const {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     Ramps,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
 } = await import("../../src");
 
 type WalletInstance = Awaited<ReturnType<typeof Wallet.create>>;
 
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const ESPLORA_URL = "http://localhost:3000/api";
 const CASH_AMOUNT_SATS = 5000;
 
@@ -59,7 +59,7 @@ async function waitFor(
 async function createWallet(name: string): Promise<WalletInstance> {
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_SERVER_URL),
+        operatorProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_URL),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
@@ -97,7 +97,7 @@ async function main() {
         async () => (await aliceWallet.getBoardingUtxos()).length > 0,
     );
 
-    console.log("[Alice]\tOnboarding into Ark...");
+    console.log("[Alice]\tBoarding into Arkade...");
     const info = await aliceWallet.arkProvider.getInfo();
     const ramps = new Ramps(aliceWallet);
     const settlementTxid = await ramps.onboard(info.fees);

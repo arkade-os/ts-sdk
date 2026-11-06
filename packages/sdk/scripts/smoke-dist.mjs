@@ -200,7 +200,17 @@ const nodeSafe = [
     "./wallet/expo",
 ];
 
+const signerSessionProbe = `
+if (sp === ".") {
+    const key = await mod.TreeSignerSession.random().getPublicKey();
+    if (!(key instanceof Uint8Array) || key.length !== 33 || ![2, 3].includes(key[0])) {
+        throw new Error("TreeSignerSession did not return a compressed public key");
+    }
+}
+`;
+
 const cjsProbe = `
+(async () => {
 const subpaths = ${JSON.stringify(nodeSafe)};
 const failures = [];
 for (const sp of subpaths) {
@@ -208,6 +218,7 @@ for (const sp of subpaths) {
     try {
         const mod = require(spec);
         if (Object.keys(mod).length === 0) failures.push(spec + ": no exports");
+        ${signerSessionProbe}
     } catch (err) {
         failures.push(spec + ": " + err.message);
     }
@@ -216,6 +227,7 @@ if (failures.length) {
     console.error(failures.join("\\n"));
     process.exit(1);
 }
+})().catch(err => { console.error(err); process.exit(1); });
 `;
 {
     const r = runNode(["-e", cjsProbe], consumer);
@@ -234,6 +246,7 @@ for (const sp of subpaths) {
     try {
         const mod = await import(spec);
         if (Object.keys(mod).length === 0) failures.push(spec + ": no exports");
+        ${signerSessionProbe}
     } catch (err) {
         failures.push(spec + ": " + err.message);
     }
