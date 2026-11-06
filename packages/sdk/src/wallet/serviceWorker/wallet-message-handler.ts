@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
 import { collectUtxos } from "../../repositories/walletRepository";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../../providers/ark";
+import { ArkadeInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
     IndexerProvider,
@@ -1058,7 +1058,7 @@ export class WalletMessageHandler
     private wallet: Wallet | undefined;
     private readonlyWallet: ReadonlyWallet | undefined;
 
-    private arkProvider: ArkProvider | undefined;
+    private arkProvider: OperatorProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private walletRepository: WalletRepository | undefined;
 

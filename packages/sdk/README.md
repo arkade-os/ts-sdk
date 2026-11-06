@@ -1,6 +1,6 @@
 # Arkade TypeScript SDK
 
-The Arkade SDK is a TypeScript library for building Bitcoin wallets using the Arkade protocol.
+The Arkade SDK is a TypeScript library for building Bitcoin wallets using Arkade.
 
 [![TypeDoc](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/arkade-os/ts-sdk)
@@ -32,7 +32,7 @@ const wallet = await Wallet.create({ identity })  // defaults to mainnet
 ```
 
 `Wallet.create` also accepts short spellings: `service` in place of the
-`arkProvider`/`indexerProvider`/`onchainProvider` trio, `mode` for `walletMode` and
+`operatorProvider`/`indexerProvider`/`onchainProvider` trio, `mode` for `walletMode` and
 `settlement` for `settlementConfig`. Setting both spellings of one field throws.
 
 ### Read-Only Wallets (Watch-Only)
@@ -183,6 +183,8 @@ const balance = await readonlyWallet.getBalance()
 - Coin type 0 for mainnet, 1 for testnet
 - Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
+For custom `Identity` implementations, see [`TreeSignerSession`](./src/tree/signingSession.ts).
+
 ### Batch Signing for Browser Wallets
 
 Arkade send transactions require N+1 PSBT signatures (N checkpoints + 1 main tx). With local identities like `SingleKey` or `SeedIdentity` this is invisible, but browser wallet extensions (Xverse, UniSat, OKX, etc.) show a confirmation popup per signature. The `BatchSignableIdentity` interface lets wallet providers reduce N+1 popups to a single batch confirmation.
@@ -220,28 +222,28 @@ await wallet.send({ address: 'ark1q...', amount: 1000 })
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
 
-### Ark Provider Caching
+### Operator Provider Caching
 
-`RestArkProvider.getInfo()` fetches current Arkade server parameters on every call. Wrap it
-with `CachingArkProvider` when you reuse that response for fee, signer, or limit lookups:
+`RestOperatorProvider.getInfo()` fetches current operator parameters on every call. Wrap it
+with `CachingOperatorProvider` when you reuse that response for fee, signer, or limit lookups:
 
 ```typescript
-import { CachingArkProvider, RestArkProvider, Wallet } from '@arkade-os/sdk'
+import { CachingOperatorProvider, RestOperatorProvider, Wallet } from '@arkade-os/sdk'
 
-const arkProvider = new CachingArkProvider(
-  new RestArkProvider('https://arkade.computer'),
+const operatorProvider = new CachingOperatorProvider(
+  new RestOperatorProvider('https://arkade.computer'),
   60_000, // optional TTL in milliseconds; defaults to 60 seconds
 )
 
-const wallet = await Wallet.create({ identity, arkProvider })
+const wallet = await Wallet.create({ identity, operatorProvider })
 ```
 
-Only `getInfo()` is cached; all other Ark provider methods pass through. The cache expires
-after the TTL and updates when the inner provider reports server-info changes, including
-signer rotation. Wrapping `RestArkProvider` preserves its `serverUrl`, so `Wallet.create`
+Only `getInfo()` is cached; all other provider methods pass through. The cache expires
+after the TTL and updates when the inner provider reports operator info changes, including
+signer rotation. Wrapping `RestOperatorProvider` preserves its `serverUrl`, so `Wallet.create`
 can still derive the default indexer URL. Expired refresh failures propagate;
 wallet boot fallback lives in the persisted ArkInfo snapshot. Call `dispose()` if the
-inner provider outlives the wrapper, to drop its server-info subscription.
+inner provider outlives the wrapper, to drop its operator info subscription.
 
 ### Onchain Providers
 
@@ -415,7 +417,7 @@ const balance = await wallet.getBalance()
 | `pendingSettlement` | Committed to an in-flight settlement intent; back in `available` when the intent ends. Always `0` without `storage.intentRepository`. |
 | `reserved` | Held by [`reserveVtxos`](#holding-vtxos-for-your-own-use) until released. |
 | `recoverable` | Swept or subdust virtual outputs that [`recoverVtxos`](#recovery-reclaim-swept-vtxos) can reclaim; `getRecoverableBalance()` gives what a batch would return today. |
-| `deprecatedSignerLocked` | Under a server signer past its cutoff, which the operator no longer co-signs; recovers once swept and re-settled. |
+| `deprecatedSignerLocked` | Under an operator signer past its cutoff, which the operator no longer cosigns; recovers once swept and re-settled. |
 | `unrolled` | Already [unilaterally exited](#unilateral-exit): onchain behind its CSV timelock, movable only by `Unroll.completeUnroll`. |
 | `total` | Everything the wallet owns: `boarding.total + settled + preconfirmed + recoverable + deprecatedSignerLocked + unrolled`. |
 | `assets` | Every [asset](#assets-issue-reissue-burn-send) balance the wallet owns. |
@@ -651,7 +653,7 @@ try {
 
 #### Recovery: Reclaim Swept VTXOs
 
-Recover virtual outputs that have been swept by the server or consolidate small amounts (subdust).
+Recover virtual outputs that have been swept by the operator or consolidate small amounts (subdust).
 
 ```typescript
 // Recover swept virtual outputs and preconfirmed subdust
@@ -672,7 +674,7 @@ Instead of the delegating user renewing virtual outputs by themselves, their del
 
 This is useful for wallets that cannot be online 24/7.
 
-When a `delegateProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to co-sign renewals alongside the Arkade server.
+When a `delegateProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to cosign renewals alongside the operator.
 
 To run a delegation service, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
 
@@ -822,7 +824,7 @@ exit waits for its batch swap queues until that batch swap finalizes, and an exi
 spends every spendable VTXO. Opt in to let spends overlap on disjoint VTXOs:
 
 ```typescript
-const wallet = await Wallet.create({ identity, arkProvider, concurrentSpending: true })
+const wallet = await Wallet.create({ identity, operatorProvider, concurrentSpending: true })
 ```
 
 With `concurrentSpending`:
@@ -870,7 +872,7 @@ Limits:
 - Deprecated-signer migration and recovery name the VTXOs they move, so they can spend a held VTXO.
 - Renewal skips a held VTXO even once it is inside the renewal threshold, since renewing would
   change the outpoint you are holding. It logs a warning naming each such VTXO; spend or release a
-  long-lived hold before the VTXO expires, or the server sweeps it and it comes back only through
+  long-lived hold before the VTXO expires, or the operator sweeps it and it comes back only through
   recovery.
 - `toReadonly()` views and the service worker's balance reads do not see reservations.
 - `reserveVtxos` is on `Wallet`; the service-worker and Expo wallets accept `concurrentSpending`
@@ -880,7 +882,7 @@ If your app keeps its own reserved-outpoint set, call `reserveVtxos` where you a
 `release()` where you remove, then let the SDK pick: plain `send`, router payments without
 `selectedVtxos`, and exits without `vtxos` all skip what you hold.
 
-### Talking to the server through the wallet
+### Talking to the operator through the wallet
 
 `getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
 server URL of its own:
@@ -897,7 +899,7 @@ const { vtxos } = await reader.getVtxos({ scripts: [covenantScriptHex], spendabl
 const { txs } = await reader.getVirtualTxs([spendTxid]);
 ```
 
-`getVtxos()` here queries the server for an arbitrary script — distinct from
+`getVtxos()` here queries the operator for an arbitrary script — distinct from
 `wallet.getVtxos()`, which answers the wallet's own outputs from local repositories. Everything
 it returns is normalized, so each VTXO carries its canonical facts.
 
@@ -909,7 +911,7 @@ connection instead of opening a second one outside its rate gate and caches.
 
 ### Unilateral Exit
 
-Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:
+Unilateral exit lets you move your funds from virtual outputs to onchain outputs without cooperation from the operator. This process involves two main steps:
 
 1. **Unrolling**: Broadcasting the transaction chain from offchain back to onchain
 2. **Completing the exit**: Spending the unrolled virtual outputs after the timelock expires
@@ -1085,7 +1087,7 @@ Key properties:
 
 ### Exit data available offline
 
-The exit above resolves a VTXO's transaction chain from the Ark **indexer** at
+The exit above resolves a VTXO's transaction chain from the Arkade **indexer** at
 exit time. To make a unilateral exit work even when the indexer is unreachable,
 configure a `virtualTxRepository` (SQLite / Realm / IndexedDB / InMemory): the
 wallet then captures each received VTXO's exit branch locally and prunes it on
@@ -1103,7 +1105,7 @@ const wallet = await Wallet.create({
     virtualTxRepository: new InMemoryVirtualTxRepository(),
     // Optional. `mode` defaults to "lite" (structure only, cheap — most VTXOs
     // never exit). Use "full" to also store the pre-signed PSBTs, so an exit
-    // needs no Ark indexer (only an Esplora endpoint to broadcast).
+    // needs no Arkade indexer (only an Esplora endpoint to broadcast).
     exitDataCapture: { mode: 'full' },
   },
 })
@@ -1193,7 +1195,7 @@ display after completion; cached reads do not guarantee a change event.
 `getStoredBalance().boarding.loaded` is false until this wallet instance has fetched
 boarding inputs. Call `getBoardingUtxos()` to refresh them. Stored methods are for
 display, not transaction inputs; use the normal reads and spending APIs for actions.
-New contract registration, identity setup, and server-info validation can still
+New contract registration, identity setup, and operator info validation can still
 require provider calls even with lazy initialization enabled.
 
 Service-worker factories expose the same `lazyInitialization` option and a separate
@@ -1415,13 +1417,13 @@ For React Native and Expo applications where standard EventSource and fetch stre
 
 ```typescript
 import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
-import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
+import { ExpoOperatorProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
 
 const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 const wallet = await Wallet.create({
   identity: identity,
-  arkProvider: new ExpoArkProvider('https://arkade.computer'), // For settlement events and transactions streaming
+  operatorProvider: new ExpoOperatorProvider('https://arkade.computer'), // For settlement events and transactions streaming
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and virtual output state updates
 })
 
@@ -1431,9 +1433,9 @@ const balance = await wallet.getBalance()
 const address = await wallet.getAddress()
 ```
 
-Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
+Both ExpoOperatorProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
 
-- **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
+- **ExpoOperatorProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and virtual output state updates using expo/fetch for JSON streaming
 
 For persistence in Expo/React Native, use the SQLite repository with `expo-sqlite`:
@@ -1451,7 +1453,7 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkProvider: new ExpoArkProvider('https://arkade.computer'),
+  operatorProvider: new ExpoOperatorProvider('https://arkade.computer'),
   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
@@ -1476,7 +1478,7 @@ global.crypto.getRandomValues = Crypto.getRandomValues;
 
 // Now import the SDK
 import { Wallet, MnemonicIdentity } from '@arkade-os/sdk';
-import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
+import { ExpoOperatorProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
 ```
 
 This is required for MuSig2 settlements and cryptographic operations.
@@ -1506,7 +1508,7 @@ import { arkade, Arkade, ArkAddress } from '@arkade-os/sdk'
 
 const program = arkade.programFromArtifact(artifactJson)
 const client = await Arkade.connect({
-  service: { network: 'bitcoin' }, // operator, indexer, esplora and covenant co-signer
+  service: { network: 'bitcoin' }, // operator, indexer and esplora
   identity: wallet.identity,
   contractManager: await wallet.getContractManager(),
 })
@@ -1526,7 +1528,7 @@ await wallet.send({ address: contract.address, amount: 10_000 })
 
 `contract.on('vtxo_received' | 'vtxo_spent' | 'connection_reset', cb)` reports activity from subscription on and returns a handle with `off()`. Coins that predate it are not replayed and a reconnect re-syncs silently, so read `contract.getVtxos()` (every stored VTXO, spent ones included) after subscribing and on each `connection_reset`.
 
-The connected server supplies `<SERVER_KEY>` (the reserved `server` parameter in normalized Programs) and `<SERVER_EXIT_DELAY>`; conflicting overrides fail, and time-based delays that are not multiples of 512 seconds fail rather than changing the advertised delay. Resolved bindings are persisted, so restoring the contract keeps its script through server key or policy changes. A declared constructor named `user` defaults to the connected identity; other constructor keys remain caller-provided. Pass a struct or array param whole by its source name, such as `{ owners: [{ key }, { key }] }`; the flattened names it binds, such as `owners.0.key`, are also accepted, and a missing, extra or duplicated field fails with its full name. Child-output placeholders remain explicit `bytes32` constructor bindings. Leaf call inputs used as script operands cannot produce a fixed address and are rejected; raw CSV operands must be canonical BIP68 encodings.
+The connected operator supplies `<SERVER_KEY>` (the reserved `server` parameter in normalized Programs) and `<SERVER_EXIT_DELAY>`; conflicting overrides fail, and time-based delays that are not multiples of 512 seconds fail rather than changing the advertised delay. Resolved bindings are persisted, so restoring the contract keeps its script through server key or policy changes. A declared constructor named `user` defaults to the connected identity; other constructor keys remain caller-provided. Pass a struct or array param whole by its source name, such as `{ owners: [{ key }, { key }] }`; the flattened names it binds, such as `owners.0.key`, are also accepted, and a missing, extra or duplicated field fails with its full name. Child-output placeholders remain explicit `bytes32` constructor bindings. Leaf call inputs used as script operands cannot produce a fixed address and are rejected; raw CSV operands must be canonical BIP68 encodings.
 
 For compiler-derived programs, call arguments are covenant inputs in declaration order, followed by non-signature leaf inputs in declaration order, one argument per source parameter: a struct or array input is passed whole, as in `contract.functions.spend(request, oracles)`. Same-named inputs in the two scopes remain separate positional arguments. Leaf signatures are PSBT signatures, not condition arguments: `send()` supports the connected identity and infrastructure signers; additional identities and covenant-tweaked leaf keys require explicit PSBT signing via `build()`. Covenant signature arguments remain caller-provided; transaction-bound Arkade `checkSig` signatures require an Arkade-specific digest helper, which is deferred. CSV leaves require aged onchain outputs and cannot use this offchain builder. Typed call validation and these spending limits apply to every normalized Program. The public `SignerRef` union is unchanged; version 1 programs store emulator signer placement in optional `emulatorIndex` metadata.
 
