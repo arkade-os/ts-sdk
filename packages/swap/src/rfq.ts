@@ -70,6 +70,7 @@ import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
 import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
+import { offerGenerationFor } from "./program";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -290,6 +291,8 @@ export interface RfqQuote {
     carrier_sats?: number | string;
     solver_pubkey: string;
     valid_until: number;
+    /** Covenant the solver chose; echoed only when the request advertised `covenant_versions`. */
+    covenant_version?: string;
     /** HTLC-class quotes only; absent for arkade↔arkade. */
     refund_locktime?: number;
     profile: {
@@ -361,6 +364,8 @@ export const arkadeSwapRequest = (input: {
     /** Trader's own x-only key (32 bytes), as bytes or lowercase hex. The
      * `cancel` path's `user` signer. */
     makerPublicKey: Uint8Array | string;
+    /** Covenants the trader can settle, most preferred first; omit for the baseline. */
+    covenantVersions?: readonly string[];
 }): Record<string, unknown> => {
     if (!input.wantAsset && !input.offerAsset) {
         throw new Error(
@@ -380,6 +385,9 @@ export const arkadeSwapRequest = (input: {
         pair,
         amount_side: input.amountSide ?? "from",
         amount: canonicalAssetAmount(input.amount),
+        ...(input.covenantVersions && input.covenantVersions.length > 0
+            ? { covenant_versions: [...input.covenantVersions] }
+            : {}),
         // The solver's `.strict()` schema refuses any undeclared key as `unsupported_payload`.
         profile: {
             maker_pk_script: normalizeMakerPkScript(input.makerPkScript),
@@ -1399,6 +1407,7 @@ export async function requestArkadeSwap(
         emulatorPubkey?: string;
         /** Canonical Arkade payout destination; the maker signing key stays this wallet's. */
         receiveAddress?: string;
+        covenantVersions?: readonly string[];
         now?: number;
     },
 ): Promise<{
@@ -1457,6 +1466,9 @@ export async function requestArkadeSwap(
             amountSide,
             makerPkScript,
             makerPublicKey,
+            ...(params.covenantVersions !== undefined
+                ? { covenantVersions: params.covenantVersions }
+                : {}),
         }),
     );
     if (quote.pair !== pair) {
@@ -1491,6 +1503,15 @@ export async function requestArkadeSwap(
             );
         }
     }
+    if (
+        quote.covenant_version !== undefined &&
+        params.covenantVersions !== undefined &&
+        !params.covenantVersions.includes(quote.covenant_version)
+    ) {
+        throw new Error(
+            `solver chose covenant ${quote.covenant_version}, not one of ${params.covenantVersions.join(", ")}`,
+        );
+    }
     const offer = await createOffer(wallet, {
         maker: { pkScript: ownPkScript, publicKey: makerPublicKey },
         ...(info === undefined ? {} : { info }),
@@ -1499,6 +1520,10 @@ export async function requestArkadeSwap(
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
+        // Only a quote that names a covenant steers the generation; else keep the default.
+        ...(quote.covenant_version !== undefined
+            ? { generation: offerGenerationFor(quote.covenant_version) }
+            : {}),
     });
     verifyOfferAddress(quote, offer);
     const fundAmount = BigInt(quote.from_amount);
