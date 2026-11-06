@@ -69,6 +69,7 @@ describe("proofTapLeafScript", () => {
         const note = new ArkNote(new Uint8Array(32).fill(1), 1000);
         expect(note.intentTapLeafScript).toBe(note.proofTapLeafScript);
         expect({ ...note }).not.toHaveProperty("intentTapLeafScript");
+        expect({ ...note }).toHaveProperty("proofTapLeafScript");
     });
 
     it("moves a handler's deprecated key to the new one", () => {
