@@ -387,7 +387,7 @@ export class MnemonicIdentity extends SeedIdentity {
      * Creates a passkey and derives an identity from its PRF secret. The words are the backup: the
      * passkey re-derives them on any device it syncs to, so whoever controls that passkey (and its
      * sync account) can sign. The derivation follows Breez's seedless-restore implementation, so
-     * the same passkey and label give the same words as a Breez wallet.
+     * with the default 12 words the same passkey and label give the same words as a Breez wallet.
      *
      * @example
      * ```typescript
