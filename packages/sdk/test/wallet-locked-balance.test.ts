@@ -67,7 +67,7 @@ describe("spendableVtxosExcludingLocked (getBalance offline-first, best-effort)"
             deleteProofMessage: "",
             partialForfeits: [],
         };
-        await repo.saveIntent({
+        await repo.saveBatchRegistration({
             ...base,
             state: "batch_in_progress",
             intentVtxos: [{ txid: "a", vout: 0 }],

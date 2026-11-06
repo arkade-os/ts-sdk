@@ -17,7 +17,7 @@ export class InMemoryIntentRepository implements IntentRepository {
         this.byId.clear();
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
         assertIntentIdUnique(intent, this.byId.values());
         this.byId.set(intent.intentTxId, {
             ...intent,
@@ -27,7 +27,7 @@ export class InMemoryIntentRepository implements IntentRepository {
         });
     }
 
-    async getIntentsPage(
+    async getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>> {
@@ -51,6 +51,16 @@ export class InMemoryIntentRepository implements IntentRepository {
         for (const i of this.byId.values())
             if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push({ ...o });
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: ArkIntent) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}

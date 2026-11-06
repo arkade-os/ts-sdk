@@ -1019,6 +1019,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         if (config.operatorProvider && config.arkProvider) {
             throw new Error("Pass either `operatorProvider` or `arkProvider`, not both");
         }
+        // Repository writes are best-effort and only log, so an old JavaScript repository would
+        // lose every batch registration in silence.
+        const intentRepository = config.storage?.intentRepository;
+        if (
+            intentRepository &&
+            (!intentRepository.saveBatchRegistration || !intentRepository.getBatchRegistrationsPage)
+        ) {
+            throw new Error(
+                "`storage.intentRepository` must have `saveBatchRegistration` and `getBatchRegistrationsPage`",
+            );
+        }
         const callerProvider = config.operatorProvider ?? config.arkProvider;
         if (
             config.service &&
@@ -4511,7 +4522,7 @@ export class Wallet
             if (existing && isTerminalIntentState(existing.state)) {
                 return;
             }
-            await repo.saveIntent({
+            await repo.saveBatchRegistration({
                 ...(existing ?? {}),
                 intentTxId,
                 registerProof: intent.proof,
