@@ -17,11 +17,11 @@ import {
     RestIndexerProvider,
     arkade,
     asset,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     resolveEmulatorPubkey,
     toXOnlySignerHex,
     type ArkTxInput,
-    type ArkadeInfo,
+    type OperatorInfo,
     type EmulatorProvider,
     type IWallet,
     type Outpoint,
@@ -417,14 +417,14 @@ export const OFFER_CONTRACT_KIND = "asset-swap-offer";
 /**
  * Register an offer's covenant as an `"arkade"` contract, so the deposit is watched, survives
  * restarts, and is known to be escrow. `genericallySpendable: false` keeps it out of coin selection:
- * the `cancel` leaf is an untimelocked user+server 2-of-2, so `send`, `settle` or background renewal
+ * the `cancel` leaf is an untimelocked user+operator 2-of-2, so `send`, `settle` or background renewal
  * would otherwise forfeit a live offer (redundant with the SDK's closed default, written anyway).
  * Watch state is promoted unconditionally because `createContract` is first-writer-wins on a shared
  * script, so a re-offered retired script would otherwise stay unwatched.
  */
 async function registerOfferContract(
     wallet: IWallet,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     binding: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
     expectedPkScript: Uint8Array,
@@ -445,13 +445,13 @@ async function registerOfferContract(
  * row's `address` on the network its script was derived for. */
 const derivingClient = (
     wallet: IWallet,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     contractManager: Awaited<ReturnType<IWallet["getContractManager"]>>,
 ): Promise<arkade.Arkade> =>
     arkade.Arkade.connect({
         arkade: { getInfo: async () => info },
         identity: wallet.identity,
-        network: networkFromArkadeInfo(info),
+        network: networkFromOperatorInfo(info),
         contractManager,
     });
 
@@ -546,7 +546,7 @@ export async function restoreOfferCoverage(
 // ── User operations ─────────────────────────────────────────────────────────
 
 /**
- * The exit delay from the server's scalar `unilateralExitDelay`, with arkd's own threshold: below
+ * The exit delay from the operator's scalar `unilateralExitDelay`, with arkd's own threshold: below
  * 512 it is blocks, otherwise seconds. A missing value arrives as `0` (`RestOperatorProvider` defaults
  * it) and is refused: an offer claiming an exit it does not have is worse than one that never did.
  */
@@ -578,8 +578,8 @@ function serverExitDelay(delay: bigint): RelativeTimelock {
  *
  * Broadcasts nothing, but registers the covenant before returning the address: a failure now is
  * retryable, whereas after `wallet.send` it would leave a funded deposit unwatched. The unilateral
- * exit closure is built by default (server's `unilateralExitDelay`, as solverd does); without it only
- * the server-co-signed `cancel` gets the deposit out, and an offer never expires.
+ * exit closure is built by default (operator's `unilateralExitDelay`, as solverd does); without it only
+ * the operator-cosigned `cancel` gets the deposit out, and an offer never expires.
  *
  * @deprecated Internal to `accept()`; no replacement. Moved off the package root to `@arkade-os/swap/protocol`.
  */
@@ -618,11 +618,11 @@ export interface OfferParams {
     /** Co-signer key override (33-byte compressed hex); see
      * {@link resolveEmulatorPubkey}. */
     emulatorPubkey?: string;
-    /** Override the exit closure's delay. Defaults to the server's own
+    /** Override the exit closure's delay. Defaults to the operator's own
      * `unilateralExitDelay`, which is the delay solverd uses too. */
     exitDelay?: RelativeTimelock;
     /** Publish without the exit closure, leaving `cancel` — which needs the
-     * server — as the only way back out. See the note on {@link createOffer}. */
+     * operator — as the only way back out. See the note on {@link createOffer}. */
     noExit?: boolean;
     /**
      * A live `getArkadeInfo` the caller already made.
@@ -632,7 +632,7 @@ export interface OfferParams {
      * live for the reason {@link createOffer} reads live — the info's
      * `signerPubkey` ends up in a covenant leaf.
      */
-    info?: ArkadeInfo;
+    info?: OperatorInfo;
     /**
      * The maker position, when the caller already read it.
      *
@@ -660,7 +660,7 @@ export interface DerivedOffer {
     /** The covenant's parameters — {@link registerDerivedOffer}'s only input. */
     readonly binding: Readonly<Omit<Offer, "swapPkScript">>;
     /** The live info this covenant is bound to. */
-    readonly info: ArkadeInfo;
+    readonly info: OperatorInfo;
     readonly operatorPubkey: Uint8Array;
 }
 
@@ -715,7 +715,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
             })(),
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
-    const network = networkFromArkadeInfo(info);
+    const network = networkFromOperatorInfo(info);
     const emuKey = hex.decode(
         toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
     );
@@ -781,8 +781,8 @@ export async function registerDerivedOffer(
  * Cancel an offer: spend the swap VTXO back to the user. Returns the ark txid. No path is on a
  * deadline, so an unfilled deposit stays at the swap address until the user cancels.
  *
- * Routes out: `fulfill` (server alone, but constrained to pay `makerWP` at least `wantAmount`),
- * `cancel` (user+server 2-of-2, no solver involved), `exit` (user alone after a CSV unless `noExit`;
+ * Routes out: `fulfill` (operator alone, but constrained to pay `makerWP` at least `wantAmount`),
+ * `cancel` (user+operator 2-of-2, no solver involved), `exit` (user alone after a CSV unless `noExit`;
  * reached by unrolling onchain, not here).
  *
  * Cancel races a fill: if `fulfill` spent first this throws "no spendable VTXO at the swap address",

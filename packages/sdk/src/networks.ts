@@ -24,12 +24,15 @@ export const getNetwork = (network: NetworkName): Network => {
 };
 
 /**
- * The {@link Network} an Arkade server's info names. {@link getNetwork} fails closed, so an
- * unrecognized server network throws here rather than resolving to mainnet parameters downstream.
+ * The {@link Network} the operator's info names. {@link getNetwork} fails closed, so an
+ * unrecognized network throws here rather than resolving to mainnet parameters downstream.
  * Structurally typed so the network table doesn't depend on the provider layer.
  */
-export const networkFromArkadeInfo = (info: { network: string }): Network =>
+export const networkFromOperatorInfo = (info: { network: string }): Network =>
     getNetwork(info.network as NetworkName);
+
+/** @deprecated Use {@link networkFromOperatorInfo}. */
+export const networkFromArkadeInfo = networkFromOperatorInfo;
 
 export const networks = {
     bitcoin: withArkPrefix(NETWORK, "ark", "bitcoin"),

@@ -176,6 +176,13 @@ style and have not been backfilled.
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
 
+- **`OperatorInfo` replaces `ArkadeInfo`.** `networkFromArkadeInfo` becomes
+  `networkFromOperatorInfo`, and `liveArkadeInfo` in `@arkade-os/swap/advanced`
+  becomes `liveOperatorInfo`. The old names stay as deprecated aliases.
+  `ArkadeInfo` is now a type alias, so code that adds fields to it with
+  `declare module` must add them to `OperatorInfo` instead. Comments in the
+  changed files now say the operator instead of the server.
+
 - **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
   takes a plan that returns piece amounts against the already-priced subtotal,
   per-piece output fee, per-output ceiling and dust floor. A plan that claims
