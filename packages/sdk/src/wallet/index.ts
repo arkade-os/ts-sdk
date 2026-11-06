@@ -297,8 +297,8 @@ export type StorageConfig = {
 
 /** Provider class constructor shape for dependency injection. */
 export interface ProviderClass<T> {
-    /** @param serverUrl - Base operator URL used by the provider */
-    new (serverUrl: string): T;
+    /** @param operatorUrl - Base operator URL used by the provider */
+    new (operatorUrl: string): T;
 }
 
 /**
