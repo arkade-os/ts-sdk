@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider } from "../src";
+import { RestIndexerProvider, configureEventSource } from "../src";
 import { isEventSourceError } from "../src/providers/utils";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
@@ -20,6 +20,7 @@ describe("RestIndexerProvider", () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        configureEventSource(undefined);
     });
 
     describe("getVtxos", () => {
@@ -369,7 +370,7 @@ describe("RestIndexerProvider", () => {
     describe("getSubscription", () => {
         beforeEach(() => {
             MockEventSource.reset();
-            vi.stubGlobal("EventSource", MockEventSource);
+            configureEventSource((url) => new MockEventSource(url));
         });
 
         it("aborts a pending subscription even when EventSource.close emits nothing", async () => {
@@ -440,7 +441,7 @@ describe("RestIndexerProvider", () => {
 
         beforeEach(() => {
             MockEventSource.reset();
-            vi.stubGlobal("EventSource", MockEventSource);
+            configureEventSource((url) => new MockEventSource(url));
         });
 
         it("opens the id-less route with every expression as a repeated filter field", async () => {

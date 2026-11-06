@@ -24,6 +24,10 @@ export interface SignerSession {
     sign(): Promise<TreePartialSigs>;
 }
 
+/**
+ * Custom `Identity.signerSession()` methods can return `TreeSignerSession.random()`
+ * to keep the local ephemeral key separate from the wallet's signing key.
+ */
 export class TreeSignerSession implements SignerSession {
     static NOT_INITIALIZED = new Error("session not initialized, call init method");
 
@@ -35,6 +39,7 @@ export class TreeSignerSession implements SignerSession {
 
     constructor(private secretKey: Uint8Array) {}
 
+    /** Use a fresh key/session per signing attempt; never reuse sessions or their nonces. */
     static random(): TreeSignerSession {
         const secretKey = randomPrivateKeyBytes();
         return new TreeSignerSession(secretKey);
