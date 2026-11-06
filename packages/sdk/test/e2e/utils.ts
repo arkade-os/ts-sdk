@@ -42,7 +42,7 @@ export const arkdExec = "docker exec -t arkd";
 export const ESPLORA_API_URL = "http://localhost:3000/api";
 
 /** Regtest arkd. Wallets take it as a provider — the URL is not wallet config. */
-export const ARK_URL = "http://localhost:7070";
+export const OPERATOR_URL = "http://localhost:7070";
 
 /**
  * Default budget for a shell-out. Every `execSync` here MUST carry one:
@@ -160,7 +160,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -185,7 +185,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -212,7 +212,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -259,7 +259,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -441,17 +441,19 @@ export function createOverrideInfoArkProvider(
 // ../arkd/internal/test/e2e/utils_test.go), adapted to this repo's two-file,
 // profiled compose project (`arkade-regtest`) launched by `regtest.mjs`.
 
-export interface ServerSignerInfo {
+export interface OperatorSignerInfo {
     /** Active signer pubkey, hex exactly as arkd's `/v1/info` returns it. */
     signerPubkey: string;
     deprecatedSigners: { pubkey: string; cutoffDate?: string }[];
 }
 
 /** Read the current active + deprecated signer set from `GET /v1/info`. */
-export async function getServerInfo(arkUrl: string = ARK_URL): Promise<ServerSignerInfo> {
-    const res = await fetch(`${arkUrl}/v1/info`);
+export async function getOperatorInfo(
+    operatorUrl: string = OPERATOR_URL,
+): Promise<OperatorSignerInfo> {
+    const res = await fetch(`${operatorUrl}/v1/info`);
     if (!res.ok) {
-        throw new Error(`getServerInfo: ${res.status} ${res.statusText}`);
+        throw new Error(`getOperatorInfo: ${res.status} ${res.statusText}`);
     }
     const j: any = await res.json();
     return {
@@ -492,9 +494,9 @@ export type DeprecatedSignerSpec = string | { priv: string; cutoffDate?: number 
 export async function rotateArkdSigner(params: {
     activeSignerPriv: string;
     deprecatedSigners?: DeprecatedSignerSpec[];
-    arkUrl?: string;
-}): Promise<ServerSignerInfo> {
-    const { activeSignerPriv, arkUrl = ARK_URL } = params;
+    operatorUrl?: string;
+}): Promise<OperatorSignerInfo> {
+    const { activeSignerPriv, operatorUrl = OPERATOR_URL } = params;
     const deprecated = (params.deprecatedSigners ?? []).map((d) =>
         typeof d === "string" ? { priv: d, cutoffDate: undefined as number | undefined } : d,
     );
@@ -537,10 +539,10 @@ export async function rotateArkdSigner(params: {
     );
 
     const deadline = Date.now() + ROTATE_POLL_TIMEOUT_MS;
-    let lastInfo: ServerSignerInfo | undefined;
+    let lastInfo: OperatorSignerInfo | undefined;
     while (Date.now() < deadline) {
         try {
-            lastInfo = await getServerInfo(arkUrl);
+            lastInfo = await getOperatorInfo(operatorUrl);
             const activeOk = toXOnly(lastInfo.signerPubkey) === expectedActive;
             const advertised = new Set(lastInfo.deprecatedSigners.map((s) => toXOnly(s.pubkey)));
             // Set equality, not containment: `every` is vacuously true for an
@@ -587,7 +589,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     repos: SharedRepos;
     unilateralExitDelay: bigint;
 }): Promise<TestArkWallet> {
-    const realProvider = new RestArkProvider(ARK_URL);
+    const realProvider = new RestArkProvider(OPERATOR_URL);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a

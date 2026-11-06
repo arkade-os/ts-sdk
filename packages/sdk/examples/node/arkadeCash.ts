@@ -97,7 +97,7 @@ async function main() {
         async () => (await aliceWallet.getBoardingUtxos()).length > 0,
     );
 
-    console.log("[Alice]\tOnboarding into Ark...");
+    console.log("[Alice]\tBoarding into Arkade...");
     const info = await aliceWallet.arkProvider.getInfo();
     const ramps = new Ramps(aliceWallet);
     const settlementTxid = await ramps.onboard(info.fees);

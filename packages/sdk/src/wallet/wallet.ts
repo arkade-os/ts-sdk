@@ -24,6 +24,7 @@ import {
     RestOperatorProvider,
     SettlementEvent,
     SignedIntent,
+    SignedProof,
     TreeNoncesEvent,
     TreeSigningStartedEvent,
 } from "../providers/ark";
@@ -109,7 +110,7 @@ import { Transaction } from "../utils/transaction";
 import {
     byValueDescending,
     DEFAULT_SETTLEMENT_CONFIG,
-    MAX_INPUTS_PER_INTENT,
+    MAX_INPUTS_PER_PROOF,
     MAX_VTXOS_PER_SETTLEMENT,
     SettlementConfig,
     VtxoManager,
@@ -117,7 +118,7 @@ import {
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { ArkadeCash } from "../arkadeCash";
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
@@ -241,7 +242,7 @@ import {
     MissingSigningDescriptorError,
 } from "./signingErrors";
 
-// Build per-input jobs for an intent proof. Index 0 of the proof is a
+// Build per-input jobs for a proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
 // coin[0]'s pkScript, so we map it to the same source contract as
 // coin[0]; coins 0..N-1 then map to proof inputs 1..N.
@@ -3976,7 +3977,7 @@ export class Wallet
         }
 
         // if some of the inputs hold assets, build the asset packet and append as output
-        // in the intent proof tx, there is a "fake" input at index 0
+        // in the proof tx, there is a "fake" input at index 0
         // so the real coin indices are offset by +1
         const assetInputs = new Map<number, Asset[]>();
         for (let i = 0; i < params.inputs.length; i++) {
@@ -4040,7 +4041,7 @@ export class Wallet
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
-        // Client-side intent key: the intent proof's txid (NArk parity).
+        // Client-side key: the proof's txid (NArk parity).
         // Falls back to a deterministic outpoint digest if the special
         // intent PSBT can't be decoded — keeps persistence resilient.
         let intentTxId: string;
@@ -4578,8 +4579,8 @@ export class Wallet
     private async persistIntentSnapshot(
         intentTxId: string,
         state: ArkIntentState,
-        intent: SignedIntent<Intent.RegisterMessage>,
-        deleteIntent: SignedIntent<Intent.DeleteMessage>,
+        intent: SignedProof<Proof.RegisterMessage>,
+        deleteIntent: SignedProof<Proof.DeleteMessage>,
         inputs: ExtendedCoin[],
         patch?: Partial<ArkIntent>,
     ): Promise<void> {
@@ -4597,7 +4598,7 @@ export class Wallet
                 ...(existing ?? {}),
                 intentTxId,
                 registerProof: intent.proof,
-                registerProofMessage: Intent.encodeMessage(intent.message),
+                registerProofMessage: Proof.encodeMessage(intent.message),
                 deleteProof: deleteIntent.proof,
                 deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
                 intentVtxos: inputs.map((i) => ({
@@ -4916,8 +4917,8 @@ export class Wallet
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[],
         validAt?: number,
-    ): Promise<SignedIntent<Intent.RegisterMessage>> {
-        const message: Intent.RegisterMessage = {
+    ): Promise<SignedProof<Proof.RegisterMessage>> {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: validAt ? Math.floor(validAt) : 0,
@@ -4925,7 +4926,7 @@ export class Wallet
             cosigners_public_keys: cosignerPubKeys,
         };
 
-        const proof = Intent.create(message, coins, outputs);
+        const proof = Proof.create(message, coins, outputs);
         const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
 
         return {
@@ -4936,13 +4937,13 @@ export class Wallet
 
     async makeDeleteIntentSignature(
         coins: ExtendedCoin[],
-    ): Promise<SignedIntent<Intent.DeleteMessage>> {
-        const message: Intent.DeleteMessage = {
+    ): Promise<SignedProof<Proof.DeleteMessage>> {
+        const message: Proof.DeleteMessage = {
             type: "delete",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, coins, []);
+        const proof = Proof.create(message, coins, []);
         const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
 
         return {
@@ -4953,13 +4954,13 @@ export class Wallet
 
     async makeGetPendingTxIntentSignature(
         coins: ExtendedVirtualCoin[],
-    ): Promise<SignedIntent<Intent.GetPendingTxMessage>> {
-        const message: Intent.GetPendingTxMessage = {
+    ): Promise<SignedProof<Proof.GetPendingTxMessage>> {
+        const message: Proof.GetPendingTxMessage = {
             type: "get-pending-tx",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, coins, []);
+        const proof = Proof.create(message, coins, []);
         const signedProof = await this._signerRouter.sign(proof, intentProofJobs(coins));
 
         return {
@@ -5013,8 +5014,8 @@ export class Wallet
             vtxos = allExtended;
         }
         const batches: ExtendedVirtualCoin[][] = [];
-        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
-            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
+        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_PROOF) {
+            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_PROOF));
         }
 
         const unrollCandidates = this.checkpointUnrollCandidates(await this.arkProvider.getInfo());
@@ -5605,14 +5606,14 @@ export class Wallet
 
         const identity = cash.identity;
 
-        // Chunked to the server's MAX_INPUTS_PER_INTENT; deduped by arkTxid since a tx can
+        // Chunked to the server's MAX_INPUTS_PER_PROOF; deduped by arkTxid since a tx can
         // surface under two chunks.
         const seenTxids = new Set<string>();
         const pendingTxs: PendingTx[] = [];
-        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_INTENT) {
-            const batch = inputs.slice(i, i + MAX_INPUTS_PER_INTENT);
-            const message: Intent.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
-            const proof = Intent.create(message, batch, []);
+        for (let i = 0; i < inputs.length; i += MAX_INPUTS_PER_PROOF) {
+            const batch = inputs.slice(i, i + MAX_INPUTS_PER_PROOF);
+            const message: Proof.GetPendingTxMessage = { type: "get-pending-tx", expire_at: 0 };
+            const proof = Proof.create(message, batch, []);
             // All inputs incl. index 0 (BIP-322 toSpend, mirroring input 1) are cash inputs;
             // explicit indexes surface a failure instead of shipping a half-signed proof.
             const signedProof = await identity.sign(

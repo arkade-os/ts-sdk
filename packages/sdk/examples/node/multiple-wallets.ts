@@ -53,7 +53,7 @@ function createSQLExecutor(dbPath: string): SQLExecutor {
 }
 
 async function main() {
-    console.log("Starting Ark SDK NodeJS Example...");
+    console.log("Starting Arkade SDK NodeJS Example...");
 
     const bob = SingleKey.fromRandomBytes();
     const alice = SingleKey.fromRandomBytes();
@@ -122,8 +122,8 @@ async function main() {
     }
     console.log("[Alice]\tBoarding UTXOs found:", utxos.length);
 
-    // Settle (onboard) into the Ark protocol
-    console.log("[Alice]\tOnboarding into Ark...");
+    // Settle (board) into Arkade
+    console.log("[Alice]\tBoarding into Arkade...");
     const info = await aliceWallet.arkProvider.getInfo();
     const ramps = new Ramps(aliceWallet);
     const txid = await ramps.onboard(info.fees);

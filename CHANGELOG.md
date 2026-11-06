@@ -61,6 +61,12 @@ style and have not been backfilled.
   Realm consumer must open at a `schemaVersion` of at least
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
+### Features
+
+- **Export `TreeSignerSession` for custom identities.** External `Identity`
+  implementations can use the existing session without an internal SDK import.
+  Class and factory TSDoc cover key isolation and nonce/session lifetime.
+
 ### Added
 
 - **Onchain coins can be spent at once through arkd's cosigner.** Boarding
@@ -231,6 +237,16 @@ style and have not been backfilled.
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
 
+- **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
+  A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin
+  outputs, its signature proves the user controls them, and its message says what
+  to do with them. `Proof` is both a namespace and a type, so
+  `const proof: Proof = Proof.create(...)` compiles. `IntentCoin` is now
+  `ProofInput`, `SignedIntent` is `SignedProof`, `AssetInputType.Intent` is
+  `AssetInputType.Proof`, and `AssetInput.createIntent` is
+  `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
+  `ark-intent-proof-message` tag does not change, because the operator verifies it.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
@@ -269,7 +285,35 @@ style and have not been backfilled.
   boarding coins; it now throws `WalletNotInitializedError`, like
   `GET_VTXOS`. (#943)
 
+- **Ark SSE streams send the SDK version headers.** `getEventStream` and
+  `getTransactionsStream` now send `X-Build-Version` and `X-SDK-VERSION`, like
+  every other Ark server call. A browser `EventSource` cannot set request
+  headers, so these streams reached arkd without them: arkd could not tie an
+  open stream to an SDK version, and its build-version guard did not apply.
+  With no factory configured, streams now open over `fetch`; the global
+  `EventSource` is used only where `fetch` cannot stream, and a factory from
+  `configureEventSource` or the `eventSource` option still wins.
+  `EventSourceFactory` takes the headers as an optional second argument; a
+  factory that ignores it keeps working but sends no headers. Indexer
+  subscriptions send none, because the indexer can be another origin. Like
+  the native `EventSource`, the `fetch` transport accepts LF, CR and CRLF line
+  endings, reads fields line by line as the spec does, and fails a response
+  that is not a 200 `text/event-stream`. It does not reconnect by itself, as
+  the callers already do.
+  In Node, streams no longer need the `eventsource` package or
+  `--experimental-eventsource`.
+
 ### Bug Fixes
+
+- **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
+  SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
+  `getEventStream` and `getTransactionsStream` took a refused stream's status
+  for an unknown message, and reconnected at once into the same refusal when
+  arkd closed the stream. Expo streams now read frames through the same SSE
+  reader as the `fetch` transport: a `failure` event throws the stream failure
+  on every Expo stream, as on the other transports, and `ExpoIndexerProvider`
+  no longer detects it from the data. Other named events are ignored, a
+  frame's `data:` lines form one message, and CR line endings are accepted.
 
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
@@ -1069,6 +1113,14 @@ style and have not been backfilled.
   writes into the caller's object.
 
 ### Performance
+
+- **Transaction history stops rescanning the VTXO list per VTXO.**
+  `buildTransactionHistory` rescanned every VTXO the wallet ever held, spent
+  ones included, two to four times per VTXO. Refreshes made it worse, because
+  they leave no row to stop the rescan. The cost grew with the square of a
+  list that only grows: on Hermes, `getTransactionHistory` blocked the JS
+  thread for 3–4 s. The builder now indexes the VTXOs once per call, and a
+  9k-VTXO history takes ~30 ms instead of ~3 s. Output is unchanged.
 
 - **A wallet registers its baseline contracts in one batch.**
   `initializeContractManager` created each baseline contract (the default,

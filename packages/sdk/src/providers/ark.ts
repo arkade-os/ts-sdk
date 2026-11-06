@@ -18,9 +18,9 @@ import {
     toProviderUnavailable,
 } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
-import { fetch } from "../utils/fetch";
+import { ARKADE_VERSION_HEADERS, fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
 /**
@@ -275,14 +275,17 @@ export interface ArkadeInfo {
     vtxoMinAmount: bigint;
 }
 
-/** Signed intent payload sent to the Arkade server. */
-export interface SignedIntent<T extends Intent.Message> {
+/** A signed {@link Proof} and its message, as sent to the operator. */
+export interface SignedProof<T extends Proof.Message> {
     /** Base64-encoded signed proof transaction. */
     proof: string;
 
-    /** Intent message payload associated with the proof. */
+    /** Message the proof commits to. */
     message: T;
 }
+
+/** @deprecated Use {@link SignedProof}. */
+export type SignedIntent<T extends Proof.Message> = SignedProof<T>;
 
 /** Transaction notification emitted by the Arkade server stream. */
 export interface TxNotification {
@@ -375,7 +378,7 @@ export interface OperatorProvider {
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
-    getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]>;
+    getPendingTxs(intent: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]>;
 }
 
 /**
@@ -733,7 +736,7 @@ export class RestOperatorProvider implements OperatorProvider {
             {
                 intent: {
                     proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                 },
             },
             (errorText) => `Failed to register intent: ${errorText}`,
@@ -750,7 +753,7 @@ export class RestOperatorProvider implements OperatorProvider {
             {
                 intent: {
                     proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                 },
             },
             (errorText) => `Failed to delete intent: ${errorText}`,
@@ -837,7 +840,10 @@ export class RestOperatorProvider implements OperatorProvider {
             try {
                 while (!signal?.aborted) {
                     const currentIterator = eventSourceIterator(
-                        resolveEventSource(self.eventSource)(url + queryParams),
+                        resolveEventSource(self.eventSource)(
+                            url + queryParams,
+                            ARKADE_VERSION_HEADERS,
+                        ),
                     );
                     iterator = currentIterator;
 
@@ -917,7 +923,7 @@ export class RestOperatorProvider implements OperatorProvider {
                 while (!signal?.aborted) {
                     try {
                         const currentIterator = eventSourceIterator(
-                            resolveEventSource(self.eventSource)(url),
+                            resolveEventSource(self.eventSource)(url, ARKADE_VERSION_HEADERS),
                         );
                         iterator = currentIterator;
 
@@ -981,14 +987,14 @@ export class RestOperatorProvider implements OperatorProvider {
         return gen;
     }
 
-    async getPendingTxs(intent: SignedIntent<Intent.GetPendingTxMessage>): Promise<PendingTx[]> {
+    async getPendingTxs(intent: SignedProof<Proof.GetPendingTxMessage>): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await this.postJson(
             url,
             {
                 intent: {
                     proof: intent.proof,
-                    message: Intent.encodeMessage(intent.message),
+                    message: Proof.encodeMessage(intent.message),
                 },
             },
             (errorText) => `Failed to get pending transactions: ${errorText}`,
