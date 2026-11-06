@@ -10,6 +10,8 @@ export interface WebAuthnClient {
 /** The browser or the authenticator cannot return a PRF secret, so this passkey cannot derive a key. */
 export class PrfUnavailable extends Error {
     name = "PrfUnavailable";
+    /** Set when the passkey was created before this failure, so an app can still use it some other way. */
+    credentialId?: Uint8Array;
 }
 
 /** The user dismissed the passkey prompt. */
@@ -113,7 +115,8 @@ export async function prfSupport(): Promise<"yes" | "no" | "unknown"> {
  * that changes its secret later is not caught here; it derives other words on the next sign-in.
  *
  * @throws PrfUnavailable when the authenticator cannot do PRF or gives another secret on reuse
- * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation
+ * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation; this and
+ *   PrfUnavailable carry the new passkey's `credentialId`, since the passkey exists by then
  * @throws PasskeyCancelled when the user dismisses the prompt
  */
 export async function createPrfPasskey(o: {
@@ -140,6 +143,21 @@ export async function createPrfPasskey(o: {
         }),
     );
     const credentialId = bytes((cred as PublicKeyCredential).rawId);
+    return confirmPrf(cred, credentialId, o, client).then(
+        (prf) => ({ credentialId, prf }),
+        (e) => {
+            if (e instanceof PrfUnavailable) e.credentialId = credentialId;
+            throw e;
+        },
+    );
+}
+
+async function confirmPrf(
+    cred: Credential,
+    credentialId: Uint8Array,
+    o: { rp: { id: string }; salt: Uint8Array },
+    client: WebAuthnClient,
+): Promise<Uint8Array> {
     const out = prfOf(cred);
     // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way.
     if (!out?.results?.first && (!out || out.enabled === false))
@@ -163,7 +181,7 @@ export async function createPrfPasskey(o: {
     if (made && !same(made, used)) {
         throw new PrfUnavailable("This passkey gave a different secret on its next use.");
     }
-    return { credentialId, prf: used };
+    return used;
 }
 
 /**

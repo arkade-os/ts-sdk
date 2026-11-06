@@ -303,4 +303,19 @@ describe("PRF passkeys", () => {
             vi.unstubAllGlobals();
         }
     });
+
+    it("names the passkey it made when that passkey then cannot derive a key, so an app can fall back to it", async () => {
+        for (const knobs of [{ prf: false }, { getFails: true }, { drift: true }]) {
+            const client = new FakeAuthenticator(knobs);
+            const error = await make(client).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(PrfUnavailable);
+            expect((error as PrfUnavailable).credentialId).toEqual(client.held[0].id);
+        }
+        const error = await evaluatePrf({
+            rpId: rp.id,
+            salt,
+            client: new FakeAuthenticator({ prf: false }),
+        }).catch((e: unknown) => e);
+        expect((error as PrfUnavailable).credentialId).toBeUndefined();
+    });
 });

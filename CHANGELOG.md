@@ -72,7 +72,8 @@ style and have not been backfilled.
   `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads. A passkey is used once right after creation and refused
   (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it gives
   no 32-byte secret or one different from the secret it returned at creation (an
-  authenticator that returns none at creation has nothing to compare against). The
+  authenticator that returns none at creation has nothing to compare against); both
+  carry the new passkey's `credentialId`, so an app can fall back to that passkey. The
   primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
   exported; every call that prompts takes a `client` in place of
   `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
