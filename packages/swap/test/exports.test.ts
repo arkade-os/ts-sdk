@@ -71,7 +71,7 @@ const CURATED_ROOT: readonly string[] = [
     "CLAIM_PACKET_TYPE",
     "claimPacketShape",
     "ClaimPacketShape",
-    "SEALED_CIPHERTEXT_LENGTH",
+    "DELEGATEE_CLAIM_TEMPLATE_ID",
     // The client: factory, object, config, and the config's field types.
     "createSwapClient",
     "SwapClient",

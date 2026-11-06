@@ -2,7 +2,7 @@
  * The three maker-flow entrypoints that need the emulator's key —
  * `requestLightningSend`, `requestOnchainSend` (rfq.ts) and `createOffer`
  * (offer.ts) — must never reach the emulator over the network: per policy,
- * clients have no network path to it, only the solver and covclaimd do. The
+ * clients have no network path to it, only the solver and delegatee do. The
  * emulator's x-only key is instead a caller-supplied parameter, sourced out
  * of band from the solver's signed registry/corridor card.
  *

@@ -68,10 +68,10 @@ export interface CorridorOverrides {
     lightning?: {
         /** Default: the package's own {@link decodeBolt11}. */
         decode?: ((bolt11: string) => InvoiceFacts) | null;
-        /** Default: none — nothing is sealed and no packet is sent, so the
-         * trader must claim its own lockup before `refund_locktime`. Set, only a
-         * take-pinned (exact-out) BTC receive is guaranteed one. */
-        covclaimd?: { pubkey: Pubkey } | null;
+        /** Default: none. Nothing is sealed and no packet is sent, so the
+         * trader must claim its own lockup before `refund_locktime`. Set, `P` is
+         * sealed to delegatee's encryption key so it can claim while the trader is offline. */
+        delegatee?: { encryptionPubkey: Pubkey } | null;
     };
     onchain?: {
         /** Default: Esplora at `ESPLORA_URL[network]`. `{ provider }` reads L1 through the caller's
@@ -135,9 +135,9 @@ export interface ArkadeCorridorDeps {
 export interface LightningCorridorDeps {
     readonly networkName: NetworkName;
     readonly decode: (bolt11: string) => InvoiceFacts;
-    /** `undefined` means no covclaimd is deployed — nothing is sealed and no
+    /** `undefined` means no delegatee is configured: nothing is sealed and no
      * packet is sent. Not a missing dep. */
-    readonly covclaimd: { pubkey: Pubkey } | undefined;
+    readonly delegatee: { encryptionPubkey: Pubkey } | undefined;
 }
 
 /** The onchain corridor's deps. */
@@ -252,10 +252,10 @@ export function resolveCorridorDeps(
                 decode:
                     refusedIfNull(overrides?.lightning?.decode, "lightning", "bolt11 decoder") ??
                     decodeBolt11,
-                covclaimd: refusedIfNull(
-                    overrides?.lightning?.covclaimd,
+                delegatee: refusedIfNull(
+                    overrides?.lightning?.delegatee,
                     "lightning",
-                    "covclaimd deployment key",
+                    "delegatee encryption key",
                 ),
             };
         }

@@ -222,7 +222,7 @@ export {
     CLAIM_PACKET_TYPE,
     claimPacketShape,
     type ClaimPacketShape,
-    SEALED_CIPHERTEXT_LENGTH,
+    DELEGATEE_CLAIM_TEMPLATE_ID,
 } from "./claimPacket";
 
 // `SwapClientConfig.operator`, for a second operator or a test.

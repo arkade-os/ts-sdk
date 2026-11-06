@@ -50,6 +50,8 @@ export interface LightningReceiveProfile extends Record<string, unknown> {
     expectedAmount: number;
     /** Where the claim pays. */
     payoutAddress: string;
+    /** `P` was sealed to delegatee. */
+    delegateeClaims?: true;
     /**
      * Our Arkade claim's txid, once submitted.
      *
@@ -67,6 +69,7 @@ const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
         const receive = swap as LightningReceiveSwap;
         return {
             expectedAmount: receive.expectedAmount,
+            ...(receive.delegateeClaims ? { delegateeClaims: true } : {}),
             ...(receive.claimTxid ? { claimTxid: receive.claimTxid } : {}),
         };
     },
@@ -83,6 +86,7 @@ const LightningReceiveCorridor: RfqCorridorHandler<LightningReceiveProfile> = {
         return {
             ...hydrateHashlock(profile),
             expectedAmount: profile.expectedAmount,
+            ...(profile.delegateeClaims ? { delegateeClaims: true } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
         };
     },

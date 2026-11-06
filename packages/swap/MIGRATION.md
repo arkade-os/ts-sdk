@@ -4,6 +4,15 @@ Newest first. Each section is one upgrade; nothing below `0.1.0` auto-upgrades i
 it under npm's `0.0.x` rules, so a consumer arriving from an old pin meets several of these in one
 jump and should read down until the version it left.
 
+## Offline Lightning-receive claims are made by delegatee
+
+A Lightning receive seals the preimage to delegatee's `noninteractiveclaim` template, so delegatee
+claims the lockup while the client is offline. Pass `lightning.delegatee: { encryptionPubkey }`
+(delegatee's `GET /v1/info` key) in place of `lightning.covclaimd: { pubkey }`. The Reveal client
+(`covclaimdClient`, `revealClaimPacket`, `revealFieldsFromScript`) and `SEALED_CIPHERTEXT_LENGTH`
+are removed; `sealClaimPacket` returns `{ packet }` only, and `claimPacketShape` reads `none` or
+`packet` with `encryptionPubkey`.
+
 ## `@arkade-os/boltz-swap` (any version) → `@arkade-os/swap` — the package is gone
 
 `@arkade-os/boltz-swap` is removed on this release line and will not be published again. Its
