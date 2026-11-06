@@ -247,6 +247,8 @@ style and have not been backfilled.
   `getBatchRegistrationsPage`. The SDK calls the new names, so a custom
   repository must add them. The old names stay on the interface and on the
   InMemory, IndexedDB, SQLite and Realm classes as deprecated methods.
+  `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
+  object passed to it must have that method.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
