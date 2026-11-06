@@ -66,6 +66,13 @@ style and have not been backfilled.
   `oneShot: false`.
   `RestArkProvider.submitTx` now rejects a response without `finalArkTx`.
 
+- **Prepared native requests can be persisted and reconciled.** An opt-in
+  NativeExecutionJournal requires asserted persistent atomic storage, admits one
+  exact immutable proposal and keeps the slot occupied. Public indexer evidence
+  must match the saved source, signed checkpoint and full-principal payout. A
+  historical receipt commits only if the exact prepared request still matches;
+  cached reads use no RPC. There is no release, replay or shared coin ownership.
+
 - **Opt-in SDK-native execution for a bounded delegatee template subset.**
   NativeExecutor imports, funds and restores one-input, full-principal offchain
   covenant plans through the existing wallet, builder and ContractManager. Locked
@@ -247,6 +254,24 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Indexer read limits stay fixed through pagination and journal validation.**
+  Automatic VTXO pages retain the caller's initial response-byte cap even if its
+  options change while a page is pending. Journal observations measure serialized
+  replies in UTF-8 bytes, so multibyte payloads cannot exceed the 4 MiB policy
+  while passing a string-length check.
+
+- **Native recovery accepts the indexer's final-page cursor.** A complete single
+  page may repeat its final index in `next`; malformed or nonterminal cursors still
+  leave the journal unresolved. Unreadable bounded error bodies retain status-only
+  availability retries for 429/5xx, while terminal status errors keep the bounded
+  read failure. Response byte limits and legacy defaults are unchanged.
+
+- **Native journal observation bounds REST bodies before parsing.** Observation
+  requests one explicit two-item page with an opt-in 4 MiB wire-byte cap, including
+  error bodies. Oversized or unstreamable replies remain unknown; legacy indexer
+  reads keep their existing defaults. Pagination whose current page exceeds its
+  total cannot acknowledge a receipt or release the occupied prepared slot.
+
 - **A failed contract-manager start-up no longer leaves its watcher running.**
   `getContractManager()` dropped a manager whose baseline registration, or the
   identity key read before it, rejected after `ContractManager.create()` had
@@ -327,6 +352,10 @@ style and have not been backfilled.
   transaction instead of joining it. A repository or serialized-executor call
   made inside a `runInTransaction` callback therefore deadlocks; after 10s the
   SDK warns with that call's stack.
+
+- **Native reconciliation accepts complete unpaged indexer replies.** The
+  server's page:null envelope is accepted without stripping metadata; malformed
+  or incomplete pagination still leaves the request unresolved.
 
 - **Queued native execution keeps its selected source.** Snapshot and validate
   the outpoint before any wait, then use it for selection and refreshes. Native

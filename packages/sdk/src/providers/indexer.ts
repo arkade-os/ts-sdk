@@ -42,7 +42,11 @@ const INDEXER_RETRY_BASE_MS = 250;
  * own-properties do not survive the service-worker `postMessage` boundary.
  * Only the retries-exhausted failure reaches the caller, in its previous shape.
  */
-async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function indexerFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+    maxResponseBytes?: number,
+): Promise<Response> {
     // Retry only what is safe to send twice. A subscribe POST whose response is
     // lost would otherwise be re-sent without a subscriptionId, creating a
     // second subscription and leaking the first. Non-GETs still wait behind the
@@ -70,10 +74,14 @@ async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promi
         // misclassified as a retryable availability failure. If the body can't be
         // read, fall back to status-only classification.
         let body: string | undefined;
+        let bodyReadFailure: { error: unknown } | undefined;
         try {
-            body = await res.clone().text();
-        } catch {
-            body = undefined;
+            body =
+                maxResponseBytes === undefined
+                    ? await res.clone().text()
+                    : await readBoundedText(res, maxResponseBytes);
+        } catch (error) {
+            if (maxResponseBytes !== undefined) bodyReadFailure = { error };
         }
 
         try {
@@ -88,8 +96,49 @@ async function indexerFetch(input: RequestInfo | URL, init?: RequestInit): Promi
         }
 
         // Terminal non-2xx: hand it back for the caller's descriptive error.
+        if (bodyReadFailure) throw bodyReadFailure.error;
         return res;
     }
+}
+
+function assertResponseLimit(limit: number | undefined): void {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0))
+        throw new Error("maxResponseBytes must be a positive safe integer");
+}
+
+async function readBoundedText(response: Response, limit: number): Promise<string> {
+    const length = response.headers.get("content-length");
+    if (length !== null && /^\d+$/.test(length) && Number(length) > limit) {
+        void response.body?.cancel().catch(() => {});
+        throw new Error("indexer response exceeds maxResponseBytes");
+    }
+    const reader = response.body?.getReader?.();
+    if (!reader) throw new Error("bounded indexer reads require a streaming response body");
+    const decoder = new TextDecoder();
+    const chunks: string[] = [];
+    let bytes = 0;
+    try {
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            bytes += value.byteLength;
+            if (bytes > limit) {
+                void reader.cancel().catch(() => {});
+                throw new Error("indexer response exceeds maxResponseBytes");
+            }
+            chunks.push(decoder.decode(value, { stream: true }));
+        }
+        chunks.push(decoder.decode());
+        return chunks.join("");
+    } finally {
+        reader.releaseLock();
+    }
+}
+
+async function indexerJson(response: Response, limit: number | undefined): Promise<any> {
+    return limit === undefined
+        ? response.json()
+        : JSON.parse(await readBoundedText(response, limit));
 }
 
 function retryDelayMs(attempt: number): number {
@@ -101,6 +150,11 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 export type PaginationOptions = {
     pageIndex?: number;
     pageSize?: number;
+};
+
+export type IndexerReadOptions = PaginationOptions & {
+    /** Opt-in REST body byte limit, enforced before JSON parsing; requires a readable stream. */
+    maxResponseBytes?: number;
 };
 
 /**
@@ -234,7 +288,7 @@ export interface SubscriptionFilter {
  *
  * @see IndexerProvider.getVtxos
  */
-export type GetVtxosOptions = PaginationOptions & {
+export type GetVtxosOptions = IndexerReadOptions & {
     /** Only return spendable virtual outputs. */
     spendableOnly?: boolean;
     /** Only return spent virtual outputs. */
@@ -365,7 +419,7 @@ export interface IndexerProvider {
      */
     getVirtualTxs(
         txids: string[],
-        opts?: PaginationOptions,
+        opts?: IndexerReadOptions,
     ): Promise<{ txs: string[]; page?: PageResponse }>;
 
     /**
@@ -663,14 +717,16 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getVirtualTxs(
         txids: string[],
-        opts?: PaginationOptions,
+        opts?: IndexerReadOptions,
     ): Promise<{ txs: string[]; page?: PageResponse }> {
+        const maxResponseBytes = opts?.maxResponseBytes;
+        assertResponseLimit(maxResponseBytes);
         const url = withPage(`${this.serverUrl}/v1/indexer/virtualTx/${txids.join(",")}`, opts);
-        const res = await indexerFetch(url);
+        const res = await indexerFetch(url, undefined, maxResponseBytes);
         if (!res.ok) {
             throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
         }
-        const data = await res.json();
+        const data = await indexerJson(res, maxResponseBytes);
         if (!Response.isVirtualTxsResponse(data)) {
             throw new Error("Invalid virtual txs data received");
         }
@@ -694,6 +750,8 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxos(opts?: GetVtxosOptions): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
+        const maxResponseBytes = opts?.maxResponseBytes;
+        assertResponseLimit(maxResponseBytes);
         const hasScripts = (opts?.scripts?.length ?? 0) > 0;
         const hasOutpoints = (opts?.outpoints?.length ?? 0) > 0;
 
@@ -746,6 +804,7 @@ export class RestIndexerProvider implements IndexerProvider {
             for (;;) {
                 const { vtxos, page } = await this.fetchVtxosPage({
                     ...(opts as GetVtxosOptions),
+                    maxResponseBytes,
                     pageIndex,
                     pageSize: DEFAULT_VTXO_PAGE_SIZE,
                 });
@@ -807,7 +866,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (params.toString()) {
             url += "?" + params.toString();
         }
-        const data = await this.fetchVtxosJson(url);
+        const data = await this.fetchVtxosJson(url, opts?.maxResponseBytes);
         // Mapped per caller, not shared: `convertVtxo` builds a fresh coin, so
         // two callers served from one request still get independent results.
         return {
@@ -826,27 +885,31 @@ export class RestIndexerProvider implements IndexerProvider {
      * the wallet's own contract milliseconds apart, and `handleContractEvent`
      * delta-syncs that contract on both arms.
      */
-    private async fetchVtxosJson(url: string): Promise<{ vtxos: Vtxo[]; page?: PageResponse }> {
-        const joined = this.inFlightVtxoReads.get(url);
+    private async fetchVtxosJson(
+        url: string,
+        maxResponseBytes?: number,
+    ): Promise<{ vtxos: Vtxo[]; page?: PageResponse }> {
+        const key = `${maxResponseBytes ?? "unbounded"}:${url}`;
+        const joined = this.inFlightVtxoReads.get(key);
         if (joined) return joined;
 
         const shared = (async () => {
-            const res = await indexerFetch(url);
+            const res = await indexerFetch(url, undefined, maxResponseBytes);
             if (!res.ok) {
                 throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
             }
-            const data = await res.json();
+            const data = await indexerJson(res, maxResponseBytes);
             if (!Response.isVtxosResponse(data)) {
                 throw new Error("Invalid vtxos data received");
             }
             return data;
         })();
 
-        this.inFlightVtxoReads.set(url, shared);
+        this.inFlightVtxoReads.set(key, shared);
         try {
             return await shared;
         } finally {
-            if (this.inFlightVtxoReads.get(url) === shared) this.inFlightVtxoReads.delete(url);
+            if (this.inFlightVtxoReads.get(key) === shared) this.inFlightVtxoReads.delete(key);
         }
     }
 
