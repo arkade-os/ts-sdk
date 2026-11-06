@@ -288,7 +288,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SEND_WITH_DEADLINE: 50_000,
     SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
-    // Broadcast: the server round-trip a spend ends in, so it belongs
+    // Broadcast: the operator round trip a spend ends in, so it belongs
     // with the writes rather than the reads above.
     SUBMIT_TX: 50_000,
     FINALIZE_TX: 50_000,
@@ -447,7 +447,7 @@ interface ServiceWorkerWalletOptions {
     lazyInitialization?: boolean;
     /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
     lazyBoarding?: boolean;
-    /** Arkade server endpoint and optional public key. */
+    /** The operator's endpoint and optional public key. */
     arkServer?: {
         url: string;
         publicKey?: string;
@@ -1108,7 +1108,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /**
      * An {@link ArkadeReader} that speaks to the worker rather than to the
-     * server. The page holds no provider, so a caller that built its own from a
+     * operator. The page holds no provider, so a caller that built its own from a
      * URL would open a second connection outside the worker's rate gate and
      * caches — this proxy is what keeps chain reads in one place.
      */

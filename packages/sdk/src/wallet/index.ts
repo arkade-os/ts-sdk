@@ -101,7 +101,7 @@ export interface NewAddress {
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /** Optional Arkade server public key used to construct and validate Arkade addresses. */
+    /** Optional operator public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
     boardingTimelock?: RelativeTimelock;
@@ -270,7 +270,7 @@ export type StorageConfig = {
      * Optional intent-lifecycle repository. Opt-in: when present, the wallet
      * persists settlement intents and excludes intent-locked VTXOs from
      * spendable balance. Absent ⇒ those code paths are no-ops. Only one wallet
-     * instance may settle against it: reconciliation deletes from the server any
+     * instance may settle against it: reconciliation deletes from the operator any
      * pending intent that instance is not settling itself.
      */
     intentRepository?: IntentRepository;
@@ -297,7 +297,7 @@ export type StorageConfig = {
 
 /** Provider class constructor shape for dependency injection. */
 export interface ProviderClass<T> {
-    /** @param serverUrl - Base server URL used by the provider */
+    /** @param serverUrl - Base operator URL used by the provider */
     new (serverUrl: string): T;
 }
 
@@ -686,7 +686,7 @@ export interface VirtualCoin extends Coin {
     isUnrolled: boolean;
     /** Whether this output was spent offchain (`spentBy` helper); not set for unrolled or swept. */
     isSpent?: boolean;
-    /** Whether the server has swept the batch this virtual output belongs to. */
+    /** Whether the operator has swept the batch this virtual output belongs to. */
     isSwept?: boolean;
     /** Whether this virtual output is not yet finalized in a batch. */
     isPreconfirmed?: boolean;
@@ -704,14 +704,14 @@ export interface VirtualCoin extends Coin {
     /** Batch commitment transaction(s) this virtual output depends on. */
     commitmentTxIds?: string[];
     /**
-     * Wall-clock batch expiry, when the server expressed expiry as a timestamp.
+     * Wall-clock batch expiry, when the operator expressed expiry as a timestamp.
      *
      * @remarks
      * Mutually exclusive with `expiresAtHeight`; both are absent when there is no expiry.
      */
     expiresAt?: Date;
     /**
-     * Block-height batch expiry, when the server expressed expiry as a height (regtest-like
+     * Block-height batch expiry, when the operator expressed expiry as a height (regtest-like
      * deployments). Evaluating it needs a chain tip — see {@link isPastExpiry}.
      */
     expiresAtHeight?: number;
@@ -979,9 +979,9 @@ export type ArkadeBroadcaster = Pick<OperatorProvider, "submitTx" | "finalizeTx"
  */
 export interface IWallet extends IReadonlyWallet {
     /**
-     * Broadcast access to this wallet's Arkade server, so a plugin needs no server URL of its own.
+     * Broadcast access to this wallet's operator, so a plugin needs no operator URL of its own.
      *
-     * @returns A submit/finalize pair bound to this wallet's server
+     * @returns A submit/finalize pair bound to this wallet's operator
      * @see ArkadeBroadcaster
      */
     getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
@@ -1052,7 +1052,7 @@ export interface IReadonlyWallet {
     getBoardingAddress(): Promise<string>;
 
     /**
-     * Info (network, signer key, delays, dust, fees, limits) for this wallet's Arkade server.
+     * Info (network, signer key, delays, dust, fees, limits) for this wallet's operator.
      * Live when reachable, else the snapshot persisted at construction.
      *
      * With `requireLive` it throws instead of using the cache — for callers binding
@@ -1067,7 +1067,7 @@ export interface IReadonlyWallet {
     getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo>;
 
     /**
-     * Server-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);
+     * Operator-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);
      * {@link getVtxos} reads the wallet's own outputs from repositories.
      *
      * @see ArkadeReader

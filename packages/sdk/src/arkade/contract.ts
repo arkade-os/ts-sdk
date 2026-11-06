@@ -41,7 +41,7 @@
  * } satisfies Program;
  *
  * const arkade = await Arkade.connect({ arkade: ark, emulator, indexer, identity, network });
- * // `server` is declared in `params`, so it defaults to the client's server key.
+ * // `server` is declared in `params`, so it defaults to the client's operator key.
  * const htlc = arkade.contract(htlcProgram, { hash, receiver, amount: 10_000n });
  * // `preimage` is typed Uint8Array; calling `claim()` with no args is a type error.
  * const { txid } = await htlc.functions.claim(preimage).to(receiver, 10_000n).send();
@@ -200,7 +200,7 @@ export interface Utxo {
      */
     script?: string;
     /**
-     * Whether the server swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
+     * Whether the operator swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
      * swept coin can't be spent offchain, so `.from()` refuses it; recover it into a batch instead.
      */
     isSwept?: boolean;
@@ -274,8 +274,8 @@ interface ArkadeConnectCommonOptions {
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
     /**
-     * Network for address derivation. Defaults to the network the server
-     * reports on `getInfo` — or the SDK default when the server names none.
+     * Network for address derivation. Defaults to the network the operator
+     * reports on `getInfo` — or the SDK default when the operator names none.
      */
     network?: Network;
     /**
@@ -320,7 +320,7 @@ export interface ArkadeConnectServiceOptions extends ArkadeConnectCommonOptions 
 /** The provider form: hand over providers you already hold (e.g. a wallet's). */
 export interface ArkadeConnectProviderOptions extends ArkadeConnectCommonOptions {
     /**
-     * The Arkade server provider. Only `getInfo` is required (enough to derive, register and
+     * The operator provider. Only `getInfo` is required (enough to derive, register and
      * inspect contracts); without `submitTx`/`finalizeTx`, `.send()` throws. So a caller already
      * holding `wallet.getOperatorInfo()` can connect without a second `/v1/info` round-trip.
      */
@@ -364,7 +364,7 @@ type EventHandle = {
 };
 
 /**
- * A connected Arkade client holding the providers and resolved network constants (server key,
+ * A connected Arkade client holding the providers and resolved network constants (operator key,
  * co-signer key, checkpoint closure), so creating contracts is synchronous.
  */
 export class Arkade {
@@ -429,7 +429,7 @@ export class Arkade {
     }
 
     /**
-     * Connect and resolve the server key, checkpoint closure and (if present) the co-signer key.
+     * Connect and resolve the operator key, checkpoint closure and (if present) the cosigner key.
      *
      * @example
      * ```typescript
@@ -465,7 +465,7 @@ export class Arkade {
 
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-        // Server-reported network, so a test-network server doesn't yield mainnet addresses.
+        // The network the operator reports, so a test network doesn't yield mainnet addresses.
         const network =
             opts.network ??
             (Object.hasOwn(networks, info.network)
@@ -591,7 +591,7 @@ export class Arkade {
      * the program's literal type, so `functions` is strongly typed.
      *
      * Declared `server`/`user` params default to the client's keys. Compiler
-     * artifacts reserve the server key and exit delay to the connected server.
+     * artifacts reserve the operator key and exit delay to the connected operator.
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
      */
     contract<const P extends Program>(
@@ -676,7 +676,7 @@ export class ArkadeContract<P extends Program = Program> {
 
     /**
      * Rebuild a callable contract from a persisted `"arkade"` row. Compiles with the stored keys,
-     * not the client's current ones, so script and address survive a server signer rotation.
+     * not the client's current ones, so script and address survive a rotation of the operator's signer.
      */
     static fromContract(client: Arkade, contract: Contract): ArkadeContract {
         if (contract.type !== "arkade") {
@@ -860,7 +860,7 @@ export class ArkadeContract<P extends Program = Program> {
             scripts: [scriptHex],
             spendableOnly: true,
         });
-        // Re-checked locally: the server's `spendableOnly` is not a fact to lean on.
+        // Re-checked locally: the operator's `spendableOnly` is not a fact to lean on.
         return vtxos.filter((v) => !isVtxoSpent(v) && !v.isUnrolled);
     }
 
@@ -1131,7 +1131,7 @@ export class ArkadeTransactionBuilder {
 
         const userInputs = this.userInputIndexes(inputs);
 
-        // arkd refuses an input signed by the server alone; a covenant leaf adds the emulator's key.
+        // The operator refuses an input it alone signed; a covenant leaf adds the emulator's key.
         const serverOnly = inputs.find(
             ({ unlocker }, i) => !unlocker.fn.arkadeScript && !userInputs.includes(i),
         );

@@ -183,7 +183,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
             // connect() takes the co-signer key from the network, not from the
             // emulator's own getInfo, so this fixture key has to come in as the
             // override or the tree below would be built against regtest's
-            // pinned key instead. "02"-prefixed like the server key above.
+            // pinned key instead. "02"-prefixed like the operator key above.
             emulatorPubkey: "02" + hex.encode(emulatorKey),
         });
         return { ark, captured };
@@ -195,7 +195,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
         const conditionScript = arkade.resolveAsm(["HASH160", "$hash", "EQUALVERIFY"], args);
         const arkadeScript = arkade.resolveAsm(payTo, args);
-        // Independently rebuild the covenant leaf: server + emulator-key tweaked
+        // Independently rebuild the covenant leaf: operator + emulator-key tweaked
         // by the arkade-script hash, in a ConditionMultisig.
         const tweaked = arkade.computeArkadeScriptPublicKey(emulatorKey, arkadeScript);
         const leaf = ConditionMultisigTapscript.encode({
@@ -234,7 +234,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
     // Paired with the manager-branch test above: the two branches must answer
     // the same about an exited coin, so neither may be narrowed alone.
     it("drops them in the no-manager fallback too, whatever spendableOnly returns", async () => {
-        // A spent coin too: `spendableOnly` is the server's answer, and a stale
+        // A spent coin too: `spendableOnly` is the operator's answer, and a stale
         // or proxying indexer that returns one must not reach the caller either.
         const healthy = { ...mintCoin(7_000), isSpent: false };
         const exited = { ...mintCoin(3_000), isSpent: false, isUnrolled: true };
@@ -748,7 +748,7 @@ describe("arkade.Arkade / ArkadeContract", () => {
 
     // A client connected for derivation/registration alone — `getInfo` and
     // nothing else. This is the shape `@arkade-os/swap`'s createOffer uses now
-    // that it sources the server info from `wallet.getOperatorInfo()` instead of
+    // that it sources the operator info from `wallet.getOperatorInfo()` instead of
     // building a provider from a URL.
     describe("a getInfo-only `arkade` provider", () => {
         const identity = stubIdentity(xOnly());

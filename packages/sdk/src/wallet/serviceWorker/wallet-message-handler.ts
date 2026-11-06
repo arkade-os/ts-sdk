@@ -205,7 +205,7 @@ export type ResponseGetOperatorInfo = ResponseEnvelope & {
 // `getArkadeReader()`/`getArkadeBroadcaster()` proxied to the worker, which
 // owns the providers. Named `INDEXER_*` rather than reusing `GET_VTXOS`: that
 // one answers the *wallet's own* outputs from repositories, while this is an
-// arbitrary-script query that reaches the server. Same verb, different
+// arbitrary-script query that reaches the operator. Same verb, different
 // question — collapsing them would silently change which one a caller gets.
 export type RequestIndexerGetVtxos = RequestEnvelope & {
     type: "INDEXER_GET_VTXOS";
@@ -288,7 +288,7 @@ export type ResponseGetStatus = ResponseEnvelope & {
     payload: {
         walletInitialized: boolean;
         xOnlyPublicKey: Uint8Array | undefined;
-        // Wallet-level provider-connection freshness (boot server-info source
+        // Wallet-level provider-connection freshness (boot operator info source
         // composed with contract-manager sync health). Optional so a status
         // response can predate a fully wired worker; always set for an
         // initialized wallet.
@@ -1235,7 +1235,7 @@ export class WalletMessageHandler
         } as WalletUpdaterResponse;
     }
 
-    // Flows that surrender control to the Ark server and the other participants
+    // Flows that surrender control to the operator and the other participants
     // in a batch round: quiet gaps between protocol events can easily exceed
     // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
     // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
@@ -1245,7 +1245,7 @@ export class WalletMessageHandler
             message.type === "SETTLE" ||
             message.type === "RECOVER_VTXOS" ||
             message.type === "RENEW_VTXOS" ||
-            // Migration may apply a server-signer rotation and then run a full
+            // Migration may rotate the operator's signer and then run a full
             // settle, so it streams settlement events like RENEW_VTXOS.
             message.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS" ||
             // HD restore walks the index range with one indexer round-trip per
@@ -2422,7 +2422,7 @@ export class WalletMessageHandler
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      *
-     * Recovery-only contracts (imported by `claimCash` for server-swept
+     * Recovery-only contracts (imported by `claimCash` for operator-swept
      * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
      * they are settled in their own isolated intent and must stay out of the
      * wallet's balance / VTXO / coin-selection / pending-tx views that read this.

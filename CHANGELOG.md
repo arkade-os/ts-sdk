@@ -166,6 +166,7 @@ style and have not been backfilled.
   The worker message is now `GET_OPERATOR_INFO`, with an `OPERATOR_INFO` reply.
   A worker still accepts `GET_ARKADE_INFO`, and a `messageTimeouts` entry under
   that name still applies. A new page needs an updated worker.
+  Comments in the changed files now say the operator instead of the server.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
