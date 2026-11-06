@@ -12,13 +12,13 @@ import renewalDocument from "./renewal.json";
 
 /** The parameters of a delegation under the default templates. */
 export interface DelegationParams {
-    /** BIP 68 sequence of the owner's exit from a delegated VTXO, at least the Ark server's. */
+    /** BIP 68 sequence of the owner's exit from a delegated VTXO, at least the operator's. */
     exitDelay: number;
     /** Seconds before expiry the service renews a VTXO. */
     renewalWindow: number;
     /** Satoshis a renewal may cost. */
     maxFee: number;
-    /** BIP 68 sequence of the owner's exit from a boarding deposit, at least the Ark server's. */
+    /** BIP 68 sequence of the owner's exit from a boarding deposit, at least the operator's. */
     boardingExitDelay?: number;
 }
 
@@ -90,7 +90,7 @@ export function defaultVariables(
 
 /**
  * The contract of a default template for owner, from the keys and params alone. Leaves are in
- * function order: forfeit (owner + server), exit (owner after CSV), then the covenant leaf.
+ * function order: forfeit (owner + operator), exit (owner after CSV), then the covenant leaf.
  */
 export function defaultContract(
     kind: DelegateeDefault,
@@ -148,10 +148,10 @@ export function instantiate(
         );
         covenants.set(fn.name, script);
     }
-    const server = hex.decode(keys.serverPubkey);
+    const operator = hex.decode(keys.serverPubkey);
     const emulator = hex.decode(keys.emulatorPubkey);
     const leafValue = (name: string): Value => {
-        if (name === "SERVER_KEY") return server.subarray(1);
+        if (name === "SERVER_KEY") return operator.subarray(1);
         if (name.startsWith("EMULATOR_KEY:")) {
             const covenant = covenants.get(name.slice("EMULATOR_KEY:".length));
             if (!covenant) throw new Error(`${name} names no covenant`);

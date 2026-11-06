@@ -186,7 +186,7 @@ describe("DelegateeManagerImpl.register", () => {
         const provider = makeProvider();
         provider.getInfo.mockResolvedValue({ ...makeInfo(), serverPubkey: vectors.owner });
         const manager = new DelegateeManagerImpl(provider, wallet);
-        await expect(manager.registerBoarding(params)).rejects.toThrow("wallet's server");
+        await expect(manager.registerBoarding(params)).rejects.toThrow("wallet's operator");
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
 
@@ -333,7 +333,7 @@ const BOARDING_ID = ids.boarding;
 const identity = { compressedPublicKey: async () => hex.decode(vectors.owner) };
 const wallet = {
     identity,
-    // any Ark address of the vectors' server
+    // any Arkade address of the vectors' operator
     getAddress: async () => vectors.renewal.address,
     getSpendableVtxos: vi.fn(),
     send: vi.fn(),

@@ -39,7 +39,7 @@ function integer(value: string | undefined, name: string): number {
     return n;
 }
 
-/** The covenant leaf is the service's and the server's to sign; it is never offered. */
+/** The covenant leaf is the service's and the operator's to sign; it is never offered. */
 function paths(
     script: DefaultVtxo.Script,
     context: PathContext,
@@ -60,9 +60,9 @@ function paths(
  * templates, the owner key, the params and the service's keys, so a restored wallet needs no
  * round-trip to the service.
  *
- * - forfeit: (Owner + Server) multisig, the wallet's collaborative path
+ * - forfeit: (Owner + Operator) multisig, the wallet's collaborative path
  * - exit: (Owner) + CSV, the wallet's unilateral path
- * - renew/board: (Server + Emulator) covenant, the service's; never offered
+ * - renew/board: (Operator + Emulator) covenant, the service's; never offered
  */
 export const DelegateeContractHandler: ContractHandler<
     DelegateeContractParams,

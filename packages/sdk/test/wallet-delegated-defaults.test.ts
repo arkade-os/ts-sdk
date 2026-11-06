@@ -83,7 +83,7 @@ async function walletWith(options: { delegatee: boolean; rows: boolean }) {
     return { wallet, renewal, boarding };
 }
 
-// a send to the server's address that leaves change, with the submission stubbed
+// a send to the operator's address that leaves change, with the submission stubbed
 async function changeOf(wallet: Wallet) {
     const submit = vi
         .spyOn(wallet as never, "_submitOffchainSpend")
