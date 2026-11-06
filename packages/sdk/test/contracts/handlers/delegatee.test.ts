@@ -21,7 +21,7 @@ import vectors from "../../fixtures/delegatee/vectors.json";
 import { createMockIndexerProvider, createMockVtxo } from "../helpers";
 
 const keys = {
-    delegatePubkey: vectors.delegatePubkey,
+    cosignerPubkey: vectors.cosignerPubkey,
     serverPubkey: vectors.serverPubkey,
     emulatorPubkey: vectors.emulatorPubkey,
 };
@@ -41,7 +41,7 @@ const params = (template: DelegateeDefault): Record<string, string> => ({
     renewalWindow: String(delegation.renewalWindow),
     maxFee: String(delegation.maxFee),
     ...(template === "boarding" ? { boardingExitDelay: String(delegation.boardingExitDelay) } : {}),
-    delegatePubKey: vectors.delegatePubkey,
+    cosignerPubKey: vectors.cosignerPubkey,
     serverPubKey: vectors.serverPubkey,
     emulatorPubKey: vectors.emulatorPubkey,
 });
@@ -131,6 +131,15 @@ describe("DelegateeContractHandler", () => {
         expect(hex.encode(leaf)).toBe(
             `20${vectors.serverPubkey.slice(2)}ad20${hex.encode(tweaked)}ac`,
         );
+    });
+
+    it("reads the cosigner key of params stored under its former name", () => {
+        const { cosignerPubKey, ...rest } = params("renewal");
+        const typed = DelegateeContractHandler.deserializeParams({
+            ...rest,
+            delegatePubKey: cosignerPubKey,
+        });
+        expect(DelegateeContractHandler.serializeParams(typed)).toEqual(params("renewal"));
     });
 
     it("round-trips its params and refuses unknown templates, x-only keys and bad numbers", () => {

@@ -86,7 +86,7 @@ function contractParams(
         renewalWindow: params.renewalWindow,
         maxFee: params.maxFee,
         ...(template === "boarding" ? { boardingExitDelay: params.boardingExitDelay } : {}),
-        delegatePubKey: hex.decode(keys.delegatePubkey),
+        cosignerPubKey: hex.decode(keys.cosignerPubkey),
         serverPubKey: hex.decode(keys.serverPubkey),
         emulatorPubKey: hex.decode(keys.emulatorPubkey),
     });
@@ -228,7 +228,7 @@ export class DelegateeManagerImpl implements IDelegateeManager {
             );
         }
         const keys = {
-            delegatePubkey: info.delegatePubkey,
+            cosignerPubkey: info.cosignerPubkey,
             serverPubkey: info.serverPubkey,
             emulatorPubkey: info.emulatorPubkey,
         };
@@ -247,7 +247,7 @@ export class DelegateeManagerImpl implements IDelegateeManager {
             variables,
             options,
         );
-        // The service fills <DELEGATE_KEY> with its key: the same address proves it is GetInfo's,
+        // The service fills <COSIGNER_KEY> with its key: the same address proves it is GetInfo's,
         // and commits to the same tapscripts.
         if (delegation.status !== "active") {
             throw new Error(`delegatee watch ${delegation.address} is ${delegation.status}`);

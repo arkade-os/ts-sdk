@@ -5,7 +5,7 @@ import { rateGate } from "./rateGate";
 export interface DelegateeInfo {
     version: string;
     network: string;
-    delegatePubkey: string;
+    cosignerPubkey: string;
     serverPubkey: string;
     emulatorPubkey: string;
 }
@@ -13,7 +13,7 @@ export interface DelegateeInfo {
 /** The service's keys a wallet's delegatee contracts are derived from. */
 export type DelegateeContractKeys = Pick<
     DelegateeInfo,
-    "delegatePubkey" | "serverPubkey" | "emulatorPubkey"
+    "cosignerPubkey" | "serverPubkey" | "emulatorPubkey"
 >;
 
 export interface DelegateeTemplate {
@@ -32,16 +32,18 @@ export interface DelegateeDelegation {
     expiresAt?: number;
 }
 
-export interface DelegateeVtxo {
+export interface DelegateeCoin {
     outpoint: string;
     amount: number;
+    status: "present" | "spent";
     expiresAt?: number;
-    renewableAt?: number;
+    due?: number;
+    spentBy?: string;
 }
 
 export interface DelegateeDelegationDetails {
     delegation: DelegateeDelegation;
-    vtxos: DelegateeVtxo[];
+    coins: DelegateeCoin[];
 }
 
 export interface DelegateeProvider {
@@ -74,7 +76,7 @@ export class RestDelegateeProvider implements DelegateeProvider {
     }
 
     async listTemplates(): Promise<DelegateeTemplate[]> {
-        const url = this.endpoint("/v1/template");
+        const url = this.endpoint("/v1/templates");
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
             throw await failure(response, "list delegatee templates");
@@ -97,7 +99,7 @@ export class RestDelegateeProvider implements DelegateeProvider {
         if (options.expiresAt !== undefined) {
             body.expiresAt = options.expiresAt;
         }
-        const response = await baseFetch(this.endpoint("/v1/delegate"), {
+        const response = await baseFetch(this.endpoint("/v1/delegation"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
@@ -110,7 +112,7 @@ export class RestDelegateeProvider implements DelegateeProvider {
     }
 
     async getDelegation(address: string): Promise<DelegateeDelegationDetails> {
-        const url = this.endpoint(`/v1/delegate/${encodeURIComponent(address)}`);
+        const url = this.endpoint(`/v1/delegation?address=${encodeURIComponent(address)}`);
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
             throw await failure(response, "get delegatee delegation");
@@ -121,7 +123,7 @@ export class RestDelegateeProvider implements DelegateeProvider {
         }
         return {
             delegation: parseDelegation(data.delegation),
-            vtxos: optionalArray(data.vtxos, "vtxos").map(parseVtxo),
+            coins: optionalArray(data.coins, "coins").map(parseCoin),
         };
     }
 }
@@ -209,15 +211,17 @@ function parseDelegation(value: unknown): DelegateeDelegation {
     };
 }
 
-function parseVtxo(value: unknown): DelegateeVtxo {
+function parseCoin(value: unknown): DelegateeCoin {
     if (!isObject(value) || typeof value.outpoint !== "string") {
-        throw new Error("Invalid delegatee vtxo");
+        throw new Error("Invalid delegatee coin");
     }
     return {
         outpoint: value.outpoint,
         amount: parseAmount(value.amount, "amount"),
+        status: oneOf(value.status, ["present", "spent"], "coin status"),
         expiresAt: parseOptionalInt64(value.expiresAt, "expiresAt"),
-        renewableAt: parseOptionalInt64(value.renewableAt, "renewableAt"),
+        due: parseOptionalInt64(value.due, "due"),
+        spentBy: typeof value.spentBy === "string" && value.spentBy ? value.spentBy : undefined,
     };
 }
 
@@ -233,11 +237,11 @@ function parseDelegateeInfo(value: unknown): DelegateeInfo {
     const info: DelegateeInfo = {
         version: requiredString(value, "version"),
         network: requiredString(value, "network"),
-        delegatePubkey: requiredString(value, "delegatePubkey"),
+        cosignerPubkey: requiredString(value, "cosignerPubkey"),
         serverPubkey: requiredString(value, "serverPubkey"),
         emulatorPubkey: requiredString(value, "emulatorPubkey"),
     };
-    decodeCompressed(info.delegatePubkey, "delegatePubkey");
+    decodeCompressed(info.cosignerPubkey, "cosignerPubkey");
     decodeCompressed(info.serverPubkey, "serverPubkey");
     decodeCompressed(info.emulatorPubkey, "emulatorPubkey");
     return info;

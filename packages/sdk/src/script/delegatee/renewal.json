@@ -1,5 +1,5 @@
 {
-    "format": "delegateed-template/v1",
+    "format": "template/v1",
     "type": "intent",
     "variables": {
         "owner": "pubkey",
@@ -15,7 +15,7 @@
             },
             "contract": {
                 "definition": {
-                    "artifact": "439eec3d9d81f26a67dde2fc62070792324cd9daf5c478806d5b265cf00e27c0"
+                    "artifact": "041af65d5443fceebd149c44d9a0b646edae24399ae3dff6c5f82b878826dda5"
                 },
                 "arguments": {
                     "owner": "<owner>",

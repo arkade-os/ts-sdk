@@ -34,8 +34,8 @@ const DELEGATEE_DEFAULTS = {
 
 /** The ids the service computes for the bundled documents; they change with the bundle. */
 export const DEFAULT_TEMPLATE_IDS: Readonly<Record<DelegateeDefault, string>> = {
-    renewal: "d901cb8554a77524fb55ebfcde8e1c468871de45163abf34e988c47f1fa36896",
-    boarding: "02b4e8bdfb52d7450ab75510cfaff36da5b88323291325e38358df10684a8344",
+    renewal: "b19c1a79f8d27559420e10804ea566d55422277aac0ade21d939a6b9e217f51c",
+    boarding: "d9fa62772dc1c349aa1fa526e6ae9ce0f38cd778e8a3d885513435eea6401b34",
 };
 
 type Field = { name: string; type: string };
@@ -105,7 +105,7 @@ export function defaultContract(
 /**
  * Build a bundled contract: arguments bind `<variable>`s or `{"program": output}`, the witness
  * program of an output locked to another contract. A pubkey is x-only in a leaf and in a covenant
- * alike; `DELEGATE_KEY` in a covenant is the hex the intent message spells it in.
+ * alike; `COSIGNER_KEY` in a covenant is the hex the intent message spells it in.
  */
 export function instantiate(
     doc: Template,
@@ -136,15 +136,14 @@ export function instantiate(
         if (value === undefined) throw new Error(`missing constructor value ${name}`);
         return pubkeys.has(name) ? (value as Uint8Array).subarray(1) : value;
     };
-    const delegate = hex.decode(keys.delegatePubkey);
 
     const covenants = new Map<string, Uint8Array>();
     for (const fn of def.functions) {
         if (!fn.arkade) continue;
         const script = assemble(fn.arkade.asm, (name) =>
-            name === "DELEGATE_KEY"
+            name === "COSIGNER_KEY"
                 ? // copied: under jsdom, TextEncoder returns another realm's Uint8Array
-                  new Uint8Array(new TextEncoder().encode(keys.delegatePubkey.toLowerCase()))
+                  new Uint8Array(new TextEncoder().encode(keys.cosignerPubkey.toLowerCase()))
                 : arg(name),
         );
         covenants.set(fn.name, script);
@@ -153,7 +152,6 @@ export function instantiate(
     const emulator = hex.decode(keys.emulatorPubkey);
     const leafValue = (name: string): Value => {
         if (name === "SERVER_KEY") return server.subarray(1);
-        if (name === "DELEGATE_KEY") return delegate.subarray(1);
         if (name.startsWith("EMULATOR_KEY:")) {
             const covenant = covenants.get(name.slice("EMULATOR_KEY:".length));
             if (!covenant) throw new Error(`${name} names no covenant`);

@@ -46,7 +46,7 @@ async function delegateeRow(template: "renewal" | "boarding") {
         renewalWindow: 1000,
         maxFee: 100,
         ...(template === "boarding" ? { boardingExitDelay: 144 } : {}),
-        delegatePubKey: hex.decode(vectors.delegatePubkey),
+        cosignerPubKey: hex.decode(vectors.cosignerPubkey),
         serverPubKey: hex.decode(SERVER_KEY_HEX),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });

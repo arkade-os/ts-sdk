@@ -17,7 +17,12 @@ describe("RestDelegateeProvider", () => {
 
     it("fetches info without a query and ignores stale covenant fields", async () => {
         const info = makeInfo();
-        respond({ ...info, renewalWindow: 1024, arkadeScript: "00" });
+        respond({
+            ...info,
+            cosignerPubkey: info.cosignerPubkey,
+            renewalWindow: 1024,
+            arkadeScript: "00",
+        });
         const provider = new RestDelegateeProvider("https://delegatee.test/");
 
         await expect(provider.getInfo()).resolves.toEqual(info);
@@ -25,9 +30,9 @@ describe("RestDelegateeProvider", () => {
     });
 
     it("rejects info with a non-compressed key", async () => {
-        respond({ ...makeInfo(), delegatePubkey: hex.encode(ownerKey) });
+        respond({ ...makeInfo(), cosignerPubkey: hex.encode(ownerKey) });
         await expect(new RestDelegateeProvider("https://delegatee.test").getInfo()).rejects.toThrow(
-            "delegatePubkey is not compressed",
+            "cosignerPubkey is not compressed",
         );
     });
 
@@ -36,7 +41,7 @@ describe("RestDelegateeProvider", () => {
         await expect(
             new RestDelegateeProvider("https://delegatee.test").listTemplates(),
         ).resolves.toEqual([template]);
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/template");
+        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/templates");
     });
 
     it("posts templateId and variables and unwraps the delegation", async () => {
@@ -60,7 +65,7 @@ describe("RestDelegateeProvider", () => {
             variables: { owner: "aa" },
             expiresAt: undefined,
         });
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegate", {
+        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegation", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ templateId: "tpl-1", variables: { owner: "aa" } }),
@@ -80,7 +85,7 @@ describe("RestDelegateeProvider", () => {
             {},
             { expiresAt: 1700000000 },
         );
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegate", {
+        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegation", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ templateId: "tpl-1", variables: {}, expiresAt: 1700000000 }),
@@ -97,18 +102,32 @@ describe("RestDelegateeProvider", () => {
     it("parses a delegation's coins, rejecting an unknown status, bad variables and amounts", async () => {
         const provider = new RestDelegateeProvider("https://delegatee.test");
         const delegation = { id: "5", address: "tark1x", status: "active", templateId: "t" };
-        const coin = { outpoint: "aa:0", amount: "100000", renewableAt: "1699990000" };
-        respond({ delegation, vtxos: [coin] });
+        const coin = { outpoint: "aa:0", amount: "100000", due: "1699990000", status: "present" };
+        const spent = { ...coin, outpoint: "bb:0", status: "spent" };
+        const parsed = {
+            amount: 100000,
+            expiresAt: undefined,
+            due: 1699990000,
+            spentBy: undefined,
+        };
+        respond({ delegation, coins: [coin, spent] });
         await expect(provider.getDelegation("tark1x")).resolves.toEqual({
             delegation: { ...delegation, id: 5, variables: {}, expiresAt: undefined },
-            vtxos: [{ ...coin, amount: 100000, expiresAt: undefined, renewableAt: 1699990000 }],
+            coins: [
+                { ...parsed, outpoint: "aa:0", status: "present" },
+                { ...parsed, outpoint: "bb:0", status: "spent" },
+            ],
         });
+        expect(mockFetch).toHaveBeenCalledWith(
+            "https://delegatee.test/v1/delegation?address=tark1x",
+        );
         for (const [body, error] of [
             [{ delegation: { ...delegation, status: "paused" } }, "unknown status paused"],
             [{ delegation: { ...delegation, variables: { a: 1 } } }, "variables are not strings"],
             [{ delegation: { ...delegation, id: "1.5" } }, "id is not an integer"],
-            [{ delegation, vtxos: [{ outpoint: "aa:0" }] }, "missing amount"],
-            [{ delegation, vtxos: [{ outpoint: "aa:0", amount: -5 }] }, "amount is negative"],
+            [{ delegation, coins: [{ outpoint: "aa:0" }] }, "missing amount"],
+            [{ delegation, coins: [{ ...coin, status: "gone" }] }, "coin status"],
+            [{ delegation, coins: [{ outpoint: "aa:0", amount: -5 }] }, "amount is negative"],
         ] as const) {
             respond(body);
             await expect(provider.getDelegation("tark1x")).rejects.toThrow(error);
@@ -128,7 +147,7 @@ describe("DelegateeManagerImpl.register", () => {
             templateId: BOARDING_ID,
             variables: vectors.boarding.variables,
             keys: {
-                delegatePubkey: vectors.delegatePubkey,
+                cosignerPubkey: vectors.cosignerPubkey,
                 serverPubkey: vectors.serverPubkey,
                 emulatorPubkey: vectors.emulatorPubkey,
             },
@@ -294,7 +313,7 @@ function makeInfo() {
     return {
         version: "test",
         network: "regtest",
-        delegatePubkey: hex.encode(compressedKey),
+        cosignerPubkey: hex.encode(compressedKey),
         serverPubkey: hex.encode(compressedKey),
         emulatorPubkey: hex.encode(compressedKey),
     };
@@ -336,7 +355,7 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
     return {
         getInfo: vi.fn().mockResolvedValue({
             ...makeInfo(),
-            delegatePubkey: vectors.delegatePubkey,
+            cosignerPubkey: vectors.cosignerPubkey,
             serverPubkey: vectors.serverPubkey,
             emulatorPubkey: vectors.emulatorPubkey,
         }),

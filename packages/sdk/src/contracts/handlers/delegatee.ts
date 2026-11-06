@@ -18,7 +18,7 @@ export interface DelegateeContractParams {
     maxFee: number;
     /** boarding only */
     boardingExitDelay?: number;
-    delegatePubKey: Uint8Array;
+    cosignerPubKey: Uint8Array;
     serverPubKey: Uint8Array;
     emulatorPubKey: Uint8Array;
 }
@@ -76,7 +76,7 @@ export const DelegateeContractHandler: ContractHandler<
         const derived = defaultContract(
             p.template,
             {
-                delegatePubkey: hex.encode(p.delegatePubKey),
+                cosignerPubkey: hex.encode(p.cosignerPubKey),
                 serverPubkey: hex.encode(p.serverPubKey),
                 emulatorPubkey: hex.encode(p.emulatorPubKey),
             },
@@ -107,7 +107,7 @@ export const DelegateeContractHandler: ContractHandler<
             ...(params.boardingExitDelay !== undefined
                 ? { boardingExitDelay: params.boardingExitDelay.toString() }
                 : {}),
-            delegatePubKey: hex.encode(params.delegatePubKey),
+            cosignerPubKey: hex.encode(params.cosignerPubKey),
             serverPubKey: hex.encode(params.serverPubKey),
             emulatorPubKey: hex.encode(params.emulatorPubKey),
         };
@@ -126,7 +126,10 @@ export const DelegateeContractHandler: ContractHandler<
             ...(params.template === "boarding"
                 ? { boardingExitDelay: integer(params.boardingExitDelay, "boardingExitDelay") }
                 : {}),
-            delegatePubKey: compressed(params.delegatePubKey, "delegatePubKey"),
+            cosignerPubKey: compressed(
+                params.cosignerPubKey ?? params.delegatePubKey,
+                "cosignerPubKey",
+            ),
             serverPubKey: compressed(params.serverPubKey, "serverPubKey"),
             emulatorPubKey: compressed(params.emulatorPubKey, "emulatorPubKey"),
         };

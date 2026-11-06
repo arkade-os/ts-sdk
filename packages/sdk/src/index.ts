@@ -272,7 +272,7 @@ import {
     DelegateeDelegationDetails,
     DelegateeProvider,
     DelegateeTemplate,
-    DelegateeVtxo,
+    DelegateeCoin,
     RestDelegateeProvider,
 } from "./providers/delegatee";
 import {
@@ -1167,7 +1167,7 @@ export type {
     DelegateeDelegation,
     DelegateeDelegationDetails,
     DelegateeTemplate,
-    DelegateeVtxo,
+    DelegateeCoin,
     DelegateeContractKeys,
     DelegateeWallet,
     DelegateeWatchRegistration,
