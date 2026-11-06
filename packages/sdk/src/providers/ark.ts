@@ -20,7 +20,7 @@ import {
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent, Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
-import { fetch } from "../utils/fetch";
+import { ARKADE_VERSION_HEADERS, fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
 /**
@@ -759,7 +759,10 @@ export class RestOperatorProvider implements OperatorProvider {
             try {
                 while (!signal?.aborted) {
                     const currentIterator = eventSourceIterator(
-                        resolveEventSource(self.eventSource)(url + queryParams),
+                        resolveEventSource(self.eventSource)(
+                            url + queryParams,
+                            ARKADE_VERSION_HEADERS,
+                        ),
                     );
                     iterator = currentIterator;
 
@@ -839,7 +842,7 @@ export class RestOperatorProvider implements OperatorProvider {
                 while (!signal?.aborted) {
                     try {
                         const currentIterator = eventSourceIterator(
-                            resolveEventSource(self.eventSource)(url),
+                            resolveEventSource(self.eventSource)(url, ARKADE_VERSION_HEADERS),
                         );
                         iterator = currentIterator;
 

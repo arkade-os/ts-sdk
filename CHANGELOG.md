@@ -249,6 +249,23 @@ style and have not been backfilled.
   boarding coins; it now throws `WalletNotInitializedError`, like
   `GET_VTXOS`. (#943)
 
+- **Ark SSE streams send the SDK version headers.** `getEventStream` and
+  `getTransactionsStream` now send `X-Build-Version` and `X-SDK-VERSION`, like
+  every other Ark server call. A browser `EventSource` cannot set request
+  headers, so these streams reached arkd without them: arkd could not tie an
+  open stream to an SDK version, and its build-version guard did not apply.
+  With no factory configured, streams now open over `fetch`; the global
+  `EventSource` is used only where `fetch` cannot stream, and a factory from
+  `configureEventSource` or the `eventSource` option still wins.
+  `EventSourceFactory` takes the headers as an optional second argument; a
+  factory that ignores it keeps working but sends no headers. Indexer
+  subscriptions send none, because the indexer can be another origin. Like
+  the native `EventSource`, the `fetch` transport accepts LF, CR and CRLF line
+  endings and fails a response that is not a 200 `text/event-stream`. It does
+  not reconnect by itself, as the callers already do.
+  In Node, streams no longer need the `eventsource` package or
+  `--experimental-eventsource`.
+
 ### Bug Fixes
 
 - **A failed contract-manager start-up no longer leaves its watcher running.**
