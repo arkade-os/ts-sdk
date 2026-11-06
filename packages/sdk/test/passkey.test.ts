@@ -99,6 +99,28 @@ describe("passkey identity", () => {
         expect(await words("café")).not.toBe(await words("café"));
     });
 
+    it("gives 24 words from all 32 bytes when asked, as the spec text's BIP39(root_key) reads", async () => {
+        expect(mnemonicFromPrf(new Uint8Array(32), 24)).toBe(`${"abandon ".repeat(23)}art`);
+        const client = new FakeAuthenticator();
+        const made = await MnemonicIdentity.createPasskey({ rp, userName: "a", client, words: 24 });
+        const back = await MnemonicIdentity.fromPasskey({
+            rpId: rp.id,
+            credentialIds: [made.credentialId],
+            words: 24,
+            client,
+        });
+        expect(made.mnemonic.split(" ")).toHaveLength(24);
+        expect(back.mnemonic).toBe(made.mnemonic);
+        const twelve = await MnemonicIdentity.fromPasskey({
+            rpId: rp.id,
+            credentialIds: [made.credentialId],
+            client,
+        });
+        expect(made.mnemonic.startsWith(twelve.mnemonic.split(" ").slice(0, 11).join(" "))).toBe(
+            true,
+        );
+    });
+
     it("turns a PRF secret into words exactly as BIP39 turns its first 16 bytes", () => {
         const prf = new Uint8Array(32).fill(0xff, 16);
         expect(mnemonicFromPrf(prf)).toBe(

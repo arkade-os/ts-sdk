@@ -61,9 +61,9 @@ style and have not been backfilled.
   backup) and the credential id. The derivation follows Breez's seedless-restore
   implementation: a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF
   salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
-  the BIP39 entropy (the spec text's `BIP39(root_key)` would give 24 words; Breez's SDK
-  uses 12), so the same passkey and label give the same words as a Breez wallet; each
-  label is a separate wallet. A passkey is used once right after creation and refused
+  the BIP39 entropy for 12 words, as Breez's SDK derives them, so the same passkey and
+  label give the same words as a Breez wallet; each label is a separate wallet.
+  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads. A passkey is used once right after creation and refused
   (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it gives
   no 32-byte secret or one different from the secret it returned at creation (an
   authenticator that returns none at creation has nothing to compare against). The

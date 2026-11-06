@@ -203,10 +203,9 @@ export async function evaluatePrf(o: {
 }
 
 /**
- * Twelve BIP39 words from a PRF secret's first 16 bytes, as Breez's SDK derives them
- * (`prf_to_mnemonic`): a Breez wallet using the same passkey and salt gets the same words. The
- * seedless-restore spec text says `BIP39(root_key)`, which over all 32 bytes would be 24 words;
- * this follows the shipped implementation instead.
+ * BIP39 words from a PRF secret. Twelve, from its first 16 bytes, is what Breez's SDK derives
+ * (`prf_to_mnemonic`), so a Breez wallet using the same passkey and salt gets the same words.
+ * Twenty-four, from all 32 bytes, is what the seedless-restore spec text's `BIP39(root_key)` reads as.
  */
-export const mnemonicFromPrf = (prfSecret: Uint8Array): string =>
-    entropyToMnemonic(secret(prfSecret).slice(0, 16), wordlist);
+export const mnemonicFromPrf = (prfSecret: Uint8Array, words: 12 | 24 = 12): string =>
+    entropyToMnemonic(secret(prfSecret).slice(0, words === 24 ? 32 : 16), wordlist);

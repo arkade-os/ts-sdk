@@ -69,11 +69,13 @@ export type MnemonicOptions = SeedIdentityOptions & {
  * Where a passkey-derived identity comes from. Each `label` is a separate wallet on the same
  * passkey; its UTF-8 bytes are the PRF salt, unnormalized as in Breez's provider, so an app taking
  * non-ASCII labels from users should normalize them (NFC) itself. Defaults to
- * {@link DEFAULT_PASSKEY_LABEL}.
+ * {@link DEFAULT_PASSKEY_LABEL}. `words` picks 12 (Breez's SDK, the default) or 24 (the spec text),
+ * see {@link mnemonicFromPrf}.
  */
 export interface PasskeySource {
     client?: WebAuthnClient;
     label?: string;
+    words?: 12 | 24;
 }
 
 /** A passkey-derived identity, with its words so the app can offer them as a backup. */
@@ -403,7 +405,7 @@ export class MnemonicIdentity extends SeedIdentity {
         } & PasskeySource &
             MnemonicOptions,
     ): Promise<PasskeyMnemonic> {
-        const { rp, userName, userId, client, label = DEFAULT_PASSKEY_LABEL, ...opts } = o;
+        const { rp, userName, userId, client, label = DEFAULT_PASSKEY_LABEL, words, ...opts } = o;
         const id = userId ?? crypto.getRandomValues(new Uint8Array(16));
         const { credentialId, prf } = await createPrfPasskey({
             rp,
@@ -412,7 +414,7 @@ export class MnemonicIdentity extends SeedIdentity {
             salt: new TextEncoder().encode(label),
             client,
         });
-        const mnemonic = mnemonicFromPrf(prf);
+        const mnemonic = mnemonicFromPrf(prf, words);
         return { identity: MnemonicIdentity.fromMnemonic(mnemonic, opts), mnemonic, credentialId };
     }
 
@@ -423,14 +425,14 @@ export class MnemonicIdentity extends SeedIdentity {
     static async fromPasskey(
         o: { rpId: string; credentialIds?: Uint8Array[] } & PasskeySource & MnemonicOptions,
     ): Promise<PasskeyMnemonic> {
-        const { rpId, credentialIds, client, label = DEFAULT_PASSKEY_LABEL, ...opts } = o;
+        const { rpId, credentialIds, client, label = DEFAULT_PASSKEY_LABEL, words, ...opts } = o;
         const { credentialId, prf } = await evaluatePrf({
             rpId,
             salt: new TextEncoder().encode(label),
             credentialIds,
             client,
         });
-        const mnemonic = mnemonicFromPrf(prf);
+        const mnemonic = mnemonicFromPrf(prf, words);
         return { identity: MnemonicIdentity.fromMnemonic(mnemonic, opts), mnemonic, credentialId };
     }
 }
