@@ -140,6 +140,56 @@ function remote(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe("SDK native template execution", () => {
+    it("requires an explicit packet policy before constructing or registering a contract", async () => {
+        const s = await setup();
+        const doc: Record<string, unknown> = template();
+        delete doc.packets;
+        await expect(s.importTemplate(doc)).rejects.toThrow("NativeExecutor: missing 'packets'");
+        expect(s.arkade.contract).not.toHaveBeenCalled();
+        expect(s.contract.register).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        -1,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER + 1,
+    ])(
+        "rejects invalid delegation expiry %s before any custom provider call",
+        async (expiresAt) => {
+            const s = await setup();
+            const execution = await s.importTemplate();
+            const provider = remote(s);
+            await expect(
+                s.executor.delegate(execution, provider as never, "renew-template", {}, expiresAt),
+            ).rejects.toThrow(/invalid expiry/);
+            for (const method of Object.values(provider)) expect(method).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([undefined, 0, 4_102_444_800, Number.MAX_SAFE_INTEGER])(
+        "forwards valid delegation expiry %s unchanged",
+        async (expiresAt) => {
+            const s = await setup();
+            const execution = await s.importTemplate();
+            const provider = remote(s);
+            await s.executor.delegate(
+                execution,
+                provider as never,
+                "renew-template",
+                {},
+                expiresAt,
+            );
+            expect(provider.registerDelegation).toHaveBeenCalledExactlyOnceWith(
+                "renew-template",
+                {},
+                expiresAt ?? 0,
+            );
+        },
+    );
+
     it("rejects a different template ID even when its watch has the same input address", async () => {
         const s = await setup();
         const execution = await s.importTemplate();

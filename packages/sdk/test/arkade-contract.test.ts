@@ -286,6 +286,28 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(captured.arkTx).toBeUndefined();
     });
 
+    it("rejects a non-covenant receipt callback before automatic coin lookup", async () => {
+        const identity = stubIdentity(xOnly());
+        const sign = vi.spyOn(identity, "sign");
+        const { ark } = await connect({ identity });
+        const lookup = vi
+            .spyOn(ark.indexer!, "getVtxos")
+            .mockRejectedValue(new Error("indexer unavailable"));
+        const submit = vi.spyOn(ark.arkProvider, "submitTx");
+        const beforeEmulatorSubmit = vi.fn();
+        await expect(
+            ark
+                .contract(exitProgram())
+                .functions.exit()
+                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
+                .send({ beforeEmulatorSubmit }),
+        ).rejects.toThrow(/beforeEmulatorSubmit.*covenant/);
+        expect(lookup).not.toHaveBeenCalled();
+        expect(sign).not.toHaveBeenCalled();
+        expect(submit).not.toHaveBeenCalled();
+        expect(beforeEmulatorSubmit).not.toHaveBeenCalled();
+    });
+
     it("rejects an emulator receipt callback on a non-covenant spend before signing or broadcasting", async () => {
         const identity = stubIdentity(xOnly());
         const sign = vi.spyOn(identity, "sign");

@@ -1129,6 +1129,9 @@ export class ArkadeTransactionBuilder {
                 );
             }
         }
+        if (beforeEmulatorSubmit && !this.unlockers().some(({ fn }) => fn.arkadeScript)) {
+            throw new Error("beforeEmulatorSubmit is only supported for covenant spends");
+        }
         const { arkTx, checkpoints, inputs } = await this.assemble();
         const hasCovenant = inputs.some(({ unlocker }) => unlocker.fn.arkadeScript);
         if (beforeEmulatorSubmit && !hasCovenant) {
