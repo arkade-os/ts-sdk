@@ -125,6 +125,7 @@ export function withExitClosure(
 export function swapProgramBinding(
     offer: Omit<Offer, "swapPkScript"> & { swapPkScript?: Uint8Array },
     operatorPubkey: Uint8Array,
+    generation: "current" | "previous" = "current",
 ): SwapProgramBinding {
     // a wrong-width script would bind a truncated makerWP into the covenant and
     // only surface as an unspendable address once the user funds it
@@ -132,8 +133,10 @@ export function swapProgramBinding(
         throw new Error("makerPkScript is not a 34-byte taproot scriptPubKey");
     }
     const expected = offer.swapPkScript;
+    // A fresh derivation has no funded script to match, so it takes the requested generation.
+    if (!expected) return bindSwapProgram(offer, operatorPubkey, generation === "previous");
     const current = bindSwapProgram(offer, operatorPubkey, false);
-    if (!expected || pkOf(current) === hex.encode(expected)) return current;
+    if (pkOf(current) === hex.encode(expected)) return current;
     const previous = bindSwapProgram(offer, operatorPubkey, true);
     if (pkOf(previous) === hex.encode(expected)) return previous;
     return current;
@@ -192,8 +195,9 @@ function pkOf(binding: SwapProgramBinding): string {
 export function offerContract(
     offer: Omit<Offer, "swapPkScript">,
     operatorPubkey: Uint8Array,
+    generation?: "current" | "previous",
 ): InstanceType<typeof arkade.ArkadeProgramScript> {
-    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey);
+    const { program, args, keys } = swapProgramBinding(offer, operatorPubkey, generation);
     return new arkade.ArkadeProgramScript(program, args, keys);
 }
 
@@ -657,6 +661,7 @@ export interface OfferParams {
      * rotation between the two reads derive a covenant the solver never quoted.
      */
     maker?: { pkScript: Uint8Array; publicKey: Uint8Array };
+    generation?: "current" | "previous";
 }
 
 /**
@@ -757,7 +762,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
               ? assertExitDelay(params.exitDelay)
               : serverExitDelay(info.unilateralExitDelay),
     });
-    const script = offerContract(binding, operatorPubKey);
+    const script = offerContract(binding, operatorPubKey, params.generation);
     const offer: Offer = { ...binding, swapPkScript: script.pkScript };
     const payload = encodeOffer(offer);
     // frozen because `SwapClient.preparationOf` hands this very value out, and `accept()` registers it
