@@ -1064,7 +1064,7 @@ export interface IReadonlyWallet {
     getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo>;
 
     /** @deprecated Use {@link getOperatorInfo}. */
-    getArkadeInfo: IReadonlyWallet["getOperatorInfo"];
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo>;
 
     /**
      * Server-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);

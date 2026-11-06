@@ -186,12 +186,10 @@ export type ResponseGetBoardingAddress = ResponseEnvelope & {
     payload: { address: string };
 };
 
-// `payload` is optional and unknown to workers built before it existed — such
-// a worker serves the ordinary snapshot-fallback read. That skew lasts only a
-// rolling-upgrade window; a page needing a hard guarantee gets it once the
-// worker updates.
+// The worker still accepts the old name, `GET_ARKADE_INFO`, so a page built before
+// the rename keeps working. A worker built before it answers "Unknown message".
 export type RequestGetOperatorInfo = RequestEnvelope & {
-    type: "GET_ARKADE_INFO";
+    type: "GET_OPERATOR_INFO" | "GET_ARKADE_INFO";
     payload?: GetOperatorInfoOptions;
 };
 // `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
@@ -200,7 +198,7 @@ export type RequestGetOperatorInfo = RequestEnvelope & {
 // `arkInfoSnapshot` serializer — that shape is the persistence cache and drops
 // `serviceStatus`.
 export type ResponseGetOperatorInfo = ResponseEnvelope & {
-    type: "ARKADE_INFO";
+    type: "OPERATOR_INFO";
     payload: { info: ArkadeInfo };
 };
 
@@ -214,7 +212,7 @@ export type RequestIndexerGetVtxos = RequestEnvelope & {
     payload: { opts: GetVtxosOptions };
 };
 // VTXOs cross the boundary raw — `assets[].amount` is bigint — relying on the
-// same bigint-safe structuredClone channel `ARKADE_INFO` documents above.
+// same bigint-safe structuredClone channel `OPERATOR_INFO` documents above.
 export type ResponseIndexerGetVtxos = ResponseEnvelope & {
     type: "INDEXER_VTXOS";
     payload: NormalizedVtxoPage;
@@ -1301,12 +1299,13 @@ export class WalletMessageHandler
                         payload: { address },
                     });
                 }
+                case "GET_OPERATOR_INFO":
                 case "GET_ARKADE_INFO": {
                     const { payload } = message as RequestGetOperatorInfo;
                     const info = await this.readonlyWallet.getOperatorInfo(payload);
                     return this.tagged({
                         id,
-                        type: "ARKADE_INFO",
+                        type: "OPERATOR_INFO",
                         payload: { info },
                     });
                 }

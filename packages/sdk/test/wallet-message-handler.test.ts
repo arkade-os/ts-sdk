@@ -317,7 +317,9 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
-    it("handles GET_ARKADE_INFO messages", async () => {
+    const INFO_REQUESTS = ["GET_OPERATOR_INFO", "GET_ARKADE_INFO"];
+
+    it.each(INFO_REQUESTS)("handles %s messages", async (type) => {
         // Worker-side half of the same guard — see `ResponseGetOperatorInfo`.
         const info = { network: "regtest", signerPubkey: "02ab", dust: 1000n };
         (updater as any).readonlyWallet = {
@@ -326,18 +328,18 @@ describe("WalletMessageHandler handleMessage", () => {
 
         const response = await updater.handleMessage({
             ...baseMessage(),
-            type: "GET_ARKADE_INFO",
+            type,
         } as any);
 
         expect(response).toEqual({
             tag: updater.messageTag,
             id: "1",
-            type: "ARKADE_INFO",
+            type: "OPERATOR_INFO",
             payload: { info },
         });
     });
 
-    it("passes requireLive through GET_ARKADE_INFO to the wallet", async () => {
+    it.each(INFO_REQUESTS)("passes requireLive through %s to the wallet", async (type) => {
         // The fail-closed covenant path in a service-worker deployment is
         // page → message → this handler → wallet.getOperatorInfo(payload). A
         // handler that dropped the payload (a destructuring slip) would pass
@@ -348,7 +350,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
         await updater.handleMessage({
             ...baseMessage(),
-            type: "GET_ARKADE_INFO",
+            type,
             payload: { requireLive: true },
         } as any);
         expect(getOperatorInfo).toHaveBeenLastCalledWith({ requireLive: true });
@@ -356,7 +358,7 @@ describe("WalletMessageHandler handleMessage", () => {
         // and the default read stays a default read
         await updater.handleMessage({
             ...baseMessage(),
-            type: "GET_ARKADE_INFO",
+            type,
         } as any);
         expect(getOperatorInfo).toHaveBeenLastCalledWith(undefined);
     });
