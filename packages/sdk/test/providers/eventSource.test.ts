@@ -5,7 +5,7 @@
  * from the `eventsource` package), so every "absent" case here removes it
  * deliberately — which is also the only honest way to reproduce plain Node.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     EventSourceUnavailableError,
     RestArkProvider,
@@ -16,31 +16,44 @@ import {
     resolveEventSource,
     type EventSourceFactory,
 } from "../../src";
+import { FetchEventSource } from "../../src/providers/eventSource";
+import { ARKADE_VERSION_HEADERS } from "../../src/utils/fetch";
 
 /** A factory that records its calls and returns something inert. */
-const fakeFactory = (): EventSourceFactory & { urls: string[] } => {
+const fakeFactory = (): EventSourceFactory & {
+    urls: string[];
+    headers: (Record<string, string> | undefined)[];
+} => {
     const urls: string[] = [];
-    const factory = ((url: string) => {
+    const headers: (Record<string, string> | undefined)[] = [];
+    const factory = ((url: string, h?: Record<string, string>) => {
         urls.push(url);
+        headers.push(h);
         return {
             addEventListener: () => {},
             removeEventListener: () => {},
             close: () => {},
         };
-    }) as unknown as EventSourceFactory & { urls: string[] };
+    }) as unknown as EventSourceFactory & {
+        urls: string[];
+        headers: (Record<string, string> | undefined)[];
+    };
     factory.urls = urls;
+    factory.headers = headers;
     return factory;
 };
 
-/** Run `fn` with no global EventSource — plain Node, in other words. */
-const withoutGlobal = async (fn: () => Promise<void> | void): Promise<void> => {
+/** Run `fn` with neither `fetch` nor a global EventSource. */
+const withoutTransport = async (fn: () => Promise<void> | void): Promise<void> => {
     const saved = globalThis.EventSource;
     // @ts-expect-error deleting an optional global for the duration of a test
     delete globalThis.EventSource;
+    vi.stubGlobal("fetch", undefined);
     try {
         await fn();
     } finally {
         globalThis.EventSource = saved;
+        vi.unstubAllGlobals();
     }
 };
 
@@ -66,12 +79,28 @@ describe("resolveEventSource", () => {
         expect(configured.urls).toEqual(["http://b"]);
     });
 
-    it("falls back to the global, read at call time not import time", async () => {
+    it("defaults to FetchEventSource, which sends the headers it is given", async () => {
+        const calls: RequestInit[] = [];
+        vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+            calls.push(init);
+            return new Response(null, { status: 204 });
+        });
+        try {
+            const source = resolveEventSource()("http://default", { "X-Build-Version": "1.2.3" });
+            expect(source).toBeInstanceOf(FetchEventSource);
+            source.close();
+            expect(calls[0].headers).toMatchObject({ "X-Build-Version": "1.2.3" });
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("falls back to the global without fetch, read at call time not import time", async () => {
         // The SDK is imported long before a polyfill assigns the global, so a
         // factory captured at module load would never see one. Resolving with
         // the global gone and then installing a different one — both after this
         // module was imported — is what tells the two apart.
-        await withoutGlobal(() => {
+        await withoutTransport(() => {
             expect(() => resolveEventSource()).toThrow(EventSourceUnavailableError);
 
             const opened: string[] = [];
@@ -91,7 +120,7 @@ describe("resolveEventSource", () => {
     });
 
     it("throws a typed, actionable error when nothing answers", async () => {
-        await withoutGlobal(() => {
+        await withoutTransport(() => {
             expect(() => resolveEventSource()).toThrow(EventSourceUnavailableError);
             try {
                 resolveEventSource();
@@ -103,7 +132,7 @@ describe("resolveEventSource", () => {
         });
     });
 
-    it("goes back to the global when configured with undefined", async () => {
+    it("goes back to the default when configured with undefined", async () => {
         configureEventSource(fakeFactory());
         configureEventSource(undefined);
         expect(getConfiguredEventSource()).toBeUndefined();
@@ -138,6 +167,7 @@ describe("providers take a factory", () => {
         const pending = iterator.next();
         await Promise.resolve();
         expect(factory.urls).toEqual(["http://ark/v1/indexer/script/subscription/sub-1"]);
+        expect(factory.headers).toEqual([undefined]);
 
         await iterator.return?.(undefined);
         await pending.catch(() => {});
@@ -151,13 +181,28 @@ describe("providers take a factory", () => {
         const pending = iterator.next();
         await Promise.resolve();
         expect(factory.urls).toEqual(["http://ark/v1/batch/events"]);
+        expect(factory.headers).toEqual([ARKADE_VERSION_HEADERS]);
+
+        await iterator.return?.(undefined);
+        await pending.catch(() => {});
+    });
+
+    it("RestArkProvider opens its transaction stream with the version headers", async () => {
+        const factory = fakeFactory();
+        const provider = new RestArkProvider("http://ark", { eventSource: factory });
+
+        const iterator = provider.getTransactionsStream(new AbortController().signal);
+        const pending = iterator.next();
+        await Promise.resolve();
+        expect(factory.urls).toEqual(["http://ark/v1/txs"]);
+        expect(factory.headers).toEqual([ARKADE_VERSION_HEADERS]);
 
         await iterator.return?.(undefined);
         await pending.catch(() => {});
     });
 
     it("fails the stream with the typed error when there is nothing to open it with", async () => {
-        await withoutGlobal(async () => {
+        await withoutTransport(async () => {
             const provider = new RestIndexerProvider("http://ark");
             const iterator = provider.getSubscription("sub-1", new AbortController().signal);
             await expect(iterator.next()).rejects.toThrow(EventSourceUnavailableError);
@@ -165,7 +210,7 @@ describe("providers take a factory", () => {
     });
 
     it("keeps resolving lazily, so a factory configured after construction still applies", async () => {
-        await withoutGlobal(async () => {
+        await withoutTransport(async () => {
             const provider = new RestIndexerProvider("http://ark");
             const factory = fakeFactory();
             configureEventSource(factory);
