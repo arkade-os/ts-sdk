@@ -36,6 +36,15 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`ArkIntent` is renamed `BatchRegistration`, and its fields follow.**
+  `IntentFilter` and `IntentPageFilter` take the matching names, and the three
+  old type names stay as deprecated aliases. On the record, `intentTxId` is
+  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is
+  `proofInputs`. Filters use `proofTxIds` and `registrationIds`. These fields
+  have no alias, so a custom repository must update. Stored data does not
+  change, and no migration runs: backends keep their column and key names on
+  disk and map them at the repository boundary.
+
 - **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
   is renamed `deprecatedSignerLocked`.** Each name now says what holds the
   funds: a contract that generic spending refuses, or a server signer past

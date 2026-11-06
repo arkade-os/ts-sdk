@@ -1164,7 +1164,7 @@ describe("Wallet", () => {
         });
 
         const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
-            intentTxId: "i1",
+            proofTxId: "i1",
             state: "waiting_for_batch",
             createdAt: 1,
             updatedAt: 1,
@@ -1173,11 +1173,11 @@ describe("Wallet", () => {
             deleteProof: "dp",
             deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }),
             partialForfeits: [],
-            intentVtxos: [{ txid: "v", vout: 0 }],
+            proofInputs: [{ txid: "v", vout: 0 }],
             ...over,
         });
         const intentIds = async (repo: IntentRepository) =>
-            (await collectIntents(repo)).map((i) => i.intentTxId);
+            (await collectIntents(repo)).map((i) => i.proofTxId);
 
         it("wipes intents once none is pending", async () => {
             const intentRepository = new InMemoryIntentRepository();
@@ -1224,7 +1224,7 @@ describe("Wallet", () => {
                 const intentRepository = new InMemoryIntentRepository();
                 await intentRepository.saveIntent(storedIntent());
                 await intentRepository.saveIntent(
-                    storedIntent({ intentTxId: "i2", intentVtxos: [{ txid: "w", vout: 0 }] }),
+                    storedIntent({ proofTxId: "i2", proofInputs: [{ txid: "w", vout: 0 }] }),
                 );
                 const deleteIntent = vi
                     .fn()

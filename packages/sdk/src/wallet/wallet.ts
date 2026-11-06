@@ -4045,7 +4045,7 @@ export class Wallet
                 intent,
                 deleteIntent,
                 params.inputs,
-                { intentId },
+                { registrationId: intentId },
             );
 
             // SDK-owned intent persistence runs from the awaited batch hooks;
@@ -4505,7 +4505,7 @@ export class Wallet
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (await collectIntents(repo, { intentTxIds: [intentTxId] }))[0];
+            const existing = (await collectIntents(repo, { proofTxIds: [intentTxId] }))[0];
             // Terminal is sticky: a later step throwing into settle()'s catch passes "cancelled",
             // which must not clobber a `batch_succeeded` whose money already moved.
             if (existing && isTerminalIntentState(existing.state)) {
@@ -4513,12 +4513,12 @@ export class Wallet
             }
             await repo.saveIntent({
                 ...(existing ?? {}),
-                intentTxId,
+                proofTxId: intentTxId,
                 registerProof: intent.proof,
                 registerProofMessage: Proof.encodeMessage(intent.message),
                 deleteProof: deleteIntent.proof,
-                deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
-                intentVtxos: inputs.map((i) => ({
+                deleteProofMessage: Proof.encodeMessage(deleteIntent.message),
+                proofInputs: inputs.map((i) => ({
                     txid: i.txid,
                     vout: i.vout,
                 })),

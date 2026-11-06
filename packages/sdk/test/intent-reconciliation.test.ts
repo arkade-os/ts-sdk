@@ -11,7 +11,7 @@ import type { VirtualCoin } from "../src/wallet";
 import { ArkError } from "../src/providers/errors";
 
 const intent = (over: Partial<ArkIntent>): ArkIntent => ({
-    intentTxId: "i1",
+    proofTxId: "i1",
     state: "waiting_for_batch",
     createdAt: 1,
     updatedAt: 1,
@@ -20,7 +20,7 @@ const intent = (over: Partial<ArkIntent>): ArkIntent => ({
     deleteProof: "dp",
     deleteProofMessage: "dpm",
     partialForfeits: [],
-    intentVtxos: [{ txid: "v", vout: 0 }],
+    proofInputs: [{ txid: "v", vout: 0 }],
     ...over,
 });
 
@@ -38,7 +38,7 @@ const seed = async (repo: InMemoryIntentRepository, i: ArkIntent) => {
 };
 
 const stateOf = async (repo: InMemoryIntentRepository, id = "i1"): Promise<ArkIntentState> =>
-    (await collectIntents(repo, { intentTxIds: [id] }))[0].state;
+    (await collectIntents(repo, { proofTxIds: [id] }))[0].state;
 
 describe("reconcileIntents", () => {
     it("marks batch_succeeded when all inputs are consumed by a batch", async () => {
@@ -52,7 +52,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("commitment-tx");
         // Succeeded intent no longer locks its inputs.
@@ -68,7 +68,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("known-ctx");
     });
@@ -82,7 +82,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("waiting_to_submit");
         expect(done.cancellationReason).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
@@ -115,7 +115,7 @@ describe("reconcileIntents", () => {
             now: () => 1000,
         });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/expired/i);
     });
@@ -164,23 +164,23 @@ describe("reconcileIntents", () => {
         const repo = new InMemoryIntentRepository();
         await repo.saveIntent(
             intent({
-                intentTxId: "done",
+                proofTxId: "done",
                 state: "waiting_for_batch",
-                intentVtxos: [{ txid: "a", vout: 0 }],
+                proofInputs: [{ txid: "a", vout: 0 }],
             }),
         );
         await repo.saveIntent(
             intent({
-                intentTxId: "stale",
+                proofTxId: "stale",
                 state: "waiting_to_submit",
-                intentVtxos: [{ txid: "b", vout: 0 }],
+                proofInputs: [{ txid: "b", vout: 0 }],
             }),
         );
         await repo.saveIntent(
             intent({
-                intentTxId: "live",
+                proofTxId: "live",
                 state: "waiting_for_batch",
-                intentVtxos: [{ txid: "c", vout: 0 }],
+                proofInputs: [{ txid: "c", vout: 0 }],
             }),
         );
         const getVtxos = vi.fn().mockResolvedValue({
@@ -209,7 +209,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/unilaterally exited/i);
         // The whole point: without the exit branch these stay locked forever.
@@ -227,7 +227,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBe("commitment-tx");
     });
@@ -237,7 +237,7 @@ describe("reconcileIntents", () => {
             new InMemoryIntentRepository(),
             intent({
                 state: "waiting_for_batch",
-                intentVtxos: [
+                proofInputs: [
                     { txid: "v", vout: 0 },
                     { txid: "v", vout: 1 },
                 ],
@@ -251,7 +251,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("batch_succeeded");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
@@ -267,7 +267,7 @@ describe("reconcileIntents", () => {
 
         await reconcileIntents({ intentRepository: repo, indexerProvider });
 
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("waiting_for_batch");
         expect(done.commitmentTransactionId).toBeUndefined();
         expect(await repo.getLockedVtxoOutpoints()).toEqual([{ txid: "v", vout: 0 }]);
@@ -293,7 +293,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         });
 
         expect(deleteIntent).toHaveBeenCalledWith({ proof: "dp", message: deleteMessage });
-        const done = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const done = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(done.state).toBe("cancelled");
         expect(done.cancellationReason).toMatch(/released from the server/i);
         expect(await repo.getLockedVtxoOutpoints()).toEqual([]);
@@ -392,7 +392,7 @@ describe("reconcileIntents: releasing stale intents from the server", () => {
         const repo = await seed(
             new InMemoryIntentRepository(),
             stale({
-                intentVtxos: [
+                proofInputs: [
                     { txid: "v", vout: 0 },
                     { txid: "w", vout: 0 },
                 ],
@@ -419,7 +419,7 @@ describe("releaseIntents", () => {
     it("is true when every non-terminal intent is deleted, skipping terminal ones", async () => {
         const repo = new InMemoryIntentRepository();
         await repo.saveIntent(pending());
-        await repo.saveIntent(pending({ intentTxId: "done", state: "batch_succeeded" }));
+        await repo.saveIntent(pending({ proofTxId: "done", state: "batch_succeeded" }));
         const deleteIntent = vi.fn().mockResolvedValue(undefined);
 
         expect(await releaseIntents({ intentRepository: repo, deleteIntent })).toBe(true);

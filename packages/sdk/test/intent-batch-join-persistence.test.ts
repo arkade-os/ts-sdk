@@ -40,7 +40,7 @@ const failed: SettlementEvent = {
 function seededRepo(): InMemoryIntentRepository {
     const repo = new InMemoryIntentRepository();
     const intent: ArkIntent = {
-        intentTxId,
+        proofTxId: intentTxId,
         state: "waiting_for_batch",
         createdAt: 1,
         updatedAt: 1,
@@ -49,7 +49,7 @@ function seededRepo(): InMemoryIntentRepository {
         deleteProof: "dp",
         deleteProofMessage: "dpm",
         partialForfeits: [],
-        intentVtxos: [{ txid: "v", vout: 0 }],
+        proofInputs: [{ txid: "v", vout: 0 }],
     };
     void repo.saveIntent(intent);
     return repo;
@@ -67,7 +67,7 @@ const wrappedHandler = (repo: InMemoryIntentRepository) =>
     );
 
 const stateOf = (repo: InMemoryIntentRepository) =>
-    collectIntents(repo, { intentTxIds: [intentTxId] }).then((r) => r[0].state);
+    collectIntents(repo, { proofTxIds: [intentTxId] }).then((r) => r[0].state);
 
 describe("Batch.join intent persistence", () => {
     it("persists batch_succeeded when the eventCallback throws", async () => {
