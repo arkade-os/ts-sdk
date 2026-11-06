@@ -193,7 +193,8 @@ style and have not been backfilled.
 
 - **The cached operator info moves to a new key.** The snapshot in wallet settings
   is now `operatorInfoSnapshot`. The SDK still reads `arkInfoSnapshot` until the next
-  live boot saves the new key, and the old key stays in place.
+  live boot saves the new key, and the old key stays in place. Comments in this
+  file now say the operator instead of the server.
 
 - **`getStoredContractsWithVtxos()` is reachable through the service
   worker.** It answers from the repository without waiting on the indexer and

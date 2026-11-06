@@ -122,7 +122,7 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
     });
 
     it("keeps the transaction limits undefined when not advertised — never 0n", () => {
-        // 0n would read as a server that accepts no transaction and forbids
+        // 0n would say the operator accepts no transaction and forbids
         // OP_RETURN outright, which is the opposite of "did not say".
         const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
         expect(hydrateArkInfo(snapshot).maxTxWeight).toBeUndefined();
@@ -461,7 +461,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         // `check-provider-boundary.mjs` enforces for SDK logic and that a raw
         // provider would let a plugin skip.
         const getVtxos = vi.fn(async () => ({
-            // a server row with the optional facts absent
+            // a row from the operator with the optional facts absent
             vtxos: [{ txid: "ab".repeat(32), vout: 0, value: 1000 }],
         }));
         const getVirtualTxs = vi.fn(async () => ({ txs: ["deadbeef"] }));

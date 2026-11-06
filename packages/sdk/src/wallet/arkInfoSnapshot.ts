@@ -5,7 +5,7 @@ import type { WalletRepository } from "../repositories/walletRepository";
 import { updateWalletState } from "../utils/syncCursors";
 
 /**
- * Key under {@link WalletState.settings} holding the cached server-info
+ * Key under {@link WalletState.settings} holding the cached operator info
  * snapshot. Namespaced so it coexists with unrelated settings keys
  * (`hasPendingTx`, `vtxoCursorMigrated`, …).
  *
@@ -76,7 +76,7 @@ export type StoredArkInfoSnapshot = {
 /**
  * A stored snapshot exists but is structurally invalid (wrong version, missing
  * or wrong-typed fields, non-decimal bigint strings). This is a *terminal*
- * failure: a corrupt cache must fail the same way malformed live server-info
+ * failure: a corrupt cache must fail the same way malformed live operator info
  * does, never silently fall through as if no cache were present.
  */
 export class MalformedArkInfoSnapshotError extends Error {
@@ -301,7 +301,7 @@ export async function loadArkInfoSnapshot(
 }
 
 /**
- * Persist a fresh snapshot from live server-info, preserving all other
+ * Persist a fresh snapshot from live operator info, preserving all other
  * {@link WalletState.settings} keys. Serialized through the shared
  * {@link updateWalletState} mutex so it can't lose-update a concurrent
  * settings write.
@@ -337,7 +337,7 @@ export interface ResolvedArkInfo {
 }
 
 /**
- * Resolve the server-info needed to construct a wallet, with cache fallback.
+ * Resolve the operator info needed to construct a wallet, with cache fallback.
  * **This never writes the cache** — persistence is deferred to
  * {@link saveValidatedArkInfoSnapshot}, called only once construction has
  * validated the response, so a terminal live response can't poison the cache.
@@ -381,7 +381,7 @@ export async function resolveArkInfo(
 }
 
 /**
- * Persist a snapshot of *validated* live server-info. Call this only after
+ * Persist a snapshot of *validated* live operator info. Call this only after
  * wallet construction has accepted the response — network, signer, and (for a
  * full wallet) checkpoint/forfeit parsing — so a terminal live response can
  * never overwrite a good cache before failing. Best-effort: a storage hiccup
