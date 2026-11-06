@@ -59,7 +59,9 @@ reviews:
     title:
       mode: warning
       requirements: >-
-        Conventional commit form, type(scope): summary, e.g. "fix(sdk): ...".
+        Conventional commit form, type(scope): summary or type: summary, e.g. "fix(sdk): ...".
+        The scope, when present, is a package (sdk, swap), never a module or directory such as
+        arkade (AGENTS.md, Commit Messages and PR Titles).
     custom_checks:
       - name: PR description
         mode: warning

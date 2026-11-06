@@ -1,0 +1,3 @@
+# The subject's scope names a package (AGENTS.md, Commit Messages and PR Titles). Git runs this
+# hook before it strips comment lines, so the subject is the first non-comment, non-empty line.
+sh scripts/check-commit-scope.sh "$(grep -v '^#' "$1" | grep -m 1 .)"

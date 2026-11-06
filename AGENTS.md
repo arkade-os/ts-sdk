@@ -30,6 +30,19 @@ Release and regtest/integration workflows are documented in `CONTRIBUTING.md`.
 
 A commit that changes `packages/**/src` or any `package.json` (root included) must add a `CHANGELOG.md` entry; other changes may skip it. Add it under `## [Unreleased]` in the same commit as the change, grouped and styled to match the existing entries (bolded headline, root-cause prose, section ordering); the `[Unreleased]` header is retitled to `## [X.Y.Z] - YYYY-MM-DD` by hand at release time — no script or CI step does this.
 
+## Commit Messages and PR Titles
+
+`type(scope): summary`. The scope is the package the change ships in, `sdk` or `swap` (a directory
+under `packages/`), and says which package's release carries the change; what changed goes in the
+summary. Leave it out when the change is not confined to one package: CI, root tooling, regtest.
+It is never a module, a directory or the repository — not `arkade` (everything here is Arkade),
+`wallet`, `contracts` or `ts-sdk`: `feat(sdk): renew covenant VTXOs without an owner key`, not
+`feat(arkade): …`.
+
+A PR title follows the same rule, since a squash merge makes it the commit subject.
+`scripts/check-commit-scope.sh` enforces it on commit subjects (husky `commit-msg` hook) and on PR
+titles (`PR Title` workflow).
+
 ## Contracts Subsystem Ownership
 
 The `src/contracts/` pipeline is event-driven with strict ownership rules:
