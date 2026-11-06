@@ -260,6 +260,11 @@ style and have not been backfilled.
   require re-import before delegation. Post-submit refresh failures are reported
   without hiding the accepted transaction result; submission failures still reject.
 
+- **Native template validation rejects invalid requests before avoidable work.**
+  Missing `packets` policy is named explicitly, and delegation rejects invalid
+  expiries before any provider call. Non-covenant spends reject
+  `beforeEmulatorSubmit` before transaction assembly.
+
 - **IndexedDB wallet-state read failures no longer look like an empty wallet.**
   Read errors propagate before updates can replace persisted pending-submit, cursor
   or unrelated settings. Genuine absence still returns null.

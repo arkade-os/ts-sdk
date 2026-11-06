@@ -133,7 +133,7 @@ export class NativeExecutor {
         const t = object(
             document,
             ["format", "type", "variables", "inputs", "outputs", "fees", "packets"],
-            ["format", "type", "inputs", "outputs"],
+            ["format", "type", "inputs", "outputs", "packets"],
         );
         if (t.format !== "delegateed-template/v1" || t.type !== "offchain") {
             throw new Error(
@@ -337,6 +337,8 @@ export class NativeExecutor {
         variables: Record<string, string> = {},
         expiresAt = 0,
     ): Promise<DelegateeDelegation> {
+        if (!Number.isSafeInteger(expiresAt) || expiresAt < 0)
+            throw new Error("NativeExecutor: invalid expiry");
         const supplied = { ...variables };
         this.check(execution);
         const binding = this.imported.get(execution)!.delegation;
