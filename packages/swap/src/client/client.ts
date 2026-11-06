@@ -50,7 +50,7 @@ import {
     type ReceiveRequest,
     type VerbDeps,
 } from "./verbs";
-import { cardMarketOf, marketBackendOf, marketKeyOf, usableMarkets, type Market } from "./market";
+import { marketOf, usableMarkets, type Market } from "./market";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
 
 export interface SwapClientConfig {
@@ -68,7 +68,8 @@ export interface SwapClientConfig {
     /** Dependency overrides only: they never enable a route or pick a solver. */
     readonly corridors?: CorridorOverrides;
     readonly policy?: SwapPolicy;
-    /** Covenant co-signer override, 33-byte compressed hex. */
+    /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
+     * compressed hex. */
     readonly emulatorPubkey?: string;
     /** Overrides the wallet's own connection; for tests and a second operator. */
     readonly operator?: SwapOperator;
@@ -153,9 +154,15 @@ export interface SwapClient {
     swaps(filter?: SwapFilter): Promise<Swap[]>;
 
     /**
-     * The markets a `quote()` could be priced against, in the `Quote.market` shape and under the same
-     * filters, so it cannot offer one `quote()` would refuse. Fetches when no snapshot is in hand, as
-     * `quote()` does, since callers reach for it BEFORE quoting.
+     * The markets on the active snapshot, in the `Quote.market` shape plus each leg's announced
+     * limits, with no RFQ and no disclosure. Shares `quote()`'s registry allowlist and addressability
+     * filter but not its eligibility, so it can list a card `quote()` refuses. Fetches when no
+     * snapshot is in hand, as `quote()` does, since callers reach for it BEFORE quoting.
+     *
+     * `key` is not unique: correlate with `resolve().market` on `key` + `source` + `discoveryPubkey`,
+     * or `solver` on spot cards, which have no `discoveryPubkey`. These fields identify a solver's
+     * market, not one card. A solver may publish several with different limits: `pair` separates a
+     * flipped card, but nothing public separates fee tiers.
      *
      * @throws {DiscoverySnapshotUnavailable} when the fetch leaves it with
      *   nothing either.
@@ -477,13 +484,14 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
 
         markets: async () => {
             ensureLive("markets");
-            const { discovery } = await resolved();
+            const { base, discovery } = await resolved();
             // `load`, as `quote()` reads it: a never-routed client must not refuse where the quote
             // would not
             const snapshot = await discovery.load();
-            // the routing read's own filter, so this cannot offer a card `quote()` would refuse
+            // the allowlist and addressability filter, not eligibility: a card `quote()` refuses
+            // can still be listed
             return usableMarkets(snapshot, config.policy).map((card) =>
-                cardMarketOf(card, snapshot.ref, marketKeyOf(card), marketBackendOf(card)),
+                marketOf(card, snapshot.ref, base.networkName),
             );
         },
 

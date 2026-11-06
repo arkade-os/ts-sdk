@@ -104,7 +104,7 @@ export class AssetGroup {
      *
      * @returns `true` when the group has an asset id and outputs exceed local inputs
      * @remarks
-     * Only local inputs contribute to the comparison; intent-backed inputs contribute `0` here.
+     * Only local inputs contribute to the comparison; proof-backed inputs contribute `0` here.
      */
     isReissuance(): boolean {
         const sumReducer = (s: bigint, { amount }: { amount: bigint }) => s + amount;
@@ -151,14 +151,14 @@ export class AssetGroup {
     }
 
     /**
-     * Convert the group into its batch-leaf representation for the given intent txid.
+     * Convert the group into its batch-leaf representation for the given proof txid.
      *
-     * @param intentTxid - Intent transaction id used to build the leaf input reference
+     * @param proofTxid - Proof transaction id used to build the leaf input reference
      * @returns Batch-leaf asset group
-     * @see AssetInput.createIntent
+     * @see AssetInput.createProof
      */
-    toBatchLeafAssetGroup(intentTxid: Uint8Array): AssetGroup {
-        const leafInput = AssetInput.createIntent(hex.encode(intentTxid), 0, 0);
+    toBatchLeafAssetGroup(proofTxid: Uint8Array): AssetGroup {
+        const leafInput = AssetInput.createProof(hex.encode(proofTxid), 0, 0);
         return new AssetGroup(
             this.assetId,
             this.controlAsset,

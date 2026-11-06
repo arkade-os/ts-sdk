@@ -60,7 +60,6 @@ const createWallet = (delegatee: boolean, overrides: Partial<WalletConfig> = {})
         },
         settlementConfig: false,
         // the delegatee stack's arkd runs short regtest delays
-        minCheckpointExitDelaySeconds: 1n,
         minBatchExpirySeconds: 1n,
         ...(delegatee ? { delegateeProvider: new RestDelegateeProvider(DELEGATEE_URL) } : {}),
         ...overrides,

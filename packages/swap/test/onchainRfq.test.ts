@@ -217,7 +217,7 @@ describe("deriveOnchainSend", () => {
     });
 
     /** A quote whose compare-only fields MATCH the maker's own derivations. */
-    const consistentQuote = (): RfqQuote => {
+    const consistentQuote = (refundWithoutReceiverDelay?: number): RfqQuote => {
         const input = derivation();
         const lockup = lightningSendContract({
             solverPubkey: key(1),
@@ -225,6 +225,7 @@ describe("deriveOnchainSend", () => {
             operatorPubkey: OPERATOR_PUBKEY,
             paymentHash: PAYMENT_HASH,
             claimDelay: 4096,
+            refundWithoutReceiverDelay,
             emulatorPubkey: key(9),
             refundPkScript: ArkAddress.decode(REFUND_ADDRESS).pkScript,
             senderPubkey: SENDER_PUBKEY,
@@ -256,6 +257,9 @@ describe("deriveOnchainSend", () => {
                 htlc_address: htlc.address,
                 min_confirmations: 2,
                 receiver_pk_script: hex.encode(RECEIVER_PK_SCRIPT),
+                ...(refundWithoutReceiverDelay !== undefined && {
+                    refund_without_receiver_delay: refundWithoutReceiverDelay,
+                }),
             },
         };
     };
@@ -278,6 +282,21 @@ describe("deriveOnchainSend", () => {
         const quote = consistentQuote();
         quote.profile.lockup_address = "ark1qtampered";
         expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(AddressMismatch);
+    });
+
+    it("builds the lockup with the solo refund delay the quote stretched", () => {
+        const derived = deriveOnchainSend({ quote: consistentQuote(30 * 512), ...derivation() });
+        expect(derived.refundWithoutReceiverDelay).toBe(30 * 512);
+    });
+
+    it("refuses a solo refund delay that is not a valid ladder rung", () => {
+        for (const delay of [3584, 30 * 512 + 1, 0x10000 * 512]) {
+            const quote = consistentQuote();
+            quote.profile.refund_without_receiver_delay = delay;
+            expect(() => deriveOnchainSend({ quote, ...derivation() })).toThrow(
+                /invalid refund_without_receiver_delay/,
+            );
+        }
     });
 
     it("refuses a quote missing a binding field", () => {

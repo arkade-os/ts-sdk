@@ -1,11 +1,13 @@
 /// <reference lib="webworker" />
 
 import { getActiveServiceWorker, setupServiceWorkerOnce } from "./browser/service-worker-manager";
-import { ArkProvider, RestArkProvider } from "../providers/ark";
+import { OperatorProvider, RestOperatorProvider } from "../providers/ark";
 import { assertTimerMs } from "../utils/time";
 import { RestDelegateProvider } from "../providers/delegate";
 import { RestIndexerProvider } from "../providers/indexer";
 import { RestDelegateeProvider } from "../providers/delegatee";
+import type { OnchainProvider } from "../providers/onchain";
+import type { NetworkName } from "../networks";
 import {
     type Identity,
     type ReadonlyIdentity,
@@ -49,7 +51,7 @@ export type ResponseEnvelope = {
     broadcast?: boolean;
 };
 type MessageBusServices = {
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     wallet?: Wallet;
     readonlyWallet: ReadonlyWallet;
 };
@@ -135,6 +137,10 @@ type Options = {
      * Ignored when `buildServices` is supplied — that override owns `storage`.
      */
     intentRepository?: IntentRepository;
+    /** The worker wallet's onchain provider, per network: an instance cannot cross `postMessage`.
+     * Called on every init and never closed, so return one instance per network. Defaults to
+     * Esplora; ignored when `buildServices` is supplied. */
+    onchainProvider?: (network: NetworkName) => OnchainProvider;
     debug?: boolean;
     buildServices?: (config: Initialize["config"]) => Promise<MessageBusServices>;
 };
@@ -179,10 +185,10 @@ type Initialize = {
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
         /** @see WalletConfig.lookAheadWindow */
         lookAheadWindow?: number;
+        /** @see WalletConfig.oneShotSubmit */
+        oneShotSubmit?: boolean;
         /** @see WalletConfig.minBatchExpirySeconds */
         minBatchExpirySeconds?: bigint;
-        /** @see WalletConfig.minCheckpointExitDelaySeconds */
-        minCheckpointExitDelaySeconds?: bigint;
         /**
          * Page-supplied per-operation timeout map. Keys are message types
          * (e.g. "SETTLE"). Overrides constructor-supplied
@@ -227,6 +233,7 @@ export class MessageBus {
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
     private readonly intentRepository?: IntentRepository;
+    private readonly onchainProvider?: (network: NetworkName) => OnchainProvider;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
     private broadcastQueue: ResponseEnvelope[] = [];
     private draining = false;
@@ -243,6 +250,7 @@ export class MessageBus {
             messageTimeoutMs = 30_000,
             messageTimeoutOverrides = {},
             intentRepository,
+            onchainProvider,
             debug = false,
             buildServices,
         }: Options,
@@ -251,6 +259,7 @@ export class MessageBus {
         assertTimerMs("messageTimeoutMs", messageTimeoutMs);
         assertTimeoutMap("messageTimeoutOverrides", messageTimeoutOverrides);
         this.intentRepository = intentRepository;
+        this.onchainProvider = onchainProvider;
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.messageTimeoutMs = messageTimeoutMs;
@@ -527,7 +536,7 @@ export class MessageBus {
     }
 
     private async buildServices(config: Initialize["config"]): Promise<MessageBusServices> {
-        const arkProvider = new RestArkProvider(config.arkServer.url);
+        const arkProvider = new RestOperatorProvider(config.arkServer.url);
         const storage = {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
@@ -550,6 +559,7 @@ export class MessageBus {
                 arkProvider,
                 arkServerPublicKey: config.arkServer.publicKey,
                 indexerProvider,
+                onchainProvider: this.onchainProvider,
                 storage,
                 delegateProvider,
                 delegateeProvider,
@@ -559,8 +569,8 @@ export class MessageBus {
                 lazyInitialization: config.lazyInitialization,
                 watcherConfig: config.watcherConfig,
                 lookAheadWindow: config.lookAheadWindow,
+                oneShotSubmit: config.oneShotSubmit,
                 minBatchExpirySeconds: config.minBatchExpirySeconds,
-                minCheckpointExitDelaySeconds: config.minCheckpointExitDelaySeconds,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
         }
@@ -572,6 +582,7 @@ export class MessageBus {
             arkProvider,
             arkServerPublicKey: config.arkServer.publicKey,
             indexerProvider,
+            onchainProvider: this.onchainProvider,
             storage,
             delegateProvider,
             delegateeProvider,

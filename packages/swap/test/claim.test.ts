@@ -25,6 +25,8 @@ import {
 import { lightningReceiveContract } from "../src/rfq";
 import { LockupAmountMismatchError, pushClaim } from "../src/claim";
 import { LockupNeedsRecoveryError, MAX_LOCKUP_SPEND_INPUTS, type LockupVtxo } from "../src/refund";
+import { CHF_ID, USD_ID } from "./fixtures";
+import { assetFlows } from "./helpers/assetPacket";
 
 const priv = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(priv(fill));
@@ -153,9 +155,109 @@ describe("pushClaim", () => {
         const conditionFields = getArkPsbtFields(tx, 0, ConditionWitness);
         expect(conditionFields).toHaveLength(1);
         expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
-        // …and finalize got the checkpoints back signed.
+        for (const checkpoint of operator.submitted[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig?.length).toBeGreaterThan(0);
+        }
+        expect(operator.finalized).toHaveLength(0);
+    });
+
+    it("keeps the preimage on the checkpoints a pre-one-shot arkd rebuilt", async () => {
+        // arkd before one-shot rebuilds the checkpoints: our signatures and the
+        // Ark PSBT fields are gone, and finalizeTx checks the claim leaf's
+        // condition against the preimage, so it has to come back.
+        const rebuild = (submitted: string[]) =>
+            submitted.map((c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                tx.updateInput(0, { tapScriptSig: undefined, unknown: undefined }, true);
+                expect(tx.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+                expect(tx.getInput(0).unknown ?? []).toHaveLength(0);
+                return base64.encode(tx.toPSBT());
+            });
+        const operator = fakeOperator({ checkpointsFor: rebuild });
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(operator.finalized).toHaveLength(1);
+        for (const checkpoint of operator.finalized[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            const conditionFields = getArkPsbtFields(cp, 0, ConditionWitness);
+            expect(conditionFields).toHaveLength(1);
+            expect(hex.encode(conditionFields[0]![0]!)).toBe(hex.encode(PREIMAGE));
+        }
+    });
+
+    it("keeps the two-step flow with oneShot: false", async () => {
+        const operator = fakeOperator();
+        const result = await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+            oneShot: false,
+        });
+
+        for (const checkpoint of operator.submitted[0]!.checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        }
         expect(operator.finalized).toHaveLength(1);
         expect(operator.finalized[0]!.txid).toBe(result.txid);
+    });
+
+    it("declares every asset on the lockup in a packet that moves it to the destination", async () => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: [
+                {
+                    ...VTXOS[0]!,
+                    assets: [
+                        { assetId: USD_ID, amount: 500n },
+                        { assetId: CHF_ID, amount: 7n },
+                    ],
+                },
+                { ...VTXOS[1]!, assets: [{ assetId: USD_ID, amount: 250n }] },
+            ],
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(assetFlows(operator.submitted[0]!.tx)).toEqual([
+            {
+                assetId: USD_ID,
+                inputs: [
+                    [0, 500n],
+                    [1, 250n],
+                ],
+                outputs: [[0, 750n]],
+            },
+            { assetId: CHF_ID, inputs: [[0, 7n]], outputs: [[0, 7n]] },
+        ]);
+    });
+
+    it("adds no extension output to a sats-only claim", async () => {
+        const operator = fakeOperator();
+        await pushClaim(operator, {
+            contract: swapScript(),
+            receiver: RECEIVER,
+            preimage: PREIMAGE,
+            vtxos: VTXOS,
+            destinationPkScript: DESTINATION_PK_SCRIPT,
+            expectedAmount: EXPECTED_AMOUNT,
+        });
+
+        expect(() => assetFlows(operator.submitted[0]!.tx)).toThrow(/no extension output/);
     });
 
     it("attaches the preimage only after signing — the server's INVALID_SIGNATURE ordering", async () => {
@@ -478,9 +580,9 @@ describe("pushClaim", () => {
                 expectedAmount: EXPECTED_AMOUNT,
             });
 
-        it("refuses a checkpoint exit delay below the network's floor", async () => {
+        it("refuses a checkpoint exit delay below the floor", async () => {
             const operator = fakeOperator({
-                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(1) }),
+                checkpointTapscript: checkpointTapscriptOf({ type: "blocks", value: BigInt(0) }),
             });
             await expect(claim(operator)).rejects.toThrow(/checkpoint exit delay rejected/);
             expect(operator.submitted).toEqual([]);

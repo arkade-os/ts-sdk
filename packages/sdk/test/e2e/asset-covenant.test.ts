@@ -59,7 +59,7 @@ import {
 import { beforeEachFaucet, createTestArkWallet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 
 const PREIMAGE = new Uint8Array(32).fill(0x42);
 // RIPEMD160(SHA256(PREIMAGE)) — same constant the sibling non-interactive test uses.
@@ -100,8 +100,15 @@ const DUST_SATS = 330n;
  * Output index 0 throughout, matching the sibling test's shape.
  */
 const assetCovenantHTLC = {
-    version: 0,
-    params: ["hash", "receiver", "amount", "assetTxid", "assetGidx", "server"],
+    version: 1,
+    params: [
+        { name: "hash", type: "bytes20" },
+        { name: "receiver", type: "pubkey" },
+        { name: "amount", type: "int" },
+        { name: "assetTxid", type: "bytes32" },
+        { name: "assetGidx", type: "int" },
+        { name: "server", type: "pubkey" },
+    ],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -162,7 +169,7 @@ const assetCovenantHTLC = {
             },
         },
     },
-};
+} satisfies arkade.Program;
 
 /**
  * The SAME contract shape, with the arkadeScript written to match
@@ -175,8 +182,14 @@ const assetCovenantHTLC = {
  * with `resolveAsm` rather than asserting it by eye.
  */
 const scriptV2Shaped = {
-    version: 0,
-    params: ["hash", "receiver", "assetTxid", "assetGidx", "server"],
+    version: 1,
+    params: [
+        { name: "hash", type: "bytes20" },
+        { name: "receiver", type: "pubkey" },
+        { name: "assetTxid", type: "bytes32" },
+        { name: "assetGidx", type: "int" },
+        { name: "server", type: "pubkey" },
+    ],
     functions: {
         claim: {
             inputs: [{ name: "preimage", type: "bytes" }] as const,
@@ -219,12 +232,12 @@ const scriptV2Shaped = {
             },
         },
     },
-};
+} satisfies arkade.Program;
 
 describe("asset-denominated non-interactive covenant", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const receiverPkScript = randomP2TR();
 
     beforeEach(beforeEachFaucet, 20000);

@@ -12,13 +12,13 @@
 //
 // Usage:
 // $ pnpm test:setup
-// $ node examples/contract-manager.js [arkdExec]
+// $ npx tsx examples/contract-manager.ts [arkdExec]
 //
 import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     EsploraProvider,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
     VHTLC,
@@ -65,7 +65,7 @@ async function main() {
     const aliceWallet = await Wallet.create({
         identity: alice,
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         storage,
         // force refresh in 2s at most for the example to run quickly
         watcherConfig: { failsafePollIntervalMs: 2000 },
@@ -228,7 +228,7 @@ async function main() {
     // Clean up
     console.log("\nStopping watcher...");
     stopWatching();
-    manager.dispose();
+    await aliceWallet.dispose();
 
     console.log("\n=== Example Complete ===");
     return 0;
@@ -238,6 +238,12 @@ async function main() {
 // For production code, use execFileSync with separated arguments to prevent
 // command injection vulnerabilities.
 async function fundAddress(address: string, amount: number) {
+    // The arkd CLI wallet starts empty and its VTXOs go stale after rounds; top it up from a fresh note.
+    const note = execSync(`${arkdExec} arkd note --amount 200000`, { encoding: "utf8" })
+        .trim()
+        .split(/\s+/)
+        .pop();
+    execSync(`${arkdExec} ark redeem-notes -n ${note} --password secret`);
     execSync(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`, {
         stdio: "inherit",
     });

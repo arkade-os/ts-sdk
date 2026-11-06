@@ -9,7 +9,7 @@ import {
     Batch,
     CSVMultisigTapscript,
     resolveBatchExpiryPolicy,
-    Intent,
+    Proof,
     networks,
     RestArkProvider,
     RestIndexerProvider,
@@ -24,7 +24,7 @@ import type { ConnectorTreeNode } from "../../src/providers/emulator";
 import { addEmulatorPacket, beforeEachFaucet, faucetOffchain } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 const DELEGATE_AMOUNT = 10_000;
 const DELEGATE_EXIT_DELAY = 512;
 
@@ -34,8 +34,11 @@ const DELEGATE_EXIT_DELAY = 512;
 // the spend to keep version 2, send output 0 to this same input's scriptPubKey,
 // and preserve its value — i.e. refresh in place.
 const delegateProgram = {
-    version: 0,
-    params: ["server", "user"],
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+    ],
     functions: {
         delegate: {
             tapscript: { signers: ["$server"] },
@@ -72,8 +75,8 @@ const delegateProgram = {
 
 describe("arkade delegate (covenant batch refresh) — intent submission", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);
 
@@ -110,7 +113,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         const session = solverIdentity.signerSession();
         const sessionPubKey = hex.encode(await session.getPublicKey());
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -118,7 +121,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
             cosigners_public_keys: [sessionPubKey],
         };
 
-        // Construct the extended coin shape that Intent.create expects.
+        // Construct the extended coin shape that Proof.create expects.
         // OP_INSPECTINPUTSCRIPTPUBKEY needs to resolve the prevout pkScript of
         // every real input, so each coin carries its creating tx as PrevArkTx.
         const [coin] = await withPrevTxs(
@@ -138,7 +141,7 @@ describe("arkade delegate (covenant batch refresh) — intent submission", () =>
         );
 
         // Self-send to the same pkScript with the same amount.
-        const validProof = Intent.create(
+        const validProof = Proof.create(
             message,
             [coin],
             [{ script: delegatePkScript, amount: BigInt(DELEGATE_AMOUNT) }],
@@ -235,7 +238,7 @@ async function waitForVtxo(indexer: RestIndexerProvider, pkScript: Uint8Array, t
 function buildDelegateHandler(opts: {
     intentId: string;
     signedProof: string;
-    message: Intent.RegisterMessage;
+    message: Proof.RegisterMessage;
     coin: {
         txid: string;
         vout: number;
@@ -246,7 +249,7 @@ function buildDelegateHandler(opts: {
     session: any;
 }): Batch.Handler {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
 
     let batchId: string;
     let sweepTapLeaf: Uint8Array;

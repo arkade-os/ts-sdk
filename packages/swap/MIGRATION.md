@@ -15,7 +15,7 @@ specifier-edit one. Concept mapping:
 | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `new ArkadeSwaps(wallet, config)` + `swapRepository`      | `createSwapClient(config)` — the drive, persistence and events are internal        |
 | `BoltzSwapProvider` (quoting / pair discovery)            | resolved for you inside `client.quote(input)` — markets come from discovery        |
-| `sendViaLightning` / `receiveViaLightning`                | `client.quote({ give, take, amount })` over the `lightning:BTC` ↔ `arkade:BTC` corridor |
+| `sendViaLightning` / `receiveViaLightning`                | `client.quote({ give, take, amount })` with `btcOn("bolt11", network)` and `btcOn("arkade", network)` |
 | `ArkadeLightning` (Expo background swaps)                 | `client.onUpdate(({ swap, outcome, detail }) => …)` driven from your background task |
 | `SwapRepository` / `BoltzRealmSchemas`                    | `AssetSwapRepository` + `AssetSwapRealmSchemas` (schema v5, additive)              |
 
@@ -174,10 +174,9 @@ pair leg `arkade:ASSET`, which no solver serves; if you were building a leg by h
 `arkadeAssetLeg` is on `/protocol`, and the v2 answer is to name the asset — `arkadeAsset(network,
 id)` — and let `client.quote()` build the pair.
 
-And seventeen internals the client absorbed, none of which had a consumer in the sweep taken at
+And fifteen internals the client absorbed, none of which had a consumer in the sweep taken at
 this release: `assertFundable`, `assertReceivable`, `offerTermsFromQuote`, `newRfqId`, `rfqPair`,
-`MIN_CLAIM_WINDOW_SECONDS`, `MIN_HEADROOM_SECONDS`, `SOLO_REFUND_HEADROOM_SECONDS`,
-`REFUND_MTP_LAG_SECONDS`, `RFQ_TERMINAL_STATES`, `RFQ_RESOLVED_STATES`,
+`MIN_HEADROOM_SECONDS`, `SOLO_REFUND_HEADROOM_SECONDS`, `RFQ_TERMINAL_STATES`, `RFQ_RESOLVED_STATES`,
 `RFQ_SWAP_TERMINAL_STATES`, `retireSettledOfferContracts`, `OfferContractRetirer`, `spendUpdate`,
 `getAssetSwapsOrThrow`, `updateAssetSwapBestEffort`. If you import one of these, say so and it
 gets a `/protocol` floor in a patch: internalizing is a finding about who uses what, not a

@@ -231,6 +231,12 @@ describe("ElectrumOnchainProvider integration tests", () => {
         expect(spentOutput).toBeDefined();
         expect(spentOutput!.txid).toMatch(/^[0-9a-f]{64}$/);
         expect(spentOutput!.txid).not.toBe(fundingTxid);
+
+        const vout = aliceCoins[0].vout;
+        await waitFor(async () => (await provider.getTxOutspend(fundingTxid, vout)).spent);
+        expect(await provider.getTxOutspend(fundingTxid, vout)).toEqual(
+            (await provider.getTxOutspends(fundingTxid))[vout],
+        );
     });
 
     it("delivers funded txs to the watchAddresses callback", { timeout: 30_000 }, async () => {

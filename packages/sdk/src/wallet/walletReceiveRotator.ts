@@ -399,7 +399,12 @@ export class WalletReceiveRotator {
     private async rotate(wallet: RotatableWallet): Promise<void> {
         // Built locally so visible state only changes after registration succeeds: no window
         // where the displayed address is unwatched.
-        const descriptor = await this.provider.getNextSigningDescriptor();
+        // Allocating the next index and opening the contract manager do not depend on each
+        // other. The manager is only needed once the new contract params exist.
+        const descriptorPromise = this.provider.getNextSigningDescriptor();
+        const managerPromise = wallet.getContractManager();
+        void managerPromise.catch(() => undefined);
+        const descriptor = await descriptorPromise;
         const { tapscript: newTapscript, params } = buildReceiveContract(
             wallet.receiveTapscript,
             descriptor,
@@ -408,7 +413,7 @@ export class WalletReceiveRotator {
         );
         const newScript = params.script;
 
-        const manager = await wallet.getContractManager();
+        const manager = await managerPromise;
         await manager.createContract(params);
 
         wallet.setOffchainTapscriptForRotation(newTapscript);

@@ -1,5 +1,6 @@
 import { Transaction } from "./utils/transaction";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
+export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
@@ -142,6 +143,7 @@ export {
     // wallet can follow the doc without re-implementing the chunk/page loop.
     getAllNormalizedVtxos,
     getNormalizedVtxos,
+    toOffchainInputFeeParams,
     collabExitResolver,
     assetMintResolver,
     createDefaultActivityRegistry,
@@ -177,6 +179,7 @@ import {
     type ArkadeCashUnclaimedVtxo,
     type ArkadeCashVtxoRef,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     DescriptorSigningProviderMissingError,
     MissingSigningDescriptorError,
 } from "./wallet/wallet";
@@ -237,14 +240,17 @@ import type {
     Unspent as ElectrumUnspent,
 } from "./providers/electrum";
 import {
+    RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -259,7 +265,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
-import { CachingArkProvider } from "./providers/cachingArk";
+import { CachingOperatorProvider, CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -295,6 +301,7 @@ import {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     ArkTxInput,
     OffchainTx,
     VerifyServerSignatures,
@@ -326,7 +333,7 @@ import {
     type RawTxSource,
     type WithPrevTx,
 } from "./utils/prevoutTx";
-import { Intent, type IntentCoin } from "./intent";
+import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
@@ -338,6 +345,7 @@ import {
     NetworkName,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
+    DEFAULT_ARKADE_EMULATOR_URL,
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
@@ -361,6 +369,7 @@ import {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
 } from "./providers/indexer";
 import {
     RestEmulatorProvider,
@@ -443,16 +452,7 @@ import {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
 } from "./wallet/batchExpiry";
 import type { BatchExpiryPolicy } from "./wallet/batchExpiry";
-import {
-    assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-} from "./wallet/checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -478,6 +478,7 @@ import type {
 import { ChainedTxType } from "./repositories/virtualTxRepository";
 import type {
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
@@ -515,6 +516,8 @@ export { collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+// Also at the root, so `import { Arkade }` works without the namespace.
+export { Arkade } from "./arkade";
 export * from "./extension/emulator";
 
 // BIP21 codec (reused by the payment rails) + the modular payment router.
@@ -554,7 +557,8 @@ import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
 import { DelegateeContractHandler } from "./contracts/handlers/delegatee";
 import type { DelegateeContractParams } from "./contracts/handlers/delegatee";
-import type { ArkadeContractParams } from "./arkade/program";
+import type { ArkadeService } from "./arkade/service";
+import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
     encodeArkContract,
     decodeArkContract,
@@ -695,7 +699,9 @@ export {
     ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
+    RestOperatorProvider,
     RestArkProvider,
+    CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
     FetchError,
@@ -766,6 +772,7 @@ export {
     assertAllowedSighashTypes,
     claimWithPreimageIdentity,
     signAndSubmitOffchainTx,
+    submitViaEmulator,
     waitForIncomingFunds,
     AbortError,
     VtxoReservedError,
@@ -793,12 +800,14 @@ export {
     // ArkadeCash
     ArkadeCash,
     ArkadeCashCreateError,
+    ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
     resolveEmulatorPubkey,
+    DEFAULT_ARKADE_EMULATOR_URL,
     BITCOIN_EMULATOR_PUBKEY,
     MUTINYNET_EMULATOR_PUBKEY,
     REGTEST_EMULATOR_PUBKEY,
@@ -825,7 +834,8 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    // Intent proof
+    // Proof
+    Proof,
     Intent,
     // BIP-322 message signing
     BIP322,
@@ -873,13 +883,6 @@ export {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
     type BatchExpiryPolicy,
     assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isSubdust,
     getSequence,
@@ -908,6 +911,7 @@ export {
     outpointReasons,
     logExcludedVtxos,
     UnannotatableInputError,
+    UnsupportedProgramVersionError,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -943,6 +947,7 @@ export type {
     NewAddressType,
     WalletConfig,
     WalletMode,
+    ArkadeService,
     // Referenced by WalletMode: consumers need these to name or implement
     // a provider they pass to the wallet.
     DescriptorProvider,
@@ -968,6 +973,7 @@ export type {
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
+    ProofInput,
     IntentCoin,
     VerifyServerSignatures,
     TapLeaves,
@@ -1003,12 +1009,14 @@ export type {
     ConnectorTreeNode,
     // Provider types
     OnchainProvider,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     FeeInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -1029,6 +1037,7 @@ export type {
     SubscriptionResponse,
     SubscriptionHeartbeat,
     SubscriptionEvent,
+    SubscriptionFilter,
     // Network types
     Network,
     NetworkName,
@@ -1174,6 +1183,7 @@ export type {
     // Repositories
     ManagedConnection,
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,

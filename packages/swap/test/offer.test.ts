@@ -70,15 +70,26 @@ describe("swap offer", () => {
                 "utf8",
             ),
         );
+        expect(compilerArtifact.formatVersion).toBe(1);
+        expect(
+            compilerArtifact.functions.every((group) =>
+                group.leaves.every((leaf) => Array.isArray(leaf.witness)),
+            ),
+        ).toBe(true);
         const binding = swapProgramBinding(
             { wantAmount: BigInt(50_000), wantAsset: testAsset, ...keys },
             operatorPubkey,
         );
         const generated = arkade.programFromArtifact(compilerArtifact);
-        expect(generated.params?.map((p) => (typeof p === "string" ? p : p.name))).toEqual([
+        expect(generated.params?.map((p) => p.name)).toEqual([
             ...compilerArtifact.constructorInputs.map((input) => input.name),
             "server",
         ]);
+        for (const expected of generated.params ?? []) {
+            expect(binding.program.params?.find((param) => param.name === expected.name)).toEqual(
+                expected,
+            );
+        }
         const packed = (script: InstanceType<typeof arkade.ArkadeProgramScript>) =>
             [
                 script.compiled.map((fn) => hex.encode(fn.leafScript)),
@@ -101,6 +112,25 @@ describe("swap offer", () => {
             ).encode();
             expect(address).toBe(golden);
         }
+    });
+
+    it.each([31, 33])("rejects a %s-byte asset txid in the bundled v1 program", (length) => {
+        const {
+            program,
+            args,
+            keys: bound,
+        } = swapProgramBinding(
+            { wantAmount: 50_000n, wantAsset: testAsset, ...keys },
+            operatorPubkey,
+        );
+        expect(
+            () =>
+                new arkade.ArkadeProgramScript(
+                    program,
+                    { ...args, wantAssetTxid: new Uint8Array(length) },
+                    bound,
+                ),
+        ).toThrow(/wantAssetTxid.*32-byte/);
     });
 
     it("roundtrips the TLV codec for both directions", () => {
@@ -128,7 +158,7 @@ describe("swap offer", () => {
             operatorPubkey,
         );
         expect(arkade.stringifyArtifact(program)).toBe(
-            '{"version":0,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
+            '{"version":1,"name":"banco-asset-to-btc","params":[{"name":"makerWP","type":"pubkey"},' +
                 '{"name":"wantAmount","type":"int"},{"name":"server","type":"pubkey"},' +
                 '{"name":"user","type":"pubkey"},{"name":"exitDelay","type":"int"}],' +
                 '"functions":{"fulfill":{"tapscript":{"signers":["$server"]},"arkadeScript":' +

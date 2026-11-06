@@ -18,8 +18,8 @@ const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
 const WALLET_STATE_LOCK_NAME = "arkade-wallet-state";
 
 /**
- * Atomically read, mutate, and persist wallet state. Every wallet-state writer must go through
- * this to avoid lost updates between interleaved async operations.
+ * Read, mutate, and persist wallet state using a backend transaction when supported.
+ * Legacy repositories retain only per-object serialization and available Web Locks.
  *
  * Serialized in-process per repo object and, where available, by a queueing cross-context Web
  * Lock. `updater` must be synchronous and must not re-enter: the Web Lock is not reentrant.
@@ -28,9 +28,14 @@ export async function updateWalletState(
     repo: WalletRepository,
     updater: (state: WalletState) => WalletState,
 ): Promise<void> {
+    const atomic = repo.atomicWalletState;
     const prev = walletStateLocks.get(repo) ?? Promise.resolve();
     const op = prev.then(() =>
         withWebLock(WALLET_STATE_LOCK_NAME, async () => {
+            if (atomic !== undefined) {
+                await atomic.update(updater);
+                return;
+            }
             const state = (await repo.getWalletState()) ?? {};
             await repo.saveWalletState(updater(state));
         }),
