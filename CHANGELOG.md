@@ -244,8 +244,7 @@ style and have not been backfilled.
   and the InMemory, IndexedDB, SQLite and Realm classes take the matching
   `BatchRegistration` names, and so do `collectIntents`, `isTerminalIntentState`
   and `INTENT_TERMINAL_STATES`. Every old name stays as a deprecated alias, and
-  stored data does not change. Repository `version` is now 2, because this
-  release also changes the repository's methods and record fields.
+  stored data does not change.
 
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
 

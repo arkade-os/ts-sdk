@@ -35,7 +35,7 @@ function toIntent(o: any): ArkIntent {
 }
 
 export class RealmBatchRegistrationRepository implements BatchRegistrationRepository {
-    readonly version = 2 as const;
+    readonly version = 1 as const;
     constructor(private readonly realm: RealmLike) {}
 
     async clear(): Promise<void> {

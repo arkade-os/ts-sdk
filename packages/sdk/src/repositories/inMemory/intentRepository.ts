@@ -10,7 +10,7 @@ import {
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 export class InMemoryBatchRegistrationRepository implements BatchRegistrationRepository {
-    readonly version = 2 as const;
+    readonly version = 1 as const;
     private byId = new Map<string, ArkIntent>();
 
     async clear(): Promise<void> {

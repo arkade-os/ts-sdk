@@ -75,7 +75,7 @@ export interface IntentFilter {
 export type IntentPageFilter = IntentFilter;
 
 export interface BatchRegistrationRepository extends AsyncDisposable {
-    readonly version: 2;
+    readonly version: 1;
     clear(): Promise<void>;
     /** Upsert by `intentTxId`; implementation sets `updatedAt = Date.now()`. */
     saveIntent(intent: ArkIntent): Promise<void>;

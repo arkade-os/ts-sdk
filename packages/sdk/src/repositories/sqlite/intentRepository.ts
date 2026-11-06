@@ -33,7 +33,7 @@ interface IntentRow {
 }
 
 export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepository {
-    readonly version = 2 as const;
+    readonly version = 1 as const;
     private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;

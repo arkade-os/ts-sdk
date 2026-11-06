@@ -17,11 +17,11 @@ import {
 } from "./batchesSchema";
 
 /**
- * @experimental Intent persistence is opt-in. Stored in its own database,
- * {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
+ * @experimental Batch registration persistence is opt-in. Stored in its own
+ * database, {@link BATCHES_DB_NAME} by default, never in the wallet/contract one.
  */
 export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRepository {
-    readonly version = 2 as const;
+    readonly version = 1 as const;
     private readonly connection: ManagedConnection;
     constructor(dbName: string = BATCHES_DB_NAME) {
         this.connection = createManagedConnection(dbName, BATCHES_DB_VERSION, initBatchesDatabase);
