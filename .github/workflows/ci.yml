@@ -107,6 +107,10 @@ jobs:
               test/e2e/onchain.test.ts
               test/e2e/deprecatedSignerMigration.test.ts
               test/e2e/digestMismatch.test.ts
+          # Needs an arkd with CosignOnchainTx (ArkLabsHQ/arkd#124, #134).
+          - package: sdk
+            group: onchain-cosign
+            test_files: test/e2e/onchain-cosign.test.ts
           - package: swap
             group: all
             test_files: ""

@@ -1,5 +1,4 @@
 import { hex } from "@scure/base";
-import { collectUtxos } from "../../repositories/walletRepository";
 import { ArkadeInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
@@ -41,6 +40,7 @@ import {
     NewAddress,
     Recipient,
     ReissuanceParams,
+    SendOnchainParams,
     SettleParams,
     VirtualCoin,
     WalletBalance,
@@ -83,6 +83,7 @@ import {
     saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
+import { offchainRows } from "../../contracts/onchainCoins";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
 
 export class WalletNotInitializedError extends Error {
@@ -740,6 +741,25 @@ export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+export type RequestCosignOnchainTx = RequestEnvelope & {
+    type: "COSIGN_ONCHAIN_TX";
+    /** Base64 PSBT. */
+    payload: { psbt: string };
+};
+export type ResponseCosignOnchainTx = ResponseEnvelope & {
+    type: "COSIGN_ONCHAIN_TX_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestSendOnchain = RequestEnvelope & {
+    type: "SEND_ONCHAIN";
+    payload: SendOnchainParams;
+};
+export type ResponseSendOnchain = ResponseEnvelope & {
+    type: "SEND_ONCHAIN_SUCCESS";
+    payload: { txid: string };
+};
+
 // Deprecated-signer migration. Reports carry `bigint` cutoff dates, which are
 // serialized to strings for transport over the postMessage boundary (mirrors
 // how RECOVERABLE_BALANCE stringifies its bigints) and reconstructed on the
@@ -962,6 +982,8 @@ export type WalletUpdaterRequest =
     | RequestRenewVtxos
     | RequestGetExpiredBoardingUtxos
     | RequestSweepExpiredBoardingUtxos
+    | RequestCosignOnchainTx
+    | RequestSendOnchain
     | RequestMigrateDeprecatedSignerVtxos
     | RequestGetDeprecatedSignerStatus
     | RequestRestoreWallet;
@@ -1029,6 +1051,8 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseRenewVtxosEvent
         | ResponseGetExpiredBoardingUtxos
         | ResponseSweepExpiredBoardingUtxos
+        | ResponseCosignOnchainTx
+        | ResponseSendOnchain
         | ResponseMigrateDeprecatedSignerVtxos
         | ResponseMigrateDeprecatedSignerVtxosEvent
         | ResponseGetDeprecatedSignerStatus
@@ -1253,7 +1277,9 @@ export class WalletMessageHandler
             // HD restore walks the index range with one indexer round-trip per
             // step until it hits gapLimit consecutive unused indices. The bus
             // deadline must not race the scan; liveness stays covered by PING.
-            message.type === "RESTORE_WALLET"
+            message.type === "RESTORE_WALLET" ||
+            message.type === "COSIGN_ONCHAIN_TX" ||
+            message.type === "SEND_ONCHAIN"
         );
     }
 
@@ -1881,6 +1907,24 @@ export class WalletMessageHandler
                         payload: { txid },
                     });
                 }
+                case "COSIGN_ONCHAIN_TX": {
+                    const { psbt } = (message as RequestCosignOnchainTx).payload;
+                    const txid = await this.requireWallet().cosignOnchainTx(psbt);
+                    return this.tagged({
+                        id,
+                        type: "COSIGN_ONCHAIN_TX_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "SEND_ONCHAIN": {
+                    const params = (message as RequestSendOnchain).payload;
+                    const txid = await this.requireWallet().sendOnchain(params);
+                    return this.tagged({
+                        id,
+                        type: "SEND_ONCHAIN_SUCCESS",
+                        payload: { txid },
+                    });
+                }
                 case "MIGRATE_DEPRECATED_SIGNER_VTXOS": {
                     const wallet = this.requireWallet();
                     const vtxoManager = await wallet.getVtxoManager();
@@ -2157,12 +2201,12 @@ export class WalletMessageHandler
             if (funds.type === "utxo") {
                 // A deposit may land on the current OR a previous boarding
                 // address (per-derivation rotation, plan §6-IV.2). The
-                // notified `coins` carry no address, so re-fetch + re-cache
+                // notified `coins` carry no address, so re-fetch + re-sync
                 // the full boarding-address set via getBoardingUtxos, which
-                // buckets each UTXO under the address it sits on with the
+                // stores each UTXO under the script it sits on with the
                 // correct per-UTXO tapscript — instead of assuming the
                 // current boarding address.
-                if (emitter.stale) return; // its re-cache is internal: bail before the call
+                if (emitter.stale) return; // its re-sync is internal: bail before the call
                 const utxos = await wallet.getBoardingUtxos();
 
                 // notify all clients about the boarding input state update
@@ -2246,41 +2290,16 @@ export class WalletMessageHandler
         await this.walletRepository.saveTransactions(history.address, history.txs);
     }
 
-    /**
-     * @param gen - set by a background caller; each write here is skipped once it goes stale.
-     *   The fetch saves the fetched rows itself, before control returns, so that one write is
-     *   outside this check.
-     */
+    /** @param gen - set by a background caller; the refresh is skipped once it goes stale. */
     private async refreshBoardingCache(gen?: Generation): Promise<void> {
         const wallet = this.readonlyWallet;
-        const repository = this.walletRepository;
-        if (!wallet || !repository) return;
-        // Fetch only current-signer boarding inputs, as getBoardingUtxos does. Keep the
-        // groups so cleanup covers exactly the fetched addresses, including empty ones.
+        if (!wallet || gen?.stale) return;
+        // Current-signer boarding only, as getBoardingUtxos does. The fetch throws on an address
+        // failure and syncs what it found into the contract manager's store.
         const currentSigner = toXOnlySignerHex(
             hex.encode(wallet.boardingTapscript.options.serverPubKey),
         );
-        const groups = await wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
-
-        // If fetching or its save fails, leave the previous snapshot intact. saveUtxos
-        // merges, so prune stale rows afterward.
-        if (gen?.stale) return;
-        const cachedByAddress = await Promise.all(
-            groups.map(({ tapscript }) =>
-                collectUtxos(repository, tapscript.onchainAddress(wallet.network)),
-            ),
-        );
-        for (const [i, { tapscript, coins }] of groups.entries()) {
-            if (gen?.stale) return;
-            const address = tapscript.onchainAddress(wallet.network);
-            const freshKeys = new Set(coins.map((coin) => `${coin.txid}:${coin.vout}`));
-            const cached = cachedByAddress[i];
-            const kept = cached.filter((coin) => freshKeys.has(`${coin.txid}:${coin.vout}`));
-            if (kept.length === cached.length) continue;
-            if (gen?.stale) return;
-            await repository.deleteUtxos(address);
-            if (kept.length > 0) await repository.saveUtxos(address, kept);
-        }
+        await wallet.getBoardingUtxosForSigners(new Set([currentSigner]));
     }
 
     /**
@@ -2512,23 +2531,28 @@ export class WalletMessageHandler
                 `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`,
             );
         }
+        // A contract row already answered for this script, layer-filtered or skipped on purpose;
+        // reading it again would re-add the rows it dropped (a `both` contract's boarding coins).
+        const primaryHasContract = contracts.some((contract) => contract.script === walletScript);
         const [lists, primaryVtxos] = await Promise.all([
             listsPromise,
             // Routed through the same helper as the contract buckets rather than reading the
             // repository directly, so this bucket normalizes too. Anything left here
             // is outside every contract row, so it carries no contract to judge it
             // by — the wallet's own receive address, which is never gated.
-            getVtxosForContract(
-                repository,
-                { script: walletScript, address: walletAddress },
-                options,
-            ),
+            primaryHasContract
+                ? []
+                : getVtxosForContract(
+                      repository,
+                      { script: walletScript, address: walletAddress },
+                      options,
+                  ),
         ]);
         const snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[] = [];
         for (const [i, contract] of eligible.entries()) {
             snapshot.push({
                 contract,
-                vtxos: addVtxos(lists[i]),
+                vtxos: addVtxos(offchainRows(contract, lists[i])),
             });
         }
         addVtxos(primaryVtxos);
