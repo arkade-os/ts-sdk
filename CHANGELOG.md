@@ -18,9 +18,9 @@ style and have not been backfilled.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
   `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
   writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
-  proofs with that leaf, and a handler that returns it has it moved to the new
-  key. A coin literal typed as `ExtendedCoin` and a handler typed as
-  `TapscriptDeriving` must add `proofTapLeafScript`.
+  proofs with that leaf and stays eligible for delegation, and a handler that
+  returns it has it moved to the new key. A coin literal typed as `ExtendedCoin`
+  and a handler typed as `TapscriptDeriving` must add `proofTapLeafScript`.
   Code that reads `intentTapLeafScript` from an SDK coin must move, because the
   key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
   keep the old key on disk.

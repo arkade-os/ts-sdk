@@ -101,9 +101,16 @@ export class DelegateManagerImpl implements IDelegateManager {
         // keep only vtxos that can be signed by the delegate. The guard
         // narrows ContractVtxo (with optional taproot fields) to the
         // ExtendedVirtualCoin shape required by makeDelegateForfeitTx.
-        // Normalized first: `vtxos` is caller-supplied, so it may be legacy-shaped.
+        // Normalized first: `vtxos` is caller-supplied, so it may be legacy-shaped
+        // or carry its proof leaf only under the deprecated key, which wins as in
+        // `proofTapLeafScriptOf`.
         const eligible = vtxos
-            .map(normalizeVtxo)
+            .map((v) =>
+                normalizeVtxo({
+                    ...v,
+                    proofTapLeafScript: v.intentTapLeafScript ?? v.proofTapLeafScript,
+                }),
+            )
             .filter(
                 (v): v is ContractVtxo & NormalizedExtendedVirtualCoin =>
                     isAnnotated(v) && findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined,
@@ -476,7 +483,7 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
     return (
         v.tapTree !== undefined &&
         v.forfeitTapLeafScript !== undefined &&
-        (v.proofTapLeafScript ?? v.intentTapLeafScript) !== undefined
+        v.proofTapLeafScript !== undefined
     );
 }
 
