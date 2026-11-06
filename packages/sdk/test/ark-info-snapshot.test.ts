@@ -230,6 +230,20 @@ describe("loadArkInfoSnapshot / saveArkInfoSnapshot", () => {
         expect((await repo.getWalletState())?.settings?.arkInfoSnapshot).toEqual(old);
     });
 
+    it("falls back on a null new key and rejects any other falsy value", async () => {
+        const repo = new InMemoryWalletRepository();
+        const arkInfoSnapshot = serializeArkInfoSnapshot(makeArkInfo(), 7);
+        await repo.saveWalletState({
+            settings: { arkInfoSnapshot, [OPERATOR_INFO_SNAPSHOT_KEY]: null },
+        });
+        expect(await loadArkInfoSnapshot(repo)).toEqual(arkInfoSnapshot);
+
+        await repo.saveWalletState({
+            settings: { arkInfoSnapshot, [OPERATOR_INFO_SNAPSHOT_KEY]: 0 },
+        });
+        await expect(loadArkInfoSnapshot(repo)).rejects.toThrow(MalformedArkInfoSnapshotError);
+    });
+
     it("throws terminally when the stored snapshot is malformed", async () => {
         const repo = new InMemoryWalletRepository();
         await repo.saveWalletState({ settings: { [OPERATOR_INFO_SNAPSHOT_KEY]: { version: 2 } } });
