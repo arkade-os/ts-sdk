@@ -119,6 +119,10 @@ describe("getBoardingTxs — sweep correlation without outspend txid", () => {
             expect(boarding).toBeDefined();
             expect(boarding!.settled).toBe(true);
             expect(boarding!.key.commitmentTxid).toBe(SWEEP_TXID);
+            // The address history already names the sweep; the explorer is not asked again.
+            expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/outspends"))).toBe(
+                false,
+            );
         } finally {
             await wallet.dispose();
         }
@@ -247,6 +251,137 @@ describe("getBoardingTxs — spend status of the boarding output only", () => {
             expect(getTxOutspend).toHaveBeenCalledTimes(2);
         } finally {
             release();
+            await wallet.dispose();
+        }
+    });
+});
+
+describe("getBoardingTxs — spender already in the address history", () => {
+    const SPENDER_TXID = "bb".repeat(32);
+    const PENDING_TXID = "cc".repeat(32);
+
+    const txAt = (
+        txid: string,
+        vin: { txid: string; vout: number }[] = [],
+        address = "tb1pelsewhere",
+    ) => ({
+        txid,
+        vin,
+        vout: [{ scriptpubkey_address: address, value: BOARDING_VALUE }],
+        status: { confirmed: true, block_time: 1_763_000_000 },
+    });
+
+    async function createWallet(onchainProvider: OnchainProvider) {
+        mockFetch.mockImplementation((url: string) => {
+            const reply = (body: unknown) => Promise.resolve(jsonResponse(body));
+            if (url.includes("/info")) return reply(mockArkInfo);
+            if (url.includes("subscribe") || url.includes("subscriptions"))
+                return reply({ subscriptionId: "sub-1" });
+            return reply({ vtxos: [] });
+        });
+        return Wallet.create({
+            identity: SingleKey.fromHex(SINGLEKEY_HEX),
+            walletMode: "static",
+            arkProvider: new RestArkProvider("http://localhost:7070"),
+            onchainProvider,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+    }
+
+    it("makes no per-output request when the history lists the spender", async () => {
+        let boardingAddr = "";
+        const fundingTx = txAt(FUNDING_TXID);
+        const spenderTx = txAt(SPENDER_TXID, [{ txid: FUNDING_TXID, vout: 0 }]);
+        const getTxOutspend = vi.fn(async () => ({ spent: false, txid: "" }));
+        const getTxOutspends = vi.fn(async () => []);
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx, spenderTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends,
+        } as unknown as OnchainProvider;
+        const wallet = await createWallet(onchainProvider);
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspend).not.toHaveBeenCalled();
+            expect(getTxOutspends).not.toHaveBeenCalled();
+            expect(commitmentsToIgnore.has(SPENDER_TXID)).toBe(true);
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding?.settled).toBe(true);
+            expect(boarding?.key.commitmentTxid).toBe(SPENDER_TXID);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("asks only about the deposit no listed tx spends", async () => {
+        let boardingAddr = "";
+        const settledTx = txAt(FUNDING_TXID);
+        const pendingTx = txAt(PENDING_TXID);
+        const spenderTx = txAt(SPENDER_TXID, [{ txid: FUNDING_TXID, vout: 0 }]);
+        // No `getTxOutspend`: the Esplora shape, one `/outspends` list per tx.
+        const getTxOutspends = vi.fn(async () => [{ spent: false }]);
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [pendingTx, spenderTx, settledTx] : [],
+            ),
+            getTxOutspends,
+        } as unknown as OnchainProvider;
+        const wallet = await createWallet(onchainProvider);
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            settledTx.vout[0].scriptpubkey_address = boardingAddr;
+            pendingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspends).toHaveBeenCalledTimes(1);
+            expect(getTxOutspends).toHaveBeenCalledWith(PENDING_TXID);
+            const settled = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            const pending = boardingTxs.find((t) => t.key.boardingTxid === PENDING_TXID);
+            expect(settled?.settled).toBe(true);
+            expect(settled?.key.commitmentTxid).toBe(SPENDER_TXID);
+            expect(pending?.settled).toBe(false);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("falls back to the outspend answer when the history lists no spender", async () => {
+        let boardingAddr = "";
+        const fundingTx = txAt(FUNDING_TXID);
+        const getTxOutspend = vi.fn(async () => ({ spent: true, txid: SPENDER_TXID }));
+        const onchainProvider = {
+            getTransactions: vi.fn(async (address: string) =>
+                address === boardingAddr ? [fundingTx] : [],
+            ),
+            getTxOutspend,
+            getTxOutspends: vi.fn(async () => []),
+        } as unknown as OnchainProvider;
+        const wallet = await createWallet(onchainProvider);
+
+        try {
+            boardingAddr = await wallet.getBoardingAddress();
+            fundingTx.vout[0].scriptpubkey_address = boardingAddr;
+
+            const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+
+            expect(getTxOutspend).toHaveBeenCalledWith(FUNDING_TXID, 0);
+            expect(commitmentsToIgnore.has(SPENDER_TXID)).toBe(true);
+            const boarding = boardingTxs.find((t) => t.key.boardingTxid === FUNDING_TXID);
+            expect(boarding?.settled).toBe(true);
+            expect(boarding?.key.commitmentTxid).toBe(SPENDER_TXID);
+        } finally {
             await wallet.dispose();
         }
     });

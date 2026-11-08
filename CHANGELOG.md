@@ -1190,6 +1190,16 @@ style and have not been backfilled.
   None of these share a result, and a step that writes what the next step
   reads is unchanged.
 
+- **Boarding history stops asking the explorer for spends it already lists.**
+  On every history read, `getBoardingTxs` asked for the spend status of every
+  boarding output, although the address's own transaction list already names
+  each spender. It now asks only about outputs no listed transaction spends,
+  mostly deposits not yet settled. The Electrum provider now returns each
+  transaction's inputs (`vin`) from `getTransactions` and `watchAddresses`, so
+  it benefits too: a settled output cost three or four sequential Electrum
+  round trips, plus a fetch of every other transaction at an address that
+  received more than one deposit. Output is unchanged.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes

@@ -678,6 +678,17 @@ describe("ElectrumOnchainProvider", () => {
             expect(verboseTxCalls).toHaveLength(0);
         });
 
+        it("returns each tx's spent outpoints as vin", async () => {
+            const { txHex } = buildTestTx();
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "tx1", height: 0 }]);
+            mockBatch(wsMock.request, [txHex]);
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+
+            // buildTestTx() spends output 0 of tx 00…01. Display-order hex, as Esplora reports it.
+            expect(txs[0].vin).toEqual([{ txid: "00".repeat(31) + "01", vout: 0 }]);
+        });
+
         it("treats height=0 entries as unconfirmed (mempool)", async () => {
             const { txHex } = buildTestTx();
             wsMock.request.mockResolvedValueOnce([{ tx_hash: "txm", height: 0 }]);
