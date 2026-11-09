@@ -663,6 +663,20 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         expect(expiredRow?.boardingValue).toBe(9000);
     });
 
+    it("lets a deprecated signer's boarding lookup fail without failing the pass", async () => {
+        const { wallet, getBoardingUtxosForSigners } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }]),
+            contractsWithVtxos: [],
+        });
+
+        await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(getBoardingUtxosForSigners).toHaveBeenCalledWith(
+            new Set([ACTIVE, DEP_A]),
+            new Set([DEP_A]),
+        );
+    });
+
     it("judges boarding-output CSV expiry against each row's own delay, not a global one", async () => {
         const { wallet } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }]),

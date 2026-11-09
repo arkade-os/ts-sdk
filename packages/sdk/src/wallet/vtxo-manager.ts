@@ -841,9 +841,13 @@ interface MigrationCapableWallet {
     sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[], now?: TimeHeight): Promise<string>;
     /**
      * Grouped boarding discovery over a signer set, returning the address↔signer association
-     * {@link ExtendedCoin} cannot carry.
+     * {@link ExtendedCoin} cannot carry. A failed or stalled lookup under one of
+     * `skipFailedSigners` leaves that address out instead of failing the call.
      */
-    getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]>;
+    getBoardingUtxosForSigners(
+        allowedSigners: Set<string>,
+        skipFailedSigners?: ReadonlySet<string>,
+    ): Promise<BoardingUtxoGroup[]>;
 }
 
 function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapableWallet {
@@ -2384,7 +2388,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // `active` lets one fetch cover both.
         const allowed = new Set<string>([signerSet.active, ...signerSet.deprecated.keys()]);
 
-        const groups = await wallet.getBoardingUtxosForSigners(allowed);
+        // A deprecated address is recovery-only: a stalled lookup must not hold up the poll.
+        const groups = await wallet.getBoardingUtxosForSigners(
+            allowed,
+            new Set(signerSet.deprecated.keys()),
+        );
 
         const { expired: csvExpired, unknown } = await classifyBoardingExpiry(
             groups.flatMap((group) => group.coins),

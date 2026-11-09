@@ -305,7 +305,8 @@ style and have not been backfilled.
   fetches every address history shows (current and deprecated signers) once,
   sweeps all of it, and still settles only current-signer coins, which the
   server would reject otherwise. A failed lookup at a deprecated-signer address
-  is bounded, skipped for that poll and retried on the next, so it cannot block
+  is bounded, skipped for that poll and retried on the next, both in boarding
+  discovery and in the deprecated-signer migration pass, so it cannot block
   current-signer work; a current-signer failure still fails it, as before.
   Discovery also includes index-zero baseline addresses for deprecated signers,
   including when their persisted row coalesced onto `default`. If the signer
