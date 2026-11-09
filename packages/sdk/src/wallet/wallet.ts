@@ -1851,47 +1851,62 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * @param allowedSigners - x-only-hex server keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
+     * @param skipFailedSigners - x-only-hex server keys whose address lookups may fail: that
+     *   address is left out of the result and its cache untouched, instead of failing the whole
+     *   fetch. A lookup under any other signer still rejects.
      */
-    async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
+    async getBoardingUtxosForSigners(
+        allowedSigners: Set<string>,
+        skipFailedSigners?: ReadonlySet<string>,
+    ): Promise<BoardingUtxoGroup[]> {
         const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const addresses = tapscripts.map((tapscript) => tapscript.onchainAddress(this.network));
-        const groups: BoardingUtxoGroup[] = await Promise.all(
-            tapscripts.map(async (tapscript, i) => {
-                const coins = await this.onchainProvider.getCoins(addresses[i]);
-                const utxos = coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo));
-                return {
+        const fetched = await Promise.all(
+            tapscripts.map(async (tapscript) => {
+                const address = tapscript.onchainAddress(this.network);
+                // x-only regardless of how the tapscript's key was stored.
+                const serverPubKey = toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey));
+                let coins: Coin[];
+                try {
+                    coins = await this.onchainProvider.getCoins(address);
+                } catch (e) {
+                    if (!skipFailedSigners?.has(serverPubKey)) throw e;
+                    console.warn(`Skipping boarding address ${address}: lookup failed`, e);
+                    return undefined;
+                }
+                const group: BoardingUtxoGroup = {
                     tapscript,
-                    // x-only regardless of how the tapscript's key was stored.
-                    serverPubKey: toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey)),
+                    serverPubKey,
                     // Per-row CSV delay decoded from THIS tapscript's exit leaf —
                     // not the wallet's current boarding timelock, which a signer
                     // rotation may have changed.
                     csvTimelock: CSVMultisigTapscript.decode(hex.decode(tapscript.exitScript))
                         .params.timelock,
-                    coins: utxos,
+                    coins: coins.map((utxo) => extendCoinWithTapscript(tapscript, utxo)),
                 };
+                return { address, group };
             }),
         );
-        // Writes start only once every fetch has succeeded, so a failure writes nothing.
+        const entries = fetched.filter((entry) => entry !== undefined);
+        // Writes start only once every fetch has settled, so a rejected fetch writes nothing.
         await this.walletRepository.saveUtxos(
-            new Map(groups.map((group, i) => [addresses[i], group.coins] as const)),
+            new Map(entries.map(({ address, group }) => [address, group.coins] as const)),
         );
         // `saveUtxos` merges, so prune rows the fetch no longer returns: a coin spent elsewhere
         // would otherwise linger for `getStoredBoardingUtxos` to report. Pruning only after the
         // save leaves the previous snapshot intact if that save fails. Reads overlap; writes stay
         // one address at a time so a shared SQLite connection is not asked to write concurrently.
         const cachedByAddress = await Promise.all(
-            addresses.map((address) => collectUtxos(this.walletRepository, address)),
+            entries.map(({ address }) => collectUtxos(this.walletRepository, address)),
         );
-        for (const [i, group] of groups.entries()) {
+        for (const [i, { address, group }] of entries.entries()) {
             const fresh = new Set(group.coins.map((coin) => `${coin.txid}:${coin.vout}`));
             const cached = cachedByAddress[i];
             const kept = cached.filter((coin) => fresh.has(`${coin.txid}:${coin.vout}`));
             if (kept.length === cached.length) continue;
-            await this.walletRepository.deleteUtxos(addresses[i]);
-            if (kept.length > 0) await this.walletRepository.saveUtxos(addresses[i], kept);
+            await this.walletRepository.deleteUtxos(address);
+            if (kept.length > 0) await this.walletRepository.saveUtxos(address, kept);
         }
-        return groups;
+        return entries.map(({ group }) => group);
     }
 
     /**
@@ -1929,8 +1944,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * unilateral exit needs no operator, so it recovers coins that `settle` must not take.
      */
     async getSelectableBoardingUtxoGroups(): Promise<BoardingUtxoGroup[]> {
+        // A deprecated signer's address is recovery-only, so a failed lookup waits for the next
+        // poll rather than aborting the settle and renewal that share it.
         const [groups, locked] = await Promise.all([
-            this.getBoardingUtxosForSigners(this.watchedBoardingSigners()),
+            this.getBoardingUtxosForSigners(
+                this.watchedBoardingSigners(),
+                new Set(this._deprecatedSigners.keys()),
+            ),
             this.lockedOutpoints(),
         ]);
         // A superset of what `getBoardingUtxos` fetches, so the balance flag stays accurate.

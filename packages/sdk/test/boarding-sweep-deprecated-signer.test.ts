@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Coin } from "../src";
+import { collectUtxos } from "../src/repositories/walletRepository";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { Transaction } from "../src/utils/transaction";
 import {
@@ -110,6 +111,50 @@ describe("boarding sweep across signers", () => {
         expect(hex.encode(tx.getOutput(0).script!)).toBe(
             hex.encode(wallet.boardingTapscript.pkScript),
         );
+    });
+
+    describe("when an address lookup fails", () => {
+        it("still returns the other signers' coins if a deprecated address fails", async () => {
+            const { wallet, deprecated, getCoins } = await setup();
+            getCoins.mockImplementation(async (address) => {
+                if (address === deprecated.address) throw new Error("429");
+                return [coin("11")];
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            const groups = await wallet.getSelectableBoardingUtxoGroups();
+
+            expect(groups.flatMap((g) => g.coins.map((c) => c.txid))).toEqual([coin("11").txid]);
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining(deprecated.address),
+                expect.any(Error),
+            );
+        });
+
+        it("keeps the failed address's cached coins for the next poll", async () => {
+            const { wallet, deprecated, getCoins } = await setup();
+            await wallet.getSelectableBoardingUtxoGroups();
+            vi.spyOn(console, "warn").mockImplementation(() => {});
+            getCoins.mockImplementation(async (address) => {
+                if (address === deprecated.address) throw new Error("timeout");
+                return [];
+            });
+
+            await wallet.getSelectableBoardingUtxoGroups();
+
+            const cached = await collectUtxos(wallet.walletRepository, deprecated.address);
+            expect(cached.map((c) => c.txid)).toEqual([coin("dd").txid]);
+        });
+
+        it("rejects if the current signer's address fails, as it always has", async () => {
+            const { wallet, currentAddress, getCoins } = await setup();
+            getCoins.mockImplementation(async (address) => {
+                if (address === currentAddress) throw new Error("down");
+                return [];
+            });
+
+            await expect(wallet.getSelectableBoardingUtxoGroups()).rejects.toThrow("down");
+        });
     });
 
     it("leaves out a coin an in-flight settle is spending", async () => {

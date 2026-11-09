@@ -297,7 +297,10 @@ style and have not been backfilled.
   a unilateral sweep needs no operator and works for any signer. The poll now
   fetches every address history shows (current and deprecated signers) once,
   sweeps all of it, and still settles only current-signer coins, which the
-  server would reject otherwise. Expiry is now read from each coin's own CSV
+  server would reject otherwise. A failed lookup at a deprecated-signer address
+  is skipped for that poll and retried on the next, so it cannot abort the
+  settle and renewal in the same poll; a current-signer failure still fails it,
+  as before. Expiry is now read from each coin's own CSV
   exit leaf rather than the wallet's current boarding delay, in the sweep, the
   periodic settle and `Wallet.settle` alike, so a rotation that changed the
   delay can no longer leave a coin that settle skips and the sweep ignores, or
