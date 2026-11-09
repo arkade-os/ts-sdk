@@ -364,6 +364,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Releases reject the temporary discovery archive before publishing any package.** Selecting swap, including through an SDK release, requires replacing its vendored discovery dependency with a published release before versions, tags or publication can change.
+
 - **Explorer transaction output values are numeric satoshis across providers.**
   `ExplorerTransaction.vout.value` was typed as a string even though Esplora
   REST responses and the WebSocket validator use numbers. The type and Electrum

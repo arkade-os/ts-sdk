@@ -9,3 +9,4 @@ SHA256: `f0d369731b39824d6697066a8d40431807c255aa477f2b7a402e9c812c2205b5`.
 Built with the package's `build` script and packed using `npm pack --ignore-scripts`.
 The swap package uses this artifact until the additive solver-routing exports are published.
 Replace its file dependency with that release and regenerate the lockfile when available.
+Release preflight blocks swap and combined SDK releases while this file dependency remains.
