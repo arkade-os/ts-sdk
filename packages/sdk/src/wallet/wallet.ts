@@ -3851,13 +3851,17 @@ export class Wallet
                 (utxo) => utxo.status.confirmed,
             );
             const expiredBoarding = new Set(
-                await filterExpiredBoardingCoins(
-                    confirmedBoarding,
-                    () => this.onchainProvider.getChainTip(),
-                    this.onchainProvider.getMedianTimePast?.bind(this.onchainProvider),
-                ),
+                (
+                    await filterExpiredBoardingCoins(
+                        confirmedBoarding,
+                        () => this.onchainProvider.getChainTip(),
+                        this.onchainProvider.getMedianTimePast?.bind(this.onchainProvider),
+                    )
+                ).map((utxo) => `${utxo.txid}:${utxo.vout}`),
             );
-            const boardingUtxos = confirmedBoarding.filter((utxo) => !expiredBoarding.has(utxo));
+            const boardingUtxos = confirmedBoarding.filter(
+                (utxo) => !expiredBoarding.has(`${utxo.txid}:${utxo.vout}`),
+            );
 
             const filteredBoardingUtxos = [];
             for (const utxo of boardingUtxos) {

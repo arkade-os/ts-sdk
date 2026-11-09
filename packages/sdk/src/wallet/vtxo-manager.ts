@@ -2913,13 +2913,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     ): Promise<void> {
         // If expiry can't be determined, this throws and nothing settles, rather than settling an
         // input the sweep also targets.
-        const expiredSet = new Set(await this.filterExpired(boardingUtxos));
+        const expiredSet = new Set(
+            (await this.filterExpired(boardingUtxos)).map((utxo) => `${utxo.txid}:${utxo.vout}`),
+        );
 
         const unsettledBoarding = boardingUtxos.filter(
             (u) =>
                 u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
-                !expiredSet.has(u),
+                !expiredSet.has(`${u.txid}:${u.vout}`),
         );
 
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];

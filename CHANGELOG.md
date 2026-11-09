@@ -311,13 +311,6 @@ style and have not been backfilled.
   the reverse. Block-based expiry no longer requires a block timestamp;
   seconds-based expiry uses the confirmation parent's and current tip's
   consensus median-time-past values, not the local clock.
-- **Electrum `getCoins` now reports each coin's `block_time`.**
-  `ElectrumOnchainProvider.getCoins` returned `confirmed` and `block_height`
-  but no `block_time`. It now looks up the block header of each distinct
-  confirmed height, reusing the transaction-history lookup. A header the
-  indexer cannot serve yet leaves the coin listed without a timestamp rather
-  than failing the query; seconds-based boarding expiry is evaluated separately
-  from consensus median-time-past.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
@@ -503,6 +496,14 @@ style and have not been backfilled.
   signing, so the unsigned checkpoints the two-step flow submits carried none.
   `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
   before submitting, in both flows.
+
+### Performance
+
+- **Electrum `getCoins` avoids per-height block-header lookups.**
+  `listunspent` already supplies confirmation status and height, so balance and
+  coin-selection reads no longer fetch a header for every distinct coin height.
+  Transaction-history reads still fetch block timestamps where they are needed;
+  boarding expiry uses consensus median-time-past.
 
 ### Breaking Changes
 

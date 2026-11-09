@@ -572,10 +572,6 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const scriptHash = toScriptHash(script);
         const unspents = await this.ws.request<UnspentElectrum[]>(ListUnspentMethod, scriptHash);
 
-        // listunspent carries a height but no time, and a seconds-typed boarding timelock cannot
-        // be judged expired without one.
-        const blockTimeByHeight = await this.fetchBlockTimes(unspents.map((u) => u.height));
-
         return unspents.map((u) => ({
             txid: u.tx_hash,
             vout: u.tx_pos,
@@ -583,7 +579,6 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             status: {
                 confirmed: u.height > 0,
                 block_height: u.height > 0 ? u.height : undefined,
-                block_time: blockTimeByHeight.get(u.height),
             },
         }));
     }
