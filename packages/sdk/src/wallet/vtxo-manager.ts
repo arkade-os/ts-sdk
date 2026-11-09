@@ -3054,6 +3054,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 success = true;
             } catch (e) {
                 if (e instanceof BoardingSignerChangedError) {
+                    // Rotation, not a failure: the next poll retries under the new signer.
+                    skipWithoutBackoff = true;
                     throw e;
                 } else if (e instanceof Error && e.name === "VtxoReservedError") {
                     // A concurrent spend holds an input; nothing failed.

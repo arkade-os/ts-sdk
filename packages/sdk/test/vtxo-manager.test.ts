@@ -2425,6 +2425,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             expect(wallet.settle).toHaveBeenCalledTimes(1);
             expect(registered).toBe(false);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
             await manager.dispose();
         });
 

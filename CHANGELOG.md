@@ -58,6 +58,15 @@ style and have not been backfilled.
   without the optional `OnchainProvider.getMedianTimePast`, such coins stay
   where they are until it is implemented; block-locked coins and VTXO renewal
   are unaffected. The built-in Esplora and Electrum providers implement it.
+- **`hasBoardingTxExpired` judges seconds-based delays on median-time-past.**
+  It takes two new optional arguments, `chainTipMedianTime` and
+  `confirmationParentMedianTime`, and with a seconds-based timelock returns
+  `false` unless both are given; it no longer compares `block_time` with the
+  local clock. Block-based delays need only the coin's `block_height` and
+  `chainTipHeight`, no longer a `block_time`. Callers on the three-argument
+  form must pass the median times, from `OnchainProvider.getMedianTimePast`
+  at the confirmation height minus one and at the tip, or seconds-locked
+  coins never read as expired.
 
 ### Features
 
@@ -311,7 +320,9 @@ style and have not been backfilled.
   Discovery also includes index-zero baseline addresses for deprecated signers,
   including when their persisted row coalesced onto `default`. If the signer
   rotates during discovery, the poll rediscovers before selecting settlement
-  inputs and checks again immediately before intent registration. Expiry is now
+  inputs and checks again immediately before intent registration; an abort
+  there does not count as a settle failure, so it does not lengthen the
+  backoff. Expiry is now
   read from each coin's own CSV
   exit leaf rather than the wallet's current boarding delay, in the sweep, the
   periodic settle and `Wallet.settle` alike, so a rotation that changed the
