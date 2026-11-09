@@ -132,6 +132,8 @@ describe("vhtlc", () => {
         );
 
         const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
+        // arkd v0.9.24+ wants each checkpoint to carry its ark tx input's condition witness.
+        for (const c of checkpoints) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
         const { arkTxid, finalArkTx, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(signedArkTx.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
@@ -255,6 +257,8 @@ describe("vhtlc", () => {
         );
 
         const signedArkTx = await claimIdentity.sign(arkTx);
+        // arkd v0.9.24+ wants each checkpoint to carry its ark tx input's condition witness.
+        for (const c of checkpoints) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
         const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(signedArkTx.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),

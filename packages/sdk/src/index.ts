@@ -126,6 +126,7 @@ import {
     Recipient,
     SendParams,
     InputExpiryFloor,
+    SendOnchainParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -244,6 +245,9 @@ import {
     RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     OperatorProvider,
     ArkProvider,
     SettlementEvent,
@@ -555,6 +559,7 @@ import {
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
 import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
+import { OnchainCosignPreflightError, isCosignFallback } from "./contracts/onchainSpend";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -569,6 +574,7 @@ import type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,
@@ -688,6 +694,9 @@ export {
     CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     FetchError,
     READ_TIMEOUT_MS,
     RestIndexerProvider,
@@ -847,6 +856,8 @@ export {
     ArkErrorName,
     isArkError,
     maybeArkError,
+    OnchainCosignPreflightError,
+    isCosignFallback,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
@@ -1071,6 +1082,7 @@ export type {
     Recipient,
     SendParams,
     InputExpiryFloor,
+    SendOnchainParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -1109,6 +1121,7 @@ export type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,

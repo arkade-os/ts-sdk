@@ -71,6 +71,15 @@ style and have not been backfilled.
   but a superset: a `Market` can still be used as a ref, but a ref no longer
   assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
 
+- **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
+  `scope`.** A custom `ContractRepository` must persist and round-trip
+  `Contract.scope`, filter on it in `getContractsPage`, and read a row without
+  one as its handler's default; the version bump makes a missing
+  implementation a compile error rather than a silent gap. The bundled
+  repositories do this: SQLite adds a nullable `scope` column on open, and a
+  Realm consumer must open at a `schemaVersion` of at least
+  `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
+
 ### Features
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
@@ -78,6 +87,27 @@ style and have not been backfilled.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
 
 ### Added
+
+- **Onchain coins can be spent at once through arkd's cosigner.** Boarding
+  UTXOs, unrolled VTXOs and Arkade covenant UTXOs could only move by joining a
+  batch or after their exit timelock. arkd v0.9.22's `POST
+  /v1/tx/onchain/cosign` cosigns their collaborative leaf instead:
+  `wallet.sendOnchain({ outputs, inputs?, sweepTo? })` pays from the wallet's
+  onchain coins, `wallet.cosignOnchainTx(psbt)` signs the owned inputs of a
+  caller-built PSBT, and `ArkadeTransactionBuilder.buildOnchain()` and
+  `sendOnchain()` spend covenant leaves the emulator cosigns. The service worker
+  and Expo wallets expose both wallet methods. `Ramps.offboardExact` without
+  named inputs tries an onchain spend before the batch path, and boarding
+  renewal near expiry tries a cosign first. The batch fallback runs only when
+  nothing can have been broadcast (unsupported endpoint, failed preflight, or a
+  rejection arkd raises before signing); any other outcome throws
+  `OnchainCosignAmbiguousError` and keeps the inputs pending until the spend is
+  seen or six blocks pass. Contracts gain `scope` (`offchain`, `onchain`,
+  `both`), and onchain coins are stored as VTXO rows that offchain balance and
+  history leave out. Legacy boarding UTXOs are copied in once at boot and the
+  legacy table is kept, so an earlier SDK still reads them.
+  `OperatorProvider.cosignOnchainTx` is optional, and an arkd older than
+  v0.9.22 reads as unsupported, so both keep the batch path.
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
   submitted already signed, so arkd finalizes the transaction within
