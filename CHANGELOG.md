@@ -54,6 +54,7 @@ style and have not been backfilled.
 
 ### Features
 
+- **Arkade Cash status, claim correlation, and activity through service-worker wallets.** Add public voucher issue/status records, expose create, inspect, and claim operations alongside existing wallet primitives, and resolve their funding and sweep transactions into arkade-cash activities without exposing bearer tokens. ArkadeCashClaimResult.claimTxIds also includes sweeps finalized from previously pending claims.
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.

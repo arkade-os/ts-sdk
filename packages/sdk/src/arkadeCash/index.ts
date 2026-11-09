@@ -5,6 +5,17 @@ import { DefaultVtxo } from "../script/default";
 import { ArkAddress } from "../script/address";
 import { RelativeTimelock } from "../script/tapscript";
 import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
+import type { ArkadeCashRequest, ArkadeCashResponse } from "./messages";
+import type { ArkadeCashRecord, ArkadeCashAction } from "./tracker";
+import type { ArkadeCashStatus, ArkadeCashStatusReport } from "./status";
+export type {
+    ArkadeCashRequest,
+    ArkadeCashResponse,
+    ArkadeCashRecord,
+    ArkadeCashAction,
+    ArkadeCashStatus,
+    ArkadeCashStatusReport,
+};
 
 /**
  * ArkadeCash is a bearer instrument for the Arkade.

@@ -84,6 +84,15 @@ import {
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { ArkadeCash } from "../../arkadeCash";
+import { readArkadeCash } from "../../arkadeCash/status";
+import type { ArkadeCashRecord } from "../../arkadeCash/tracker";
+import {
+    addArkadeCashRecord,
+    arkadeCashActivity,
+    arkadeCashId,
+    createArkadeCashTracker,
+} from "../../arkadeCash/tracker";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -270,6 +279,17 @@ export type ResponseGetSpendableVtxos = ResponseEnvelope & {
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
     type: "GET_BOARDING_UTXOS";
+};
+
+export type RequestArkadeCash = RequestEnvelope & {
+    type: "ARKADE_CASH";
+    payload: import("../../arkadeCash/messages").ArkadeCashRequest;
+};
+export type ResponseArkadeCash = ResponseEnvelope & {
+    type: "ARKADE_CASH";
+    payload?: import("../../arkadeCash/messages").ArkadeCashResponse;
+    /** Clone-safe recovery token if creating the voucher funded it but then failed. */
+    cash?: string;
 };
 export type ResponseGetBoardingUtxos = ResponseEnvelope & {
     type: "BOARDING_UTXOS";
@@ -964,7 +984,8 @@ export type WalletUpdaterRequest =
     | RequestSweepExpiredBoardingUtxos
     | RequestMigrateDeprecatedSignerVtxos
     | RequestGetDeprecatedSignerStatus
-    | RequestRestoreWallet;
+    | RequestRestoreWallet
+    | RequestArkadeCash;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -1033,6 +1054,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseMigrateDeprecatedSignerVtxosEvent
         | ResponseGetDeprecatedSignerStatus
         | ResponseRestoreWallet
+        | ResponseArkadeCash
     );
 
 /**
@@ -1300,6 +1322,89 @@ export class WalletMessageHandler
                         type: "BOARDING_ADDRESS",
                         payload: { address },
                     });
+                }
+                case "ARKADE_CASH": {
+                    const request = message.payload;
+                    switch (request.action) {
+                        case "get": {
+                            const cash = ArkadeCash.fromString(request.token);
+                            const info = await this.readonlyWallet.getArkadeInfo();
+                            const currentThreshold =
+                                cash.csvTimelock.type === "blocks"
+                                    ? { blocks: Number(cash.csvTimelock.value) }
+                                    : { seconds: Number(info.unilateralExitDelay) };
+                            const report = await readArkadeCash(
+                                request.token,
+                                this.readonlyWallet.indexerProvider,
+                                info,
+                                this.readonlyWallet.onchainProvider,
+                                currentThreshold,
+                            );
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "get", cashId: arkadeCashId(cash), ...report },
+                            });
+                        }
+                        case "create": {
+                            try {
+                                const token = await this.requireWallet().createCash(request.amount);
+                                return this.tagged({
+                                    id,
+                                    type: "ARKADE_CASH",
+                                    payload: { action: "create", token },
+                                });
+                            } catch (error) {
+                                const cash = (error as { cash?: unknown }).cash;
+                                return this.tagged({
+                                    id,
+                                    error: error as Error,
+                                    ...(typeof cash === "string" ? { cash } : {}),
+                                });
+                            }
+                        }
+                        case "activities": {
+                            const records = createArkadeCashTracker();
+                            request.records.forEach((record) =>
+                                addArkadeCashRecord(records, record),
+                            );
+                            const state = await this.walletRepository?.getWalletState();
+                            const recovered = state?.settings?.arkadeCashRecovery;
+                            if (Array.isArray(recovered)) {
+                                recovered.forEach((record) =>
+                                    addArkadeCashRecord(records, record as ArkadeCashRecord),
+                                );
+                            }
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: {
+                                    action: "activities",
+                                    activities: await arkadeCashActivity(
+                                        records,
+                                        (await this.buildTransactionHistoryFromCache()) ?? [],
+                                    ),
+                                },
+                            });
+                        }
+                        case "claim": {
+                            const result = await this.requireWallet().claimCash(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "claim", ...result },
+                            });
+                        }
+                        case "reveal": {
+                            const record = ArkadeCash.fromString(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "reveal", cashId: arkadeCashId(record) },
+                            });
+                        }
+                    }
+                    return this.tagged({ id, error: new Error("Unknown Arkade Cash action") });
                 }
                 case "GET_ARKADE_INFO": {
                     const { payload } = message as RequestGetArkadeInfo;
