@@ -149,5 +149,4 @@ describe("Worker ArkadeCash", () => {
         expect((failed as { error?: { cash?: string } }).error?.cash).toBe("recover-me");
         expect((failed as { cash?: string }).cash).toBe("recover-me");
     });
-
 });

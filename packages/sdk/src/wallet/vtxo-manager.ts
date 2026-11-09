@@ -850,7 +850,11 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
  */
 interface RecoveryContractCapableWallet {
     removeRecoveryContract(script: string): Promise<void>;
-    correlateArkadeCashRecoveryByScript(script: string, txid: string, amount: number): Promise<void>;
+    correlateArkadeCashRecoveryByScript(
+        script: string,
+        txid: string,
+        amount: number,
+    ): Promise<void>;
 }
 
 /** Return whether a wallet can purge its imported recovery contracts. */

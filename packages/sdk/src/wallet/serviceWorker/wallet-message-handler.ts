@@ -1365,7 +1365,9 @@ export class WalletMessageHandler
                         }
                         case "activities": {
                             const records = createArkadeCashTracker();
-                            request.records.forEach((record) => addArkadeCashRecord(records, record));
+                            request.records.forEach((record) =>
+                                addArkadeCashRecord(records, record),
+                            );
                             const state = await this.walletRepository?.getWalletState();
                             const recovered = state?.settings?.arkadeCashRecovery;
                             if (Array.isArray(recovered)) {

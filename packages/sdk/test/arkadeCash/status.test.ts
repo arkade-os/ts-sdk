@@ -60,18 +60,16 @@ describe("classifyArkadeCash", () => {
     it("prefers unspent exited funds over spent claim evidence", () => {
         const exited = { ...live(), txid: "b".repeat(64), isUnrolled: true };
         const spent = { ...live(), txid: "c".repeat(64), isSpent: true };
-        expect(
-            classifyArkadeCash([spent, exited], 1_000n, { timestamp: new Date() }).status,
-        ).toBe("exited");
+        expect(classifyArkadeCash([spent, exited], 1_000n, { timestamp: new Date() }).status).toBe(
+            "exited",
+        );
     });
 
     it("reports a spent, exited coin as claimed", () => {
         expect(
-            classifyArkadeCash(
-                [{ ...live(), isUnrolled: true, isSpent: true }],
-                1_000n,
-                { timestamp: new Date() },
-            ).status,
+            classifyArkadeCash([{ ...live(), isUnrolled: true, isSpent: true }], 1_000n, {
+                timestamp: new Date(),
+            }).status,
         ).toBe("claimed");
     });
 });
