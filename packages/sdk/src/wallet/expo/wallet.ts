@@ -6,7 +6,7 @@ import type { Activity, ActivityRegistry } from "../activity";
 import type {
     ArkadeBroadcaster,
     ArkadeReader,
-    GetArkadeInfoOptions,
+    GetOperatorInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -312,8 +312,13 @@ export class ExpoWallet
         return this.wallet.getBoardingAddress();
     }
 
-    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        return this.wallet.getArkadeInfo(opts);
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.wallet.getOperatorInfo(opts);
+    }
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.getOperatorInfo(opts);
     }
 
     getArkadeReader(): Promise<ArkadeReader> {

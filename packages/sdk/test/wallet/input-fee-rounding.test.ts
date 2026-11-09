@@ -60,7 +60,7 @@ function delegateVtxo(value: number): ContractVtxo {
         value,
         tapTree: testDelegateScript.encode(),
         forfeitTapLeafScript: testDelegateScript.forfeit(),
-        intentTapLeafScript: testDelegateScript.delegate(),
+        proofTapLeafScript: testDelegateScript.delegate(),
         expiresAt: new Date(Date.now() + 86_400_000),
     });
 }
@@ -130,7 +130,7 @@ const boardingUtxo = (value: number): ExtendedCoin =>
         value,
         status: { confirmed: true },
         forfeitTapLeafScript: boardingTapscript.forfeit(),
-        intentTapLeafScript: boardingTapscript.forfeit(),
+        proofTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
     }) as unknown as ExtendedCoin;
 

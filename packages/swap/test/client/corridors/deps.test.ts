@@ -246,7 +246,7 @@ describe("resolveCorridorDeps", () => {
         });
     });
 
-    describe("the covenant co-signer", () => {
+    describe("the operator's cosigner that emulates Arkade Script", () => {
         it("resolves from the network name, never from the operator's self-report", () => {
             expect(
                 resolveCorridorDeps("arkade", undefined, corridorBaseFor("regtest")).emulatorPubkey,
@@ -267,7 +267,7 @@ describe("resolveCorridorDeps", () => {
                 ).toThrow(MissingCorridorDep);
                 expect(() =>
                     resolveCorridorDeps("arkade", undefined, corridorBaseFor(network)),
-                ).toThrow(new RegExp(`covenant co-signer key \\(none is pinned for ${network}`));
+                ).toThrow(new RegExp(`emulates Arkade Script \\(none is pinned for ${network}`));
             }
         });
 
@@ -353,7 +353,7 @@ describe("resolveCorridorBase", () => {
             Object.assign(new Error("aborted"), { name: "TimeoutError" }),
             // Across the service-worker boundary the error is a fresh `Error`
             // whose only branchable identity is `cause.name`.
-            new Error("Failed to get arkade info: Error", {
+            new Error("Failed to get operator info: Error", {
                 cause: Object.assign(new Error("offline"), { name: "ProviderUnavailableError" }),
             }),
             "a thrown string",

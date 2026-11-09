@@ -25,7 +25,7 @@ import type {
 import {
     ArkadeBroadcaster,
     ArkadeReader,
-    GetArkadeInfoOptions,
+    GetOperatorInfoOptions,
     ArkTransaction,
     AssetDetails,
     BurnParams,
@@ -187,35 +187,33 @@ export type ResponseGetBoardingAddress = ResponseEnvelope & {
     payload: { address: string };
 };
 
-// `payload` is optional and unknown to workers built before it existed — such
-// a worker serves the ordinary snapshot-fallback read. That skew lasts only a
-// rolling-upgrade window; a page needing a hard guarantee gets it once the
-// worker updates.
-export type RequestGetArkadeInfo = RequestEnvelope & {
-    type: "GET_ARKADE_INFO";
-    payload?: GetArkadeInfoOptions;
+// The worker still accepts the old name, `GET_ARKADE_INFO`, so a page built before
+// the rename keeps working. A worker built before it answers "Unknown message".
+export type RequestGetOperatorInfo = RequestEnvelope & {
+    type: "GET_OPERATOR_INFO" | "GET_ARKADE_INFO";
+    payload?: GetOperatorInfoOptions;
 };
 // `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
 // `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
 // already relies on that for `Asset.amount`. Do NOT route it through the
 // `arkInfoSnapshot` serializer — that shape is the persistence cache and drops
 // `serviceStatus`.
-export type ResponseGetArkadeInfo = ResponseEnvelope & {
-    type: "ARKADE_INFO";
+export type ResponseGetOperatorInfo = ResponseEnvelope & {
+    type: "OPERATOR_INFO";
     payload: { info: ArkadeInfo };
 };
 
 // `getArkadeReader()`/`getArkadeBroadcaster()` proxied to the worker, which
 // owns the providers. Named `INDEXER_*` rather than reusing `GET_VTXOS`: that
 // one answers the *wallet's own* outputs from repositories, while this is an
-// arbitrary-script query that reaches the server. Same verb, different
+// arbitrary-script query that reaches the operator. Same verb, different
 // question — collapsing them would silently change which one a caller gets.
 export type RequestIndexerGetVtxos = RequestEnvelope & {
     type: "INDEXER_GET_VTXOS";
     payload: { opts: GetVtxosOptions };
 };
 // VTXOs cross the boundary raw — `assets[].amount` is bigint — relying on the
-// same bigint-safe structuredClone channel `ARKADE_INFO` documents above.
+// same bigint-safe structuredClone channel `OPERATOR_INFO` documents above.
 export type ResponseIndexerGetVtxos = ResponseEnvelope & {
     type: "INDEXER_VTXOS";
     payload: NormalizedVtxoPage;
@@ -291,7 +289,7 @@ export type ResponseGetStatus = ResponseEnvelope & {
     payload: {
         walletInitialized: boolean;
         xOnlyPublicKey: Uint8Array | undefined;
-        // Wallet-level provider-connection freshness (boot server-info source
+        // Wallet-level provider-connection freshness (boot operator info source
         // composed with contract-manager sync health). Optional so a status
         // response can predate a fully wired worker; always set for an
         // initialized wallet.
@@ -931,7 +929,7 @@ export type WalletUpdaterRequest =
     | RequestSettle
     | RequestGetAddress
     | RequestGetBoardingAddress
-    | RequestGetArkadeInfo
+    | RequestGetOperatorInfo
     | RequestIndexerGetVtxos
     | RequestIndexerGetVirtualTxs
     | RequestSubmitTx
@@ -995,7 +993,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseSettleEvent
         | ResponseGetAddress
         | ResponseGetBoardingAddress
-        | ResponseGetArkadeInfo
+        | ResponseGetOperatorInfo
         | ResponseIndexerGetVtxos
         | ResponseIndexerGetVirtualTxs
         | ResponseSubmitTx
@@ -1261,7 +1259,7 @@ export class WalletMessageHandler
         } as WalletUpdaterResponse;
     }
 
-    // Flows that surrender control to the Ark server and the other participants
+    // Flows that surrender control to the operator and the other participants
     // in a batch round: quiet gaps between protocol events can easily exceed
     // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
     // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
@@ -1271,7 +1269,7 @@ export class WalletMessageHandler
             message.type === "SETTLE" ||
             message.type === "RECOVER_VTXOS" ||
             message.type === "RENEW_VTXOS" ||
-            // Migration may apply a server-signer rotation and then run a full
+            // Migration may rotate the operator's signer and then run a full
             // settle, so it streams settlement events like RENEW_VTXOS.
             message.type === "MIGRATE_DEPRECATED_SIGNER_VTXOS" ||
             // HD restore walks the index range with one indexer round-trip per
@@ -1327,12 +1325,13 @@ export class WalletMessageHandler
                         payload: { address },
                     });
                 }
+                case "GET_OPERATOR_INFO":
                 case "GET_ARKADE_INFO": {
-                    const { payload } = message as RequestGetArkadeInfo;
-                    const info = await this.readonlyWallet.getArkadeInfo(payload);
+                    const { payload } = message as RequestGetOperatorInfo;
+                    const info = await this.readonlyWallet.getOperatorInfo(payload);
                     return this.tagged({
                         id,
-                        type: "ARKADE_INFO",
+                        type: "OPERATOR_INFO",
                         payload: { info },
                     });
                 }
@@ -2442,7 +2441,7 @@ export class WalletMessageHandler
      * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      *
-     * Recovery-only contracts (imported by `claimCash` for server-swept
+     * Recovery-only contracts (imported by `claimCash` for operator-swept
      * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
      * they are settled in their own isolated intent and must stay out of the
      * wallet's balance / VTXO / coin-selection / pending-tx views that read this.

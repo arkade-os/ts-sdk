@@ -6,7 +6,7 @@ import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
 import { ConditionWitness, PrevArkTxField, VtxoTaprootTree } from "../utils/unknownFields";
 import { hex } from "@scure/base";
-import { getSequence, VtxoScript } from "../script/base";
+import { getSequence, proofTapLeafScriptOf, VtxoScript } from "../script/base";
 import { ExtendedCoin } from "../wallet";
 import type { WithPrevTx } from "../utils/prevoutTx";
 
@@ -367,7 +367,7 @@ function prepareProofInput(coin: ProofInput | TransactionInput): TransactionInpu
         return coin;
     }
     const vtxoScript = VtxoScript.decode(coin.tapTree);
-    const sequence = getSequence(coin.intentTapLeafScript);
+    const sequence = getSequence(proofTapLeafScriptOf(coin));
 
     const unknown = [VtxoTaprootTree.encode(coin.tapTree)];
     if (coin.extraWitness) {
@@ -387,7 +387,7 @@ function prepareProofInput(coin: ProofInput | TransactionInput): TransactionInpu
             script: vtxoScript.pkScript,
         },
         sequence,
-        tapLeafScript: [coin.intentTapLeafScript],
+        tapLeafScript: [proofTapLeafScriptOf(coin)],
         unknown,
     };
 }

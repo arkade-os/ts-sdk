@@ -1164,7 +1164,7 @@ describe("Wallet", () => {
         });
 
         const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
-            intentTxId: "i1",
+            proofTxId: "i1",
             state: "waiting_for_batch",
             createdAt: 1,
             updatedAt: 1,
@@ -1173,11 +1173,11 @@ describe("Wallet", () => {
             deleteProof: "dp",
             deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }),
             partialForfeits: [],
-            intentVtxos: [{ txid: "v", vout: 0 }],
+            proofInputs: [{ txid: "v", vout: 0 }],
             ...over,
         });
         const intentIds = async (repo: IntentRepository) =>
-            (await collectIntents(repo)).map((i) => i.intentTxId);
+            (await collectIntents(repo)).map((i) => i.proofTxId);
 
         it("wipes intents once none is pending", async () => {
             const intentRepository = new InMemoryIntentRepository();
@@ -1224,7 +1224,7 @@ describe("Wallet", () => {
                 const intentRepository = new InMemoryIntentRepository();
                 await intentRepository.saveIntent(storedIntent());
                 await intentRepository.saveIntent(
-                    storedIntent({ intentTxId: "i2", intentVtxos: [{ txid: "w", vout: 0 }] }),
+                    storedIntent({ proofTxId: "i2", proofInputs: [{ txid: "w", vout: 0 }] }),
                 );
                 const deleteIntent = vi
                     .fn()
@@ -2475,7 +2475,7 @@ describe("Wallet._settleImpl", () => {
         const boardingInput = {
             ...input,
             forfeitTapLeafScript: boardingScript.forfeit(),
-            intentTapLeafScript: boardingScript.forfeit(),
+            proofTapLeafScript: boardingScript.forfeit(),
             tapTree: boardingScript.encode(),
         } as ExtendedCoin;
         const stream = {
@@ -2555,7 +2555,7 @@ describe("Wallet._settleImpl", () => {
                 createdAt: new Date(),
                 isUnrolled: false,
                 forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-                intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
                 tapTree: new Uint8Array(),
             }) as any;
 
@@ -2865,7 +2865,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
     const annotated = (input: VirtualCoin): any => ({
         ...input,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
         tapTree: new Uint8Array(64),
     });
 
@@ -3097,7 +3097,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const annotatedInput: any = {
             ...input,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
         };
 
@@ -3158,8 +3158,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const expectedForfeit = tapscriptNew.forfeit();
         expect(changeVtxo.forfeitTapLeafScript[0]).toEqual(expectedForfeit[0]);
         expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
-        expect(changeVtxo.intentTapLeafScript[0]).toEqual(expectedForfeit[0]);
-        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
+        expect(changeVtxo.proofTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.proofTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
         // also derives from the snapshot tapscript + server key, not from
@@ -3216,7 +3216,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             value,
             status: { confirmed: true },
             forfeitTapLeafScript: tapscript.forfeit(),
-            intentTapLeafScript: tapscript.forfeit(),
+            proofTapLeafScript: tapscript.forfeit(),
             tapTree: tapscript.encode(),
         }) as ExtendedCoin;
 
@@ -3236,7 +3236,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             expiresAt: new Date(1_700_000_000),
             script,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
         }) as unknown as ExtendedCoin;
 

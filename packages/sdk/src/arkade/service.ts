@@ -18,9 +18,10 @@ import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers
 /**
  * The Arkade deployment to talk to.
  *
- * - `{ network: "bitcoin" }` — the hosted mainnet deployment, including its covenant co-signer
- *   ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network with a one-liner.
- * - `{ operatorUrl, emulatorUrl? }` — a specific operator. A custom operator does not imply the default
+ * - `{ network: "bitcoin" }`: the hosted mainnet deployment, including the operator's cosigner
+ *   that emulates Arkade Script ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network
+ *   with a one-liner.
+ * - `{ operatorUrl, emulatorUrl? }`: a specific operator. A custom operator does not imply the default
  *   emulator: without `emulatorUrl`, covenant (`arkadeScript`) paths stay disabled.
  */
 export type ArkadeService = { network: "bitcoin" } | { operatorUrl: string; emulatorUrl?: string };
@@ -30,7 +31,8 @@ export interface ResolvedArkadeService {
     arkProvider: OperatorProvider;
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
-    /** The covenant co-signer; absent for an `operatorUrl` service without `emulatorUrl`. */
+    /** The operator's cosigner that emulates Arkade Script; absent for an `operatorUrl` service
+     * without `emulatorUrl`. */
     emulator?: EmulatorProvider;
     info: ArkadeInfo;
 }

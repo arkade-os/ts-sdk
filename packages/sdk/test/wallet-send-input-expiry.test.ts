@@ -72,7 +72,7 @@ function coin(
         isPreconfirmed: false,
         script: hex.encode(tree.pkScript),
         forfeitTapLeafScript: tree.forfeit(),
-        intentTapLeafScript: tree.forfeit(),
+        proofTapLeafScript: tree.forfeit(),
         tapTree: tree.encode(),
         ...expiry,
     };

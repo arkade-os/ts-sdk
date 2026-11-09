@@ -57,7 +57,7 @@ import {
     RequestCreateContract,
     RequestDeleteContract,
     RequestGetAddress,
-    RequestGetArkadeInfo,
+    RequestGetOperatorInfo,
     RequestIndexerGetVtxos,
     RequestIndexerGetVirtualTxs,
     RequestSubmitTx,
@@ -88,7 +88,7 @@ import {
     RequestUpdateContract,
     ResponseAnnotateVtxos,
     ResponseGetAddress,
-    ResponseGetArkadeInfo,
+    ResponseGetOperatorInfo,
     ResponseIndexerGetVtxos,
     ResponseIndexerGetVirtualTxs,
     ResponseSubmitTx,
@@ -205,7 +205,7 @@ import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
 import { getRandomId } from "../utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
-import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
+import type { ArkadeBroadcaster, ArkadeReader, GetOperatorInfoOptions, VirtualCoin } from "..";
 import {
     isMessageBusInitializingError,
     isMessageBusNotInitializedError,
@@ -269,6 +269,8 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // budget so the worker's snapshot fallback stays reachable before this
     // page deadline fires — lowering it below the budget would time the page
     // out while the worker is still seconds from answering from cache.
+    GET_OPERATOR_INFO: INFO_FETCH_TIMEOUT_MS + 8_000,
+    /** @deprecated Use `GET_OPERATOR_INFO`. */
     GET_ARKADE_INFO: INFO_FETCH_TIMEOUT_MS + 8_000,
     INDEXER_GET_VTXOS: 20_000,
     INDEXER_GET_VIRTUAL_TXS: 20_000,
@@ -299,7 +301,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     SEND_WITH_DEADLINE: 50_000,
     SEND_WITH_INPUT_EXPIRY_FLOOR: 50_000,
     SETTLE: 50_000,
-    // Broadcast: the server round-trip a spend ends in, so it belongs
+    // Broadcast: the operator round trip a spend ends in, so it belongs
     // with the writes rather than the reads above.
     SUBMIT_TX: 50_000,
     FINALIZE_TX: 50_000,
@@ -337,7 +339,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
-    "GET_ARKADE_INFO",
+    "GET_OPERATOR_INFO",
     "INDEXER_GET_VTXOS",
     "INDEXER_GET_VIRTUAL_TXS",
     "GET_BALANCE",
@@ -472,7 +474,7 @@ interface ServiceWorkerWalletOptions {
     lazyInitialization?: boolean;
     /** Defer boarding and history loading; render boarding.loaded=false as unknown. */
     lazyBoarding?: boolean;
-    /** Arkade server endpoint and optional public key. */
+    /** The operator's endpoint and optional public key. */
     arkServer?: {
         url: string;
         publicKey?: string;
@@ -715,6 +717,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
         const messageTimeouts = {
             ...DEFAULT_MESSAGE_TIMEOUTS,
+            // The deprecated key still sets the timeout of the request it named.
+            ...("GET_ARKADE_INFO" in overrides
+                ? { GET_OPERATOR_INFO: overrides.GET_ARKADE_INFO }
+                : {}),
             ...overrides,
         } as Record<RequestType, number>;
 
@@ -1092,23 +1098,22 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Delegated to the worker, which holds the wallet that owns the connection.
-     * The payload crosses raw — see {@link ResponseGetArkadeInfo} for why.
+     * The payload crosses raw — see {@link ResponseGetOperatorInfo} for why.
      */
-    async getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        const message: RequestGetArkadeInfo = {
+    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        const message: RequestGetOperatorInfo = {
             id: getRandomId(),
             tag: this.messageTag,
-            type: "GET_ARKADE_INFO",
-            // omitted entirely for the default read: wire-shape hygiene
-            // toward workers built before the option existed. (Dedup is
-            // unaffected either way — the key is JSON.stringify, which drops
+            type: "GET_OPERATOR_INFO",
+            // omitted entirely for the default read. (Dedup is unaffected
+            // either way — the key is JSON.stringify, which drops
             // undefined-valued properties.)
             ...(opts?.requireLive ? { payload: { requireLive: true } } : {}),
         };
 
         try {
             const response = await this.sendMessage(message);
-            return (response as ResponseGetArkadeInfo).payload.info;
+            return (response as ResponseGetOperatorInfo).payload.info;
         } catch (cause) {
             // Keep the original reachable as `cause`. Unlike its siblings, this
             // call reaches `resolveArkInfo` in the worker, which distinguishes
@@ -1119,13 +1124,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             // the worker sends the name beside the error as plain data and
             // `restoreErrorName` puts it back — which is what makes
             // `cause.name` the one thing a page can branch on.
-            throw new Error(`Failed to get arkade info: ${cause}`, { cause });
+            throw new Error(`Failed to get operator info: ${cause}`, { cause });
         }
+    }
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.getOperatorInfo(opts);
     }
 
     /**
      * An {@link ArkadeReader} that speaks to the worker rather than to the
-     * server. The page holds no provider, so a caller that built its own from a
+     * operator. The page holds no provider, so a caller that built its own from a
      * URL would open a second connection outside the worker's rate gate and
      * caches — this proxy is what keeps chain reads in one place.
      */

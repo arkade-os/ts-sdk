@@ -15,6 +15,16 @@ style and have not been backfilled.
 ### Breaking Changes
 
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
+- **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
+  `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
+  writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
+  proofs with that leaf, and a handler that returns it has it moved to the new
+  key. A coin literal typed as `ExtendedCoin` and a handler typed as
+  `TapscriptDeriving` must add `proofTapLeafScript`.
+  Code that reads `intentTapLeafScript` from an SDK coin must move, because the
+  key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
+  keep the old key on disk.
+
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -36,6 +46,15 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`ArkIntent` is renamed `BatchRegistration`, and its fields follow.**
+  `IntentFilter` and `IntentPageFilter` take the matching names, and the three
+  old type names stay as deprecated aliases. On the record, `intentTxId` is
+  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is
+  `proofInputs`. Filters use `proofTxIds` and `registrationIds`. These fields
+  have no alias, so a custom repository must update. Stored data does not
+  change, and no migration runs: backends keep their column and key names on
+  disk and map them at the repository boundary.
+
 - **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
   is renamed `deprecatedSignerLocked`.** Each name now says what holds the
   funds: a contract that generic spending refuses, or a server signer past
@@ -124,8 +143,8 @@ style and have not been backfilled.
 
 - **`Arkade.connect` takes a `service` and can own its contract manager.**
   `Arkade.connect({ service: { network: "bitcoin" }, identity, storage: {
-  contractRepository } })` resolves the operator, indexer, esplora and the mainnet
-  covenant co-signer (new `DEFAULT_ARKADE_EMULATOR_URL`); `{ operatorUrl,
+  contractRepository } })` resolves the mainnet operator, its cosigner that
+  emulates Arkade Script (new `DEFAULT_ARKADE_EMULATOR_URL`), indexer and esplora; `{ operatorUrl,
   emulatorUrl? }` names a custom deployment, whose covenant paths stay disabled
   without `emulatorUrl`. A `{ network }` service whose operator reports another
   network throws. `storage` builds a session-scoped manager (in-memory VTXO
@@ -190,6 +209,14 @@ style and have not been backfilled.
 
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
+- **`getOperatorInfo` replaces `getArkadeInfo`.** Wallets expose the new method,
+  and `GetArkadeInfoOptions` becomes `GetOperatorInfoOptions`. The old names stay
+  as deprecated aliases. A custom `IReadonlyWallet` must add the new method.
+  The worker message is now `GET_OPERATOR_INFO`, with an `OPERATOR_INFO` reply.
+  A worker still accepts `GET_ARKADE_INFO`, and a `messageTimeouts` entry under
+  that name still applies. A new page needs an updated worker.
+  Comments in the changed files now say the operator instead of the server.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
@@ -205,6 +232,13 @@ style and have not been backfilled.
 - **Arkade scripts support `OP_PUT` (`0xbb`).** Opcode lookup, script assembly,
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
+
+- **`OperatorInfo` replaces `ArkadeInfo`.** `networkFromArkadeInfo` becomes
+  `networkFromOperatorInfo`, and `liveArkadeInfo` in `@arkade-os/swap/advanced`
+  becomes `liveOperatorInfo`. The old names stay as deprecated aliases.
+  `ArkadeInfo` is now a type alias, so code that adds fields to it with
+  `declare module` must add them to `OperatorInfo` instead. Comments in the
+  changed files now say the operator instead of the server.
 
 - **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
   takes a plan that returns piece amounts against the already-priced subtotal,
@@ -236,6 +270,12 @@ style and have not been backfilled.
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
+
+- **Doc comments and two error messages describe the emulator as part of the operator.**
+  The SDK no longer presents it as a separate cosigner. `MissingCorridorDep` on an
+  unpinned network now names the key of the operator's cosigner that emulates Arkade
+  Script, and the VHTLC v2 error for two different emulator pubkeys rewords its second
+  clause. Code that matches either message must update.
 
 - **`Intent` is renamed `Proof`, because "intent" now names only Arkade Intents.**
   A proof is a signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin

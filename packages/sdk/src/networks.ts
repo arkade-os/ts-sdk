@@ -24,12 +24,15 @@ export const getNetwork = (network: NetworkName): Network => {
 };
 
 /**
- * The {@link Network} an Arkade server's info names. {@link getNetwork} fails closed, so an
- * unrecognized server network throws here rather than resolving to mainnet parameters downstream.
+ * The {@link Network} the operator's info names. {@link getNetwork} fails closed, so an
+ * unrecognized network throws here rather than resolving to mainnet parameters downstream.
  * Structurally typed so the network table doesn't depend on the provider layer.
  */
-export const networkFromArkadeInfo = (info: { network: string }): Network =>
+export const networkFromOperatorInfo = (info: { network: string }): Network =>
     getNetwork(info.network as NetworkName);
+
+/** @deprecated Use {@link networkFromOperatorInfo}. */
+export const networkFromArkadeInfo = networkFromOperatorInfo;
 
 export const networks = {
     bitcoin: withArkPrefix(NETWORK, "ark", "bitcoin"),
@@ -62,7 +65,7 @@ function withArkPrefix(
 
 export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
 /**
- * Covenant co-signer ("emulator") of the mainnet Arkade deployment, resolved by the
+ * The operator's cosigner that emulates Arkade Script on mainnet, resolved by the
  * `{ network: "bitcoin" }` service. No trailing slash: `RestEmulatorProvider` appends its paths
  * verbatim. The URL only selects where to ask for a signature; the key covenants commit to is
  * {@link BITCOIN_EMULATOR_PUBKEY}.
@@ -81,20 +84,20 @@ export const DEFAULT_NETWORK_NAME = "bitcoin" as const satisfies NetworkName;
  */
 const COMPRESSED_PUBKEY = /^0[23][0-9a-f]{64}$/;
 
-/** Covenant co-signer ("emulator") for the mainnet Arkade deployment. */
+/** Key of the operator's cosigner that emulates Arkade Script on mainnet. */
 export const BITCOIN_EMULATOR_PUBKEY =
     "0239c196415da47b26456a101daaa12ba9e445bfe153197f1e2b750bf40e52092e" as const;
 
-/** Covenant co-signer ("emulator") for the hosted mutinynet Arkade deployment. */
+/** Key of the operator's cosigner that emulates Arkade Script on mutinynet. */
 export const MUTINYNET_EMULATOR_PUBKEY =
     "03f823b9b2febc81f4af967e77aed2f541cbd3397c6d8f5a72e32eb7b471af889a" as const;
 
-/** Covenant co-signer ("emulator") shipped with the `arkade-regtest` stack. */
+/** Key of the operator's cosigner that emulates Arkade Script in the `arkade-regtest` stack. */
 export const REGTEST_EMULATOR_PUBKEY =
     "02999413c46fa10ada5cbc4bcc79a1d09160c2ba3cfc812705d7a13e5e545fb2a9" as const;
 
 /**
- * The covenant co-signer each network's Arkade deployment runs — a property of the NETWORK, since
+ * The operator's cosigner that emulates Arkade Script, by network: a property of the NETWORK, since
  * every participant on it co-signs with the same key; a per-deployment copy could only introduce
  * disagreement nothing downstream catches. `testnet`/`signet` have no emulator and throw rather
  * than resolve to a neighbour's key.

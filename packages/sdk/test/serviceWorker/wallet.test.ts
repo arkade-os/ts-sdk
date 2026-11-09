@@ -349,8 +349,8 @@ describe("ServiceWorkerReadonlyWallet", () => {
         );
     });
 
-    it("round-trips GET_ARKADE_INFO, bigints intact", async () => {
-        // Guards the wire-format decision documented on `ResponseGetArkadeInfo`:
+    it("round-trips GET_OPERATOR_INFO, bigints intact", async () => {
+        // Guards the wire-format decision documented on `ResponseGetOperatorInfo`:
         // a serializer inserted on either side would fail this deep-compare.
         //
         // Cloned for real here rather than through the harness's
@@ -361,11 +361,11 @@ describe("ServiceWorkerReadonlyWallet", () => {
         // used by responses carrying spies, which do not clone.
         const info = { network: "regtest", signerPubkey: "02ab", unilateralExitDelay: 4096n };
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
-            message.type === "GET_ARKADE_INFO"
+            message.type === "GET_OPERATOR_INFO"
                 ? structuredClone({
                       id: message.id,
                       tag: messageTag,
-                      type: "ARKADE_INFO",
+                      type: "OPERATOR_INFO",
                       payload: { info },
                   })
                 : null,
@@ -374,22 +374,21 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        await expect(wallet.getOperatorInfo()).resolves.toEqual(info);
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ type: "GET_ARKADE_INFO" }),
+            expect.objectContaining({ type: "GET_OPERATOR_INFO" }),
         );
     });
 
     it("sends requireLive on the wire, and omits payload for the default read", async () => {
         // The other half of the fail-closed path: the page proxy must put the
         // option INTO the message, and must not grow a payload key on the
-        // default read — wire-shape hygiene toward workers built before the
-        // option existed. (Dedup is unaffected either way: the key is
+        // default read. (Dedup is unaffected either way: the key is
         // JSON.stringify, which drops undefined-valued properties.)
         const info = { network: "regtest" };
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
-            message.type === "GET_ARKADE_INFO"
-                ? { id: message.id, tag: messageTag, type: "ARKADE_INFO", payload: { info } }
+            message.type === "GET_OPERATOR_INFO"
+                ? { id: message.id, tag: messageTag, type: "OPERATOR_INFO", payload: { info } }
                 : null,
         );
 
@@ -397,17 +396,17 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         const wallet = createWallet(serviceWorker as any, messageTag);
 
-        await expect(wallet.getArkadeInfo({ requireLive: true })).resolves.toEqual(info);
+        await expect(wallet.getOperatorInfo({ requireLive: true })).resolves.toEqual(info);
         expect(serviceWorker.postMessage).toHaveBeenLastCalledWith(
             expect.objectContaining({
-                type: "GET_ARKADE_INFO",
+                type: "GET_OPERATOR_INFO",
                 payload: { requireLive: true },
             }),
         );
 
-        await expect(wallet.getArkadeInfo()).resolves.toEqual(info);
+        await expect(wallet.getOperatorInfo()).resolves.toEqual(info);
         const last = (serviceWorker.postMessage as any).mock.calls.at(-1)[0];
-        expect(last.type).toBe("GET_ARKADE_INFO");
+        expect(last.type).toBe("GET_OPERATOR_INFO");
         expect("payload" in last).toBe(false);
     });
 
@@ -482,7 +481,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const worker = new Error("no cached snapshot");
         worker.name = "ProviderUnavailableError";
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
-            message.type === "GET_ARKADE_INFO"
+            message.type === "GET_OPERATOR_INFO"
                 ? {
                       id: message.id,
                       tag: messageTag,
@@ -495,7 +494,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
+        const err = (await wallet.getOperatorInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("ProviderUnavailableError");
     });
 
@@ -507,7 +506,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const worker = new Error("no cached snapshot");
         worker.name = "ProviderUnavailableError";
         const { navigatorServiceWorker, serviceWorker } = createServiceWorkerHarness((message) =>
-            message.type === "GET_ARKADE_INFO"
+            message.type === "GET_OPERATOR_INFO"
                 ? { id: message.id, tag: messageTag, error: worker }
                 : null,
         );
@@ -515,7 +514,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         vi.stubGlobal("navigator", { serviceWorker: navigatorServiceWorker } as any);
 
         const wallet = createWallet(serviceWorker as any, messageTag);
-        const err = (await wallet.getArkadeInfo().catch((e: unknown) => e)) as Error;
+        const err = (await wallet.getOperatorInfo().catch((e: unknown) => e)) as Error;
         expect((err.cause as Error).name).toBe("Error");
         expect((err.cause as Error).message).toBe("no cached snapshot");
     });

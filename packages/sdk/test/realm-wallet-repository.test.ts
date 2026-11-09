@@ -40,7 +40,7 @@ function createMockVtxo(txid: string, vout: number, value: number): ExtendedVirt
         isSpent: false,
         script: "5120" + "00".repeat(32),
         forfeitTapLeafScript: tapLeaf,
-        intentTapLeafScript: tapLeaf,
+        proofTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),
     };
 }
@@ -67,7 +67,7 @@ function createMockVtxoWithExtras(txid: string, vout: number, value: number): Ex
         arkTxId: "ark-tx-123",
         script: "5120deadbeef",
         forfeitTapLeafScript: tapLeaf,
-        intentTapLeafScript: tapLeaf,
+        proofTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(5),
         extraWitness: [new Uint8Array([0xab, 0xcd]), new Uint8Array([0xef])],
         assets: [{ assetId: "asset-1", amount: 500n }],
@@ -87,7 +87,7 @@ function createMockUtxo(txid: string, vout: number, value: number): ExtendedCoin
             block_time: 1700000000,
         },
         forfeitTapLeafScript: tapLeaf,
-        intentTapLeafScript: tapLeaf,
+        proofTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),
     };
 }
@@ -102,7 +102,7 @@ function createMockUtxoWithExtras(txid: string, vout: number, value: number): Ex
             confirmed: false,
         },
         forfeitTapLeafScript: tapLeaf,
-        intentTapLeafScript: tapLeaf,
+        proofTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(6),
         extraWitness: [new Uint8Array([0x11, 0x22])],
     };

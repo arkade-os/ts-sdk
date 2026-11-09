@@ -85,6 +85,7 @@ import {
     IReadonlyWallet,
     ArkadeReader,
     ArkadeBroadcaster,
+    GetOperatorInfoOptions,
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
@@ -251,6 +252,7 @@ import {
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
@@ -334,6 +336,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     Network,
@@ -460,9 +463,12 @@ import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTx
 import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
 import type {
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
 } from "./repositories/intentRepository";
 import type {
@@ -790,6 +796,7 @@ export {
     ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
@@ -927,6 +934,7 @@ export type {
     IReadonlyWallet,
     ArkadeReader,
     ArkadeBroadcaster,
+    GetOperatorInfoOptions,
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
@@ -1001,6 +1009,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
@@ -1171,9 +1180,12 @@ export type {
     ContractRepository,
     ContractFilter,
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
     VirtualTxRepository,
     VirtualTx,
