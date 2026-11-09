@@ -305,6 +305,16 @@ style and have not been backfilled.
   periodic settle and `Wallet.settle` alike, so a rotation that changed the
   delay can no longer leave a coin that settle skips and the sweep ignores, or
   the reverse.
+- **Electrum `getCoins` now reports each coin's `block_time`.**
+  `ElectrumOnchainProvider.getCoins` returned `confirmed` and `block_height`
+  but no `block_time`, and the boarding expiry check reads a coin without one
+  as not expired. With an Electrum provider no boarding UTXO was therefore ever
+  swept, whatever its timelock: a seconds-typed delay (mainnet's) cannot be
+  judged without a time, and the check bails before it looks at heights. It now
+  looks up the block header of each distinct confirmed height, the same lookup
+  the transaction history uses. A header the indexer cannot serve yet leaves
+  the coin without a time, so it reads as unexpired until the next poll rather
+  than failing the listing.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status

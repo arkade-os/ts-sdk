@@ -178,46 +178,85 @@ describe("ElectrumOnchainProvider", () => {
     });
 
     describe("getCoins", () => {
-        it("maps listunspent results to Coin shape", async () => {
-            wsMock.request.mockResolvedValueOnce([
-                {
-                    tx_hash: "abcd1234",
-                    tx_pos: 0,
-                    value: 100_000,
-                    height: 500,
-                },
-                {
-                    tx_hash: "ef567890",
-                    tx_pos: 1,
-                    value: 50_000,
-                    height: 0, // mempool
-                },
-            ]);
+        it("maps listunspent results to Coin shape, with the block time of confirmed ones", async () => {
+            wsMock.request
+                .mockResolvedValueOnce([
+                    {
+                        tx_hash: "abcd1234",
+                        tx_pos: 0,
+                        value: 100_000,
+                        height: 500,
+                    },
+                    {
+                        tx_hash: "ef567890",
+                        tx_pos: 1,
+                        value: 50_000,
+                        height: 0, // mempool
+                    },
+                ])
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX);
 
             const coins = await provider.getCoins(REGTEST_ADDRESS);
 
-            expect(wsMock.request).toHaveBeenCalledTimes(1);
+            // One listunspent, then one header: the mempool coin has no block to look up.
+            expect(wsMock.request).toHaveBeenCalledTimes(2);
             expect(wsMock.request.mock.calls[0][0]).toBe("blockchain.scripthash.listunspent");
+            expect(wsMock.request.mock.calls[1]).toEqual(["blockchain.block.header", 500]);
             expect(coins).toEqual([
                 {
                     txid: "abcd1234",
                     vout: 0,
                     value: 100_000,
-                    status: { confirmed: true, block_height: 500 },
+                    status: {
+                        confirmed: true,
+                        block_height: 500,
+                        block_time: GENESIS_BLOCK_TIME,
+                    },
                 },
                 {
                     txid: "ef567890",
                     vout: 1,
                     value: 50_000,
-                    status: { confirmed: false, block_height: undefined },
+                    status: { confirmed: false, block_height: undefined, block_time: undefined },
                 },
             ]);
+        });
+
+        it("looks up each block's header once for coins that share it", async () => {
+            wsMock.request
+                .mockResolvedValueOnce([
+                    { tx_hash: "aa", tx_pos: 1, value: 1, height: 500 },
+                    { tx_hash: "aa", tx_pos: 2, value: 2, height: 500 },
+                ])
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX);
+
+            const coins = await provider.getCoins(REGTEST_ADDRESS);
+
+            expect(wsMock.request).toHaveBeenCalledTimes(2);
+            expect(coins.map((c) => c.status.block_time)).toEqual([
+                GENESIS_BLOCK_TIME,
+                GENESIS_BLOCK_TIME,
+            ]);
+        });
+
+        it("still lists a coin whose block header is not indexed yet, without a block time", async () => {
+            wsMock.request
+                .mockResolvedValueOnce([{ tx_hash: "aa", tx_pos: 0, value: 1, height: 500 }])
+                .mockRejectedValueOnce(new Error("missingheight"))
+                .mockRejectedValueOnce(new Error("missingheight"));
+
+            const coins = await provider.getCoins(REGTEST_ADDRESS);
+
+            expect(coins).toHaveLength(1);
+            expect(coins[0].status.confirmed).toBe(true);
+            expect(coins[0].status.block_time).toBeUndefined();
         });
 
         it("returns empty array when no unspents", async () => {
             wsMock.request.mockResolvedValueOnce([]);
             const coins = await provider.getCoins(REGTEST_ADDRESS);
             expect(coins).toEqual([]);
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
     });
 
