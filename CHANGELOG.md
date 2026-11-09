@@ -358,6 +358,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **The automatic cosign sweep takes boarding coins only.** `needsOnchainSweep`
+  selected coins by scope, so any contract registered with `scope: "onchain"`
+  or `"both"` had its onchain coins swept into the wallet's boarding address
+  near CSV maturity, and settled into Arkade by a later poll. It now takes only
+  `boarding` contracts and the `default` row an equal-delay boarding script
+  coalesced onto. Onchain sync and balances still cover every onchain-scoped
+  contract.
+
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
