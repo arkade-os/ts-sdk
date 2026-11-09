@@ -1693,9 +1693,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             spentStatus: Promise<{ spent: boolean; txid?: string } | undefined>;
         }[] = [];
         for (const { boardingAddress, scriptHex, txs } of histories) {
-            // Fallback spender (commitment) txid from this address history's vins: some Esplora
-            // deployments (e.g. mempool.arkade.sh) return `/outspends` `{spent:true}` WITHOUT the
-            // txid, which would double-count the resulting VTXO as a phantom receive.
+            // Spender (commitment) txid from this address history's vins. It is the primary
+            // source: the explorer is asked only for outputs no listed tx spends. It is also
+            // what recovers the spender where `/outspends` answers `{spent:true}` WITHOUT the
+            // txid (e.g. mempool.arkade.sh), which would double-count the resulting VTXO as a
+            // phantom receive.
             const commitmentByOutpoint = new Map<string, string>();
             for (const tx of txs) {
                 for (const input of tx.vin ?? []) {
@@ -1707,6 +1709,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 for (let i = 0; i < tx.vout.length; i++) {
                     const vout = tx.vout[i];
                     if (vout.scriptpubkey_address !== boardingAddress) continue;
+                    const commitmentFromVin = commitmentByOutpoint.get(`${tx.txid}:${i}`);
                     outputs.push({
                         txid: tx.txid,
                         vout: i,
@@ -1714,8 +1717,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         confirmed: tx.status.confirmed,
                         blockTime: tx.status.block_time,
                         scriptHex,
-                        commitmentFromVin: commitmentByOutpoint.get(`${tx.txid}:${i}`),
-                        spentStatus: outspendOf(tx.txid, i),
+                        commitmentFromVin,
+                        // The address history already names the spender; the explorer would
+                        // repeat it.
+                        spentStatus: commitmentFromVin
+                            ? Promise.resolve(undefined)
+                            : outspendOf(tx.txid, i),
                     });
                 }
             }
@@ -1726,8 +1733,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const spentResult = spentResults[i];
             if (spentResult.status === "rejected") throw spentResult.reason;
             const spentStatus = spentResult.value;
-            // `||` (not `??`) so the electrum provider's `txid: ""` sentinel for
-            // unspent outputs falls through to the vin lookup.
+            // `||` (not `??`): the request runs only when the vin lookup found nothing, and
+            // `||` turns the electrum provider's `txid: ""` sentinel for an unspent output into
+            // `undefined`. With `??` every unspent electrum output would count as spent.
             const commitmentTxid = spentStatus?.txid || output.commitmentFromVin;
             const spent = Boolean(spentStatus?.spent) || commitmentTxid !== undefined;
 
