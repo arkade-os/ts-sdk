@@ -220,6 +220,48 @@ export function hasBoardingTxExpired(
 }
 
 /**
+ * The CSV exit path of the boarding address a coin sits on, decoded from the coin's own
+ * `tapTree`. Its timelock can differ from the wallet's current boarding delay (a signer rotation
+ * may change it), so expiry and the sweep must read it from the coin, not from the wallet.
+ *
+ * @returns `undefined` when the tree is undecodable or has no CSV leaf.
+ */
+export function decodeBoardingExit(
+    coin: ExtendedCoin,
+): { script: VtxoScript; leaf: TapLeafScript; timelock: RelativeTimelock } | undefined {
+    try {
+        const script = VtxoScript.decode(coin.tapTree);
+        for (const leaf of script.leaves) {
+            const tapscript = scriptFromTapLeafScript(leaf);
+            if (CSVMultisigTapscript.isScriptValid(tapscript) === true) {
+                const { timelock } = CSVMultisigTapscript.decode(tapscript).params;
+                return { script, leaf, timelock };
+            }
+        }
+    } catch {}
+    return undefined;
+}
+
+/**
+ * The coins whose own boarding timelock has elapsed, so they can no longer be settled and leave
+ * through the unilateral exit. A coin with no decodable CSV leaf is never expired. The chain tip
+ * is fetched at most once, and only if some coin has a block-based timelock.
+ */
+export async function filterExpiredBoardingCoins(
+    coins: ExtendedCoin[],
+    getChainTipHeight: () => Promise<number>,
+): Promise<ExtendedCoin[]> {
+    const timelocks = coins.map((coin) => decodeBoardingExit(coin)?.timelock);
+    const chainTipHeight = timelocks.some((t) => t?.type === "blocks")
+        ? await getChainTipHeight()
+        : undefined;
+    return coins.filter((coin, i) => {
+        const timelock = timelocks[i];
+        return timelock !== undefined && hasBoardingTxExpired(coin, timelock, chainTipHeight);
+    });
+}
+
+/**
  * Verify tapscript signatures on a transaction input
  * @param tx Transaction to verify
  * @param inputIndex Index of the input to verify

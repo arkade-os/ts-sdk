@@ -926,6 +926,7 @@ function createPollableWallet() {
             exitScript: boardingExitScript,
             pkScript: new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]),
             exit: vi.fn(),
+            options: { serverPubKey: hex.decode(ACTIVE) },
         },
         onchainProvider: {
             getFeeRate: vi.fn().mockResolvedValue(1),
@@ -1050,6 +1051,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
             exitScript: boardingExitScript,
             pkScript: new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]),
             exit: vi.fn(),
+            options: { serverPubKey: hex.decode(ACTIVE) },
         },
         onchainProvider: {
             getFeeRate: vi.fn().mockResolvedValue(1),

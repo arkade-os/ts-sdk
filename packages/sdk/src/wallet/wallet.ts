@@ -99,7 +99,7 @@ import {
     assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
-    hasBoardingTxExpired,
+    filterExpiredBoardingCoins,
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
@@ -557,6 +557,18 @@ export async function spendableVtxosExcludingLocked<T extends { txid: string; vo
         return vtxos;
     }
     return excludeLockedOutpoints(vtxos, locked);
+}
+
+/** Drops coins an in-flight settle is spending or an unresolved intent locks. */
+function excludeUnselectable(
+    coins: ExtendedCoin[],
+    pending: ReadonlySet<string>,
+    locked: ReadonlySet<string>,
+): ExtendedCoin[] {
+    return coins.filter((coin) => {
+        const key = `${coin.txid}:${coin.vout}`;
+        return !pending.has(key) && !locked.has(key);
+    });
 }
 
 /**
@@ -1908,10 +1920,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getBoardingUtxos(),
             this.lockedOutpoints(),
         ]);
-        return utxos.filter((coin) => {
-            const key = `${coin.txid}:${coin.vout}`;
-            return !this._pendingSpendOutpoints.has(key) && !locked.has(key);
-        });
+        return excludeUnselectable(utxos, this._pendingSpendOutpoints, locked);
+    }
+
+    /**
+     * @internal {@link getSelectableBoardingUtxos} for every boarding address history shows,
+     * current and deprecated signers, grouped by signer. Only the boarding sweep reads it: a
+     * unilateral exit needs no operator, so it recovers coins that `settle` must not take.
+     */
+    async getSelectableBoardingUtxoGroups(): Promise<BoardingUtxoGroup[]> {
+        const [groups, locked] = await Promise.all([
+            this.getBoardingUtxosForSigners(this.watchedBoardingSigners()),
+            this.lockedOutpoints(),
+        ]);
+        // A superset of what `getBoardingUtxos` fetches, so the balance flag stays accurate.
+        this.boardingLoaded = true;
+        return groups.map((group) => ({
+            ...group,
+            coins: excludeUnselectable(group.coins, this._pendingSpendOutpoints, locked),
+        }));
     }
 
     async getStoredBoardingUtxos(): Promise<ExtendedCoin[]> {
@@ -3755,24 +3782,16 @@ export class Wallet
 
             let amount = 0;
 
-            const exitScript = CSVMultisigTapscript.decode(
-                hex.decode(this.boardingTapscript.exitScript),
+            const confirmedBoarding = (await this.getSelectableBoardingUtxos()).filter(
+                (utxo) => utxo.status.confirmed,
             );
-
-            const boardingTimelock = exitScript.params.timelock;
-
-            // For block-based timelocks, fetch the chain tip height
-            let chainTipHeight: number | undefined;
-            if (boardingTimelock.type === "blocks") {
-                const tip = await this.onchainProvider.getChainTip();
-                chainTipHeight = tip.height;
-            }
-
-            const boardingUtxos = (await this.getSelectableBoardingUtxos()).filter(
-                (utxo) =>
-                    utxo.status.confirmed &&
-                    !hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
+            const expiredBoarding = new Set(
+                await filterExpiredBoardingCoins(
+                    confirmedBoarding,
+                    async () => (await this.onchainProvider.getChainTip()).height,
+                ),
             );
+            const boardingUtxos = confirmedBoarding.filter((utxo) => !expiredBoarding.has(utxo));
 
             const filteredBoardingUtxos = [];
             for (const utxo of boardingUtxos) {

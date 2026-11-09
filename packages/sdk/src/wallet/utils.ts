@@ -7,6 +7,7 @@ import {
     type VirtualCoin,
 } from "..";
 import type { Contract } from "../contracts/types";
+import type { BoardingUtxoGroup } from "./wallet";
 import { isTapscriptDeriving } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
@@ -214,6 +215,22 @@ export function getSelectableBoardingUtxos(
     const selectable = (wallet as { getSelectableBoardingUtxos?: () => Promise<ExtendedCoin[]> })
         .getSelectableBoardingUtxos;
     return typeof selectable === "function" ? selectable.call(wallet) : wallet.getBoardingUtxos();
+}
+
+/**
+ * Boarding UTXOs an SDK sweep may take, grouped by the server key of their address. A `Wallet`
+ * answers across current and deprecated signers; any other `IWallet` falls back to
+ * {@link getSelectableBoardingUtxos} under `currentSigner`.
+ */
+export async function getSelectableBoardingUtxoGroups(
+    wallet: Pick<IWallet, "getBoardingUtxos">,
+    currentSigner: string,
+): Promise<Pick<BoardingUtxoGroup, "serverPubKey" | "coins">[]> {
+    const groups = (
+        wallet as { getSelectableBoardingUtxoGroups?: () => Promise<BoardingUtxoGroup[]> }
+    ).getSelectableBoardingUtxoGroups;
+    if (typeof groups === "function") return groups.call(wallet);
+    return [{ serverPubKey: currentSigner, coins: await getSelectableBoardingUtxos(wallet) }];
 }
 
 type ValidatedRecipient = Required<Omit<Recipient, "extensions" | "tapTree">> & {

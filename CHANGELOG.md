@@ -288,6 +288,20 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Expired boarding UTXOs held under a deprecated signer are now swept.**
+  After the operator rotated its signer, deposits made to a boarding address on
+  the old key showed in history but were never recovered: the sweep fetched
+  boarding coins for the current signer only, found nothing, and its "no
+  expired boarding UTXOs" result is silenced by the poll loop, so they sat
+  unswept with no error. A boarding exit leaf is the user's key plus a CSV, so
+  a unilateral sweep needs no operator and works for any signer. The poll now
+  fetches every address history shows (current and deprecated signers) once,
+  sweeps all of it, and still settles only current-signer coins, which the
+  server would reject otherwise. Expiry is now read from each coin's own CSV
+  exit leaf rather than the wallet's current boarding delay, in the sweep, the
+  periodic settle and `Wallet.settle` alike, so a rotation that changed the
+  delay can no longer leave a coin that settle skips and the sweep ignores, or
+  the reverse.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status

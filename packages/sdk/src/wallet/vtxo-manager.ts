@@ -28,14 +28,18 @@ import {
     classifyAgainstSignerSet,
     isCooperativelyMigratable,
     signerSetFromInfo,
+    toXOnlySignerHex,
     type SignerClassification,
     type SignerSet,
     type SignerStatus,
 } from "./signerRotation";
-import { hasBoardingTxExpired } from "../utils/arkTransaction";
-import { CSVMultisigTapscript } from "../script/tapscript";
+import {
+    decodeBoardingExit,
+    filterExpiredBoardingCoins,
+    hasBoardingTxExpired,
+} from "../utils/arkTransaction";
 import { hex } from "@scure/base";
-import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
+import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Estimator } from "../arkfee";
@@ -43,7 +47,7 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
+import { getDustAmount, getSelectableBoardingUtxoGroups, markSdkPicked } from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -996,8 +1000,18 @@ export interface IVtxoManager {
         options?: RenewVtxosOptions,
     ): Promise<string>;
 
+    /**
+     * Boarding inputs whose own timelock has elapsed, at every boarding address the wallet shows,
+     * including those under a deprecated signer.
+     */
     getExpiredBoardingUtxos(): Promise<ExtendedCoin[]>;
 
+    /**
+     * Sweep the expired boarding inputs from {@link getExpiredBoardingUtxos} back to the current
+     * boarding address via the unilateral exit path, which needs no operator.
+     *
+     * @returns The broadcast transaction ID
+     */
     sweepExpiredBoardingUtxos(): Promise<string>;
 
     /**
@@ -1815,6 +1829,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Get boarding inputs whose timelock has expired: they can no longer be onboarded via
      * `settle()` and must be swept back to a fresh boarding address via the unilateral exit path.
+     * Covers every boarding address the wallet shows, including those under a deprecated signer,
+     * and judges each input by the timelock of its own address.
      *
      * @returns Array of expired boarding inputs
      *
@@ -1828,25 +1844,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```
      */
     async getExpiredBoardingUtxos(prefetchedUtxos?: ExtendedCoin[]): Promise<ExtendedCoin[]> {
-        const boardingUtxos = prefetchedUtxos ?? (await this.wallet.getBoardingUtxos());
-        const boardingTimelock = this.getBoardingTimelock();
-
-        let chainTipHeight: number | undefined;
-        if (boardingTimelock.type === "blocks") {
-            const tip = await this.getOnchainProvider().getChainTip();
-            chainTipHeight = tip.height;
-        }
-
-        return boardingUtxos.filter((utxo) =>
-            hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
-        );
+        const boardingUtxos =
+            prefetchedUtxos ??
+            (await getSelectableBoardingUtxoGroups(this.wallet, this.getCurrentSigner())).flatMap(
+                (g) => g.coins,
+            );
+        return this.filterExpired(boardingUtxos);
     }
 
     /**
      * Sweep expired boarding inputs back to a fresh boarding address via the unilateral exit path:
      * one pure onchain tx (no Arkade server) spending every expired input via the CSV exit script
      * into a single boarding-address output, which restarts the timelock. Skipped if the output
-     * after fees would be below dust.
+     * after fees would be below dust. Covers boarding inputs under a deprecated signer too: the
+     * exit leaf is the user's key plus a CSV, so it never needs the operator.
      *
      * @returns The broadcast transaction ID
      * @throws Error if no expired boarding inputs are found
@@ -1894,19 +1905,26 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
 
-        // Representative leaf, for size estimation only: every boarding exit leaf shares one
-        // template (Alice + CSV). The per-UTXO leaf is resolved in the input loop below.
-        const exitTapLeafScript = this.getSweepWallet().boardingTapscript.exit();
+        // Each coin spends through the exit leaf of the boarding address it sits on: rotation and
+        // signer changes leave coins at addresses whose leaf differs from the current one.
+        const inputs = expiredUtxos.map((utxo) => {
+            const exit = decodeBoardingExit(utxo);
+            if (!exit) {
+                throw new Error(
+                    `Boarding sweep: no CSV exit leaf for UTXO ${utxo.txid}:${utxo.vout}`,
+                );
+            }
+            return { utxo, ...exit };
+        });
 
-        // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
-        const leafScript = exitTapLeafScript[1];
-        const leafScriptSize = leafScript.length - 1; // minus version byte
-        const controlBlockSize = exitTapLeafScript[0].merklePath.length * 32;
         // Exit path witness: 1 Schnorr signature (64 bytes)
         const leafWitnessSize = 64;
 
         const estimator = TxWeightEstimator.create();
-        for (const _ of expiredUtxos) {
+        for (const { leaf } of inputs) {
+            // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
+            const leafScriptSize = leaf[1].length - 1; // minus version byte
+            const controlBlockSize = leaf[0].merklePath.length * 32;
             estimator.addTapscriptInput(leafWitnessSize, leafScriptSize, controlBlockSize);
         }
         estimator.addOutputAddress(boardingAddress, this.getNetwork());
@@ -1924,28 +1942,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const tx = new Transaction();
 
-        for (const utxo of expiredUtxos) {
-            // Use the tapTree of the boarding address THIS UTXO sits on: per-derivation rotation
-            // can leave unspent UTXOs at previous boarding addresses.
-            const utxoScript = VtxoScript.decode(utxo.tapTree);
-            const utxoExitLeaf = utxoScript.leaves.find(
-                (leaf) =>
-                    CSVMultisigTapscript.isScriptValid(scriptFromTapLeafScript(leaf)) === true,
-            );
-            if (!utxoExitLeaf) {
-                throw new Error(
-                    `Boarding sweep: no CSV exit leaf for UTXO ${utxo.txid}:${utxo.vout}`,
-                );
-            }
+        for (const { utxo, script, leaf } of inputs) {
             tx.addInput({
                 txid: utxo.txid,
                 index: utxo.vout,
                 witnessUtxo: {
-                    script: utxoScript.pkScript,
+                    script: script.pkScript,
                     amount: BigInt(utxo.value),
                 },
-                tapLeafScript: [utxoExitLeaf],
-                sequence: getSequence(utxoExitLeaf),
+                tapLeafScript: [leaf],
+                sequence: getSequence(leaf),
             });
         }
 
@@ -2571,12 +2577,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.wallet;
     }
 
-    private getBoardingTimelock() {
-        const wallet = this.getSweepWallet();
-        const exitScript = CSVMultisigTapscript.decode(
-            hex.decode(wallet.boardingTapscript.exitScript),
+    /** The signer `settle` can cooperate with: the one the wallet's boarding address is built on. */
+    private getCurrentSigner(): string {
+        return toXOnlySignerHex(
+            hex.encode(this.getSweepWallet().boardingTapscript.options.serverPubKey),
         );
-        return exitScript.params.timelock;
+    }
+
+    private filterExpired(coins: ExtendedCoin[]): Promise<ExtendedCoin[]> {
+        return filterExpiredBoardingCoins(
+            coins,
+            async () => (await this.getOnchainProvider().getChainTip()).height,
+        );
     }
 
     private getOnchainProvider() {
@@ -2798,11 +2810,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // and N-1 collide on the server's duplicated-input check.
             await runWithCrossInstanceLock(BOARDING_POLL_LOCK_NAME, async () => {
                 // Both passes pick from it, so neither takes an input an in-flight settle holds.
-                const boardingUtxos = await getSelectableBoardingUtxos(this.wallet);
+                const currentSigner = this.getCurrentSigner();
+                const groups = await getSelectableBoardingUtxoGroups(this.wallet, currentSigner);
+                // The server rejects an input under a deprecated signer, so only the sweep takes
+                // those: a unilateral exit works for any signer.
+                const settleable = groups
+                    .filter((g) => g.serverPubKey === currentSigner)
+                    .flatMap((g) => g.coins);
+                const boardingUtxos = groups.flatMap((g) => g.coins);
 
                 // Settle, then sweep: sequential to avoid racing for the same inputs.
                 try {
-                    await this.runPeriodicSettle(boardingUtxos);
+                    await this.runPeriodicSettle(settleable);
                 } catch (e) {
                     hadError = true;
                     console.error("Error during periodic settle:", e);
@@ -2868,29 +2887,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * VTXOs while the event-driven renewal runs, to avoid double-spending.
      */
     private async runPeriodicSettle(boardingUtxos: ExtendedCoin[]): Promise<void> {
-        // If expiry can't be determined, bail entirely rather than settle an input sweep also
-        // targets.
-        let expiredSet: Set<string>;
-        try {
-            const boardingTimelock = this.getBoardingTimelock();
-            let chainTipHeight: number | undefined;
-            if (boardingTimelock.type === "blocks") {
-                const tip = await this.getOnchainProvider().getChainTip();
-                chainTipHeight = tip.height;
-            }
-            const expired = boardingUtxos.filter((utxo) =>
-                hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
-            );
-            expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
-        } catch (e) {
-            throw e instanceof Error ? e : new Error(String(e));
-        }
+        // If expiry can't be determined, this throws and nothing settles, rather than settling an
+        // input the sweep also targets.
+        const expiredSet = new Set(await this.filterExpired(boardingUtxos));
 
         const unsettledBoarding = boardingUtxos.filter(
             (u) =>
                 u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
-                !expiredSet.has(`${u.txid}:${u.vout}`),
+                !expiredSet.has(u),
         );
 
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
