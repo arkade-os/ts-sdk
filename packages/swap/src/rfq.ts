@@ -25,6 +25,7 @@
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
  */
 import { hex } from "@scure/base";
+import { SolverResponseInvalid } from "./transportErrors";
 import { isAmount } from "@arkade-os/solver-discovery";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import {
@@ -722,10 +723,10 @@ export const expectQuote = (payload: unknown, rfqId: string, requestedPair?: str
         });
     }
     if (p?.type !== "rfq_quote" || p.rfq_id !== rfqId) {
-        throw new Error(`unexpected reply: ${p?.type ?? "no payload"}`);
+        throw new SolverResponseInvalid(`unexpected reply: ${p?.type ?? "no payload"}`);
     }
     if (requestedPair !== undefined && p.pair !== requestedPair) {
-        throw new Error(
+        throw new SolverResponseInvalid(
             `solver quoted ${JSON.stringify(p.pair)}, not the requested ${requestedPair}`,
         );
     }

@@ -82,6 +82,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **Swap clients can prioritize solvers and fail over before acceptance.** Optional per-direction routing supports saved priority, successful usage and amount-aware advertised cost. Quote preparation tries another eligible solver after a candidate-local failure, preserves cancellation and closes its transports on disposal; accepted quotes, uncertain funding and recovery retain their original solver. Existing explicit selection and single-solver defaults remain compatible.
+
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.

@@ -17,6 +17,7 @@ import {
     type DiscoveredMarket,
     type OfferPlan,
     type Side,
+    type QuoteOfferOptions,
 } from "@arkade-os/solver-discovery";
 import { QUOTE_OPTIONS, makeCachedFeedFetch } from "../markets";
 import { ASSET_CARRIER_SATS } from "../offer";
@@ -29,6 +30,8 @@ import type { CardMarketRef, Quote, QuoteId, ResolvedEndpoint } from "./quote";
 import { assembleRoute } from "./resolve";
 import type { PinnedAmount } from "./quote";
 import { verifyQuoteTtl } from "./verify";
+import { SolverUnavailable } from "../transportErrors";
+import { SwapRefusal } from "../rfq";
 
 /** How long a feed value is reused, and so how long a quote priced from it lives — one number, so a
  * quote cannot outlive the value it quoted. */
@@ -76,6 +79,22 @@ export interface FeedQuoteInput {
     readonly now: number;
 }
 
+export const quoteAdvertisedPlan = (
+    card: DiscoveredMarket,
+    options: QuoteOfferOptions,
+    policy?: SwapPolicy,
+): Promise<OfferPlan> =>
+    quoteOffer(card, options).catch((cause: unknown) => {
+        const cancelled =
+            options.signal?.aborted ||
+            (cause !== null &&
+                typeof cause === "object" &&
+                "name" in cause &&
+                cause.name === "AbortError");
+        if (policy?.solverRouting === undefined || cancelled) throw cause;
+        throw new SolverUnavailable("The solver's advertised price is unavailable", { cause });
+    });
+
 export const quoteFromFeed = async (
     input: FeedQuoteInput,
 ): Promise<{ quote: Quote; preparation: OfferPreparation }> => {
@@ -85,15 +104,22 @@ export const quoteFromFeed = async (
         throw new Error("an asset swap needs an amount and the side it pins");
     }
 
-    const plan = await quoteOffer(candidate.card, {
-        give: candidate.give,
-        ...(amount.on === "give" ? { giveAmount: amount.value } : { wantAmount: amount.value }),
-        // What `fund` attaches to an asset deposit and the fill pays an asset want: the plan asks
-        // for it back in a BTC payout, and charges it where the card declares a delivered carrier.
-        carrierSats: ASSET_CARRIER_SATS,
-        ...QUOTE_OPTIONS,
-        fetchImpl: input.feed.fetch,
-    });
+    const plan = await quoteAdvertisedPlan(
+        candidate.card,
+        {
+            give: candidate.give,
+            ...(amount.on === "give" ? { giveAmount: amount.value } : { wantAmount: amount.value }),
+            // What `fund` attaches to an asset deposit and the fill pays an asset want: the plan asks
+            // for it back in a BTC payout, and charges it where the card declares a delivered carrier.
+            carrierSats: ASSET_CARRIER_SATS,
+            ...QUOTE_OPTIONS,
+            fetchImpl: input.feed.fetch,
+        },
+        input.policy,
+    );
+    if (input.policy?.solverRouting !== undefined && !plan.limits.withinLimits) {
+        throw new SwapRefusal("amount_out_of_range");
+    }
 
     // the pair check `expectQuote` does over the RFQ string, via the plan's only identity: its two
     // asset ids — a quote for another market is not this market's quote

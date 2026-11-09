@@ -7,6 +7,7 @@
 import type { MarketCandidate } from "./market";
 import type { RankedBid } from "./quote";
 import type { FeeCeiling } from "./verbs";
+import type { SolverRoutingPolicy } from "./solverRouting";
 
 /**
  * A published-RFQ auction's parameters (§10, Q9).
@@ -45,6 +46,9 @@ export type DriveMode =
 export const DEFAULT_MAX_REFUND_WINDOW_SECONDS = 30 * 24 * 3600;
 
 export interface SwapPolicy {
+    /** Opt in to direction-specific ordering and quote-only failover. Explicit selectMarket stays pinned. */
+    readonly solverRouting?: SolverRoutingPolicy;
+
     /** How much the client drives on its own. Default `"auto"`. */
     readonly drive?: DriveMode;
 

@@ -15,6 +15,52 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
+## Solver priority and failover
+
+Opt in with `policy: { solverRouting: {} }` to try the next eligible solver when quote preparation
+fails with a solver-local refusal, unavailable transport/price, expired quote or verification error.
+Wallet errors, invalid input, missing dependencies and disposal stop the operation. Each attempt
+closes its transport; an accepted quote, funding submission and recovery never switch solvers.
+Without this option the existing single-selection behavior remains. `selectMarket` always pins or
+vetoes a candidate, including when failover is enabled.
+
+```ts
+import { completedSolverUsage, createSwapClient } from "@arkade-os/swap";
+
+const client = createSwapClient({
+    wallet,
+    repository,
+    policy: {
+        solverRouting: {
+            preferences: async ({ network, direction }) => ({
+                mode: "usage", // "manual" | "usage" | "cost"
+                priority: savedPriorities[direction] ?? [],
+                usage: completedSolverUsage(await client.swaps(), network, direction),
+            }),
+        },
+    },
+});
+const candidates = await client.candidates({ to: invoice });
+const quote = await client.quote({ to: invoice });
+await client.accept(quote);
+```
+
+Persist preferences in your application's storage. Usage counts unique successful swap IDs, not
+quote attempts. `candidates()` enumerates eligible markets without negotiating RFQs. Signed solver
+preference IDs include network, source, name and the claimed discovery key; quote responder checks
+remain independent. Direction keys keep reversed routes separate.
+
+Cost mode orders advertised estimates at the requested amount: most received for exact give,
+least deposited for exact take. Estimates include directional flat fees, feed prices and carrier
+charges; unavailable estimates follow comparable ones. This does not query every RFQ solver or
+guarantee the cheapest final quote. Existing fee ceilings and confirmation checks still apply;
+final fee-ceiling rejection does not retry acceptance. Low-level `/protocol` requests remain
+single-solver primitives; use this client for shared routing behavior.
+
+Custom transports should throw `SolverUnavailable` for retryable connection failures or timeouts.
+Exhaustion across multiple solvers throws `SolverRoutesUnavailable` with each attempt's solver
+identity and error. Neither error authorizes retrying acceptance after funding began.
+
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
