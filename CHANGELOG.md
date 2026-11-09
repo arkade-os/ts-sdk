@@ -358,6 +358,13 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Explorer transaction output values are numeric satoshis across providers.**
+  `ExplorerTransaction.vout.value` was typed as a string even though Esplora
+  REST responses and the WebSocket validator use numbers. The type and Electrum
+  adapter now match that contract; Bitcoin's full satoshi supply fits exactly
+  in a JavaScript number. Custom providers must return numbers rather than
+  strings, and Electrum consumers no longer receive string amounts.
+
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
