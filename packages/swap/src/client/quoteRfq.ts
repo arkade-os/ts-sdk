@@ -464,7 +464,8 @@ const quoteArkadeAsset = async (
     // The solver's own carrier, parsed before anything is derived; a card that charges for it
     // prices the reference below with it.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
-    // Before deriving: a failed feed or a mismatched pair refuses with no covenant built.
+    // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
+    // solver before any covenant is derived or accepted. This asset path sends no invoice.
     const reference = await quoteAdvertisedPlan(
         input.candidate.card,
         {

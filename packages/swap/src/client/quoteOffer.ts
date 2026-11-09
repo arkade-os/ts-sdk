@@ -117,6 +117,7 @@ export const quoteFromFeed = async (
         },
         input.policy,
     );
+    // Opt-in routing enforces the give-side ceiling; legacy selection keeps market.ts's sharp edge.
     if (input.policy?.solverRouting !== undefined && !plan.limits.withinLimits) {
         throw new SwapRefusal("amount_out_of_range");
     }

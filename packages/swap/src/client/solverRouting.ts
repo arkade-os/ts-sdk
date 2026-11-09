@@ -53,6 +53,7 @@ export const orderedSolverCandidates = async (
         direction: solverDirectionKey(candidate.card, candidate.give, network),
     }));
     if (candidates.length === 0) return [];
+    // Candidates match the trader's ordered give/take legs, including reversed cards.
     const preferences = await policy?.solverRouting?.preferences?.({
         network,
         direction: candidates[0].direction,
@@ -73,6 +74,7 @@ export const orderedSolverCandidates = async (
 };
 
 export const canFailoverQuote = (error: unknown): boolean => {
+    // A responder failure discards one candidate; the next must verify its own responder.
     if (
         error instanceof SolverUnavailable ||
         error instanceof QuoteExpired ||
@@ -120,6 +122,8 @@ export const completedSolverUsage = (
             swap.market.kind !== "card"
         )
             continue;
+        // Resolved routes persist canonical CAIP-19 IDs; solverDirectionKey canonicalizes
+        // legacy card legs to those same IDs before preferences are read.
         if (JSON.stringify([network, swap.route.give.asset, swap.route.take.asset]) !== direction)
             continue;
         seen.add(swap.id);
