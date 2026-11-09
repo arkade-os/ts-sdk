@@ -630,6 +630,8 @@ export interface ArkadeCashUnclaimedVtxo extends ArkadeCashVtxoRef {
  * non-sweepable states become claimable.
  */
 export interface ArkadeCashClaimResult {
+    /** The Arkade transaction ids registered by successful sweeps. */
+    claimTxIds?: string[];
     /** Satoshis swept to this wallet instantly (the thin single-key sweep). */
     swept: number;
     /**
@@ -4922,7 +4924,7 @@ export class Wallet
         const myPkScript = ArkAddress.decode(await this.getAddress()).pkScript;
         let { spendable, recoverable, unclaimed } = this.classifyCashVtxos(vtxos);
         let swept = 0;
-
+        const claimTxIds: string[] = [];
         // Drain a previously registered but unfinalized sweep, keyed to the cash key so
         // finalizePendingTxs can't reach it. Not gated on `spendable`: a registered sweep marks
         // its input `already-spent`. Subdust is excluded (the proof's P2TR pkScript would be a lie
@@ -4931,7 +4933,12 @@ export class Wallet
             (vtxo) => !isSubdust(vtxo, this.dustAmount) && !vtxo.isUnrolled,
         );
         if (drainable.length > 0) {
-            let drained = { count: 0, swept: 0, claimed: new Set<string>() };
+            let drained = {
+                count: 0,
+                swept: 0,
+                claimed: new Set<string>(),
+                claimTxIds: [] as string[],
+            };
             try {
                 drained = await this.finalizePendingCashTxs(
                     cash,
@@ -4943,6 +4950,7 @@ export class Wallet
                 // Must not sink a claim that can still sweep; held VTXOs fail and are reported.
                 console.error("Failed to drain pending arkadeCash txs:", error);
             }
+            claimTxIds.push(...drained.claimTxIds);
             if (drained.count > 0) {
                 // Re-read, or we'd re-sweep an outpoint the drain just spent.
                 vtxos = await this.fetchAllVtxos(scripts);
@@ -4968,7 +4976,7 @@ export class Wallet
             // within the server's per-output ceiling.
             for (const vtxo of spendable) {
                 try {
-                    await signAndSubmitOffchainTx({
+                    const registeredTxid = await signAndSubmitOffchainTx({
                         identity: cash.identity,
                         provider: this.arkProvider,
                         inputs: [
@@ -4984,6 +4992,7 @@ export class Wallet
                         serverUnrollScript,
                         oneShot: this.oneShotSubmit,
                     });
+                    claimTxIds.push(registeredTxid);
                     swept += vtxo.value;
                 } catch (error) {
                     console.error(
@@ -5027,6 +5036,7 @@ export class Wallet
         }
 
         return {
+            claimTxIds,
             swept,
             recovering: {
                 amount: recovering.reduce((total, vtxo) => total + vtxo.value, 0),
@@ -5257,8 +5267,13 @@ export class Wallet
         vtxos: VirtualCoin[],
         cashScript: DefaultVtxo.Script,
         myPkScript: Bytes,
-    ): Promise<{ count: number; swept: number; claimed: Set<string> }> {
-        const result = { count: 0, swept: 0, claimed: new Set<string>() };
+    ): Promise<{ count: number; swept: number; claimed: Set<string>; claimTxIds: string[] }> {
+        const result = {
+            count: 0,
+            swept: 0,
+            claimed: new Set<string>(),
+            claimTxIds: [] as string[],
+        };
 
         const inputs = vtxos.map((vtxo) => ({
             ...vtxo,
@@ -5328,6 +5343,7 @@ export class Wallet
 
                 const paidToMe = this.arkTxAmountPaidTo(pendingTx.finalArkTx, myPkScriptHex);
                 if (paidToMe === 0) continue;
+                result.claimTxIds.push(pendingTx.arkTxid);
 
                 // The ark tx spends the checkpoints; the cash VTXOs are the checkpoints' inputs.
                 result.swept += paidToMe;

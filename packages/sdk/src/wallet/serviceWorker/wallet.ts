@@ -156,6 +156,8 @@ import {
     RequestGetStoredContractsWithVtxos,
     ResponseGetStoredContractsWithVtxos,
     DEFAULT_MESSAGE_TAG,
+    RequestArkadeCash,
+    ResponseArkadeCash,
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
@@ -297,6 +299,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    ARKADE_CASH: 50_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
     // kept for type completeness and is never enforced as an inactivity deadline.
     MIGRATE_DEPRECATED_SIGNER_VTXOS: 50_000,
@@ -587,6 +590,23 @@ const initializeMessageBus = (
 };
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
+    readonly arkadeCash = (
+        request: import("../../arkadeCash/messages").ArkadeCashRequest,
+    ): Promise<import("../../arkadeCash/messages").ArkadeCashResponse | undefined> =>
+        this.cashRequest(request);
+
+    private async cashRequest(
+        request: import("../../arkadeCash/messages").ArkadeCashRequest,
+    ): Promise<import("../../arkadeCash/messages").ArkadeCashResponse | undefined> {
+        const message: RequestArkadeCash = {
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "ARKADE_CASH",
+            payload: request,
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseArkadeCash).payload;
+    }
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;

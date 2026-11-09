@@ -84,6 +84,10 @@ import {
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
+import { ArkadeCash } from "../../arkadeCash";
+import { arkadeCashId } from "../../arkadeCash/tracker";
+import { readArkadeCash } from "../../arkadeCash/status";
+import { arkadeCashActivity, createArkadeCashTracker } from "../../arkadeCash/tracker";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -270,6 +274,15 @@ export type ResponseGetSpendableVtxos = ResponseEnvelope & {
 
 export type RequestGetBoardingUtxos = RequestEnvelope & {
     type: "GET_BOARDING_UTXOS";
+};
+
+export type RequestArkadeCash = RequestEnvelope & {
+    type: "ARKADE_CASH";
+    payload: import("../../arkadeCash/messages").ArkadeCashRequest;
+};
+export type ResponseArkadeCash = ResponseEnvelope & {
+    type: "ARKADE_CASH";
+    payload?: import("../../arkadeCash/messages").ArkadeCashResponse;
 };
 export type ResponseGetBoardingUtxos = ResponseEnvelope & {
     type: "BOARDING_UTXOS";
@@ -964,7 +977,8 @@ export type WalletUpdaterRequest =
     | RequestSweepExpiredBoardingUtxos
     | RequestMigrateDeprecatedSignerVtxos
     | RequestGetDeprecatedSignerStatus
-    | RequestRestoreWallet;
+    | RequestRestoreWallet
+    | RequestArkadeCash;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -1033,6 +1047,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseMigrateDeprecatedSignerVtxosEvent
         | ResponseGetDeprecatedSignerStatus
         | ResponseRestoreWallet
+        | ResponseArkadeCash
     );
 
 /**
@@ -1300,6 +1315,78 @@ export class WalletMessageHandler
                         type: "BOARDING_ADDRESS",
                         payload: { address },
                     });
+                }
+                case "ARKADE_CASH": {
+                    const request = message.payload;
+                    switch (request.action) {
+                        case "get": {
+                            const cash = ArkadeCash.fromString(request.token);
+                            const info = await this.readonlyWallet.getArkadeInfo();
+                            const exitDiff =
+                                this.readonlyWallet.offchainTapscript.options.csvTimelock;
+                            const currentThreshold =
+                                cash.csvTimelock.type === "blocks" && exitDiff.type === "blocks"
+                                    ? {
+                                          height: Math.max(
+                                              0,
+                                              Number(exitDiff.value - cash.csvTimelock.value),
+                                          ),
+                                      }
+                                    : { seconds: Number(info.unilateralExitDelay) };
+                            const report = await readArkadeCash(
+                                request.token,
+                                this.readonlyWallet.indexerProvider,
+                                info,
+                                this.readonlyWallet.onchainProvider,
+                                currentThreshold,
+                            );
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "get", cashId: arkadeCashId(cash), ...report },
+                            });
+                        }
+                        case "create": {
+                            const token = await this.requireWallet().createCash(request.amount);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "create", token },
+                            });
+                        }
+                        case "activities":
+                            const records = createArkadeCashTracker();
+                            request.records.forEach((record) =>
+                                records.records.set(record.id, record),
+                            );
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: {
+                                    action: "activities",
+                                    activities: await arkadeCashActivity(
+                                        records,
+                                        (await this.buildTransactionHistoryFromCache()) ?? [],
+                                    ),
+                                },
+                            });
+                        case "claim": {
+                            const result = await this.requireWallet().claimCash(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "claim", ...result },
+                            });
+                        }
+                        case "reveal": {
+                            const record = ArkadeCash.fromString(request.token);
+                            return this.tagged({
+                                id,
+                                type: "ARKADE_CASH",
+                                payload: { action: "reveal", cashId: arkadeCashId(record) },
+                            });
+                        }
+                    }
                 }
                 case "GET_ARKADE_INFO": {
                     const { payload } = message as RequestGetArkadeInfo;
