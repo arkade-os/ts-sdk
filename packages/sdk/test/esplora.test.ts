@@ -226,10 +226,7 @@ describe("EsploraProvider", () => {
                 1,
                 "http://localhost:3000/block-height/800000",
             );
-            expect(mockFetch).toHaveBeenNthCalledWith(
-                2,
-                "http://localhost:3000/block/block-hash",
-            );
+            expect(mockFetch).toHaveBeenNthCalledWith(2, "http://localhost:3000/block/block-hash");
         });
     });
 });

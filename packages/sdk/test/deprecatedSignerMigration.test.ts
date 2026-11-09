@@ -12,6 +12,7 @@ import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/ark";
 import type { Contract, ContractWithVtxos, ExtendedContractVtxo } from "../src/contracts/types";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { VtxoScript } from "../src/script/base";
 
 // Mock chain tip height returned by the wallet's onchainProvider.
 const TIP_HEIGHT = 1_000_000;
@@ -44,6 +45,12 @@ function makeBoardingGroup(
     coins: ExtendedCoin[],
     csvTimelock: RelativeTimelock = BOARDING_CSV_BLOCKS,
 ): BoardingUtxoGroup {
+    // Expiry is read from each coin's own exit leaf.
+    const tapTree = new VtxoScript([
+        CSVMultisigTapscript.encode({ timelock: csvTimelock, pubkeys: [hex.decode(serverPubKey)] })
+            .script,
+    ]).encode();
+    for (const coin of coins) coin.tapTree = tapTree;
     return {
         // The tapscript object is not read by the classifier (it works off
         // serverPubKey + csvTimelock), so a minimal stub suffices.

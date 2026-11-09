@@ -397,7 +397,14 @@ describe("Wallet boarding rotation", () => {
                 new Set([currentSigner, depSigner]),
             );
 
-            const depGroup = groups.find((g) => g.serverPubKey === depSigner);
+            const rowScript = new DefaultVtxo.Script({
+                pubKey: hex.decode(SINGLEKEY_HEX),
+                serverPubKey: hex.decode(FOREIGN_SERVER_PUBKEY_HEX),
+                csvTimelock: { type: "blocks", value: 288n },
+            });
+            const depGroup = groups.find(
+                (g) => hexEncode(g.tapscript.pkScript) === hexEncode(rowScript.pkScript),
+            );
             expect(depGroup).toBeDefined();
             // CSV decoded from THIS row's exit leaf — the per-row delay, not the
             // wallet's current 144.
@@ -472,7 +479,7 @@ describe("Wallet boarding rotation", () => {
 
             await wallet.getBoardingUtxosForSigners(new Set([currentSigner, depSigner]));
 
-            expect(getCoins).toHaveBeenCalledWith(address);
+            expect(getCoins).toHaveBeenCalledWith(baseline.onchainAddress(wallet.network));
             await wallet.dispose();
         });
     });

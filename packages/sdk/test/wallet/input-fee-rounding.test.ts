@@ -128,7 +128,7 @@ const boardingUtxo = (value: number): ExtendedCoin =>
         txid: `boarding-${value}`,
         vout: 0,
         value,
-        status: { confirmed: true },
+        status: { confirmed: true, block_height: 100, block_time: 1 },
         forfeitTapLeafScript: boardingTapscript.forfeit(),
         intentTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
@@ -151,7 +151,10 @@ describe("periodic settle boarding fee rounding", () => {
             boardingTapscript,
             network: {},
             signOnchainBoardingTx: vi.fn(),
-            onchainProvider: { getChainTip: vi.fn() },
+            onchainProvider: {
+                getChainTip: vi.fn().mockResolvedValue({ height: 101, time: 2 }),
+                getMedianTimePast: vi.fn().mockResolvedValue(1),
+            },
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({
                     fees: { intentFee: { onchainInput: "amount * 0.9" } },

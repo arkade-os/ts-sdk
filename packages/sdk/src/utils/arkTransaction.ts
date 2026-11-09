@@ -219,8 +219,7 @@ export function hasBoardingTxExpired(
         return false;
     }
     return (
-        BigInt(confirmationParentMedianTime) + boardingTimelock.value <=
-        BigInt(chainTipMedianTime)
+        BigInt(confirmationParentMedianTime) + boardingTimelock.value <= BigInt(chainTipMedianTime)
     );
 }
 
@@ -261,9 +260,7 @@ export async function filterExpiredBoardingCoins(
     const timelocks = coins.map((coin) => decodeBoardingExit(coin)?.timelock);
     const needsSecondsMtp = timelocks.some(
         (timelock, i) =>
-            timelock?.type === "seconds" &&
-            timelock.value > 0n &&
-            coins[i].status.confirmed,
+            timelock?.type === "seconds" && timelock.value > 0n && coins[i].status.confirmed,
     );
     if (
         coins.some((coin, i) => {
@@ -306,10 +303,9 @@ export async function filterExpiredBoardingCoins(
             ? new Map<number, number>()
             : new Map(
                   await Promise.all(
-                      [...medianTimeHeights].map(async (height) => [
-                          height,
-                          await getMedianTimePast(height),
-                      ] as const),
+                      [...medianTimeHeights].map(
+                          async (height) => [height, await getMedianTimePast(height)] as const,
+                      ),
                   ),
               );
     return coins.filter((coin, i) => {

@@ -34,10 +34,7 @@ import {
     type SignerSet,
     type SignerStatus,
 } from "./signerRotation";
-import {
-    decodeBoardingExit,
-    filterExpiredBoardingCoins,
-} from "../utils/arkTransaction";
+import { decodeBoardingExit, filterExpiredBoardingCoins } from "../utils/arkTransaction";
 import { hex } from "@scure/base";
 import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
@@ -2832,9 +2829,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 // The server rejects an input under a deprecated signer, so only the sweep takes
                 // those: a unilateral exit works for any signer.
                 const settleable = signerStable
-                    ? groups
-                          .filter((g) => g.serverPubKey === currentSigner)
-                          .flatMap((g) => g.coins)
+                    ? groups.filter((g) => g.serverPubKey === currentSigner).flatMap((g) => g.coins)
                     : [];
                 const boardingUtxos = groups.flatMap((g) => g.coins);
 

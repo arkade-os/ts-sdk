@@ -1814,10 +1814,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const currentServerPubKey = this.boardingTapscript.options.serverPubKey;
         const currentServerSigner = toXOnlySignerHex(hex.encode(currentServerPubKey));
-        const signers = new Set([
-            currentServerSigner,
-            ...(allowedSigners ?? []),
-        ]);
+        const signers = new Set([currentServerSigner, ...(allowedSigners ?? [])]);
         const boardingCsv =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
         // Index-0 baseline boarding (identity x-only key) is in scope for every queried signer.

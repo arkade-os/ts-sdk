@@ -116,10 +116,10 @@ describe("boarding sweep across signers", () => {
 
     describe("when an address lookup fails", () => {
         it("still returns the other signers' coins if a deprecated address fails", async () => {
-            const { wallet, deprecated, getCoins } = await setup();
+            const { wallet, currentAddress, deprecated, getCoins } = await setup();
             getCoins.mockImplementation(async (address) => {
                 if (address === deprecated.address) throw new Error("429");
-                return [coin("11")];
+                return address === currentAddress ? [coin("11")] : [];
             });
             const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 

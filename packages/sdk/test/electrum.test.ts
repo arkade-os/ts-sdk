@@ -179,21 +179,20 @@ describe("ElectrumOnchainProvider", () => {
 
     describe("getCoins", () => {
         it("maps listunspent results to Coin shape without fetching block headers", async () => {
-            wsMock.request
-                .mockResolvedValueOnce([
-                    {
-                        tx_hash: "abcd1234",
-                        tx_pos: 0,
-                        value: 100_000,
-                        height: 500,
-                    },
-                    {
-                        tx_hash: "ef567890",
-                        tx_pos: 1,
-                        value: 50_000,
-                        height: 0, // mempool
-                    },
-                ]);
+            wsMock.request.mockResolvedValueOnce([
+                {
+                    tx_hash: "abcd1234",
+                    tx_pos: 0,
+                    value: 100_000,
+                    height: 500,
+                },
+                {
+                    tx_hash: "ef567890",
+                    tx_pos: 1,
+                    value: 50_000,
+                    height: 0, // mempool
+                },
+            ]);
 
             const coins = await provider.getCoins(REGTEST_ADDRESS);
 
