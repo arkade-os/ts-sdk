@@ -17,12 +17,9 @@ call that needs one does it.
 
 ## Solver priority and failover
 
-Opt in with `policy: { solverRouting: {} }` to try the next eligible solver when quote preparation
-fails with a solver-local refusal, unavailable transport/price, expired quote or verification error.
-Wallet errors, invalid input, missing dependencies and disposal stop the operation. Each attempt
-closes its transport; an accepted quote, funding submission and recovery never switch solvers.
-Without this option the existing single-selection behavior remains. `selectMarket` always pins or
-vetoes a candidate, including when failover is enabled.
+Opt in with `policy: { solverRouting: {} }`. The
+[`SolverRoutingPolicy` API contract](src/client/solverRouting.ts) documents the defaults,
+quote-only failover boundary and explicit-selection precedence.
 
 ```ts
 import { completedSolverUsage, createSwapClient } from "@arkade-os/swap";

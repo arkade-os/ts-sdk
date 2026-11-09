@@ -26,8 +26,13 @@ export interface SolverRoutingContext {
     readonly candidates: readonly SolverCandidate[];
 }
 
+/** Optional direction-specific policy for quote preparation; accepted swaps keep their solver. */
 export interface SolverRoutingPolicy {
+    /** Try another candidate on solver-local quote failure; defaults to true. An explicit
+     * `selectMarket` remains an authoritative pin or veto and disables failover. */
     readonly failover?: boolean;
+    /** Read current preferences before selection. Absent means discovery order; rejection stops
+     * the operation before negotiation. Modes, priority and usage follow {@link SolverRoutingPreferences}. */
     readonly preferences?: (
         context: SolverRoutingContext,
     ) => SolverRoutingPreferences | Promise<SolverRoutingPreferences>;
