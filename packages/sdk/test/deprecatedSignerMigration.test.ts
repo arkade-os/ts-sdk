@@ -35,7 +35,7 @@ function makeBoardingCoin(
             ? { confirmed: true, block_height: blockHeight, block_time: 1 }
             : { confirmed: false },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as unknown as ExtendedCoin;
 }
@@ -122,7 +122,7 @@ function makeVtxo(
         isUnrolled: false,
         virtualStatus: { state, batchExpiry: DEFAULT_BATCH_EXPIRY },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as unknown as ExtendedContractVtxo;
 }
@@ -1010,7 +1010,7 @@ function makeVtxoWithExpiry(
         isUnrolled: false,
         virtualStatus: { state, batchExpiry },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as unknown as ExtendedContractVtxo;
 }

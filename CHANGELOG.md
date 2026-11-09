@@ -15,6 +15,16 @@ style and have not been backfilled.
 ### Breaking Changes
 
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
+- **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
+  `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
+  writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
+  proofs with that leaf, and a handler that returns it has it moved to the new
+  key. A coin literal typed as `ExtendedCoin` and a handler typed as
+  `TapscriptDeriving` must add `proofTapLeafScript`.
+  Code that reads `intentTapLeafScript` from an SDK coin must move, because the
+  key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
+  keep the old key on disk.
+
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -36,6 +46,15 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`ArkIntent` is renamed `BatchRegistration`, and its fields follow.**
+  `IntentFilter` and `IntentPageFilter` take the matching names, and the three
+  old type names stay as deprecated aliases. On the record, `intentTxId` is
+  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is
+  `proofInputs`. Filters use `proofTxIds` and `registrationIds`. These fields
+  have no alias, so a custom repository must update. Stored data does not
+  change, and no migration runs: backends keep their column and key names on
+  disk and map them at the repository boundary.
+
 - **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
   is renamed `deprecatedSignerLocked`.** Each name now says what holds the
   funds: a contract that generic spending refuses, or a server signer past
@@ -68,6 +87,15 @@ style and have not been backfilled.
   at the confirmation height minus one and at the tip, or seconds-locked
   coins never read as expired.
 
+- **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
+  `scope`.** A custom `ContractRepository` must persist and round-trip
+  `Contract.scope`, filter on it in `getContractsPage`, and read a row without
+  one as its handler's default; the version bump makes a missing
+  implementation a compile error rather than a silent gap. The bundled
+  repositories do this: SQLite adds a nullable `scope` column on open, and a
+  Realm consumer must open at a `schemaVersion` of at least
+  `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
+
 ### Features
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
@@ -75,6 +103,40 @@ style and have not been backfilled.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
 
 ### Added
+
+- **Onchain coin spends come from the arkd indexer first.** arkd v0.9.22
+  records the onchain coins whose spend it signed or watched (boarding inputs
+  of a batch, inputs of a cosigned onchain tx, spent unrolled VTXOs), and the
+  optional `IndexerProvider.getUtxos` reads them as `IndexerUtxo`; a server
+  without the route throws `IndexerUtxosUnsupportedError` and is not asked
+  again. `syncOnchain` names a vanished coin's spender without an `outspends`
+  call, and only asks about coins whose state can change. arkd's word holds a
+  coin the explorer still lists only for the spend this wallet recorded and
+  only within the six-block pending window: an unbounded hold would let an
+  operator hide a boarding coin from its CSV exit. `syncOnchain` also takes
+  the coins a caller already fetched, so `getBoardingUtxos` fetches each
+  boarding address once.
+
+- **Onchain coins can be spent at once through arkd's cosigner.** Boarding
+  UTXOs, unrolled VTXOs and Arkade covenant UTXOs could only move by joining a
+  batch or after their exit timelock. arkd v0.9.22's `POST
+  /v1/tx/onchain/cosign` cosigns their collaborative leaf instead:
+  `wallet.sendOnchain({ outputs, inputs?, sweepTo? })` pays from the wallet's
+  onchain coins, `wallet.cosignOnchainTx(psbt)` signs the owned inputs of a
+  caller-built PSBT, and `ArkadeTransactionBuilder.buildOnchain()` and
+  `sendOnchain()` spend covenant leaves the emulator cosigns. The service worker
+  and Expo wallets expose both wallet methods. `Ramps.offboardExact` without
+  named inputs tries an onchain spend before the batch path, and boarding
+  renewal near expiry tries a cosign first. The batch fallback runs only when
+  nothing can have been broadcast (unsupported endpoint, failed preflight, or a
+  rejection arkd raises before signing); any other outcome throws
+  `OnchainCosignAmbiguousError` and keeps the inputs pending until the spend is
+  seen or six blocks pass. Contracts gain `scope` (`offchain`, `onchain`,
+  `both`), and onchain coins are stored as VTXO rows that offchain balance and
+  history leave out. Legacy boarding UTXOs are copied in once at boot and the
+  legacy table is kept, so an earlier SDK still reads them.
+  `OperatorProvider.cosignOnchainTx` is optional, and an arkd older than
+  v0.9.22 reads as unsupported, so both keep the batch path.
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
   submitted already signed, so arkd finalizes the transaction within
@@ -175,6 +237,14 @@ style and have not been backfilled.
   no function of its own, so every input names its function in `.from()`.
 
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
+
+- **`getOperatorInfo` replaces `getArkadeInfo`.** Wallets expose the new method,
+  and `GetArkadeInfoOptions` becomes `GetOperatorInfoOptions`. The old names stay
+  as deprecated aliases. A custom `IReadonlyWallet` must add the new method.
+  The worker message is now `GET_OPERATOR_INFO`, with an `OPERATOR_INFO` reply.
+  A worker still accepts `GET_ARKADE_INFO`, and a `messageTimeouts` entry under
+  that name still applies. A new page needs an updated worker.
+  Comments in the changed files now say the operator instead of the server.
 
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
@@ -1242,6 +1312,16 @@ style and have not been backfilled.
   the static descriptor and server info. Delegate info overlaps server info.
   None of these share a result, and a step that writes what the next step
   reads is unchanged.
+
+- **Boarding history stops asking the explorer for spends it already lists.**
+  On every history read, `getBoardingTxs` asked for the spend status of every
+  boarding output, although the address's own transaction list already names
+  each spender. It now asks only about outputs no listed transaction spends,
+  mostly deposits not yet settled. The Electrum provider now returns each
+  transaction's inputs (`vin`) from `getTransactions` and `watchAddresses`, so
+  it benefits too: a settled output cost three or four sequential Electrum
+  round trips, plus a fetch of every other transaction at an address that
+  received more than one deposit. Output is unchanged.
 
 ## [0.4.77] - 2026-09-30
 

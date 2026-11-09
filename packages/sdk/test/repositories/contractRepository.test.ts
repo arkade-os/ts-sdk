@@ -54,6 +54,43 @@ describe.each(contractRepositoryImplementations)("ContractRepository: $name", ({
         expect(contracts[0]).toEqual(contract);
     });
 
+    it("round-trips scope and filters it, resolving rows without one via the handler default", async () => {
+        const row = (type: string, script: string, scope?: Contract["scope"]): Contract => ({
+            type,
+            params: {},
+            script,
+            address: script,
+            state: "active",
+            createdAt: 0,
+            ...(scope && { scope }),
+        });
+        await repository.saveContract(row("default", "both-row", "both"));
+        await repository.saveContract(row("boarding", "boarding-row"));
+        await repository.saveContract(row("default", "default-row"));
+
+        const [both] = await collectContracts(repository, { script: "both-row" });
+        expect(both.scope).toBe("both");
+
+        const onchain = await collectContracts(repository, { scope: "onchain" });
+        expect(onchain.map((c) => c.script)).toEqual(["boarding-row"]);
+
+        const anyOnchain = await collectContracts(repository, { scope: ["onchain", "both"] });
+        expect(anyOnchain.map((c) => c.script).sort()).toEqual(["boarding-row", "both-row"]);
+        expect(await collectContracts(repository, { scope: [] })).toEqual([]);
+        const first = await repository.getContractsPage(
+            { scope: ["onchain", "both"] },
+            { limit: 1 },
+        );
+        const second = await repository.getContractsPage(
+            { scope: ["onchain", "both"] },
+            { limit: 1, after: first.nextCursor },
+        );
+        expect([...first.items, ...second.items].map((c) => c.script)).toEqual([
+            "boarding-row",
+            "both-row",
+        ]);
+    });
+
     it("should get contracts by state", async () => {
         const activeContract: Contract = {
             type: "default",

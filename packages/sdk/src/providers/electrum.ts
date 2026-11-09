@@ -836,6 +836,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         blockTimeByHeight: Map<number, number>,
     ): ExplorerTransaction {
         const vout: ExplorerTransaction["vout"] = [];
+        // Unknown (`undefined`) without the raw tx; `[]` would claim it has no inputs.
+        let vin: ExplorerTransaction["vin"];
         if (rawHex) {
             let tx: Transaction;
             try {
@@ -858,10 +860,14 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                     value: (output.amount ?? 0n).toString(),
                 });
             }
+            vin = Array.from({ length: tx.inputsLength }, (_, k) => tx.getInput(k))
+                .filter((input) => input.txid !== undefined && input.index !== undefined)
+                .map((input) => ({ txid: hex.encode(input.txid!), vout: input.index! }));
         }
 
         return {
             txid: entry.tx_hash,
+            vin,
             vout,
             status: {
                 confirmed: entry.height > 0,

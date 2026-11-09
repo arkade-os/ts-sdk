@@ -30,6 +30,7 @@ export class CachingOperatorProvider implements OperatorProvider {
     /** Bumped on every event-driven cache write; see {@link getInfo}. */
     private generation = 0;
     private readonly unsubscribe: () => void;
+    readonly cosignOnchainTx?: (psbtB64: string) => Promise<string>;
 
     constructor(
         private readonly inner: OperatorProvider,
@@ -42,6 +43,8 @@ export class CachingOperatorProvider implements OperatorProvider {
                 this.expiresAt = Date.now() + this.ttlMs;
                 this.generation++;
             }) ?? (() => {});
+        const cosign = inner.cosignOnchainTx;
+        if (cosign) this.cosignOnchainTx = (psbtB64) => cosign.call(inner, psbtB64);
     }
 
     /** Releases the inner provider's server-info subscription. */

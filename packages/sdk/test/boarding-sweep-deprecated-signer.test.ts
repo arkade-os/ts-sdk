@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Coin } from "../src";
-import { collectUtxos } from "../src/repositories/walletRepository";
+import { collectScriptVtxos } from "../src/repositories/walletRepository";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { Transaction } from "../src/utils/transaction";
 import { READ_TIMEOUT_MS } from "../src/utils/fetch";
@@ -86,6 +86,9 @@ describe("boarding sweep across signers", () => {
 
     it("lists the deprecated signer's coins but never scans a foreign signer's address", async () => {
         const { wallet, deprecated, foreign, getCoins } = await setup();
+        // The contract manager's startup sync covers every active onchain contract.
+        await wallet.getContractManager();
+        getCoins.mockClear();
 
         const groups = await wallet.getSelectableBoardingUtxoGroups();
 
@@ -143,12 +146,17 @@ describe("boarding sweep across signers", () => {
 
             await wallet.getSelectableBoardingUtxoGroups();
 
-            const cached = await collectUtxos(wallet.walletRepository, deprecated.address);
+            const cached = await collectScriptVtxos(
+                wallet.walletRepository,
+                hex.encode(deprecated.script.pkScript),
+            );
             expect(cached.map((c) => c.txid)).toEqual([coin("dd").txid]);
         });
 
         it("bounds a stalled deprecated lookup without blocking current-signer results", async () => {
             const { wallet, currentAddress, deprecated, getCoins } = await setup();
+            // Started before the stall: its startup sync is not what this test bounds.
+            await wallet.getContractManager();
             vi.useFakeTimers();
             let signalLookupStarted!: () => void;
             const lookupStarted = new Promise<void>((resolve) => {

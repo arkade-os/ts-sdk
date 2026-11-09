@@ -12,7 +12,7 @@ import { isTapscriptDeriving } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
-import { VtxoScript } from "../script/base";
+import { proofTapLeafScriptOf, VtxoScript } from "../script/base";
 import { classifyAgainstSignerSet, type SignerSet } from "./signerRotation";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
@@ -46,7 +46,7 @@ export function extendCoinWithTapscript(
     return {
         ...utxo,
         forfeitTapLeafScript: boardingTapscript.forfeit(),
-        intentTapLeafScript: boardingTapscript.forfeit(),
+        proofTapLeafScript: boardingTapscript.forfeit(),
         tapTree: boardingTapscript.encode(),
     };
 }
@@ -58,7 +58,7 @@ export function extendCoinWithTapscript(
  */
 export type ContractTapscripts = Pick<
     ExtendedVirtualCoin,
-    "forfeitTapLeafScript" | "intentTapLeafScript" | "tapTree"
+    "forfeitTapLeafScript" | "proofTapLeafScript" | "tapTree"
 >;
 
 /**
@@ -85,12 +85,17 @@ export function deriveContractTapscripts(contract: Contract): ContractTapscripts
     // Handlers whose script shape has no `forfeit()` (e.g. program-compiled
     // arkade contracts) provide the annotation tapscripts themselves.
     if (isTapscriptDeriving(handler)) {
-        return handler.deriveTapscripts(script, contract);
+        const derived = handler.deriveTapscripts(script, contract);
+        return {
+            forfeitTapLeafScript: derived.forfeitTapLeafScript,
+            proofTapLeafScript: proofTapLeafScriptOf(derived),
+            tapTree: derived.tapTree,
+        };
     }
     const legacy = script as DefaultVtxo.Script | DelegateVtxo.Script;
     return {
         forfeitTapLeafScript: legacy.forfeit(),
-        intentTapLeafScript: legacy.forfeit(),
+        proofTapLeafScript: legacy.forfeit(),
         tapTree: legacy.encode(),
     };
 }
@@ -112,7 +117,7 @@ function cloneTapLeafScript([
 function cloneContractTapscripts(tapscripts: ContractTapscripts): ContractTapscripts {
     return {
         forfeitTapLeafScript: cloneTapLeafScript(tapscripts.forfeitTapLeafScript),
-        intentTapLeafScript: cloneTapLeafScript(tapscripts.intentTapLeafScript),
+        proofTapLeafScript: cloneTapLeafScript(tapscripts.proofTapLeafScript),
         tapTree: new Uint8Array(tapscripts.tapTree),
     };
 }

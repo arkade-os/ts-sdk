@@ -38,7 +38,7 @@ export function createMockVtxo(txid: string, vout: number, value: number): Exten
         spentBy: "",
         script: hex.encode(new Uint8Array(32).fill(4)),
         forfeitTapLeafScript: tapLeaf,
-        intentTapLeafScript: tapLeaf,
+        proofTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),
     };
 }
@@ -56,7 +56,7 @@ export function createMockUtxo(txid: string, vout: number, value: number): Exten
             block_time: Date.now(),
         },
         forfeitTapLeafScript: tapLeaf,
-        intentTapLeafScript: tapLeaf,
+        proofTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),
     };
 }

@@ -38,7 +38,7 @@ function makeVtxo(over: Partial<VirtualCoin> = {}): ExtendedVirtualCoin {
         expiresAt: EXPIRES_AT,
         spentBy: "",
         forfeitTapLeafScript: tapLeaf(),
-        intentTapLeafScript: tapLeaf(),
+        proofTapLeafScript: tapLeaf(),
         tapTree: new Uint8Array([0x00]),
         ...over,
     } as ExtendedVirtualCoin;

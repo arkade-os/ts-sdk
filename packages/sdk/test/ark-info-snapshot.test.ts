@@ -458,7 +458,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         expect(getVirtualTxs).toHaveBeenCalledWith(["cd".repeat(32)], undefined);
     });
 
-    it("getArkadeInfo reports the server's CURRENT info, not the boot snapshot", async () => {
+    it("getOperatorInfo reports the server's CURRENT info, not the boot snapshot", async () => {
         // The fields callers come here for — signerPubkey, checkpointTapscript,
         // fees — are the ones a mid-session rotation moves. Pinning to boot
         // would hand a plugin a superseded signer to build a covenant against.
@@ -468,15 +468,15 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         };
         let served = makeArkInfo();
         const wallet = await createWallet(async () => served, repos);
-        expect((await wallet.getArkadeInfo()).digest).toBe("digest-abc");
+        expect((await wallet.getOperatorInfo()).digest).toBe("digest-abc");
 
         served = makeArkInfo({ digest: "digest-rotated" });
-        expect((await wallet.getArkadeInfo()).digest).toBe("digest-rotated");
+        expect((await wallet.getOperatorInfo()).digest).toBe("digest-rotated");
         // The wallet's own pinned epoch is untouched by the read.
         expect(wallet.dustAmount).toBe(makeArkInfo().dust);
     });
 
-    it("getArkadeInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
+    it("getOperatorInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
         // The covenant-derivation contract (PR #803 review): a caller about to
         // bind signerPubkey into a script must never get a snapshot answer.
         const repos = {
@@ -492,18 +492,20 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
 
         reachable = false;
         // the ordinary read still answers from the boot snapshot…
-        expect((await wallet.getArkadeInfo()).digest).toBe(info.digest);
+        expect((await wallet.getOperatorInfo()).digest).toBe(info.digest);
         // …the live-only read refuses to
-        await expect(wallet.getArkadeInfo({ requireLive: true })).rejects.toThrow(/operator down/);
+        await expect(wallet.getOperatorInfo({ requireLive: true })).rejects.toThrow(
+            /operator down/,
+        );
         // and the connection state reflects the failed-over ordinary read, not boot
         expect(wallet.getProviderConnectionState().mode).toBe("degraded");
 
         reachable = true;
-        await wallet.getArkadeInfo({ requireLive: true });
+        await wallet.getOperatorInfo({ requireLive: true });
         expect(wallet.getProviderConnectionState().mode).not.toBe("degraded");
     });
 
-    it("getArkadeInfo falls back to the cached snapshot when the operator goes away", async () => {
+    it("getOperatorInfo falls back to the cached snapshot when the operator goes away", async () => {
         const repos = {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -518,10 +520,10 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         reachable = false;
         // Boot persisted the snapshot, so an offline read still answers —
         // minus serviceStatus, which is live health and deliberately uncached.
-        expect(await wallet.getArkadeInfo()).toEqual({ ...info, serviceStatus: {} });
+        expect(await wallet.getOperatorInfo()).toEqual({ ...info, serviceStatus: {} });
     });
 
-    it("getArkadeInfo propagates a terminal failure rather than serving the cache", async () => {
+    it("getOperatorInfo propagates a terminal failure rather than serving the cache", async () => {
         const repos = {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -534,7 +536,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         }, repos);
 
         live = false;
-        await expect(wallet.getArkadeInfo()).rejects.toBe(terminal);
+        await expect(wallet.getOperatorInfo()).rejects.toBe(terminal);
     });
 
     it("full Wallet.create does not cache a live response with invalid checkpoint metadata", async () => {
