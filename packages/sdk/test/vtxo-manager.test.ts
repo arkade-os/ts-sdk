@@ -2262,15 +2262,30 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             await manager.dispose();
         });
 
-        it("fails closed when the provider cannot supply consensus median times", async () => {
-            const coin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(SEVEN_DAYS));
-            const wallet = createBlockBasedWallet([coin], 110);
+        it("settles the other coins when the provider cannot supply median times", async () => {
+            const secondsCoin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(SEVEN_DAYS));
+            const blocksCoin = createMockBoardingUtxo(40_000, 1, 105, blockScript);
+            const wallet = createBlockBasedWallet([], 110);
             delete wallet.onchainProvider.getMedianTimePast;
             const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+            (manager as any).renewalInProgress = true;
 
-            await expect(manager.getExpiredBoardingUtxos()).rejects.toThrow(
-                "Onchain provider must implement getMedianTimePast",
-            );
+            expect(await manager.getExpiredBoardingUtxos([secondsCoin, blocksCoin])).toEqual([]);
+            await (manager as any).runPeriodicSettle([secondsCoin, blocksCoin], "");
+            expect(wallet.settle.mock.calls[0][0].inputs).toEqual([blocksCoin]);
+            await manager.dispose();
+        });
+
+        it("still sweeps block-based coins when a median time lookup fails", async () => {
+            const secondsCoin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(SEVEN_DAYS));
+            const blocksCoin = createMockBoardingUtxo(40_000, 1, 100, blockScript);
+            const wallet = createBlockBasedWallet([], 110);
+            wallet.onchainProvider.getMedianTimePast.mockRejectedValue(new Error("429"));
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            expect(await manager.getExpiredBoardingUtxos([secondsCoin, blocksCoin])).toEqual([
+                blocksCoin,
+            ]);
             await manager.dispose();
         });
     });

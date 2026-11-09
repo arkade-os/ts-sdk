@@ -51,6 +51,13 @@ style and have not been backfilled.
   which forbid `bigint`. `Market` is also no longer an alias of `CardMarketRef`
   but a superset: a `Market` can still be used as a ref, but a ref no longer
   assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
+- **Custom onchain providers need `getMedianTimePast` to settle seconds-locked
+  boarding coins.** Seconds-based boarding expiry is judged on consensus
+  median-time-past, not the local clock, and a coin whose expiry cannot be
+  established is neither settled nor swept rather than guessed. On a provider
+  without the optional `OnchainProvider.getMedianTimePast`, such coins stay
+  where they are until it is implemented; block-locked coins and VTXO renewal
+  are unaffected. The built-in Esplora and Electrum providers implement it.
 
 ### Features
 
@@ -310,7 +317,10 @@ style and have not been backfilled.
   delay can no longer leave a coin that settle skips and the sweep ignores, or
   the reverse. Block-based expiry no longer requires a block timestamp;
   seconds-based expiry uses the confirmation parent's and current tip's
-  consensus median-time-past values, not the local clock.
+  consensus median-time-past values, not the local clock. A coin whose expiry
+  cannot be established (no block height, a failed chain-tip or median-time
+  lookup) is left out of settlement and the sweep, while the other coins and
+  VTXO renewal go ahead.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status

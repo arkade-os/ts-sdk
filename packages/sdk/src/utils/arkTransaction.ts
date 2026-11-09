@@ -246,84 +246,67 @@ export function decodeBoardingExit(
     return undefined;
 }
 
+export type BoardingExpiry = { expired: ExtendedCoin[]; unknown: ExtendedCoin[] };
+
 /**
- * The coins whose own boarding timelock has elapsed, so they can no longer be settled and leave
- * through the unilateral exit. Seconds-based CSV uses the MTP of the block before confirmation
- * and the current tip MTP, as required by BIP 68. A missing provider MTP lookup is an error rather
- * than a guessed expiry result.
+ * Splits out the confirmed coins whose own boarding timelock has elapsed, so they can no longer be
+ * settled and leave through the unilateral exit. Seconds-based CSV uses the MTP of the block before
+ * confirmation and the current tip MTP, as required by BIP 68. A coin whose expiry cannot be
+ * established (no block height, no provider MTP lookup, a failed lookup) is `unknown`: callers
+ * must neither settle nor sweep it, but the other coins are still judged.
  */
-export async function filterExpiredBoardingCoins(
+export async function classifyBoardingExpiry(
     coins: ExtendedCoin[],
     getChainTip: () => Promise<{ height: number; time: number }>,
     getMedianTimePast?: (height: number) => Promise<number>,
-): Promise<ExtendedCoin[]> {
-    const timelocks = coins.map((coin) => decodeBoardingExit(coin)?.timelock);
-    const needsSecondsMtp = timelocks.some(
-        (timelock, i) =>
-            timelock?.type === "seconds" && timelock.value > 0n && coins[i].status.confirmed,
-    );
-    if (
-        coins.some((coin, i) => {
-            const timelock = timelocks[i];
-            return (
-                timelock?.type === "seconds" &&
-                timelock.value > 0n &&
-                coin.status.confirmed &&
-                (coin.status.block_height === undefined || coin.status.block_height <= 0)
-            );
-        })
-    ) {
-        throw new Error(
-            "Confirmed coin is missing a valid block height for seconds-based boarding expiry",
-        );
-    }
-    if (needsSecondsMtp && !getMedianTimePast) {
-        throw new Error(
-            "Onchain provider must implement getMedianTimePast to evaluate seconds-based boarding expiry",
-        );
-    }
-    const needsChainTip = coins.some((coin, i) => coin.status.confirmed && timelocks[i]);
-    const chainTip = needsChainTip ? await getChainTip() : undefined;
-    const medianTimeHeights = new Set<number>();
-    if (needsSecondsMtp && chainTip) medianTimeHeights.add(chainTip.height);
-    for (const [i, timelock] of timelocks.entries()) {
-        const height = coins[i].status.block_height;
-        if (
-            timelock?.type === "seconds" &&
-            timelock.value > 0n &&
-            coins[i].status.confirmed &&
-            height !== undefined &&
-            height > 0
-        ) {
-            medianTimeHeights.add(height - 1);
-        }
-    }
-    const parentMedianTimes =
-        getMedianTimePast === undefined
-            ? new Map<number, number>()
-            : new Map(
-                  await Promise.all(
-                      [...medianTimeHeights].map(
-                          async (height) => [height, await getMedianTimePast(height)] as const,
-                      ),
-                  ),
-              );
-    return coins.filter((coin, i) => {
-        const timelock = timelocks[i];
-        if (!timelock || chainTip === undefined) return false;
-        const confirmationParentMedianTime =
-            coin.status.block_height === undefined
-                ? undefined
-                : parentMedianTimes.get(coin.status.block_height - 1);
-        const tipMedianTime = parentMedianTimes.get(chainTip.height);
-        return hasBoardingTxExpired(
-            coin,
-            timelock,
-            chainTip.height,
-            tipMedianTime,
-            confirmationParentMedianTime,
-        );
+): Promise<BoardingExpiry> {
+    const judged = coins.flatMap((coin) => {
+        const timelock = decodeBoardingExit(coin)?.timelock;
+        return coin.status.confirmed && timelock ? [{ coin, timelock }] : [];
     });
+    if (judged.length === 0) return { expired: [], unknown: [] };
+
+    let tipHeight: number;
+    try {
+        tipHeight = (await getChainTip()).height;
+    } catch {
+        return { expired: [], unknown: judged.map(({ coin }) => coin) };
+    }
+
+    const medianTimes = new Map<number, Promise<number | undefined>>();
+    const medianTimePast = (height: number) => {
+        if (!getMedianTimePast) return undefined;
+        let time = medianTimes.get(height);
+        if (!time) {
+            time = getMedianTimePast(height).catch(() => undefined);
+            medianTimes.set(height, time);
+        }
+        return time;
+    };
+
+    const verdicts = await Promise.all(
+        judged.map(async ({ coin, timelock }) => {
+            const height = coin.status.block_height;
+            if (height === undefined || height <= 0) return "unknown";
+            if (timelock.type === "blocks" || timelock.value === 0n) {
+                return hasBoardingTxExpired(coin, timelock, tipHeight) ? "expired" : "live";
+            }
+            const [parentTime, tipTime] = await Promise.all([
+                medianTimePast(height - 1),
+                medianTimePast(tipHeight),
+            ]);
+            if (parentTime === undefined || tipTime === undefined) return "unknown";
+            return hasBoardingTxExpired(coin, timelock, tipHeight, tipTime, parentTime)
+                ? "expired"
+                : "live";
+        }),
+    );
+
+    const expiry: BoardingExpiry = { expired: [], unknown: [] };
+    for (const [i, verdict] of verdicts.entries()) {
+        if (verdict !== "live") expiry[verdict].push(judged[i].coin);
+    }
+    return expiry;
 }
 
 /**

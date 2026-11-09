@@ -34,7 +34,11 @@ import {
     type SignerSet,
     type SignerStatus,
 } from "./signerRotation";
-import { decodeBoardingExit, filterExpiredBoardingCoins } from "../utils/arkTransaction";
+import {
+    type BoardingExpiry,
+    classifyBoardingExpiry,
+    decodeBoardingExit,
+} from "../utils/arkTransaction";
 import { hex } from "@scure/base";
 import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
@@ -1858,7 +1862,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             (await getSelectableBoardingUtxoGroups(this.wallet, this.getCurrentSigner())).flatMap(
                 (g) => g.coins,
             );
-        return this.filterExpired(boardingUtxos);
+        return (await this.boardingExpiry(boardingUtxos)).expired;
     }
 
     /**
@@ -2382,14 +2386,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const groups = await wallet.getBoardingUtxosForSigners(allowed);
 
-        const expiredBoarding = new Set(
-            (
-                await filterExpiredBoardingCoins(
-                    groups.flatMap((group) => group.coins),
-                    () => wallet.onchainProvider.getChainTip(),
-                    wallet.onchainProvider.getMedianTimePast?.bind(wallet.onchainProvider),
-                )
-            ).map((coin) => `${coin.txid}:${coin.vout}`),
+        const { expired: csvExpired, unknown } = await classifyBoardingExpiry(
+            groups.flatMap((group) => group.coins),
+            () => wallet.onchainProvider.getChainTip(),
+            wallet.onchainProvider.getMedianTimePast?.bind(wallet.onchainProvider),
+        );
+        const unsettleable = new Set(
+            [...csvExpired, ...unknown].map((coin) => `${coin.txid}:${coin.vout}`),
         );
 
         const reportsBySigner = new Map<string, DeprecatedSignerReport>();
@@ -2430,13 +2433,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             for (const coin of confirmed) {
                 // Two independent gates: signer cutoff AND this row's own CSV expiry.
-                const boardingExpired = expiredBoarding.has(`${coin.txid}:${coin.vout}`);
-                if (isCooperativelyMigratable(cls.status) && !boardingExpired) {
+                const csvBlocked = unsettleable.has(`${coin.txid}:${coin.vout}`);
+                if (isCooperativelyMigratable(cls.status) && !csvBlocked) {
                     migratable.push({ coin, classification: cls });
                 } else if (cls.status === "EXPIRED") {
                     expired.push({ coin, classification: cls });
                 }
-                // Migratable signer but CSV-expired: leaves via the unilateral sweep instead.
+                // Migratable signer but CSV-expired, or of unknown expiry: not migrated.
             }
         }
 
@@ -2592,8 +2595,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         );
     }
 
-    private filterExpired(coins: ExtendedCoin[]): Promise<ExtendedCoin[]> {
-        return filterExpiredBoardingCoins(
+    private boardingExpiry(coins: ExtendedCoin[]): Promise<BoardingExpiry> {
+        return classifyBoardingExpiry(
             coins,
             () => this.getOnchainProvider().getChainTip(),
             this.getOnchainProvider().getMedianTimePast?.bind(this.getOnchainProvider()),
@@ -2906,17 +2909,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         boardingUtxos: ExtendedCoin[],
         expectedSigner: string,
     ): Promise<void> {
-        // If expiry can't be determined, this throws and nothing settles, rather than settling an
-        // input the sweep also targets.
-        const expiredSet = new Set(
-            (await this.filterExpired(boardingUtxos)).map((utxo) => `${utxo.txid}:${utxo.vout}`),
+        // A coin of unknown expiry is left out rather than settled: the sweep may also target it.
+        const { expired, unknown } = await this.boardingExpiry(boardingUtxos);
+        const unsettleable = new Set(
+            [...expired, ...unknown].map((utxo) => `${utxo.txid}:${utxo.vout}`),
         );
 
         const unsettledBoarding = boardingUtxos.filter(
             (u) =>
                 u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
-                !expiredSet.has(`${u.txid}:${u.vout}`),
+                !unsettleable.has(`${u.txid}:${u.vout}`),
         );
 
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];

@@ -100,7 +100,7 @@ import {
     assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
-    filterExpiredBoardingCoins,
+    classifyBoardingExpiry,
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
@@ -3847,17 +3847,16 @@ export class Wallet
             const confirmedBoarding = (await this.getSelectableBoardingUtxos()).filter(
                 (utxo) => utxo.status.confirmed,
             );
-            const expiredBoarding = new Set(
-                (
-                    await filterExpiredBoardingCoins(
-                        confirmedBoarding,
-                        () => this.onchainProvider.getChainTip(),
-                        this.onchainProvider.getMedianTimePast?.bind(this.onchainProvider),
-                    )
-                ).map((utxo) => `${utxo.txid}:${utxo.vout}`),
+            const { expired, unknown } = await classifyBoardingExpiry(
+                confirmedBoarding,
+                () => this.onchainProvider.getChainTip(),
+                this.onchainProvider.getMedianTimePast?.bind(this.onchainProvider),
+            );
+            const unsettleable = new Set(
+                [...expired, ...unknown].map((utxo) => `${utxo.txid}:${utxo.vout}`),
             );
             const boardingUtxos = confirmedBoarding.filter(
-                (utxo) => !expiredBoarding.has(`${utxo.txid}:${utxo.vout}`),
+                (utxo) => !unsettleable.has(`${utxo.txid}:${utxo.vout}`),
             );
 
             const filteredBoardingUtxos = [];
