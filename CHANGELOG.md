@@ -84,6 +84,7 @@ style and have not been backfilled.
 
 - **Swap clients can prioritize solvers and fail over before acceptance.** Optional per-direction routing supports saved priority, successful usage and amount-aware advertised cost. Quote preparation tries another eligible solver after a candidate-local failure, preserves cancellation and closes its transports on disposal; accepted quotes, uncertain funding and recovery retain their original solver. Existing explicit selection and single-solver defaults remain compatible.
 - **Solver routing defaults are documented at the API boundary.** `SolverRoutingPolicy` TSDoc specifies selection precedence and preference lookup behavior; the README links to that contract.
+- **Solver cost ranking accepts portable fetch adapters.** The vendored discovery snapshot uses the package's `FetchLike` interface, preserving minimal custom transports and global `fetch` callers without changing runtime code.
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
