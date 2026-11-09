@@ -1713,7 +1713,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     outputs.push({
                         txid: tx.txid,
                         vout: i,
-                        value: Number(vout.value),
+                        value: vout.value,
                         confirmed: tx.status.confirmed,
                         blockTime: tx.status.block_time,
                         scriptHex,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EsploraProvider, Coin } from "../src";
+import { EsploraProvider, Coin, type ExplorerTransaction } from "../src";
 import { jsonResponse, textResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
@@ -51,6 +51,22 @@ describe("EsploraProvider", () => {
             await expect(provider.getCoins("bc1qtest")).rejects.toThrow(
                 "Failed to fetch UTXOs: Not Found",
             );
+        });
+    });
+
+    describe("getTransactions", () => {
+        it("preserves Esplora's numeric satoshi output values", async () => {
+            const tx: ExplorerTransaction = {
+                txid: "deposit",
+                vout: [{ scriptpubkey_address: "bc1qtest", value: 10000 }],
+                status: { confirmed: true, block_time: 1600000000 },
+            };
+            mockFetch.mockResolvedValueOnce(jsonResponse([tx]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const txs = await provider.getTransactions("bc1qtest");
+
+            expect(txs[0].vout[0].value).toBe(10000);
         });
     });
 

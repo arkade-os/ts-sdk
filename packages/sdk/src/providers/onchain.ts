@@ -30,7 +30,8 @@ export type ExplorerTransaction = {
     }[];
     vout: {
         scriptpubkey_address: string;
-        value: string;
+        /** Output amount in satoshis, matching Esplora's numeric JSON field. */
+        value: number;
     }[];
     status: {
         confirmed: boolean;

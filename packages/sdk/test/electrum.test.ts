@@ -657,8 +657,8 @@ describe("ElectrumOnchainProvider", () => {
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
             expect(txs).toHaveLength(1);
             expect(txs[0].txid).toBe("tx1");
-            // Sat amounts come from the parsed raw tx (exact bigints, no float rounding).
-            expect(txs[0].vout.map((v) => v.value)).toEqual(["10000", "20000"]);
+            // Sat amounts match Esplora's numeric output values.
+            expect(txs[0].vout.map((v) => v.value)).toEqual([10000, 20000]);
             // Addresses come from decoding each output's scriptPubKey.
             expect(txs[0].vout[0].scriptpubkey_address).toMatch(/^bcrt1q/);
             expect(txs[0].vout[1].scriptpubkey_address).toMatch(/^bcrt1q/);
@@ -676,6 +676,18 @@ describe("ElectrumOnchainProvider", () => {
                 (c) => c[0] === "blockchain.transaction.get" && c[c.length - 1] === true,
             );
             expect(verboseTxCalls).toHaveLength(0);
+        });
+
+        it("preserves numeric satoshi amounts up to Bitcoin's total supply", async () => {
+            const tx = Transaction.fromRaw(hex.decode(buildTestTx().txHex));
+            tx.updateOutput(0, { amount: 2_100_000_000_000_000n });
+            tx.updateOutput(1, { amount: 0n });
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "tx1", height: 0 }]);
+            mockBatch(wsMock.request, [tx.hex]);
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+
+            expect(txs[0].vout.map((v) => v.value)).toEqual([2_100_000_000_000_000, 0]);
         });
 
         it("returns each tx's spent outpoints as vin", async () => {
