@@ -797,8 +797,14 @@ export type TapLeaves = {
     /** Tapleaf script used for the forfeit path. */
     forfeitTapLeafScript: TapLeafScript;
 
-    /** Tapleaf script used for the intent path. */
-    intentTapLeafScript: TapLeafScript;
+    /** Tapleaf script a proof signs for this coin. */
+    proofTapLeafScript: TapLeafScript;
+
+    /**
+     * @deprecated Use {@link proofTapLeafScript}. SDK coins never set this key.
+     * A coin that sets it signs proofs with this leaf.
+     */
+    intentTapLeafScript?: TapLeafScript;
 };
 
 /**

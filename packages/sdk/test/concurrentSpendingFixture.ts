@@ -104,7 +104,7 @@ export async function fundedWallet(
                 expiresAt: new Date(Date.now() + (i + 1) * 10 * HOUR),
                 script: wallet.defaultContractScript,
                 forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-                intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+                proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
                 tapTree: new Uint8Array(64),
             }) as unknown as ExtendedVirtualCoin,
     );

@@ -139,7 +139,7 @@ const createMockVtxo = (
         createdAt: new Date(),
         isUnrolled: false,
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as any;
 };
@@ -406,7 +406,7 @@ describe("VtxoManager - Recovery", () => {
                         createdAt: new Date(),
                         isUnrolled: false,
                         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-                        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
                         tapTree: new Uint8Array(),
                     }) as any,
             );
@@ -2906,7 +2906,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
             createdAt: new Date(),
             isUnrolled: false,
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         }) as any;
 
@@ -3462,7 +3462,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
             createdAt: new Date(),
             isUnrolled: false,
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         }) as any;
 
@@ -3833,7 +3833,7 @@ describe("VtxoManager - intent fee pricing", () => {
             createdAt: new Date(),
             isUnrolled: false,
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         }) as any;
 

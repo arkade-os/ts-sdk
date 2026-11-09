@@ -4666,7 +4666,7 @@ export class Wallet
                 allExtended.push({
                     ...vtxo,
                     forfeitTapLeafScript: vtxoScript.forfeit(),
-                    intentTapLeafScript: vtxoScript.forfeit(),
+                    proofTapLeafScript: vtxoScript.forfeit(),
                     tapTree: vtxoScript.encode(),
                 });
             }
@@ -5263,7 +5263,7 @@ export class Wallet
         const inputs = vtxos.map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: cashScript.forfeit(),
-            intentTapLeafScript: cashScript.forfeit(),
+            proofTapLeafScript: cashScript.forfeit(),
             tapTree: cashScript.encode(),
         }));
         if (inputs.length === 0) return result;
@@ -6171,7 +6171,7 @@ export class Wallet
                     vout: changeVout,
                     createdAt: new Date(createdAt),
                     forfeitTapLeafScript: offchainTapscript.forfeit(),
-                    intentTapLeafScript: offchainTapscript.forfeit(),
+                    proofTapLeafScript: offchainTapscript.forfeit(),
                     isUnrolled: false,
                     tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),

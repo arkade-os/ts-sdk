@@ -143,7 +143,7 @@ const BOARDING_INPUT = {
     value: 10_000,
     status: { confirmed: true },
     forfeitTapLeafScript: BOARDING_SCRIPT.leaves[0],
-    intentTapLeafScript: BOARDING_SCRIPT.leaves[0],
+    proofTapLeafScript: BOARDING_SCRIPT.leaves[0],
     tapTree: new Uint8Array([0x00]),
 } as unknown as ExtendedCoin;
 
