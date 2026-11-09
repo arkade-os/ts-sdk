@@ -15,8 +15,8 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     networks,
-    RestArkProvider,
     RestIndexerProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -35,6 +35,16 @@ const regtest = (...args: string[]) =>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+async function waitFor<T>(what: string, poll: () => Promise<T | undefined>): Promise<T> {
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+        const found = await poll();
+        if (found !== undefined) return found;
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await sleep(1000);
+    }
+}
+
 async function main() {
     const explorer = new EsploraProvider(ESPLORA_URL, {
         forcePolling: true,
@@ -42,7 +52,7 @@ async function main() {
     });
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(ARK_URL),
+        operatorProvider: new RestOperatorProvider(ARK_URL),
         indexerProvider: new RestIndexerProvider(ARK_URL),
         onchainProvider: explorer,
         storage: {
@@ -56,7 +66,9 @@ async function main() {
     console.log("boarding address:", boarding);
     regtest("faucet", boarding, (BOARDING_SATS / 1e8).toFixed(8), "--confirm");
 
-    while (!(await wallet.getBoardingUtxos()).some((u) => u.status.confirmed)) await sleep(1000);
+    await waitFor("the boarding coin to confirm", async () =>
+        (await wallet.getBoardingUtxos()).find((u) => u.status.confirmed),
+    );
     console.log("boarding coin confirmed");
 
     const dest = p2tr(
@@ -68,14 +80,11 @@ async function main() {
     console.log("cosigned and broadcast:", txid);
 
     regtest("mine", "1");
-    for (;;) {
-        const utxos = await explorer.getCoins(dest);
-        if (utxos.length) {
-            console.log("destination received", utxos[0].value, "sats");
-            break;
-        }
-        await sleep(1000);
-    }
+    const received = await waitFor(
+        "the destination coin",
+        async () => (await explorer.getCoins(dest))[0],
+    );
+    console.log("destination received", received.value, "sats");
 
     await wallet.dispose();
 }
