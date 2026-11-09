@@ -333,6 +333,7 @@ export type { ArkadeCashRequest, ArkadeCashResponse } from "./arkadeCash/message
 export type { ArkadeCashRecord, ArkadeCashAction } from "./arkadeCash/tracker";
 export type { ArkadeCashStatus, ArkadeCashStatusReport } from "./arkadeCash/status";
 export {
+    addArkadeCashRecord,
     arkadeCashId,
     arkadeCashResolver,
     createArkadeCashTracker,

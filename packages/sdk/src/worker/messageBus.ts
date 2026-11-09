@@ -150,7 +150,7 @@ type Options = {
  * the bus sends an "Operation abandoned" error so the message id
  * never goes silent indefinitely.
  */
-const LATE_DELIVERY_GRACE_MS = 5 * 60_000;
+export const LATE_DELIVERY_GRACE_MS = 5 * 60_000;
 
 /**
  * Tracks one in-flight late-delivery watcher (a handler that has already

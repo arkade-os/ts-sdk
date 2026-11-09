@@ -162,6 +162,7 @@ import {
     isSerializedAggregateError,
 } from "./wallet-message-handler";
 import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
+import { LATE_DELIVERY_GRACE_MS } from "../../worker/messageBus";
 import { captureInputExpiryFloor } from "../sendInputExpiry";
 import type {
     Contract,
@@ -604,8 +605,56 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             type: "ARKADE_CASH",
             payload: request,
         };
-        const response = await this.sendMessage(message);
-        return (response as ResponseArkadeCash).payload;
+        // Attach before posting so a late result cannot land between the
+        // timeout rejection and the follow-up listener.
+        const late = this.waitForLateCashResponse(message.id);
+        let response: WalletUpdaterResponse;
+        try {
+            response = await this.sendMessage(message);
+            late.cancel();
+        } catch (error) {
+            // Vouchers can take several sequential sweeps. The worker keeps the
+            // handler running after the inactivity deadline and delivers the
+            // final envelope under the same id; wait for that instead of losing
+            // completed txids. Keep this bounded by the worker's grace window.
+            if (error instanceof ServiceWorkerTimeoutError) {
+                response = await late.promise;
+            } else {
+                throw error;
+            }
+        }
+        const cashEnvelope = response as ResponseArkadeCash;
+        if (cashEnvelope.error && cashEnvelope.cash) {
+            const restored = restoreErrorName(cashEnvelope);
+            Object.assign(restored, { cash: cashEnvelope.cash });
+            throw restored;
+        }
+        if (cashEnvelope.error) throw restoreErrorName(cashEnvelope);
+        return cashEnvelope.payload;
+    }
+
+    private waitForLateCashResponse(id: string): {
+        promise: Promise<WalletUpdaterResponse>;
+        cancel: () => void;
+    } {
+        let cleanup = () => {};
+        const promise = new Promise<WalletUpdaterResponse>((resolve, reject) => {
+            cleanup = () => {
+                navigator.serviceWorker.removeEventListener("message", onMessage);
+                clearTimeout(timeoutId);
+            };
+            const onMessage = (event: MessageEvent<WalletUpdaterResponse>) => {
+                if (event.data?.id !== id) return;
+                cleanup();
+                resolve(event.data);
+            };
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new ServiceWorkerTimeoutError("Waiting for the Cash claim timed out"));
+            }, LATE_DELIVERY_GRACE_MS);
+            navigator.serviceWorker.addEventListener("message", onMessage);
+        });
+        return { promise, cancel: () => cleanup() };
     }
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;

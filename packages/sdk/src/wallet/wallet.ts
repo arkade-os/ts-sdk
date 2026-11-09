@@ -5183,6 +5183,61 @@ export class Wallet
     }
 
     /**
+     * Correlate an imported voucher's settlement with the voucher record. This
+     * is deliberately kept on wallet state rather than being inferred from the
+     * generic recovery row, which has no safe public correlation key.
+     */
+    async correlateArkadeCashRecovery(
+        cashId: string,
+        txid: string,
+        amount: number,
+        outcome = "recovered",
+    ): Promise<void> {
+        let records: Record<string, unknown>[] = [];
+        try {
+            const state = await this.walletRepository.getWalletState();
+            const raw = state?.settings?.arkadeCashRecovery;
+            if (Array.isArray(raw)) records = raw as Record<string, unknown>[];
+        } catch {
+            // Bookkeeping only; a completed settlement must not fail for it.
+        }
+        const index = records.findIndex((record) => record.id === cashId);
+        const previous = index >= 0 ? records[index] : undefined;
+        const claims = Array.isArray(previous?.claimTxIds) ? (previous.claimTxIds as string[]) : [];
+        if (claims.includes(txid)) return;
+        const next = {
+            ...previous,
+            id: cashId,
+            action: "claimed",
+            amount,
+            outcome,
+            issueTxIds: Array.isArray(previous?.issueTxIds) ? previous.issueTxIds : [],
+            claimTxIds: [...claims, txid],
+            createdAt: previous?.createdAt ?? Math.floor(Date.now() / 1000),
+        };
+        if (index >= 0) records[index] = next;
+        else records.push(next);
+        await updateWalletState(this.walletRepository, (state) => ({
+            ...state,
+            settings: { ...state.settings, arkadeCashRecovery: records },
+        }));
+    }
+
+    /**
+     * Read the transaction id returned by `settle` and attach it to the voucher
+     * identified by its script. Imported recovery contracts currently carry no
+     * cash id, so the script is the stable join key and is already the
+     * activity-facing voucher id.
+     */
+    async correlateArkadeCashRecoveryByScript(
+        script: string,
+        txid: string,
+        amount: number,
+    ): Promise<void> {
+        await this.correlateArkadeCashRecovery(script, txid, amount);
+    }
+
+    /**
      * Split the VTXOs at an arkadeCash address into three buckets: the ones the
      * thin sweep can move (`spendable`), the server-swept ones that must go
      * through a recovery settlement (`recoverable`), and the ones that can

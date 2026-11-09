@@ -850,6 +850,7 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
  */
 interface RecoveryContractCapableWallet {
     removeRecoveryContract(script: string): Promise<void>;
+    correlateArkadeCashRecoveryByScript(script: string, txid: string, amount: number): Promise<void>;
 }
 
 /** Return whether a wallet can purge its imported recovery contracts. */
@@ -858,7 +859,9 @@ function isRecoveryContractCapable(
 ): wallet is IWallet & RecoveryContractCapableWallet {
     return (
         typeof (wallet as Partial<RecoveryContractCapableWallet>).removeRecoveryContract ===
-        "function"
+            "function" &&
+        typeof (wallet as Partial<RecoveryContractCapableWallet>)
+            .correlateArkadeCashRecoveryByScript === "function"
     );
 }
 
@@ -1497,10 +1500,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             const totalAmount = deductOffchainOutputFee(subtotal, estimator, arkAddress);
             if (totalAmount < dustAmount) return;
 
-            await wallet.settle({
+            const settledTxid = await wallet.settle({
                 inputs: batch,
                 outputs: [{ address: arkAddress, amount: totalAmount }],
             });
+            await wallet.correlateArkadeCashRecoveryByScript(
+                contract.script,
+                settledTxid,
+                Number(totalAmount),
+            );
         }
 
         // Purge only on AUTHORITATIVE evidence the funds are gone — never on an

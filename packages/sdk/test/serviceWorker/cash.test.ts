@@ -147,5 +147,7 @@ describe("Worker ArkadeCash", () => {
         const failed = await message(wallet, "create", undefined, 5000);
         expect((failed as { error?: unknown }).error).toBe(error);
         expect((failed as { error?: { cash?: string } }).error?.cash).toBe("recover-me");
+        expect((failed as { cash?: string }).cash).toBe("recover-me");
     });
+
 });
