@@ -7,7 +7,7 @@ import { completedSolverUsage, SolverRoutesUnavailable } from "../../src/client/
 import { SolverUnavailable } from "../../src/transportErrors";
 import { solverDirectionKey, solverId } from "@arkade-os/solver-discovery";
 import { collectSwapRecords, InMemoryAssetSwapRepository } from "../../src/repository";
-import type { Swap } from "../../src/client/record";
+import { swapOf, type SwapRecord } from "../../src/client/record";
 import {
     EMULATOR_PUBKEY_HEX,
     PAYMENT_HASH,
@@ -109,14 +109,21 @@ describe("solver quote failover", () => {
         expect(attempted).toEqual(["first"]);
     });
 
-    it("discards unverifiable terms before trying a different solver", async () => {
-        const { client, attempted } = await setup({
-            failure: new QuoteVerificationFailed("responder"),
-        });
-        const quote = await client.quote(input());
-        expect(quote.market).toMatchObject({ solver: "second" });
-        expect(attempted).toEqual(["first", "second"]);
-    });
+    it.each(["responder", "lockup_address", "invoice", "refund_window", "pair"] as const)(
+        "discards terms failing %s before trying a different solver",
+        async (check) => {
+            const { client, attempted, firstTransport, secondTransport } = await setup({
+                failure: new QuoteVerificationFailed(check),
+            });
+            const quote = await client.quote(input());
+            expect(quote.market).toMatchObject({ solver: "second" });
+            expect(client.preparationOf(quote.id)?.card).toEqual(second);
+            expect(attempted).toEqual(["first", "second"]);
+            expect(firstTransport.closed()).toBe(true);
+            expect(secondTransport.closed()).toBe(true);
+            await client[Symbol.asyncDispose]();
+        },
+    );
 
     it("enumerates saved priority without disclosing an invoice", async () => {
         const { client, attempted } = await setup({
@@ -234,20 +241,44 @@ describe("solver quote failover", () => {
         expect(quote.market).toMatchObject({ solver: "working" });
     });
 
-    it("counts successful durable IDs once and separates directions and networks", async () => {
-        const { client } = await setup({
-            routing: { preferences: () => ({ priority: [solverId(second, "regtest")] }) },
+    it("counts durable round-trip IDs once across card spellings and separates directions and networks", async () => {
+        const wallet = await acceptWallet();
+        const repository = new InMemoryAssetSwapRepository();
+        const client = createSwapClient({
+            wallet: wallet.wallet,
+            repository,
+            discovery: { snapshot: [second] },
+            emulatorPubkey: EMULATOR_PUBKEY_HEX,
+            policy: { drive: "manual", solverRouting: {} },
+            transportFor: () =>
+                solverTransport(solverFor(CLOCK), {
+                    attestedResponder: second.discovery_pubkey,
+                }),
         });
         const quote = await client.quote(input());
-        const swap: Swap = {
-            ...quote,
-            id: `rfq:${quote.id}`,
-            family: "rfq",
-            outcome: "paid",
-            createdAt: NOW,
-            updatedAt: NOW,
+        await client.accept(quote);
+        const record = await repository.getSwapRecord(quote.id);
+        expect(record).toBeDefined();
+        const restored: SwapRecord = JSON.parse(JSON.stringify(record));
+        const swap = swapOf(restored, "paid");
+        const direction = '["regtest","arkade:regtest/slip44:1","bolt11:regtest/slip44:1"]';
+        expect(swap.route.give.asset).toBe("arkade:regtest/slip44:1");
+        expect(swap.route.take.asset).toBe("bolt11:regtest/slip44:1");
+        const canonical = {
+            ...second,
+            base_asset: { ...second.base_asset, id: "arkade:regtest/slip44:1" },
+            quote_asset: { ...second.quote_asset, id: "bolt11:regtest/slip44:1" },
         };
-        const direction = solverDirectionKey(second, "base", "regtest");
+        const reversed = {
+            ...second,
+            base_asset: second.quote_asset,
+            quote_asset: second.base_asset,
+            base_corridor: second.quote_corridor,
+            quote_corridor: second.base_corridor,
+        };
+        expect(solverDirectionKey(second, "base", "regtest")).toBe(direction);
+        expect(solverDirectionKey(canonical, "base", "regtest")).toBe(direction);
+        expect(solverDirectionKey(reversed, "quote", "regtest")).toBe(direction);
         const usage = completedSolverUsage(
             [
                 swap,
@@ -263,6 +294,7 @@ describe("solver quote failover", () => {
             completedSolverUsage([swap], "regtest", solverDirectionKey(second, "quote", "regtest")),
         ).toEqual({});
         expect(completedSolverUsage([swap], "bitcoin", direction)).toEqual({});
+        await client[Symbol.asyncDispose]();
     });
 
     it("fails over after the real reply parser rejects a mismatched pair", async () => {

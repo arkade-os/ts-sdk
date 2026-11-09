@@ -28,8 +28,10 @@ export interface SolverRoutingContext {
 
 /** Optional direction-specific policy for quote preparation; accepted swaps keep their solver. */
 export interface SolverRoutingPolicy {
-    /** Try another candidate on solver-local quote failure; defaults to true. An explicit
-     * `selectMarket` remains an authoritative pin or veto and disables failover. */
+    /** Try another candidate on solver-local quote failure; defaults to true. Invalid terms
+     * are discarded before funding and every candidate must pass full verification.
+     * Attempts may disclose the same invoice or request details to multiple solvers.
+     * An explicit `selectMarket` remains an authoritative pin or veto and disables failover. */
     readonly failover?: boolean;
     /** Read current preferences before selection. Absent means discovery order; rejection stops
      * the operation before negotiation. Modes, priority and usage follow {@link SolverRoutingPreferences}. */
@@ -98,6 +100,7 @@ export const canFailoverQuote = (error: unknown): boolean => {
     ].includes(error.reason);
 };
 
+/** Exhausted candidates, outside the closed SwapError taxonomy; narrow with instanceof. */
 export class SolverRoutesUnavailable extends AggregateError {
     override readonly name = "SolverRoutesUnavailable";
     constructor(readonly attempts: readonly { solverId: string; error: unknown }[]) {
