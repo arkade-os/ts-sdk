@@ -102,5 +102,6 @@ export async function arkadeCashActivity(
     records: ArkadeCashTracker,
     txs: ArkTransaction[],
 ): Promise<Activity[]> {
-    return buildActivities(txs, [arkadeCashResolver(records)]);
+    const activities = await buildActivities(txs, [arkadeCashResolver(records)]);
+    return activities.filter((activity) => activity.intent?.kind === "arkade-cash");
 }

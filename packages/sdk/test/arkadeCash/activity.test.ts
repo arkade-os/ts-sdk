@@ -64,4 +64,26 @@ describe("ArkadeCash activity records", () => {
         expect(activities[0].id).toBe("arkade-cash:cash-id");
         expect(activities[0].intent?.metadata).toEqual({ cashId: "cash-id", direction: "issued" });
     });
+
+    it("returns only correlated rows, not the normal history again", async () => {
+        const records = createArkadeCashTracker();
+        await fundArkadeCashRecord(records, "cash-id", 1, ["funding"], 500);
+        const activities = await arkadeCashActivity(records, [
+            {
+                key: { arkTxid: "funding", commitmentTxid: "", boardingTxid: "" },
+                type: TxType.TxSent,
+                amount: 1,
+                createdAt: 600,
+                settled: true,
+            },
+            {
+                key: { arkTxid: "other", commitmentTxid: "", boardingTxid: "" },
+                type: TxType.TxReceived,
+                amount: 2,
+                createdAt: 700,
+                settled: true,
+            },
+        ]);
+        expect(activities.map((activity) => activity.id)).toEqual(["arkade-cash:cash-id"]);
+    });
 });
