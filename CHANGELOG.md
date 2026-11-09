@@ -298,23 +298,26 @@ style and have not been backfilled.
   fetches every address history shows (current and deprecated signers) once,
   sweeps all of it, and still settles only current-signer coins, which the
   server would reject otherwise. A failed lookup at a deprecated-signer address
-  is skipped for that poll and retried on the next, so it cannot abort the
-  settle and renewal in the same poll; a current-signer failure still fails it,
-  as before. Expiry is now read from each coin's own CSV
+  is bounded, skipped for that poll and retried on the next, so it cannot block
+  current-signer work; a current-signer failure still fails it, as before.
+  Discovery also includes index-zero baseline addresses for deprecated signers,
+  including when their persisted row coalesced onto `default`. If the signer
+  rotates during discovery, the poll rediscovers before selecting settlement
+  inputs and checks again immediately before intent registration. Expiry is now
+  read from each coin's own CSV
   exit leaf rather than the wallet's current boarding delay, in the sweep, the
   periodic settle and `Wallet.settle` alike, so a rotation that changed the
   delay can no longer leave a coin that settle skips and the sweep ignores, or
-  the reverse.
+  the reverse. Block-based expiry no longer requires a block timestamp;
+  seconds-based expiry uses the confirmation parent's and current tip's
+  consensus median-time-past values, not the local clock.
 - **Electrum `getCoins` now reports each coin's `block_time`.**
   `ElectrumOnchainProvider.getCoins` returned `confirmed` and `block_height`
-  but no `block_time`, and the boarding expiry check reads a coin without one
-  as not expired. With an Electrum provider no boarding UTXO was therefore ever
-  swept, whatever its timelock: a seconds-typed delay (mainnet's) cannot be
-  judged without a time, and the check bails before it looks at heights. It now
-  looks up the block header of each distinct confirmed height, the same lookup
-  the transaction history uses. A header the indexer cannot serve yet leaves
-  the coin without a time, so it reads as unexpired until the next poll rather
-  than failing the listing.
+  but no `block_time`. It now looks up the block header of each distinct
+  confirmed height, reusing the transaction-history lookup. A header the
+  indexer cannot serve yet leaves the coin listed without a timestamp rather
+  than failing the query; seconds-based boarding expiry is evaluated separately
+  from consensus median-time-past.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status

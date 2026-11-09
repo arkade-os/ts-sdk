@@ -463,6 +463,15 @@ describe("ElectrumOnchainProvider", () => {
             expect(tip.time).not.toBe(TIP_TIME);
         });
 
+        it("returns median-time-past for an arbitrary block height", async () => {
+            mockBatch(wsMock.request, [headerAt(TIP_TIME), ...WINDOW_TIMES.map(headerAt)]);
+
+            expect(await provider.getMedianTimePast(100)).toBe(MEDIAN);
+            expect(headerCalls().map((call) => call[1])).toEqual([
+                100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90,
+            ]);
+        });
+
         it("asks for exactly the ten blocks below the tip", async () => {
             tipAt100();
             await provider.getChainTip();

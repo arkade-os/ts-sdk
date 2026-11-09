@@ -4,6 +4,7 @@ import type { Coin } from "../src";
 import { collectUtxos } from "../src/repositories/walletRepository";
 import { BoardingContractHandler } from "../src/contracts/handlers/boarding";
 import { Transaction } from "../src/utils/transaction";
+import { READ_TIMEOUT_MS } from "../src/utils/fetch";
 import {
     installRestoreHarness,
     makeStaticWalletForTest,
@@ -144,6 +145,40 @@ describe("boarding sweep across signers", () => {
 
             const cached = await collectUtxos(wallet.walletRepository, deprecated.address);
             expect(cached.map((c) => c.txid)).toEqual([coin("dd").txid]);
+        });
+
+        it("bounds a stalled deprecated lookup without blocking current-signer results", async () => {
+            const { wallet, currentAddress, deprecated, getCoins } = await setup();
+            vi.useFakeTimers();
+            let signalLookupStarted!: () => void;
+            const lookupStarted = new Promise<void>((resolve) => {
+                signalLookupStarted = resolve;
+            });
+            getCoins.mockImplementation((address) => {
+                if (address === deprecated.address) {
+                    signalLookupStarted();
+                    return new Promise(() => {});
+                }
+                return Promise.resolve(address === currentAddress ? [coin("11")] : []);
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+            try {
+                const pending = wallet.getSelectableBoardingUtxoGroups();
+                await lookupStarted;
+                await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+                const groups = await pending;
+
+                expect(groups.flatMap((group) => group.coins.map((c) => c.txid))).toContain(
+                    coin("11").txid,
+                );
+                expect(warn).toHaveBeenCalledWith(
+                    expect.stringContaining(deprecated.address),
+                    expect.any(Error),
+                );
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it("rejects if the current signer's address fails, as it always has", async () => {

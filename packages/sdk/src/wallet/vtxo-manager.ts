@@ -6,6 +6,7 @@ import {
     IReadonlyWallet,
     isSubdust,
     Outpoint,
+    SettleParams,
     VirtualCoin,
 } from ".";
 import {
@@ -36,7 +37,6 @@ import {
 import {
     decodeBoardingExit,
     filterExpiredBoardingCoins,
-    hasBoardingTxExpired,
 } from "../utils/arkTransaction";
 import { hex } from "@scure/base";
 import { getSequence } from "../script/base";
@@ -89,6 +89,11 @@ interface SweepCapableWallet extends IReadonlyWallet {
     onchainProvider: OnchainProvider;
     arkProvider: OperatorProvider;
     network: Network;
+    settle(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
+    ): Promise<string>;
     /**
      * Descriptor-aware signer: routes each input to the identity or its per-index descriptor
      * (rotated boarding), so a sweep batching several boarding addresses signs each correctly.
@@ -119,6 +124,13 @@ function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepC
  * Static: two distinct wallets on one origin just take turns, which is acceptable.
  */
 const BOARDING_POLL_LOCK_NAME = "arkade-boarding-poll";
+
+class BoardingSignerChangedError extends Error {
+    constructor() {
+        super("Boarding signer changed before intent registration");
+        this.name = "BoardingSignerChangedError";
+    }
+}
 
 /**
  * Web Locks name serializing imported-contract recovery (arkcash) across
@@ -2373,12 +2385,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const groups = await wallet.getBoardingUtxosForSigners(allowed);
 
-        // Boarding-output expiry is PER GROUP: a rotation may change the boarding exit delay.
-        let chainTipHeight: number | undefined;
-        if (groups.some((g) => g.csvTimelock.type === "blocks")) {
-            const tip = await wallet.onchainProvider.getChainTip();
-            chainTipHeight = tip.height;
-        }
+        const expiredBoarding = new Set(
+            (
+                await filterExpiredBoardingCoins(
+                    groups.flatMap((group) => group.coins),
+                    () => wallet.onchainProvider.getChainTip(),
+                    wallet.onchainProvider.getMedianTimePast?.bind(wallet.onchainProvider),
+                )
+            ).map((coin) => `${coin.txid}:${coin.vout}`),
+        );
 
         const reportsBySigner = new Map<string, DeprecatedSignerReport>();
         const migratable: ClassifiedBoarding[] = [];
@@ -2418,11 +2433,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             for (const coin of confirmed) {
                 // Two independent gates: signer cutoff AND this row's own CSV expiry.
-                const boardingExpired = hasBoardingTxExpired(
-                    coin,
-                    group.csvTimelock,
-                    chainTipHeight,
-                );
+                const boardingExpired = expiredBoarding.has(`${coin.txid}:${coin.vout}`);
                 if (isCooperativelyMigratable(cls.status) && !boardingExpired) {
                     migratable.push({ coin, classification: cls });
                 } else if (cls.status === "EXPIRED") {
@@ -2587,7 +2598,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private filterExpired(coins: ExtendedCoin[]): Promise<ExtendedCoin[]> {
         return filterExpiredBoardingCoins(
             coins,
-            async () => (await this.getOnchainProvider().getChainTip()).height,
+            () => this.getOnchainProvider().getChainTip(),
+            this.getOnchainProvider().getMedianTimePast?.bind(this.getOnchainProvider()),
         );
     }
 
@@ -2810,21 +2822,30 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // and N-1 collide on the server's duplicated-input check.
             await runWithCrossInstanceLock(BOARDING_POLL_LOCK_NAME, async () => {
                 // Both passes pick from it, so neither takes an input an in-flight settle holds.
-                const currentSigner = this.getCurrentSigner();
-                const groups = await getSelectableBoardingUtxoGroups(this.wallet, currentSigner);
+                let currentSigner = this.getCurrentSigner();
+                let groups = await getSelectableBoardingUtxoGroups(this.wallet, currentSigner);
+                if (this.getCurrentSigner() !== currentSigner) {
+                    currentSigner = this.getCurrentSigner();
+                    groups = await getSelectableBoardingUtxoGroups(this.wallet, currentSigner);
+                }
+                const signerStable = this.getCurrentSigner() === currentSigner;
                 // The server rejects an input under a deprecated signer, so only the sweep takes
                 // those: a unilateral exit works for any signer.
-                const settleable = groups
-                    .filter((g) => g.serverPubKey === currentSigner)
-                    .flatMap((g) => g.coins);
+                const settleable = signerStable
+                    ? groups
+                          .filter((g) => g.serverPubKey === currentSigner)
+                          .flatMap((g) => g.coins)
+                    : [];
                 const boardingUtxos = groups.flatMap((g) => g.coins);
 
                 // Settle, then sweep: sequential to avoid racing for the same inputs.
                 try {
-                    await this.runPeriodicSettle(settleable);
+                    await this.runPeriodicSettle(settleable, currentSigner);
                 } catch (e) {
-                    hadError = true;
-                    console.error("Error during periodic settle:", e);
+                    if (!(e instanceof BoardingSignerChangedError)) {
+                        hadError = true;
+                        console.error("Error during periodic settle:", e);
+                    }
                 }
 
                 const sweepEnabled =
@@ -2886,7 +2907,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Skips expired boarding (swept instead) and in-flight boarding (knownBoardingUtxos); omits
      * VTXOs while the event-driven renewal runs, to avoid double-spending.
      */
-    private async runPeriodicSettle(boardingUtxos: ExtendedCoin[]): Promise<void> {
+    private async runPeriodicSettle(
+        boardingUtxos: ExtendedCoin[],
+        expectedSigner: string,
+    ): Promise<void> {
         // If expiry can't be determined, this throws and nothing settles, rather than settling an
         // input the sweep also targets.
         const expiredSet = new Set(await this.filterExpired(boardingUtxos));
@@ -3003,6 +3027,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                         inputs: [...filteredBoarding, ...filteredVtxos],
                         outputs: [{ address: arkAddress, amount: totalAmount }],
                     }),
+                    undefined,
+                    {
+                        onPhase: (phase) => {
+                            if (
+                                phase === "registration_attempt" &&
+                                this.getCurrentSigner() !== expectedSigner
+                            ) {
+                                throw new BoardingSignerChangedError();
+                            }
+                        },
+                    },
                 );
 
                 for (const u of filteredBoarding) {
@@ -3010,7 +3045,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
                 success = true;
             } catch (e) {
-                if (e instanceof Error && e.name === "VtxoReservedError") {
+                if (e instanceof BoardingSignerChangedError) {
+                    throw e;
+                } else if (e instanceof Error && e.name === "VtxoReservedError") {
                     // A concurrent spend holds an input; nothing failed.
                     skipWithoutBackoff = true;
                 } else if (e instanceof Error && e.message.includes("VTXO_ALREADY_SPENT")) {

@@ -1936,7 +1936,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             status: {
                 confirmed: !!blockTime,
                 block_time: blockTime,
-                block_height: blockHeight,
+                block_height: blockHeight ?? (blockTime ? 100 : undefined),
             },
         });
 
@@ -1991,6 +1991,13 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     height: chainTipHeight,
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
+                }),
+                getMedianTimePast: vi.fn().mockImplementation(async (height: number) => {
+                    if (height === chainTipHeight) return Math.floor(Date.now() / 1000);
+                    const coin = [...boardingUtxos, ...(groups ?? []).flatMap((g) => g.coins)].find(
+                        (candidate) => candidate.status.block_height === height + 1,
+                    );
+                    return coin?.status.block_time ?? Math.floor(Date.now() / 1000) - 3600;
                 }),
             },
             arkProvider: {
@@ -2208,7 +2215,9 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
         it("should skip UTXOs without block_height for block-based timelocks", async () => {
             // UTXO confirmed but missing block_height
-            const utxos = [createMockBoardingUtxo(50000, 1000, undefined, blockScript)];
+            const coin = createMockBoardingUtxo(50000, 1000, undefined, blockScript);
+            coin.status.block_height = undefined;
+            const utxos = [coin];
             const wallet = createBlockBasedWallet(utxos, 200);
             const manager = new VtxoManager(wallet, {
                 boardingUtxoSweep: true,
@@ -2217,6 +2226,50 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             const expired = await manager.getExpiredBoardingUtxos();
 
             expect(expired).toHaveLength(0);
+        });
+
+        it("detects block-based expiry when block_time is unavailable", async () => {
+            const coin = createMockBoardingUtxo(50_000, undefined, 100, blockScript);
+            coin.status.confirmed = true;
+            const wallet = createBlockBasedWallet([coin], 110);
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            expect(await manager.getExpiredBoardingUtxos()).toEqual([coin]);
+            await manager.dispose();
+        });
+
+        it("uses confirmation-parent and tip median times for seconds-based expiry", async () => {
+            const csv: RelativeTimelock = { type: "seconds", value: 512n };
+            const coin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(csv));
+            const wallet = createBlockBasedWallet([coin], 110);
+            let tipMedianTime = 2511;
+            wallet.onchainProvider.getChainTip.mockImplementation(async () => ({
+                height: 110,
+                time: tipMedianTime,
+                hash: "0".repeat(64),
+            }));
+            wallet.onchainProvider.getMedianTimePast.mockImplementation(async (height) =>
+                height === 99 ? 2000 : tipMedianTime,
+            );
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            expect(await manager.getExpiredBoardingUtxos()).toEqual([]);
+            tipMedianTime = 2512;
+            expect(await manager.getExpiredBoardingUtxos()).toEqual([coin]);
+            expect(wallet.onchainProvider.getMedianTimePast).toHaveBeenCalledWith(99);
+            await manager.dispose();
+        });
+
+        it("fails closed when the provider cannot supply consensus median times", async () => {
+            const coin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(SEVEN_DAYS));
+            const wallet = createBlockBasedWallet([coin], 110);
+            delete wallet.onchainProvider.getMedianTimePast;
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await expect(manager.getExpiredBoardingUtxos()).rejects.toThrow(
+                "Onchain provider must implement getMedianTimePast",
+            );
+            await manager.dispose();
         });
     });
 
@@ -2298,6 +2351,63 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             expect(wallet.settle).toHaveBeenCalledTimes(1);
             expect(wallet.settle.mock.calls[0][0].inputs).toEqual([mine]);
+            await manager.dispose();
+        });
+
+        it("rediscovers boarding coins when the signer changes during discovery", async () => {
+            const nextSigner = new Uint8Array(32).fill(0x04);
+            const staleCoin = createMockBoardingUtxo(10_000, Math.floor(Date.now() / 1000) - 60);
+            const freshCoin = createMockBoardingUtxo(
+                20_000,
+                Math.floor(Date.now() / 1000) - 60,
+                undefined,
+                boardingScript(SEVEN_DAYS, nextSigner),
+            );
+            const wallet = createMockWalletWithBoarding([], { groups: [] });
+            wallet.getSelectableBoardingUtxoGroups
+                .mockImplementationOnce(async () => {
+                    wallet.boardingTapscript = boardingScript(SEVEN_DAYS, nextSigner);
+                    return [{ serverPubKey: signerHex(currentSigner), coins: [staleCoin] }];
+                })
+                .mockResolvedValueOnce([
+                    { serverPubKey: signerHex(nextSigner), coins: [freshCoin] },
+                ]);
+            wallet.settle.mockImplementation(async (_params, _eventCallback, hooks) => {
+                hooks?.onPhase?.("registration_attempt");
+                return "mock-txid";
+            });
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(wallet.getSelectableBoardingUtxoGroups).toHaveBeenCalledTimes(2);
+            expect(wallet.settle.mock.calls[0][0].inputs).toEqual([freshCoin]);
+            await manager.dispose();
+        });
+
+        it("aborts registration if the signer changes after discovery", async () => {
+            const nextSigner = new Uint8Array(32).fill(0x04);
+            const coin = createMockBoardingUtxo(10_000, Math.floor(Date.now() / 1000) - 60);
+            const wallet = createMockWalletWithBoarding([], {
+                groups: [{ serverPubKey: signerHex(currentSigner), coins: [coin] }],
+            });
+            const address = await wallet.getAddress();
+            wallet.getAddress.mockImplementation(async () => {
+                wallet.boardingTapscript = boardingScript(SEVEN_DAYS, nextSigner);
+                return address;
+            });
+            let registered = false;
+            wallet.settle.mockImplementation(async (_params, _eventCallback, hooks) => {
+                hooks?.onPhase?.("registration_attempt");
+                registered = true;
+                return "mock-txid";
+            });
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect(registered).toBe(false);
             await manager.dispose();
         });
 

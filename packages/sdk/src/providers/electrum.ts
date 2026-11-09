@@ -935,6 +935,21 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         };
     }
 
+    async getMedianTimePast(height: number): Promise<number> {
+        if (!Number.isInteger(height) || height < 0) {
+            throw new Error(`Invalid block height for median-time-past: ${height}`);
+        }
+        const heights: number[] = [];
+        for (let h = height; h >= 0 && heights.length < MTP_WINDOW; h--) heights.push(h);
+        const headers = await this.chain.fetchBlockHeaders(heights);
+        if (headers.length !== heights.length) {
+            throw new Error(`Incomplete block header window at height ${height}`);
+        }
+        const timestamps = headers.map((header) => parseBlockHeader(header.hex).timestamp);
+        timestamps.sort((a, b) => a - b);
+        return timestamps[Math.floor(timestamps.length / 2)];
+    }
+
     /**
      * Consensus's `GetMedianTimePast`, ending at and including `height`.
      *
