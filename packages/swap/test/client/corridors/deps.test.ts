@@ -353,7 +353,7 @@ describe("resolveCorridorBase", () => {
             Object.assign(new Error("aborted"), { name: "TimeoutError" }),
             // Across the service-worker boundary the error is a fresh `Error`
             // whose only branchable identity is `cause.name`.
-            new Error("Failed to get arkade info: Error", {
+            new Error("Failed to get operator info: Error", {
                 cause: Object.assign(new Error("offline"), { name: "ProviderUnavailableError" }),
             }),
             "a thrown string",

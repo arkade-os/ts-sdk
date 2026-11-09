@@ -804,8 +804,8 @@ const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
-// Get fee information from the server
-const { fees: feeInfo } = await wallet.getArkadeInfo();
+// Get fee information from the operator
+const { fees: feeInfo } = await wallet.getOperatorInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
   'bc1p...',
@@ -813,9 +813,9 @@ const exitTxid = await new Ramps(wallet).offboard(
 );
 ```
 
-`getArkadeInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
-service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
-to the snapshot persisted at wallet construction when the server is unreachable.
+`getOperatorInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
+service-worker and Expo wallets too. It answers with the operator's live `OperatorInfo`, falling back
+to the snapshot persisted at wallet construction when the operator is unreachable.
 
 ### Concurrent Spending & Coin Reservations
 
@@ -884,12 +884,12 @@ If your app keeps its own reserved-outpoint set, call `reserveVtxos` where you a
 
 ### Talking to the operator through the wallet
 
-`getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
-server URL of its own:
+`getOperatorInfo()` is one of three seams that let a plugin work from a wallet alone, never an
+operator URL of its own:
 
 | Seam | Interface | For |
 | --- | --- | --- |
-| `getArkadeInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
+| `getOperatorInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
 | `getArkadeReader()` | `IReadonlyWallet` | Chain reads for scripts the wallet does not own |
 | `getArkadeBroadcaster()` | `IWallet` | `submitTx` / `finalizeTx` |
 

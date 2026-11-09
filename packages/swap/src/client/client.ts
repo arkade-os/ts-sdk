@@ -54,8 +54,8 @@ import { marketOf, usableMarkets, type Market } from "./market";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
 
 export interface SwapClientConfig {
-    /** The wallet, and through it the operator: server info, chain reads and broadcast all come from
-     * it; no server URL is accepted anywhere. */
+    /** The wallet, and through it the operator: operator info, chain reads and broadcast all come from
+     * it; no operator URL is accepted anywhere. */
     readonly wallet: IWallet;
     /**
      * Storage for accept records, the markets cache and the restore-scan cursor. No implicit default
