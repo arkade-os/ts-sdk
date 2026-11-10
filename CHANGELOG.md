@@ -368,8 +368,9 @@ style and have not been backfilled.
   or `"both"` had its onchain coins swept into the wallet's boarding address
   near CSV maturity, and settled into Arkade by a later poll. It now takes only
   `boarding` contracts and the `default` row an equal-delay boarding script
-  coalesced onto. Onchain sync and balances still cover every onchain-scoped
-  contract.
+  coalesced onto, recognized by its CSV matching the boarding CSV rather than
+  by its `both` scope, which any caller may set. Onchain sync and balances
+  still cover every onchain-scoped contract.
 
 - **Explorer transaction output values are numeric satoshis across providers.**
   `ExplorerTransaction.vout.value` was typed as a string even though Esplora

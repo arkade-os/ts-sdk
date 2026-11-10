@@ -4871,11 +4871,13 @@ export class Wallet
             this.lockedOutpoints(),
             this.onchainCoins(manager),
         ]);
+        const boardingCsv =
+            this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return coins
             .filter(
                 ({ coin, contract }) =>
                     !locked.has(vtxoOutpoint(coin)) &&
-                    needsOnchainSweep(coin, contract, tip, this._cosignMarginBlocks),
+                    needsOnchainSweep(coin, contract, boardingCsv, tip, this._cosignMarginBlocks),
             )
             .slice(0, MAX_COSIGN_INPUTS)
             .map(({ coin }) => ({ txid: coin.txid, vout: coin.vout }));
