@@ -37,9 +37,34 @@ export function createArkadeCashTracker(): ArkadeCashTracker {
     return new ArkadeCashTracker();
 }
 
-/** Inject a public record. */
+const unionByTxid = (a: ArkadeCashTx[], b: ArkadeCashTx[]): ArkadeCashTx[] => [
+    ...new Map([...a, ...b].map((entry) => [entry.txid, entry])).values(),
+];
+
+/**
+ * Combine two records of one voucher. Transactions are unioned by txid and the earliest
+ * `createdAt` is kept. A claim outranks an issue for `action` and `outcome`; between records
+ * with the same action, `next` wins.
+ */
+export function mergeArkadeCashRecord(
+    prev: ArkadeCashRecord | undefined,
+    next: ArkadeCashRecord,
+): ArkadeCashRecord {
+    if (!prev) return next;
+    const lead = prev.action === "claimed" && next.action === "issued" ? prev : next;
+    return {
+        id: next.id,
+        action: lead.action,
+        outcome: lead.outcome,
+        createdAt: Math.min(prev.createdAt, next.createdAt),
+        issues: unionByTxid(prev.issues, next.issues),
+        claims: unionByTxid(prev.claims, next.claims),
+    };
+}
+
+/** Inject a public record, merging it into any record already held for the voucher. */
 export function addArkadeCashRecord(records: ArkadeCashTracker, record: ArkadeCashRecord): void {
-    records.records.set(record.id, record);
+    records.records.set(record.id, mergeArkadeCashRecord(records.get(record.id), record));
 }
 
 export function arkadeCashId(cash: ArkadeCash): string {

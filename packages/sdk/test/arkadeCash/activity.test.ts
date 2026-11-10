@@ -4,6 +4,7 @@ import {
     addArkadeCashRecord,
     arkadeCashActivity,
     createArkadeCashTracker,
+    mergeArkadeCashRecord,
     type ArkadeCashRecord,
 } from "../../src/arkadeCash/tracker";
 import { TxType } from "../../src/wallet";
@@ -193,5 +194,50 @@ describe("ArkadeCash activity records", () => {
         ]);
         // The shares come from the record (3k + 2k), not from the txs' own 9,999.
         expect(activities.map((activity) => activity.amount)).toEqual([5_000]);
+    });
+
+    it("keeps the claim when an issued record is added after it", async () => {
+        const records = createArkadeCashTracker();
+        addArkadeCashRecord(
+            records,
+            record({
+                id: "v",
+                action: "claimed",
+                outcome: "claimed",
+                createdAt: 20,
+                claims: [{ txid: "claim", amount: 5_000 }],
+            }),
+        );
+        addArkadeCashRecord(
+            records,
+            record({ id: "v", createdAt: 10, issues: [{ txid: "funding", amount: 5_000 }] }),
+        );
+        expect(records.get("v")).toEqual({
+            id: "v",
+            action: "claimed",
+            outcome: "claimed",
+            createdAt: 10,
+            issues: [{ txid: "funding", amount: 5_000 }],
+            claims: [{ txid: "claim", amount: 5_000 }],
+        });
+    });
+
+    it("lets the later record win between records of the same action", () => {
+        const merged = mergeArkadeCashRecord(
+            record({
+                id: "v",
+                action: "claimed",
+                outcome: "claimed",
+                claims: [{ txid: "sweep", amount: 3_000 }],
+            }),
+            record({
+                id: "v",
+                action: "claimed",
+                outcome: "recovered",
+                claims: [{ txid: "settle", amount: 2_000 }],
+            }),
+        );
+        expect(merged.outcome).toBe("recovered");
+        expect(merged.claims.map((claim) => claim.txid)).toEqual(["sweep", "settle"]);
     });
 });

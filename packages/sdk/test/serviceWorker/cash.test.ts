@@ -6,7 +6,7 @@ import { ArkadeCashCreateError, Wallet } from "../../src/wallet/wallet";
 import { InMemoryContractRepository } from "../../src/repositories/inMemory/contractRepository";
 import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
 import { SingleKey } from "../../src/identity/singleKey";
-import type { VirtualCoin } from "../../src/wallet";
+import { TxType, type VirtualCoin } from "../../src/wallet";
 import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import { ServiceWorkerReadonlyWallet } from "../../src/wallet/serviceWorker/wallet";
 
@@ -136,6 +136,70 @@ describe("Worker ArkadeCash", () => {
         const wallet = await fakeWallet(note);
         const err = await message(wallet, "claim", note.toString());
         expect((err as { error?: Error }).error?.message).toContain("another operator");
+    });
+
+    it("merges page records with wallet-state recovery records instead of replacing them", async () => {
+        const wallet = await fakeWallet(cash());
+        await wallet.walletRepository.saveWalletState({
+            settings: {
+                arkadeCashRecovery: [
+                    {
+                        id: "v1",
+                        action: "claimed",
+                        createdAt: 5,
+                        outcome: "recovered",
+                        issues: [],
+                        claims: [{ txid: "settle", amount: 2_000 }],
+                    },
+                ],
+            },
+        });
+        const handler = new WalletMessageHandler();
+        await handler.start({ arkProvider: wallet.arkProvider, wallet, readonlyWallet: wallet }, {
+            walletRepository: wallet.walletRepository,
+        } as never);
+        const tx = (arkTxid: string, type: TxType, amount: number) => ({
+            key: { arkTxid, commitmentTxid: "", boardingTxid: "" },
+            type,
+            amount,
+            createdAt: 10,
+            settled: true,
+        });
+        vi.spyOn(handler as never, "buildTransactionHistoryFromCache").mockResolvedValue([
+            tx("funding", TxType.TxSent, 5_000),
+            tx("sweep", TxType.TxReceived, 3_000),
+            tx("settle", TxType.TxReceived, 2_000),
+        ] as never);
+
+        const response = (await handler.handleMessage({
+            id: "1",
+            tag: handler.messageTag,
+            type: "ARKADE_CASH",
+            payload: {
+                action: "activities",
+                records: [
+                    {
+                        id: "v1",
+                        action: "claimed",
+                        createdAt: 1,
+                        outcome: "claimed",
+                        issues: [{ txid: "funding", amount: 5_000 }],
+                        claims: [{ txid: "sweep", amount: 3_000 }],
+                    },
+                ],
+            },
+        } as never)) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
+
+        if (response.payload?.action !== "activities") throw new Error("expected activities");
+        const [activity] = response.payload.activities;
+        expect(response.payload.activities).toHaveLength(1);
+        // The page's funding and sweep survive next to the recovery record's settle.
+        expect(activity.txs.map((t) => t.key.arkTxid).sort()).toEqual([
+            "funding",
+            "settle",
+            "sweep",
+        ]);
+        expect(activity.intent).toMatchObject({ outcome: "recovered" });
     });
 
     it("exposes the created token", async () => {

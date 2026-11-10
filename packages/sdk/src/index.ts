@@ -337,6 +337,7 @@ export {
     arkadeCashId,
     arkadeCashResolver,
     createArkadeCashTracker,
+    mergeArkadeCashRecord,
 } from "./arkadeCash/tracker";
 export { readArkadeCash } from "./arkadeCash/status";
 import {
