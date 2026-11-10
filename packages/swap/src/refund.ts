@@ -10,8 +10,8 @@
  *
  * | leaf                              | needs                        | timelock |
  * |-----------------------------------|------------------------------|----------|
- * | `refund`                          | trader + solver + server     | none     |
- * | `refundWithoutReceiver`           | trader + server              | CLTV     |
+ * | `refund`                          | trader + solver + operator   | none     |
+ * | `refundWithoutReceiver`           | trader + operator            | CLTV     |
  * | `unilateralRefund`                | trader + solver              | CSV      |
  * | `unilateralRefundWithoutReceiver` | trader alone                 | CSV, longest |
  *
@@ -28,21 +28,19 @@ import {
     type Asset,
     type IContractManager,
     type Identity,
-    type ArkProvider,
+    type OperatorProvider,
     type Network,
     RestIndexerProvider,
     Transaction,
     VHTLC,
-    assertSubmittedArkTxid,
     assertValidServerUnrollScript,
-    buildOffchainTx,
     createAssetPacket,
     decodeTapscript,
     Extension,
     getArkPsbtFields,
     isVtxoSpent,
-    matchServerCheckpoints,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
+    signAndSubmitOffchainTx,
     scriptFromTapLeafScript,
     toXOnly,
     type IWallet,
@@ -94,9 +92,9 @@ export async function awaitRfqResolution(
 /**
  * What a push needs from the operator: the broadcast pair, plus the info read that supplies
  * `checkpointTapscript`. Narrow so a wallet's own connection satisfies it (see
- * {@link walletOperator}) and no second connection is opened; a full `ArkProvider` also fits.
+ * {@link walletOperator}) and no second connection is opened; a full `OperatorProvider` also fits.
  */
-export type SwapOperator = Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">;
+export type SwapOperator = Pick<OperatorProvider, "getInfo" | "submitTx" | "finalizeTx">;
 
 /**
  * A wallet's own connection, as a {@link SwapOperator}. The broadcaster is resolved lazily and
@@ -244,8 +242,9 @@ export type LockupFate =
     | { fate: "open" }
     /** Spent by a witness carrying a preimage that HASHES to the quote's `payment_hash`. */
     | { fate: "claimed"; preimage: Uint8Array; spends: readonly LockupSpend[] }
-    /** Every lockup output was spent through a recognized refund leaf. */
-    | { fate: "returned"; spends: readonly LockupSpend[] }
+    /** Every lockup output was spent through a recognized refund leaf. `leafScripts` are
+     * the distinct leaf scripts spent, hex. */
+    | { fate: "returned"; spends: readonly LockupSpend[]; leafScripts: readonly string[] }
     /**
      * At least one output was unilaterally exited: onchain under the VHTLC script, beyond any
      * offchain claim or refund. Not terminal and not a loss (`completeUnroll` plus an onchain
@@ -270,7 +269,8 @@ const candidateWitnessItems = (tx: Transaction, inputIndex: number): Uint8Array[
     ...(tx.getInput(inputIndex).finalScriptWitness ?? []),
 ];
 
-const spendsRefundLeaf = (tx: Transaction, inputIndex: number): boolean => {
+/** The refund leaf script an input spends, if it spends one. */
+const refundLeafScript = (tx: Transaction, inputIndex: number): Uint8Array | undefined => {
     const input = tx.getInput(inputIndex);
     const witness = input.finalScriptWitness;
     const leaves = input.tapLeafScript ?? [];
@@ -280,12 +280,14 @@ const spendsRefundLeaf = (tx: Transaction, inputIndex: number): boolean => {
             : leaves.length === 1
               ? scriptFromTapLeafScript(leaves[0])
               : undefined;
-    if (!script) return false;
+    if (!script) return undefined;
     try {
         const { type } = decodeTapscript(script);
-        return type === "multisig" || type === "csv-multisig" || type === "cltv-multisig";
+        return type === "multisig" || type === "csv-multisig" || type === "cltv-multisig"
+            ? script
+            : undefined;
     } catch {
-        return false;
+        return undefined;
     }
 };
 
@@ -356,6 +358,7 @@ export async function readLockupFate(
     const spends = [...spentBy.values()];
     const { txs } = await indexer.getVirtualTxs([...spentBy.keys()]);
     const refunded = new Set<string>();
+    const leafScripts = new Set<string>();
     for (const raw of txs) {
         let tx: Transaction;
         try {
@@ -379,13 +382,17 @@ export async function readLockupFate(
                     return { fate: "claimed", preimage: candidate, spends };
                 }
             }
-            if (spendsRefundLeaf(tx, i)) refunded.add(`${vtxo.txid}:${vtxo.vout}`);
+            const leafScript = refundLeafScript(tx, i);
+            if (leafScript) {
+                refunded.add(`${vtxo.txid}:${vtxo.vout}`);
+                leafScripts.add(hex.encode(leafScript));
+            }
         }
     }
 
     if (sweptLeft) return { fate: "open" };
     return everySpendNamed && all.every((vtxo) => refunded.has(`${vtxo.txid}:${vtxo.vout}`))
-        ? { fate: "returned", spends }
+        ? { fate: "returned", spends, leafScripts: [...leafScripts] }
         : { fate: "unknown" };
 }
 
@@ -404,7 +411,7 @@ export const assertNoneSwept = (
 };
 
 /**
- * The checkpoint outputs' server-claim leaf, validated through the SDK's gate: a degenerate or
+ * The checkpoint outputs' operator-claim leaf, validated through the SDK's gate: a degenerate or
  * wrong-key script lets the operator sweep an in-flight checkpoint before it settles.
  *
  * `network` pins the exit-delay check to what the CALLER resolved — without it the type bound
@@ -421,7 +428,7 @@ export const operatorUnrollScript = async (
     const info = await operator.getInfo();
     return assertValidServerUnrollScript(
         info.checkpointTapscript,
-        network ?? networkFromArkadeInfo(info),
+        network ?? networkFromOperatorInfo(info),
         toXOnly(hex.decode(info.forfeitPubkey), "forfeit key"),
     );
 };
@@ -474,8 +481,8 @@ export const lockupInputs = (
  * Build, sign, and push the `refundWithoutReceiver` spend: return the largest funded
  * outputs at the lockup to the trader's refund address.
  *
- * The leaf is `CLTV(refundLocktime) + <sender> + <server>`: no emulator (it co-signs only the
- * covenant leaves), so the tx is submitted SIGNED. One aggregate output, since this leaf has no
+ * The leaf is `CLTV(refundLocktime) + <sender> + <operator>`: not a covenant leaf, so the tx
+ * is submitted SIGNED. One aggregate output, since this leaf has no
  * covenant requiring index-aligned outputs.
  *
  * `refundPkScript` defaults to the contract's committed `senderPkScript` (the trader's quote-time
@@ -499,6 +506,7 @@ export async function pushRefundWithoutReceiver(
         refundPkScript?: Uint8Array;
         /** @see operatorUnrollScript */
         network?: Network;
+        oneShot?: boolean;
     },
 ): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to refund: no funded outputs");
@@ -519,36 +527,17 @@ export async function pushRefundWithoutReceiver(
     const vtxos = boundedLockupSpend(input.vtxos);
     const amount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
-    // buildOffchainTx sets nLockTime/sequence from the leaf's CLTV, checkpoints included.
-    const { arkTx: tx, checkpoints } = buildOffchainTx(
-        lockupInputs(vtxos, input.contract, leaf),
-        [{ script: refundPkScript, amount: BigInt(amount) }, ...lockupAssetOutputs(vtxos)],
+    // nLockTime/sequence come from the leaf's CLTV, checkpoints included.
+    const txid = await signAndSubmitOffchainTx({
+        identity: input.sender,
+        provider: operator,
+        inputs: lockupInputs(vtxos, input.contract, leaf),
+        outputs: [{ script: refundPkScript, amount: BigInt(amount) }, ...lockupAssetOutputs(vtxos)],
         serverUnrollScript,
-    );
-
-    // No index list: every input spends the same leaf, so all are signed.
-    const signedTx = await input.sender.sign(tx);
-    const submitted = await operator.submitTx(
-        base64.encode(signedTx.toPSBT()),
-        checkpoints.map((c) => base64.encode(c.toPSBT())),
-    );
-    assertSubmittedArkTxid(submitted, signedTx, "refundWithoutReceiver");
-
-    // Only checkpoints we built get signed: a substituted one is rejected, not blind-signed.
-    const matched = matchServerCheckpoints(
-        submitted.signedCheckpointTxs,
-        checkpoints,
-        "refundWithoutReceiver",
-    );
-    const finalCheckpoints = await Promise.all(
-        matched.map(async ({ server }) =>
-            base64.encode((await input.sender.sign(server, [0])).toPSBT()),
-        ),
-    );
-
-    await operator.finalizeTx(submitted.arkTxid, finalCheckpoints);
+        oneShot: input.oneShot,
+    });
     return {
-        txid: submitted.arkTxid,
+        txid,
         amount,
         left: input.vtxos.length - vtxos.length,
         spent: vtxos,
@@ -558,7 +547,7 @@ export async function pushRefundWithoutReceiver(
 // ── Refund timing ────────────────────────────────────────────────────────────
 
 /**
- * How long past `refundLocktime` to keep retrying the push before surfacing the server's refusal.
+ * How long past `refundLocktime` to keep retrying the push before surfacing the operator's refusal.
  * Two hours: MTP (BIP-113) lags wall clock by about an hour, plus room for a slow block. Mirror
  * of `MIN_HEADROOM_SECONDS`, which refuses to FUND without 90 minutes of the same margin.
  */

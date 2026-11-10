@@ -1,6 +1,10 @@
 import { collectContracts } from "../repositories/contractRepository";
 import { hex } from "@scure/base";
-import { IndexerProvider } from "../providers/indexer";
+import {
+    IndexerProvider,
+    IndexerUtxosUnsupportedError,
+    type IndexerUtxo,
+} from "../providers/indexer";
 import { isRetryableProviderError } from "../providers/availability";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -28,7 +32,7 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { speculativeReceiveMetadata } from "./handlers/helpers";
-import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
+import { Coin, ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import {
     getAllNormalizedVtxos,
     getNormalizedVtxos,
@@ -51,6 +55,7 @@ import {
     computeSyncWindow,
     cursorCutoff,
     getSyncCursor,
+    updateWalletState,
 } from "../utils/syncCursors";
 import {
     applyRecordedSpends,
@@ -58,10 +63,16 @@ import {
     hasVtxosForContract,
     inVtxoWriteOrder,
     saveVtxosForContract,
+    vtxoOutpoint,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
-import { DEFAULT_PAGE_SIZE } from "./constants";
+import { DEFAULT_PAGE_SIZE, OUTPOINT_QUERY_CHUNK_SIZE } from "./constants";
 import { assertNonNegativeMs } from "../utils/time";
+import type { OnchainProvider } from "../providers/onchain";
+import type { Network } from "../networks";
+import { OnchainContractWatcher } from "./onchainWatcher";
+import { isExplorerCoin, onchainAddressOf, toOnchainCoinRow } from "./onchainCoins";
+import { isOnchainScoped, scopeOf } from "./scope";
 
 /**
  * Whether two *different* contract types may share one repository row when their derived
@@ -463,9 +474,33 @@ export interface IContractManager extends Disposable {
     refreshOutpoints(outpoints: Outpoint[]): Promise<void>;
 
     /**
-     * Rebuild the HD look-ahead watch window around the current allocation watermark. No-op
-     * without `lookAhead`. Call after anything that moves the watermark (restore, boarding
-     * allocation, receive rotation, server-signer rotation); concurrent calls coalesce.
+     * Fetch onchain coins for onchain-scoped contracts (and contracts holding
+     * unspent unrolled outputs), upsert them, and mark vanished ones spent.
+     * No-op without `onchainProvider` and `network`. Narrowed by `scripts`; `fetched` holds coins
+     * the caller already fetched, by script, so they are not fetched again.
+     * Optional (like {@link watchScript}): the service-worker proxy does not forward it yet.
+     */
+    syncOnchain?(scripts?: string[], fetched?: ReadonlyMap<string, Coin[]>): Promise<void>;
+
+    /**
+     * Record `txid` as the pending spender of stored onchain coins. A sync confirms it once the
+     * coin is spent, or releases it if still unspent `ONCHAIN_PENDING_RELEASE_BLOCKS` later.
+     * `skipUnknown` marks the stored coins and logs the rest instead of rejecting them all.
+     * `height` starts the release countdown; without it the chain tip is fetched.
+     */
+    markOnchainSpendPending?(
+        outpoints: Outpoint[],
+        txid: string,
+        options?: { skipUnknown?: boolean; height?: number },
+    ): Promise<void>;
+
+    /**
+     * Rebuild the HD look-ahead watch window around the current allocation
+     * watermark. No-op when the manager was configured without `lookAhead`.
+     *
+     * Call after anything that moves the watermark (restore, boarding
+     * allocation, receive rotation, server-signer rotation). Concurrent calls
+     * coalesce into a single drain.
      */
     refillLookAhead(): Promise<void>;
 
@@ -551,7 +586,17 @@ export type GetAllSpendingPathsOptions = {
     walletDescriptor?: string;
 };
 
-/** Configuration for the ContractManager. */
+/** A broadcast spend still unconfirmed after this many blocks is released. */
+export const ONCHAIN_PENDING_RELEASE_BLOCKS = 6;
+const ONCHAIN_PENDING_SPENDS_KEY = "onchainPendingSpends";
+
+/** `settings.onchainPendingSpends["txid:vout"]`; `script` locates the owner without a full scan. */
+interface OnchainPendingSpend {
+    spender: string;
+    height: number;
+    script: string;
+}
+
 export interface ContractManagerConfig {
     /** Opt in to background boot; inspect getSyncState() before using cached data. */
     lazyInitialization?: boolean;
@@ -611,6 +656,9 @@ export interface ContractManagerConfig {
      * on arkd's clock, so this must cover how far this host's clock can run ahead of it.
      */
     vtxoSyncOverlapMs?: number;
+    /** Enables onchain coin discovery and watching; needs `network` too. */
+    onchainProvider?: OnchainProvider;
+    network?: Network;
 }
 
 /**
@@ -741,12 +789,25 @@ export class ContractManager implements IContractManager {
     /** Set by {@link dispose}, cleared by a re-`initialize`. A drain outlives the synchronous
      * `dispose()`, so it re-checks this at every await rather than run on a torn-down watcher. */
     private disposed = false;
+    private onchainWatcher?: OnchainContractWatcher;
+    /** Serializes onchain read-modify-writes so a pending spender is never overwritten. */
+    private onchainChain: Promise<void> = Promise.resolve();
 
     private constructor(config: ContractManagerConfig) {
         assertNonNegativeMs("vtxoSyncMaxAgeMs", config.vtxoSyncMaxAgeMs);
         assertNonNegativeMs("vtxoSyncOverlapMs", config.vtxoSyncOverlapMs);
         // A copy, so a caller mutating its object later cannot skip the check.
         this.config = { ...config };
+        if (config.onchainProvider && config.network) {
+            this.onchainWatcher = new OnchainContractWatcher({
+                onchainProvider: config.onchainProvider,
+                network: config.network,
+                onChange: (scripts) =>
+                    void this.syncOnchain(scripts).catch((e) =>
+                        console.error("[contracts] watcher-triggered onchain sync failed", e),
+                    ),
+            });
+        }
 
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,
@@ -1350,11 +1411,14 @@ export class ContractManager implements IContractManager {
                     persisted: true,
                 };
             }
-            // Equal-delay default/boarding collision: FIRST-WINS, row untouched (NArk's
-            // script-keyed dedup). Never mutating it keeps the watcher's registered type
-            // authoritative.
+            // Equal-delay default/boarding collision: FIRST-WINS on type (NArk's script-keyed
+            // dedup), so the watcher's registered type stays authoritative. The one script
+            // now holds coins of both layers, so only the scope widens.
             if (areCoalescibleContractTypes(existing.type, params.type)) {
-                return { contract: existing, persisted: false };
+                if (scopeOf(existing) === "both") return { contract: existing, persisted: false };
+                const contract: Contract = { ...existing, scope: "both" };
+                await this.config.contractRepository.saveContract(contract);
+                return { contract, persisted: false };
             }
             throw new Error(
                 `Contract with script ${params.script} already exists with type ${existing.type}.`,
@@ -1761,8 +1825,12 @@ export class ContractManager implements IContractManager {
         });
         if (asking.length === 0) return refused;
 
-        const tip = await this.currentChainTip();
-        const walletDescriptorValue = await walletDescriptor?.();
+        // Chain tip and the wallet descriptor are independent reads. Every spend and settle
+        // waits on this, so they share one round trip instead of two.
+        const [tip, walletDescriptorValue] = await Promise.all([
+            this.currentChainTip(),
+            walletDescriptor?.(),
+        ]);
         // Per INPUT: a CSV timelock runs from THIS coin's confirmation, so two vtxos on one
         // contract can disagree about the same leaf.
         for (const vtxo of asking) {
@@ -1803,6 +1871,7 @@ export class ContractManager implements IContractManager {
             state: filter.state,
             type: filter.type,
             watch: filter.watch,
+            scope: filter.scope,
         };
     }
 
@@ -2067,6 +2136,303 @@ export class ContractManager implements IContractManager {
         return this.watcher.getWatchedScripts();
     }
 
+    /** @see IContractManager.syncOnchain */
+    syncOnchain(scripts?: string[], fetched?: ReadonlyMap<string, Coin[]>): Promise<void> {
+        return this.inOnchainOrder(() => this.runOnchainSync(scripts, fetched));
+    }
+
+    /**
+     * @see IContractManager.markOnchainSpendPending
+     * @throws naming every outpoint that is not a stored, unconfirmed onchain coin; nothing is written then.
+     */
+    markOnchainSpendPending(
+        outpoints: Outpoint[],
+        txid: string,
+        options?: { skipUnknown?: boolean; height?: number },
+    ): Promise<void> {
+        return this.inOnchainOrder(async () => {
+            const { onchainProvider } = this.config;
+            if (!onchainProvider)
+                throw new Error("markOnchainSpendPending needs an onchainProvider");
+            const keys = new Set(outpoints.map(vtxoOutpoint));
+            const contracts = await collectContracts(this.config.contractRepository);
+            const rows = (await this.getVtxosForContracts(contracts)).filter(
+                (v) => v.isUnrolled && !v.isSpent && keys.has(vtxoOutpoint(v)),
+            );
+            const unknown = [...keys].filter((k) => !rows.some((v) => vtxoOutpoint(v) === k));
+            if (unknown.length > 0) {
+                const message = `Unknown onchain coins: ${unknown.join(", ")}`;
+                if (!options?.skipUnknown) throw new Error(message);
+                console.warn(`[contracts] ${message}; marking the rest pending`);
+            }
+
+            const height = options?.height ?? (await onchainProvider.getChainTip()).height;
+            // State first: an entry without a marked row releases harmlessly.
+            await this.updatePendingSpends((pending) => {
+                for (const v of rows) {
+                    pending[vtxoOutpoint(v)] = { spender: txid, height, script: v.contractScript };
+                }
+            });
+            for (const contract of contracts) {
+                const marked = rows
+                    .filter((v) => v.contractScript === contract.script)
+                    .map(({ contractScript: _, ...v }) => ({ ...v, spentBy: txid }));
+                if (marked.length === 0) continue;
+                await saveVtxosForContract(this.config.walletRepository, contract, marked);
+            }
+        });
+    }
+
+    private async readPendingSpends(): Promise<Record<string, OnchainPendingSpend>> {
+        const state = await this.config.walletRepository.getWalletState();
+        return { ...state?.settings?.[ONCHAIN_PENDING_SPENDS_KEY] };
+    }
+
+    private updatePendingSpends(
+        mutate: (pending: Record<string, OnchainPendingSpend>) => void,
+    ): Promise<void> {
+        return updateWalletState(this.config.walletRepository, (state) => {
+            const pending = { ...state.settings?.[ONCHAIN_PENDING_SPENDS_KEY] };
+            mutate(pending);
+            return {
+                ...state,
+                settings: { ...state.settings, [ONCHAIN_PENDING_SPENDS_KEY]: pending },
+            };
+        });
+    }
+
+    private inOnchainOrder(fn: () => Promise<void>): Promise<void> {
+        const run = this.onchainChain.then(fn, fn);
+        this.onchainChain = run.catch(() => {});
+        return run;
+    }
+
+    private async runOnchainSync(
+        scripts?: string[],
+        fetched?: ReadonlyMap<string, Coin[]>,
+    ): Promise<void> {
+        const { onchainProvider, network } = this.config;
+        if (!onchainProvider || !network || this.disposed) return;
+        const contracts = await collectContracts(this.config.contractRepository);
+        const pending = await this.readPendingSpends();
+        const owners = new Set([
+            ...(await this.getVtxosForContracts(contracts, { unspentOnly: true }))
+                .filter((v) => v.isUnrolled)
+                .map((v) => v.contractScript),
+            ...Object.values(pending).map((p) => p.script),
+        ]);
+        const targets = contracts.filter(
+            (c) =>
+                contractHandlers.has(c.type) &&
+                ((c.state === "active" && isOnchainScoped(c)) || owners.has(c.script)),
+        );
+        const wanted = scripts && new Set(scripts);
+        const settled: string[] = [];
+        let tip: Promise<{ height: number }> | undefined;
+        const tipHeight = async () => (await (tip ??= onchainProvider.getChainTip())).height;
+        for (const contract of targets) {
+            if (this.disposed) return;
+            if (wanted && !wanted.has(contract.script)) continue;
+            try {
+                settled.push(
+                    ...(await this.syncOnchainContract(
+                        contract,
+                        onchainProvider,
+                        network,
+                        pending,
+                        tipHeight,
+                        fetched?.get(contract.script),
+                    )),
+                );
+            } catch (e) {
+                console.warn(`[contracts] onchain sync failed for ${contract.script}`, e);
+            }
+        }
+        // After dispose the repositories may belong to a successor.
+        if (this.disposed) return;
+        if (settled.length > 0) {
+            await this.updatePendingSpends((latest) => {
+                for (const key of settled) delete latest[key];
+            });
+        }
+        // The coins are stored; a failed subscribe is retried by the next sync.
+        await this.onchainWatcher
+            ?.setTargets(
+                targets.map((c) => ({ script: c.script, address: onchainAddressOf(c, network) })),
+            )
+            .catch((e) => console.warn("[contracts] onchain watch failed", e));
+    }
+
+    private async syncOnchainContract(
+        contract: Contract,
+        onchainProvider: OnchainProvider,
+        network: Network,
+        pending: Readonly<Record<string, OnchainPendingSpend>>,
+        tipHeight: () => Promise<number>,
+        prefetched?: Coin[],
+    ): Promise<string[]> {
+        const tapscript = contractHandlers.get(contract.type)!.createScript(contract.params);
+        const coins =
+            prefetched ?? (await onchainProvider.getCoins(onchainAddressOf(contract, network)));
+        const stored = new Map(
+            (await getVtxosForContract(this.config.walletRepository, contract)).map((v) => [
+                vtxoOutpoint(v),
+                v,
+            ]),
+        );
+        const live = new Set(coins.map(vtxoOutpoint));
+        // Only what can change: arkd can hold a listed coin only while it is pending, and name or
+        // mark a vanished one.
+        const recorded = await this.serverSpends(
+            [...stored.values()].filter((v) => {
+                const key = vtxoOutpoint(v);
+                if (!v.isUnrolled) return false;
+                return live.has(key) ? key in pending : !v.isSpent || !v.spentBy;
+            }),
+        );
+        const rows: ExtendedVirtualCoin[] = [];
+        // Pending keys this sync resolves, reported only once their rows are saved: dropping an
+        // entry whose release never reached the row would leave the coin marked spent.
+        const settled: string[] = [];
+        const spent: ExtendedVirtualCoin[] = [];
+        const named: ExtendedVirtualCoin[] = [];
+        for (const coin of coins) {
+            const key = vtxoOutpoint(coin);
+            const prior = stored.get(key);
+            // An unrolled VTXO keeps the indexer's facts; the explorer only adds its confirmation.
+            const row: ExtendedVirtualCoin =
+                prior?.isUnrolled && !isExplorerCoin(prior)
+                    ? { ...prior, status: { ...prior.status, ...coin.status } }
+                    : toOnchainCoinRow(coin, contract, tapscript);
+            const record = recorded?.get(key);
+            const entry = pending[key];
+            // arkd's word holds a coin the explorer lists no longer than the pending rule would,
+            // or a confirmation it invents could hide the coin from its CSV exit for good.
+            const holding =
+                entry !== undefined &&
+                (await tipHeight()) < entry.height + ONCHAIN_PENDING_RELEASE_BLOCKS;
+            if (holding && record?.spendConfirmation && record.spentBy === entry.spender) {
+                // arkd saw our spend confirm before the explorer did. The entry stays: it bounds
+                // the hold, and the release below undoes it if the explorer never agrees.
+                if (!prior?.isSpent) spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
+                else if (!prior.spentBy) named.push({ ...prior, spentBy: record.spentBy });
+                continue;
+            }
+            // A failed lookup cannot tell a lagging explorer from a reorg: keep the stored spend
+            // while the entry holds it, so it does not flap.
+            if (prior?.isSpent && recorded === undefined && holding) continue;
+            if (holding) {
+                rows.push({ ...row, spentBy: entry.spender });
+                continue;
+            }
+            if (entry) settled.push(key);
+            // An unrolled VTXO's row carries a spend the hold above may have set.
+            rows.push(
+                entry && row.spentBy === entry.spender
+                    ? { ...row, isSpent: false, spentBy: "" }
+                    : row,
+            );
+        }
+
+        for (const row of stored.values()) {
+            const key = vtxoOutpoint(row);
+            if (!row.isUnrolled || live.has(key)) continue;
+            const record = recorded?.get(key);
+            if (row.isSpent) {
+                // Already spent and announced: this only names the spender.
+                if (!row.spentBy && record) named.push({ ...row, spentBy: record.spentBy });
+                // An entry left by a hold settles here.
+                if (pending[key]) settled.push(key);
+                continue;
+            }
+            if (record) {
+                spent.push({ ...row, isSpent: true, spentBy: record.spentBy });
+                if (pending[key]) settled.push(key);
+                continue;
+            }
+            let outspend: { spent: boolean; txid?: string } | undefined;
+            try {
+                outspend = (await onchainProvider.getTxOutspends(row.txid))[row.vout];
+            } catch (e) {
+                // e.g. an evicted or reorged funding tx; must not block saving new coins.
+                console.warn(`[contracts] outspends lookup failed for ${key}`, e);
+            }
+            // A coin the explorer listed before and no longer does is gone, spent or evicted, even
+            // when outspends lags it (Electrum answers unspent if it finds no spender). An
+            // indexer-written unrolled VTXO may not be indexed yet, so it needs a seen spend.
+            if (!isExplorerCoin(row) && !outspend?.spent) continue;
+            const seenSpender = outspend?.spent ? outspend.txid : undefined;
+            const spentBy = seenSpender || pending[key]?.spender || row.spentBy || "";
+            spent.push({ ...row, isSpent: true, spentBy });
+            if (pending[key]) settled.push(key);
+        }
+
+        const writes = [...rows, ...spent, ...named];
+        // After dispose the repositories may belong to a successor.
+        if (this.disposed) return [];
+        // Nothing to save: an entry settled without a write has no row to wait for.
+        if (writes.length === 0) return settled;
+        await saveVtxosForContract(this.config.walletRepository, contract, writes);
+        const emit = (type: "vtxo_received" | "vtxo_spent", vtxos: ExtendedVirtualCoin[]) => {
+            if (vtxos.length === 0) return;
+            this.emitEvent({
+                type,
+                contractScript: contract.script,
+                vtxos: vtxos.map((v) => ({ ...v, contractScript: contract.script })),
+                contract,
+                timestamp: Date.now(),
+            });
+        };
+        emit(
+            "vtxo_received",
+            rows.filter((r) => !stored.has(vtxoOutpoint(r))),
+        );
+        emit("vtxo_spent", spent);
+        return settled;
+    }
+
+    /**
+     * arkd's record of how these onchain coins were spent, by outpoint: empty if it keeps none,
+     * undefined if the lookup failed.
+     */
+    private async serverSpends(rows: Outpoint[]): Promise<Map<string, IndexerUtxo> | undefined> {
+        const { indexerProvider } = this.config;
+        const found = new Map<string, IndexerUtxo>();
+        if (!indexerProvider.getUtxos || rows.length === 0) return found;
+        try {
+            for (let i = 0; i < rows.length; i += OUTPOINT_QUERY_CHUNK_SIZE) {
+                const outpoints = rows
+                    .slice(i, i + OUTPOINT_QUERY_CHUNK_SIZE)
+                    .map(({ txid, vout }) => ({ txid, vout }));
+                let pageIndex: number | undefined;
+                let pages = 0;
+                do {
+                    // A record per outpoint at most, so more pages means a cursor that never ends.
+                    if (++pages > outpoints.length + 1) {
+                        throw new Error("GetUtxos paging does not end");
+                    }
+                    // arkd refuses a page index without a size.
+                    const { utxos, page } = await indexerProvider.getUtxos({
+                        outpoints,
+                        pageIndex,
+                        pageSize: OUTPOINT_QUERY_CHUNK_SIZE,
+                    });
+                    for (const utxo of utxos) found.set(vtxoOutpoint(utxo), utxo);
+                    const more = page && page.current < page.total && page.next > page.current;
+                    pageIndex = more ? page.next : undefined;
+                } while (pageIndex !== undefined);
+            }
+        } catch (e) {
+            if (e instanceof IndexerUtxosUnsupportedError) return found;
+            console.warn("[contracts] arkd spend lookup failed; using the explorer", e);
+            return undefined;
+        }
+        return found;
+    }
+
+    /**
+     * Emit an event to all registered callbacks.
+     */
     private emitEvent(event: ContractEvent): void {
         for (const callback of this.eventCallbacks) {
             try {
@@ -2402,8 +2768,8 @@ export class ContractManager implements IContractManager {
      * Stop the watcher, clear callbacks, and mark the manager uninitialized.
      *
      * Teardown is synchronous. The returned promise settles once watcher events already being
-     * handled, any look-ahead drain, and any lazy boot sequence finish; after that nothing more is written to the
-     * repositories.
+     * handled, any look-ahead drain, any onchain sync and any lazy boot sequence finish; after that
+     * nothing more is written to the repositories.
      */
     dispose(): Promise<void> {
         // First, before the watcher goes away: a fire-and-forget drain parked on an await must
@@ -2414,6 +2780,7 @@ export class ContractManager implements IContractManager {
 
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
+        this.onchainWatcher?.stop();
 
         this.eventCallbacks.clear();
 
@@ -2427,9 +2794,12 @@ export class ContractManager implements IContractManager {
 
         this.initialized = false;
 
-        return Promise.all([...this.inFlightEvents, drainUnwound, pendingBoot]).then(
-            () => undefined,
-        );
+        return Promise.all([
+            ...this.inFlightEvents,
+            drainUnwound,
+            pendingBoot,
+            this.onchainChain,
+        ]).then(() => undefined);
     }
 
     /**

@@ -2,10 +2,14 @@
  * Where the SDK gets its `EventSource`. Node exposes the global only behind
  * `--experimental-eventsource` (24.x), so it must be injectable.
  *
- * Resolution order, per call: per-provider factory, then {@link configureEventSource}, then the
- * global. When none answers, {@link resolveEventSource} throws {@link EventSourceUnavailableError}
- * so callers can tell "no SSE in this environment" (don't reconnect) from "connection dropped".
+ * Resolution order, per call: per-provider factory, then {@link configureEventSource}, then
+ * {@link FetchEventSource} where `fetch` can stream, then the global. When none answers,
+ * {@link resolveEventSource} throws {@link EventSourceUnavailableError} so callers can tell
+ * "no SSE in this environment" (don't reconnect) from "connection dropped".
  */
+
+import { baseFetch } from "../utils/fetch";
+import { readSseFrames } from "./sseFrames";
 
 /**
  * The slice of `EventSource` this SDK actually uses. Structural rather than the DOM type because
@@ -24,7 +28,7 @@ export interface EventSourceLike {
 }
 
 /** Opens an SSE connection to `url`. `new EventSource(url)`, as a value. */
-export type EventSourceFactory = (url: string) => EventSourceLike;
+export type EventSourceFactory = (url: string, headers?: Record<string, string>) => EventSourceLike;
 
 /** Options shared by every provider that opens an SSE stream. */
 export interface EventSourceCapable {
@@ -38,7 +42,7 @@ export interface EventSourceCapable {
 const GUIDANCE =
     "Pass one with configureEventSource(url => new EventSource(url)) — in Node, from the " +
     "`eventsource` package or by running with --experimental-eventsource. In React Native, " +
-    "use ExpoArkProvider / ExpoIndexerProvider instead.";
+    "use ExpoOperatorProvider / ExpoIndexerProvider instead.";
 
 /**
  * No `EventSource` could be resolved, so no SSE stream can be opened. An environment property, so
@@ -66,7 +70,7 @@ let configured: EventSourceFactory | undefined;
 
 /**
  * Set the `EventSource` every provider uses by default. Call once at startup,
- * before opening a wallet; pass `undefined` to go back to the global.
+ * before opening a wallet; pass `undefined` to go back to the default.
  *
  * @example
  * ```typescript
@@ -91,7 +95,59 @@ export function resolveEventSource(override?: EventSourceFactory): EventSourceFa
     const factory =
         override ??
         configured ??
+        (typeof globalThis.fetch === "function" && typeof ReadableStream !== "undefined"
+            ? (url: string, headers?: Record<string, string>) => new FetchEventSource(url, headers)
+            : undefined) ??
         (typeof EventSource === "undefined" ? undefined : (url: string) => new EventSource(url));
     if (!factory) throw new EventSourceUnavailableError();
     return factory;
+}
+
+export class FetchEventSource implements EventSourceLike {
+    private readonly events = new EventTarget();
+    private readonly controller = new AbortController();
+
+    constructor(url: string, headers: Record<string, string> = {}) {
+        this.read(url, headers).catch(() => {
+            if (!this.controller.signal.aborted) this.events.dispatchEvent(new Event("error"));
+        });
+    }
+
+    addEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void {
+        this.events.addEventListener(type, listener as EventListener);
+    }
+
+    removeEventListener(
+        type: "message" | "error" | "failure",
+        listener: (event: MessageEvent) => void,
+    ): void {
+        this.events.removeEventListener(type, listener as EventListener);
+    }
+
+    close(): void {
+        this.controller.abort();
+    }
+
+    private async read(url: string, headers: Record<string, string>): Promise<void> {
+        const response = await baseFetch(url, {
+            headers: { Accept: "text/event-stream", ...headers },
+            signal: this.controller.signal,
+        });
+        const type = response.headers.get("Content-Type") ?? "";
+        if (
+            response.status !== 200 ||
+            !response.body ||
+            !/^text\/event-stream\s*(;|$)/i.test(type)
+        ) {
+            await response.body?.cancel();
+            throw new Error(`SSE response ${response.status} ${type}`);
+        }
+        for await (const { event, data } of readSseFrames(response.body)) {
+            this.events.dispatchEvent(new MessageEvent(event, { data }));
+        }
+        throw new Error("SSE stream ended");
+    }
 }

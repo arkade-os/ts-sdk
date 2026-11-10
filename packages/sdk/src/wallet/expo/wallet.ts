@@ -1,12 +1,13 @@
 import { hex } from "@scure/base";
 import { assertTimerMs } from "../../utils/time";
 import { extractServerUrl } from "../../providers/utils";
+import type { Transaction } from "@scure/btc-signer";
 import { Wallet, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
     ArkadeBroadcaster,
     ArkadeReader,
-    GetArkadeInfoOptions,
+    GetOperatorInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -20,6 +21,7 @@ import type {
     ExtendedCoin,
     Recipient,
     SendParams,
+    SendOnchainParams,
 } from "..";
 import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
@@ -110,7 +112,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *     arkProvider: new RestArkProvider(),
+ *     operatorProvider: new RestOperatorProvider(),
  *     onchainProvider: new EsploraProvider(),
  *     storage: { ... },
  *     background: {
@@ -311,8 +313,13 @@ export class ExpoWallet
         return this.wallet.getBoardingAddress();
     }
 
-    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        return this.wallet.getArkadeInfo(opts);
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.wallet.getOperatorInfo(opts);
+    }
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.getOperatorInfo(opts);
     }
 
     getArkadeReader(): Promise<ArkadeReader> {
@@ -321,6 +328,10 @@ export class ExpoWallet
 
     getArkadeBroadcaster(): Promise<ArkadeBroadcaster> {
         return this.wallet.getArkadeBroadcaster();
+    }
+
+    get oneShotSubmit(): boolean {
+        return this.wallet.oneShotSubmit;
     }
 
     getBalance(): Promise<WalletBalance> {
@@ -409,6 +420,14 @@ export class ExpoWallet
 
     send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         return this.wallet.send(...args);
+    }
+
+    cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        return this.wallet.cosignOnchainTx(psbt);
+    }
+
+    sendOnchain(params: SendOnchainParams): Promise<string> {
+        return this.wallet.sendOnchain(params);
     }
 
     get assetManager(): IAssetManager {

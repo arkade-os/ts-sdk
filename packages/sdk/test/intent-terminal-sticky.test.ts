@@ -9,7 +9,7 @@ import type { ArkIntent, ArkIntentState } from "../src/repositories/intentReposi
 // terminal, a later settle-path error routing through the catch (which calls
 // this with "cancelled") must NOT overwrite the recorded outcome.
 type PersistFn = (
-    intentTxId: string,
+    proofTxId: string,
     state: ArkIntentState,
     intent: unknown,
     deleteIntent: unknown,
@@ -21,7 +21,7 @@ const persistIntentSnapshot = (Wallet.prototype as unknown as { persistIntentSna
     .persistIntentSnapshot;
 
 const terminalIntent = (state: ArkIntentState): ArkIntent => ({
-    intentTxId: "i1",
+    proofTxId: "i1",
     state,
     createdAt: 1,
     updatedAt: 1,
@@ -32,7 +32,7 @@ const terminalIntent = (state: ArkIntentState): ArkIntent => ({
     commitmentTransactionId: "ctx",
     batchId: "batch-1",
     partialForfeits: [],
-    intentVtxos: [{ txid: "v", vout: 0 }],
+    proofInputs: [{ txid: "v", vout: 0 }],
 });
 
 describe("persistIntentSnapshot terminal stickiness", () => {
@@ -53,7 +53,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
             },
         );
 
-        const got = (await collectIntents(repo, { intentTxIds: ["i1"] }))[0];
+        const got = (await collectIntents(repo, { proofTxIds: ["i1"] }))[0];
         expect(got.state).toBe("batch_succeeded");
         expect(got.commitmentTransactionId).toBe("ctx");
         expect(got.cancellationReason).toBeUndefined();
@@ -65,7 +65,7 @@ describe("persistIntentSnapshot terminal stickiness", () => {
 
         await persistIntentSnapshot.call({ intentRepository: repo }, "i1", "cancelled", {}, {}, []);
 
-        expect((await collectIntents(repo, { intentTxIds: ["i1"] }))[0].state).toBe("batch_failed");
+        expect((await collectIntents(repo, { proofTxIds: ["i1"] }))[0].state).toBe("batch_failed");
     });
 
     it("is a no-op when no intent repository is configured", async () => {

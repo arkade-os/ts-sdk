@@ -267,6 +267,23 @@ describe("pushRefundWithoutReceiver", () => {
         expect(tx.inputsLength).toBe(2);
         expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(REFUND_PK_SCRIPT));
         expect(tx.getOutput(0).amount).toBe(BigInt(100_000));
+        expect(operator.finalized).toHaveLength(0);
+        expect(result.txid).toBe(tx.id);
+    });
+
+    it("keeps the two-step flow with oneShot: false", async () => {
+        const operator = fakeOperator();
+        const result = await pushRefundWithoutReceiver(operator, {
+            contract: swapScript(),
+            sender: SENDER,
+            vtxos: VTXOS,
+            oneShot: false,
+        });
+
+        for (const checkpoint of operator.submitted[0].checkpoints) {
+            const cp = Transaction.fromPSBT(base64.decode(checkpoint));
+            expect(cp.getInput(0).tapScriptSig ?? []).toHaveLength(0);
+        }
         expect(operator.finalized).toHaveLength(1);
         expect(operator.finalized[0].txid).toBe(result.txid);
         expect(result.left).toBe(0);
@@ -702,6 +719,7 @@ describe("readLockupFate", () => {
         expect(await read(fateIndexer([{ ...OUT_A, spentBy: spend.txid }], [spend]))).toMatchObject(
             {
                 fate: "returned",
+                leafScripts: [hex.encode(scriptFromTapLeafScript(leaf))],
             },
         );
     });
@@ -767,6 +785,7 @@ describe("readLockupFate", () => {
                 { checkpointTxid: first.txid, txid: "c1".repeat(32) },
                 { checkpointTxid: second.txid, txid: "c2".repeat(32) },
             ],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
@@ -790,6 +809,7 @@ describe("readLockupFate", () => {
                 { checkpointTxid: first.txid, txid: undefined },
                 { checkpointTxid: second.txid, txid: "c4".repeat(32) },
             ],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 
@@ -799,6 +819,7 @@ describe("readLockupFate", () => {
         expect(fate).toEqual({
             fate: "returned",
             spends: [{ checkpointTxid: spend.txid, txid: undefined }],
+            leafScripts: [LOCKUP.refundWithoutReceiverScript],
         });
     });
 

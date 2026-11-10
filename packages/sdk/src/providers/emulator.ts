@@ -12,7 +12,7 @@
  */
 
 import { signedGet } from "../enclave/signedResponse";
-import { Intent } from "../intent";
+import { Intent, Proof } from "../proof";
 import { baseFetch } from "../utils/fetch";
 import { throwIfHttpUnavailable } from "./errors";
 
@@ -38,7 +38,7 @@ export interface EmulatorProvider {
     submitFinalization(
         intent: {
             proof: string;
-            message: Intent.RegisterMessage;
+            message: Proof.RegisterMessage;
         },
         forfeits: string[],
         connectorTree: ConnectorTreeNode[] | null,
@@ -182,7 +182,7 @@ export class RestEmulatorProvider implements EmulatorProvider {
     async submitFinalization(
         intent: {
             proof: string;
-            message: Intent.RegisterMessage;
+            message: Proof.RegisterMessage;
         },
         forfeits: string[],
         connectorTree: ConnectorTreeNode[] | null,

@@ -59,7 +59,7 @@ import {
 import { beforeEachFaucet, createTestArkWallet, faucetOffchain, randomP2TR } from "./utils";
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 
 const PREIMAGE = new Uint8Array(32).fill(0x42);
 // RIPEMD160(SHA256(PREIMAGE)) — same constant the sibling non-interactive test uses.
@@ -236,8 +236,8 @@ const scriptV2Shaped = {
 
 describe("asset-denominated non-interactive covenant", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const receiverPkScript = randomP2TR();
 
     beforeEach(beforeEachFaucet, 20000);
