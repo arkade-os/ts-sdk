@@ -89,7 +89,10 @@ describe("solver quote failover", () => {
     });
 
     it("keeps an explicit selection pinned even with routing enabled", async () => {
-        const { client, attempted } = await setup({ selectMarket: (candidates) => candidates[0] });
+        const { client, attempted } = await setup({
+            selectMarket: (candidates) => candidates[0],
+            routing: { preferences: () => ({ preferFirst: solverId(second, "regtest") }) },
+        });
         await expect(client.quote(input())).rejects.toMatchObject({ reason: "rate_limited" });
         expect(attempted).toEqual(["first"]);
     });
@@ -136,6 +139,54 @@ describe("solver quote failover", () => {
         expect((await client.quote(input())).market).toMatchObject({ solver: "second" });
         expect(attempted).toEqual(["second"]);
     });
+
+    it.each(["usage", "cost"] as const)(
+        "tries the preferred solver first, then fails over through the %s-ranked remainder",
+        async (mode) => {
+            const third = { ...second, solver: "third", source: "third-source", fee_bps: 0 };
+            const attempted: string[] = [];
+            const client = createSwapClient({
+                wallet: await hdWallet(),
+                discovery: {
+                    snapshot: [{ ...second, fee_bps: 100 }, third, { ...first, fee_bps: 500 }],
+                },
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                policy: {
+                    drive: "manual",
+                    solverRouting: {
+                        preferences: () => ({
+                            mode,
+                            preferFirst: solverId(first, "regtest"),
+                            usage: {
+                                [solverId(third, "regtest")]: 10,
+                                [solverId(second, "regtest")]: 5,
+                            },
+                        }),
+                    },
+                },
+                transportFor: ({ card }) => {
+                    attempted.push(card.solver);
+                    return card.solver === "second"
+                        ? solverTransport(solverFor(CLOCK), {
+                              attestedResponder: second.discovery_pubkey,
+                          })
+                        : solverTransport(() => {
+                              throw new SolverUnavailable("offline");
+                          });
+                },
+            });
+            expect((await client.candidates(input()))[0].card.solver).toBe("first");
+            expect(attempted).toEqual([]);
+            const quote = await client.quote(input());
+            expect(attempted).toEqual(["first", "third", "second"]);
+            expect(quote.market).toMatchObject({ solver: "second" });
+            await expect(client.accept(quote)).rejects.toMatchObject({
+                name: "MissingCorridorDep",
+            });
+            expect(attempted).toEqual(["first", "third", "second"]);
+            await client[Symbol.asyncDispose]();
+        },
+    );
 
     it("never resurrects an explicit policy veto", async () => {
         const { client, attempted } = await setup({ selectMarket: () => undefined });
@@ -225,17 +276,21 @@ describe("solver quote failover", () => {
         expect(secondTransport.sent).toEqual([]);
     });
 
-    it("retains the quoted solver after pausing it and uncertain funding", async () => {
+    it("retains the quoted solver after changing preferences, pausing it and uncertain funding", async () => {
         const wallet = await acceptWallet();
         const repository = new InMemoryAssetSwapRepository();
         const attempted: string[] = [];
         let disabled: string[] = [];
+        let preferFirst: string | undefined;
         const client = createSwapClient({
             wallet: wallet.wallet,
             repository,
             discovery: { snapshot: [first, second] },
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
-            policy: { drive: "manual", solverRouting: { preferences: () => ({ disabled }) } },
+            policy: {
+                drive: "manual",
+                solverRouting: { preferences: () => ({ disabled, preferFirst }) },
+            },
             transportFor: ({ card }) => {
                 attempted.push(card.solver);
                 return card.solver === "first"
@@ -249,6 +304,7 @@ describe("solver quote failover", () => {
         });
         const quote = await client.quote(input());
         disabled = [solverId(second, "regtest")];
+        preferFirst = solverId(first, "regtest");
         vi.spyOn(wallet.wallet, "send").mockRejectedValue(new Error("submission uncertain"));
         await expect(client.accept(quote)).rejects.toThrow("submission uncertain");
         const records = await collectSwapRecords(repository);

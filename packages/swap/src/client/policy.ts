@@ -62,13 +62,9 @@ export interface SwapPolicy {
      */
     readonly maxFee?: FeeCeiling;
 
-    /**
-     * The last word on which market prices a swap.
-     *
-     * Called with every eligible candidate, best-ranked first; `undefined` vetoes them all
-     * (surfacing as `UnsupportedRoute`). The answer must be one of the candidates: a card from
-     * elsewhere has not passed the pair, corridor and addressability checks.
-     */
+    /** Choose a market from the eligible candidates, best-ranked first; `undefined` vetoes all.
+     * The answer must be one of those candidates, which passed pair, corridor and addressability
+     * checks. An explicit selection disables quote failover; routing pauses can still veto it. */
     readonly selectMarket?: (candidates: readonly MarketCandidate[]) => MarketCandidate | undefined;
 
     /**

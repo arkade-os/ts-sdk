@@ -1,10 +1,10 @@
 # Vendored discovery dependency
 
-`arkade-os-solver-discovery-0.3.0-routing-b5b414d.tgz` is the built discovery client from
-arkade-os/solver-registry commit `b5b414d33d1bf18161a29e00db4e89cddf446a08`,
+`arkade-os-solver-discovery-0.3.0-routing-2ee6a81.tgz` is the built discovery client from
+arkade-os/solver-registry commit `2ee6a813b346a20d0320429f4b15df6c526f86ec`,
 [PR #42](https://github.com/arkade-os/solver-registry/pull/42).
 
-SHA256: `41034fa5c4928e5fadd6421a2b64a3571b6442a61fd5820e281c7aa1ffdfe576`.
+SHA256: `88cc3f9ddf3d30c86e8873657dd080cf8d7342ed4b55f8f1774d40754d7827a6`.
 
 Built with the package's `build` script and packed using `npm pack --ignore-scripts`.
 The swap package uses this artifact until the additive solver-routing exports are published.

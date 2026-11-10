@@ -35,7 +35,8 @@ export interface SolverRoutingPolicy {
     readonly failover?: boolean;
     /** Read current preferences before selection. Absent means discovery order; rejection stops
      * the operation before negotiation. Modes, priority, usage and disabled solver IDs follow
-     * {@link SolverRoutingPreferences}. Pauses apply to new candidate selection; issued quotes
+     * {@link SolverRoutingPreferences}. `preferFirst` precedes heuristic ordering without disabling
+     * failover. Pauses apply to new candidate selection; issued quotes
      * and accepted swaps retain their selected solver. */
     readonly preferences?: (
         context: SolverRoutingContext,

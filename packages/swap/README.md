@@ -32,6 +32,7 @@ const client = createSwapClient({
             preferences: async ({ network, direction }) => ({
                 mode: "usage", // "manual" | "usage" | "cost"
                 priority: savedPriorities[direction] ?? [],
+                preferFirst: preferredSolverIds[direction],
                 disabled: disabledSolverIds[direction] ?? [],
                 usage: completedSolverUsage(await client.swaps(), network, direction),
             }),
@@ -47,6 +48,11 @@ Persist preferences in your application's storage. Usage counts unique successfu
 quote attempts. `candidates()` enumerates eligible markets without negotiating RFQs. Signed solver
 preference IDs include network, source, name and the claimed discovery key; quote responder checks
 remain independent. Direction keys keep reversed routes separate.
+
+`preferFirst` is a soft preference for one eligible solver in that direction. The rest follow
+the selected ordering mode, and quote preparation can still fail over if the preferred solver
+fails. Missing or paused preferences fall back to the remaining enabled solvers. Use `selectMarket`
+for an authoritative single-solver selection; it keeps its existing failover-disabled behavior.
 
 Cost mode orders advertised estimates at the requested amount: most received for exact give,
 least deposited for exact take. Estimates include directional flat fees, feed prices and carrier

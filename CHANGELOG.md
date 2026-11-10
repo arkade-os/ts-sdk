@@ -82,6 +82,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **Prefer one solver before automatically ranked fallbacks.** Direction-scoped routing preferences accept `preferFirst`, placing an enabled solver ahead of usage or advertised-cost ordering while retaining quote failover. Pauses, explicit selection and issued-quote ownership remain authoritative.
+
 - **Solver pauses preserve cards and priorities.** Routing preferences accept disabled solver IDs, excluded before candidate enumeration, advertised-cost feeds and new quotes. Applications can combine global card pauses with direction-specific choices; issued quotes and accepted swaps keep their selected solver.
 
 - **Swap clients can prioritize solvers and fail over before acceptance.** Optional per-direction routing supports saved priority, successful usage and amount-aware advertised cost. Quote preparation tries another eligible solver after a candidate-local failure, preserves cancellation and closes its transports on disposal; accepted quotes, uncertain funding and recovery retain their original solver. Existing explicit selection and single-solver defaults remain compatible.
