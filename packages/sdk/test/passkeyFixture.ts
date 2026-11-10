@@ -1,6 +1,5 @@
-import { hmac } from "@noble/hashes/hmac.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
+import { createHmac } from "node:crypto";
+import { hex } from "@scure/base";
 import type { WebAuthnClient } from "../src/identity/passkey";
 
 interface Held {
@@ -71,12 +70,12 @@ export class FakeAuthenticator implements WebAuthnClient {
         if (this.knobs.cancel || this.knobs.getFails)
             throw new DOMException("cancelled", "NotAllowedError");
         const pk = o.publicKey!;
-        const allowed = pk.allowCredentials?.map((c) => bytesToHex(copy(c.id)));
+        const allowed = pk.allowCredentials?.map((c) => hex.encode(copy(c.id)));
         const held = [...this.held]
             .reverse()
             .find(
                 (h) =>
-                    h.rpId === pk.rpId && (!allowed?.length || allowed.includes(bytesToHex(h.id))),
+                    h.rpId === pk.rpId && (!allowed?.length || allowed.includes(hex.encode(h.id))),
             );
         if (!held) throw new DOMException("no such passkey", "NotAllowedError");
         const salt = saltOf(pk.extensions);
@@ -87,12 +86,16 @@ export class FakeAuthenticator implements WebAuthnClient {
     }
 
     private prf = (h: Held, salt: BufferSource, drift = false) =>
-        hmac(sha256, drift ? h.secret.map((b) => b ^ 1) : h.secret, copy(salt));
+        new Uint8Array(
+            createHmac("sha256", drift ? h.secret.map((b) => b ^ 1) : h.secret)
+                .update(copy(salt))
+                .digest(),
+        );
 
     private credential(h: Held, prf: { enabled?: boolean; first?: Uint8Array }): Credential {
         const out = (b: Uint8Array) =>
             this.knobs.result === "string"
-                ? bytesToHex(b)
+                ? hex.encode(b)
                 : this.knobs.result === "empty"
                   ? new ArrayBuffer(0)
                   : this.knobs.arrays
@@ -100,7 +103,7 @@ export class FakeAuthenticator implements WebAuthnClient {
                     : b.slice().buffer;
         const results = prf.first ? { results: { first: out(prf.first) } } : {};
         return {
-            id: bytesToHex(h.id),
+            id: hex.encode(h.id),
             type: "public-key",
             rawId: h.id.slice().buffer,
             response: { userHandle: h.userHandle.slice().buffer },

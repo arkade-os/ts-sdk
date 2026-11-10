@@ -1,6 +1,3 @@
-import { hkdf } from "@noble/hashes/hkdf.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { entropyToMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
@@ -13,6 +10,8 @@ export interface WebAuthnClient {
 /** The browser or the authenticator cannot return a PRF secret, so this passkey cannot derive a key. */
 export class PrfUnavailable extends Error {
     name = "PrfUnavailable";
+    /** Set when the passkey was created before this failure, so an app can still use it some other way. */
+    credentialId?: Uint8Array;
 }
 
 /** The user dismissed the passkey prompt. */
@@ -31,18 +30,12 @@ export class PasskeyUnconfirmed extends PrfUnavailable {
     name = "PasskeyUnconfirmed";
 }
 
-/** The PRF salt and HKDF label keys derive under; changing either changes every key. */
-export interface PasskeyDomain {
-    salt: Uint8Array;
-    label: string;
-}
-
-export const DEFAULT_PASSKEY_DOMAIN: PasskeyDomain = {
-    salt: sha256(utf8ToBytes("arkade/passkey/mnemonic/v1")),
-    label: "arkade/passkey/mnemonic/v1",
-};
+/** The label of a passkey's first wallet, as in Breez's seedless-restore implementation. */
+export const DEFAULT_PASSKEY_LABEL = "Default";
 
 type Bytes = ArrayBuffer | ArrayBufferView | ArrayLike<number>;
+
+const UNUSABLE = "This passkey returned no usable secret.";
 
 // Some password managers return PRF results as plain arrays; everything is copied into a fresh Uint8Array.
 function bytes(x: Bytes): Uint8Array<ArrayBuffer> {
@@ -50,13 +43,20 @@ function bytes(x: Bytes): Uint8Array<ArrayBuffer> {
     if (Object.prototype.toString.call(x) === "[object ArrayBuffer]")
         return new Uint8Array((x as ArrayBuffer).slice(0));
     if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength).slice();
-    return Uint8Array.from(x as ArrayLike<number>);
+    // Uint8Array.from reads holes, nulls and out-of-range values as bytes, so a broken bridge's output could become a fixed, public secret.
+    if (!Array.isArray(x)) throw new PrfUnavailable(UNUSABLE);
+    for (let i = 0; i < x.length; i++) {
+        const v: unknown = x[i];
+        if (!(i in x) || !Number.isInteger(v) || (v as number) < 0 || (v as number) > 255)
+            throw new PrfUnavailable(UNUSABLE);
+    }
+    return Uint8Array.from(x as number[]);
 }
 
 // A PRF output is exactly 32 bytes; anything else (a bridge's hex string, an empty buffer) is refused, never stretched into a key.
 function secret(x: unknown): Uint8Array {
     const b = typeof x === "object" && x !== null ? bytes(x as Bytes) : null;
-    if (!b || b.length !== 32) throw new PrfUnavailable("This passkey returned no usable secret.");
+    if (!b || b.length !== 32) throw new PrfUnavailable(UNUSABLE);
     return b;
 }
 
@@ -82,7 +82,13 @@ async function ask(prompt: () => Promise<Credential | null>): Promise<Credential
     try {
         c = await prompt();
     } catch (e) {
-        if (e instanceof DOMException && e.name === "NotAllowedError") throw new PasskeyCancelled();
+        // By name: a bridge's error may come from another realm, and React Native has no DOMException.
+        if (
+            typeof e === "object" &&
+            e !== null &&
+            (e as { name?: unknown }).name === "NotAllowedError"
+        )
+            throw new PasskeyCancelled();
         throw e;
     }
     if (!c) throw new PasskeyCancelled();
@@ -109,7 +115,8 @@ export async function prfSupport(): Promise<"yes" | "no" | "unknown"> {
  * that changes its secret later is not caught here; it derives other words on the next sign-in.
  *
  * @throws PrfUnavailable when the authenticator cannot do PRF or gives another secret on reuse
- * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation
+ * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation; this and
+ *   PrfUnavailable carry the new passkey's `credentialId`, since the passkey exists by then
  * @throws PasskeyCancelled when the user dismisses the prompt
  */
 export async function createPrfPasskey(o: {
@@ -136,6 +143,21 @@ export async function createPrfPasskey(o: {
         }),
     );
     const credentialId = bytes((cred as PublicKeyCredential).rawId);
+    return confirmPrf(cred, credentialId, o, client).then(
+        (prf) => ({ credentialId, prf }),
+        (e) => {
+            if (e instanceof PrfUnavailable) e.credentialId = credentialId;
+            throw e;
+        },
+    );
+}
+
+async function confirmPrf(
+    cred: Credential,
+    credentialId: Uint8Array,
+    o: { rp: { id: string }; salt: Uint8Array },
+    client: WebAuthnClient,
+): Promise<Uint8Array> {
     const out = prfOf(cred);
     // No prf entry at all means the browser ignored the extension: a second prompt would fail the same way.
     if (!out?.results?.first && (!out || out.enabled === false))
@@ -159,7 +181,7 @@ export async function createPrfPasskey(o: {
     if (made && !same(made, used)) {
         throw new PrfUnavailable("This passkey gave a different secret on its next use.");
     }
-    return { credentialId, prf: used };
+    return used;
 }
 
 /**
@@ -198,6 +220,10 @@ export async function evaluatePrf(o: {
     };
 }
 
-/** Twelve BIP39 words from a PRF secret: the same passkey and label always give the same words. */
-export const mnemonicFromPrf = (prfSecret: Uint8Array, label: string): string =>
-    entropyToMnemonic(hkdf(sha256, prfSecret, undefined, utf8ToBytes(label), 16), wordlist);
+/**
+ * BIP39 words from a PRF secret. Twelve, from its first 16 bytes, is what Breez's SDK derives
+ * (`prf_to_mnemonic`), so a Breez wallet using the same passkey and salt gets the same words.
+ * Twenty-four, from all 32 bytes, is what the seedless-restore spec text's `BIP39(root_key)` reads as.
+ */
+export const mnemonicFromPrf = (prfSecret: Uint8Array, words: 12 | 24 = 12): string =>
+    entropyToMnemonic(secret(prfSecret).slice(0, words === 24 ? 32 : 16), wordlist);

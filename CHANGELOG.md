@@ -92,15 +92,19 @@ style and have not been backfilled.
   creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
   `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
   the passkey syncs to. Both return the identity, the words (for the app to offer as a
-  backup) and the credential id. The words come from HKDF-SHA256 over the PRF secret
-  under a salt and label, `DEFAULT_PASSKEY_DOMAIN` unless an app passes its own `domain`
-  to keep words it derived before. A passkey is used once right after creation and
-  refused (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it
-  gives no 32-byte secret or one different from the secret it returned at creation (an
-  authenticator that returns none at creation has nothing to compare against). The primitives (`createPrfPasskey`, `evaluatePrf`,
-  `mnemonicFromPrf`, `prfSupport`) are exported; every call that prompts takes a
-  `client` in place of `navigator.credentials`. Adds `@noble/hashes` as a direct dependency (already
-  in the tree through `@noble/curves`).
+  backup) and the credential id. The derivation follows Breez's seedless-restore
+  implementation: a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF
+  salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
+  the BIP39 entropy for 12 words, as Breez's SDK derives them, so the same passkey and
+  label give the same words as a Breez wallet; each label is a separate wallet.
+  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads. A passkey is used once right after creation and refused
+  (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it gives
+  no 32-byte secret or one different from the secret it returned at creation (an
+  authenticator that returns none at creation has nothing to compare against); both
+  carry the new passkey's `credentialId`, so an app can fall back to that passkey. The
+  primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
+  exported; every call that prompts takes a `client` in place of
+  `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
 
 - **Onchain coin spends come from the arkd indexer first.** arkd v0.9.22
   records the onchain coins whose spend it signed or watched (boarding inputs

@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm";
-import { describe, expect, it } from "vitest";
-import { validateMnemonic } from "@scure/bip39";
+import { describe, expect, it, vi } from "vitest";
+import { entropyToMnemonic, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { hex } from "@scure/base";
 import { MnemonicIdentity } from "../src/identity/seedIdentity";
@@ -59,23 +59,73 @@ describe("passkey identity", () => {
         expect(again.mnemonic).toBe(a.mnemonic);
     });
 
-    it("keeps an app's own salt and label, so words it already derived stay the same", async () => {
+    it("derives the seedless-restore words: the label's UTF-8 bytes as the PRF salt, the first 16 bytes as entropy", async () => {
         const client = new FakeAuthenticator();
-        const domain = { salt, label: "my app seed v1" };
-        const own = await MnemonicIdentity.createPasskey({ rp, userName: "a", client, domain });
-        const { prf } = await evaluatePrf({
+        const made = await MnemonicIdentity.createPasskey({ rp, userName: "a", client });
+        const used = async (label: string) =>
+            (
+                await evaluatePrf({
+                    rpId: rp.id,
+                    salt: new TextEncoder().encode(label),
+                    credentialIds: [made.credentialId],
+                    client,
+                })
+            ).prf;
+        expect(made.mnemonic).toBe(
+            entropyToMnemonic((await used("Default")).slice(0, 16), wordlist),
+        );
+        const work = await MnemonicIdentity.fromPasskey({
             rpId: rp.id,
-            salt,
-            credentialIds: [own.credentialId],
+            credentialIds: [made.credentialId],
+            label: "work",
             client,
         });
-        expect(own.mnemonic).toBe(mnemonicFromPrf(prf, "my app seed v1"));
-        const defaults = await MnemonicIdentity.fromPasskey({
+        expect(work.mnemonic).toBe(entropyToMnemonic((await used("work")).slice(0, 16), wordlist));
+        expect(work.mnemonic).not.toBe(made.mnemonic);
+    });
+
+    it("uses a label's bytes as given, without Unicode normalization, as Breez's provider does", async () => {
+        const client = new FakeAuthenticator();
+        const made = await MnemonicIdentity.createPasskey({ rp, userName: "a", client });
+        const words = async (label: string) =>
+            (
+                await MnemonicIdentity.fromPasskey({
+                    rpId: rp.id,
+                    credentialIds: [made.credentialId],
+                    label,
+                    client,
+                })
+            ).mnemonic;
+        expect(await words("café")).not.toBe(await words("café"));
+    });
+
+    it("gives 24 words from all 32 bytes when asked, as the spec text's BIP39(root_key) reads", async () => {
+        expect(mnemonicFromPrf(new Uint8Array(32), 24)).toBe(`${"abandon ".repeat(23)}art`);
+        const client = new FakeAuthenticator();
+        const made = await MnemonicIdentity.createPasskey({ rp, userName: "a", client, words: 24 });
+        const back = await MnemonicIdentity.fromPasskey({
             rpId: rp.id,
-            credentialIds: [own.credentialId],
+            credentialIds: [made.credentialId],
+            words: 24,
             client,
         });
-        expect(defaults.mnemonic).not.toBe(own.mnemonic);
+        expect(made.mnemonic.split(" ")).toHaveLength(24);
+        expect(back.mnemonic).toBe(made.mnemonic);
+        const twelve = await MnemonicIdentity.fromPasskey({
+            rpId: rp.id,
+            credentialIds: [made.credentialId],
+            client,
+        });
+        expect(made.mnemonic.startsWith(twelve.mnemonic.split(" ").slice(0, 11).join(" "))).toBe(
+            true,
+        );
+    });
+
+    it("turns a PRF secret into words exactly as BIP39 turns its first 16 bytes", () => {
+        const prf = new Uint8Array(32).fill(0xff, 16);
+        expect(mnemonicFromPrf(prf)).toBe(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        );
     });
 });
 
@@ -199,5 +249,73 @@ describe("PRF passkeys", () => {
         expect((await evaluatePrf({ rpId: rp.id, salt, client })).prf).toEqual(
             new Uint8Array(32).fill(6),
         );
+    });
+
+    const answering = (first: unknown) => ({
+        create: async () => null,
+        get: async () =>
+            ({
+                rawId: new Uint8Array(16).buffer,
+                response: { userHandle: null },
+                getClientExtensionResults: () => ({ prf: { results: { first } } }),
+            }) as unknown as Credential,
+    });
+
+    it("refuses array output that is not 32 real bytes, which would read as a predictable all-zero secret", async () => {
+        for (const first of [
+            new Array(32),
+            new Array(32).fill(null),
+            { length: 32 },
+            new Array(32).fill(256),
+            new Array(32).fill(1.5),
+        ]) {
+            await expect(
+                evaluatePrf({ rpId: rp.id, salt, client: answering(first) }),
+            ).rejects.toThrow(PrfUnavailable);
+        }
+    });
+
+    it("derives no words from a secret that is not 32 bytes", () => {
+        expect(() => mnemonicFromPrf(new Uint8Array(0))).toThrow(PrfUnavailable);
+        expect(() => mnemonicFromPrf(new Uint8Array(31))).toThrow(PrfUnavailable);
+    });
+
+    it("reads a cancel by its name, from another realm or where there is no DOMException", async () => {
+        const rejecting = (e: unknown) => ({
+            create: async () => null,
+            get: async () => {
+                throw e;
+            },
+        });
+        await expect(
+            evaluatePrf({
+                rpId: rp.id,
+                salt,
+                client: rejecting({ name: "NotAllowedError", message: "x" }),
+            }),
+        ).rejects.toThrow(PasskeyCancelled);
+        vi.stubGlobal("DOMException", undefined);
+        try {
+            await expect(
+                evaluatePrf({ rpId: rp.id, salt, client: rejecting(new Error("boom")) }),
+            ).rejects.toThrow("boom");
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("names the passkey it made when that passkey then cannot derive a key, so an app can fall back to it", async () => {
+        for (const knobs of [{ prf: false }, { getFails: true }, { drift: true }]) {
+            const client = new FakeAuthenticator(knobs);
+            const error = await make(client).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(PrfUnavailable);
+            expect((error as PrfUnavailable).credentialId).toEqual(client.held[0].id);
+        }
+        const error = await evaluatePrf({
+            rpId: rp.id,
+            salt,
+            client: new FakeAuthenticator({ prf: false }),
+        }).catch((e: unknown) => e);
+        expect((error as PrfUnavailable).credentialId).toBeUndefined();
     });
 });
