@@ -326,6 +326,39 @@ style and have not been backfilled.
   `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
   longer reports a txid it did not submit.
 
+- **`renewProgramContractOutputs` renews covenant VTXOs without an owner
+  key.** A covenant coin whose owner is offline was swept at batch expiry unless the
+  app hand-rolled the intent, the emulator packet and a batch handler that
+  still demanded a signer. The helper registers one intent for any number of
+  coins, each through a covenant function that lets proof input k+1 through
+  to output k (`renew` by default) with its assets, has the emulator sign the
+  proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
+  its signer for this: forfeits go to the emulator unsigned, and boarding
+  inputs and inputs without an Arkade script, whose forfeits need a key, are
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal, and so are a coin its contract does not lock and a server
+  provider lacking a method the renewal or its batch calls. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing. A renewal that fails or is aborted
+  after registering deletes its intent with a delete proof the emulator signs
+  up front alongside the registration, as `Wallet.settle` does; a left intent
+  held the coins until arkd dropped it, failing retries with "duplicated
+  input". `EmulatorProvider.submitIntent` accepts a delete message for this.
+  Once the forfeits are being sent the signal is ignored and the intent kept,
+  and the renewal waits for the batch's outcome: arkd can commit it by then,
+  and an abort would report spent coins as unrenewed and lose the commitment
+  txid. It subscribes to batch events before
+  registering, as `Wallet.settle` does, so a batch that starts while the
+  intent is being registered is not missed; the new `Batch.prime` does the
+  subscribing for both. A renewal the server would charge an intent fee for
+  is refused before anything is signed: the covenant keeps each output equal
+  to its input, so no fee can be paid and arkd would reject the intent. A
+  renew leaf's condition witness goes on the proof and on the forfeits, where
+  arkd evaluates it. A leaf whose witness names a call input, which a renewal
+  cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
+  path, is refused before anything is signed. The renewal's asset packet is
+  built by `createAssetPacket`, as a wallet send's is.
+
 ### Changed
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
@@ -410,6 +443,13 @@ style and have not been backfilled.
   `--experimental-eventsource`.
 
 ### Bug Fixes
+
+- **`createArkadeBatchHandler` writes an input's condition witness on its
+  forfeit.** arkd evaluates a condition leaf against the forfeit's
+  ConditionWitness field when it verifies the forfeit's signatures. The proof
+  carried it but the forfeit never did, so a batch spending a coin through a
+  condition leaf failed with `INVALID_FORFEIT_TXS`. An input's `extraWitness`
+  now goes on its forfeit too.
 
 - **Expired boarding UTXOs held under a deprecated signer are now swept.**
   After the operator rotated its signer, deposits made to a boarding address on

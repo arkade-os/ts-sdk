@@ -4217,20 +4217,8 @@ export class Wallet
 
         try {
             stream = this.arkProvider.getEventStream(abortController.signal, topics);
-
-            // Prime the iterator so the provider opens the SSE subscription
-            // before safeRegisterIntent can trigger operator-side batch events.
-            const firstNext = stream.next();
-            // If settle exits before Batch.join consumes the primed result,
-            // keep the orphaned promise from surfacing as an unhandled rejection.
-            void firstNext.catch(() => {});
-            const primedStream = (async function* () {
-                const first = await firstNext;
-                if (!first.done) {
-                    yield first.value;
-                }
-                yield* stream;
-            })();
+            // Subscribe before safeRegisterIntent can trigger operator-side batch events.
+            const primedStream = Batch.prime(stream);
 
             onRegistrationAttempt?.();
             registering = true;
