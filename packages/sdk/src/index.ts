@@ -12,6 +12,7 @@ export {
 } from "./identity/passkey";
 export type { WebAuthnClient, PasskeyDomain } from "./identity/passkey";
 export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
+export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
     SeedIdentity,
@@ -96,6 +97,7 @@ import {
     IReadonlyWallet,
     ArkadeReader,
     ArkadeBroadcaster,
+    GetOperatorInfoOptions,
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
@@ -136,6 +138,7 @@ import {
     Recipient,
     SendParams,
     InputExpiryFloor,
+    SendOnchainParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -251,14 +254,21 @@ import type {
     Unspent as ElectrumUnspent,
 } from "./providers/electrum";
 import {
+    RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -273,7 +283,7 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
-import { CachingArkProvider } from "./providers/cachingArk";
+import { CachingOperatorProvider, CachingArkProvider } from "./providers/cachingArk";
 import {
     DelegateProvider,
     DelegateInfo,
@@ -332,12 +342,13 @@ import {
     type RawTxSource,
     type WithPrevTx,
 } from "./utils/prevoutTx";
-import { Intent, type IntentCoin } from "./intent";
+import { Intent, Proof, type IntentCoin, type ProofInput } from "./proof";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     Network,
@@ -355,6 +366,9 @@ import {
     IndexerTxType,
     ChainTxType,
     GetVtxosOptions,
+    GetUtxosOptions,
+    IndexerUtxo,
+    IndexerUtxosUnsupportedError,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -451,16 +465,7 @@ import {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
 } from "./wallet/batchExpiry";
 import type { BatchExpiryPolicy } from "./wallet/batchExpiry";
-import {
-    assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-} from "./wallet/checkpointExitDelay";
-import type { CheckpointExitDelayPolicy } from "./wallet/checkpointExitDelay";
+import { assertValidServerUnrollScript } from "./wallet/checkpointExitDelay";
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
@@ -473,9 +478,12 @@ import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTx
 import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
 import type {
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
 } from "./repositories/intentRepository";
 import type {
@@ -486,6 +494,7 @@ import type {
 import { ChainedTxType } from "./repositories/virtualTxRepository";
 import type {
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
@@ -565,6 +574,7 @@ import {
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
 import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
+import { OnchainCosignPreflightError, isCosignFallback } from "./contracts/onchainSpend";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -579,6 +589,7 @@ import type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,
@@ -693,13 +704,19 @@ export {
     ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
+    RestOperatorProvider,
     RestArkProvider,
+    CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     FetchError,
     READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
+    IndexerUtxosUnsupportedError,
     DEFAULT_VTXO_PAGE_SIZE,
     // Script-related
     ArkAddress,
@@ -795,6 +812,7 @@ export {
     ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
@@ -826,7 +844,8 @@ export {
     isTerminalIntentState,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
-    // Intent proof
+    // Proof
+    Proof,
     Intent,
     // BIP-322 message signing
     BIP322,
@@ -853,6 +872,8 @@ export {
     ArkErrorName,
     isArkError,
     maybeArkError,
+    OnchainCosignPreflightError,
+    isCosignFallback,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
@@ -874,13 +895,6 @@ export {
     REGTEST_MIN_BATCH_EXPIRY_SECONDS,
     type BatchExpiryPolicy,
     assertValidServerUnrollScript,
-    defaultCheckpointExitDelayPolicy,
-    resolveCheckpointExitDelayPolicy,
-    DEFAULT_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    REGTEST_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    MUTINYNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    SIGNET_MIN_CHECKPOINT_EXIT_DELAY_SECONDS,
-    type CheckpointExitDelayPolicy,
     buildForfeitTx,
     isSubdust,
     getSequence,
@@ -936,6 +950,7 @@ export type {
     IReadonlyWallet,
     ArkadeReader,
     ArkadeBroadcaster,
+    GetOperatorInfoOptions,
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
@@ -970,6 +985,7 @@ export type {
     PrevTxSource,
     RawTxSource,
     WithPrevTx,
+    ProofInput,
     IntentCoin,
     VerifyServerSignatures,
     TapLeaves,
@@ -991,6 +1007,8 @@ export type {
     // Indexer types
     IndexerProvider,
     GetVtxosOptions,
+    GetUtxosOptions,
+    IndexerUtxo,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -1005,12 +1023,15 @@ export type {
     ConnectorTreeNode,
     // Provider types
     OnchainProvider,
+    OperatorProvider,
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
+    SignedProof,
     TxNotification,
     TxNotificationEvent,
     SweepTxNotification,
@@ -1079,6 +1100,7 @@ export type {
     Recipient,
     SendParams,
     InputExpiryFloor,
+    SendOnchainParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -1117,6 +1139,7 @@ export type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,
@@ -1166,6 +1189,7 @@ export type {
     // Repositories
     ManagedConnection,
     WalletRepository,
+    AtomicWalletState,
     TransactionHistoryPageFilter,
     TransactionHistoryPageCursor,
     ScriptVtxoCursor,
@@ -1174,9 +1198,12 @@ export type {
     ContractRepository,
     ContractFilter,
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
     VirtualTxRepository,
     VirtualTx,

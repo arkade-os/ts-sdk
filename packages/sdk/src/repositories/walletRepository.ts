@@ -63,6 +63,28 @@ export interface WalletState {
     lastSyncTime?: number;
 }
 
+/** Backend transaction over fresh state. Updaters run once, synchronously, with no I/O,
+ * re-entry or external side effects. Failures are propagated without automatic retries.
+ */
+export interface AtomicWalletState {
+    readonly version: 1;
+    /** Caller assertion of persistence beyond this process, not physical storage detection. */
+    readonly persistent?: true;
+    update(updater: (state: WalletState) => WalletState): Promise<void>;
+}
+
+export function applyWalletStateUpdate(
+    state: WalletState,
+    updater: (state: WalletState) => WalletState,
+): WalletState {
+    const updated = updater(state);
+    if (updated && typeof (updated as { then?: unknown }).then === "function") {
+        if (updated instanceof Promise) void updated.catch(() => {});
+        throw new TypeError("wallet-state updater must be synchronous");
+    }
+    return updated;
+}
+
 export interface VtxoRepositoryKey {
     /** Authoritative ownership key. */
     script: string;
@@ -95,6 +117,7 @@ export interface WalletRepository extends AsyncDisposable {
      * `getVtxosForScript(s)`) are gone; implement the `*Page` reads instead.
      */
     readonly version: 2;
+    readonly atomicWalletState?: AtomicWalletState;
 
     /**
      * Clear all data from storage.

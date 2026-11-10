@@ -59,7 +59,15 @@ beforeAll(async () => {
         address: await bob.wallet.getAddress(),
         amount: SEND_SATS,
     });
-    await waitFor(async () => (await alice.wallet.getTransactionHistory()).length >= 2);
+    // Wait for both rows by key: the boarding row comes from the explorer, so a count can be met
+    // by other rows first.
+    await waitFor(async () => {
+        const keys = (await alice.wallet.getTransactionHistory()).map((tx) => tx.key);
+        return (
+            keys.some((k) => k.boardingTxid === boardingTxid) &&
+            keys.some((k) => k.arkTxid === sendTxid)
+        );
+    });
 }, 180_000);
 
 describe("the built-in resolvers, against a real history (regtest)", () => {

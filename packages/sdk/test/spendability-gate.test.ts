@@ -410,7 +410,7 @@ describe("getSpendableVtxos", () => {
         const intents = new InMemoryIntentRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await intents.saveIntent({
-            intentTxId: "i",
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -419,7 +419,7 @@ describe("getSpendableVtxos", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
+            proofInputs: [{ txid: defaultScript.slice(-2).repeat(32), vout: 0 }],
         });
 
         expect(scriptsOf(await wallet.getSpendableVtxos())).toEqual([MARKED_SCRIPT]);
@@ -465,7 +465,7 @@ describe("getSpendableVtxos", () => {
 
 describe("getBalance", () => {
     /**
-     * `settled + preconfirmed === available + gated + intentLocked + carrier`,
+     * `settled + preconfirmed === available + contractLocked + pendingSettlement + carrier`,
      * where `carrier` is the one dust carrier that leaves `available` whenever an asset is available;
      * and the five owned buckets sum to `total` — which is what catches a bucket added
      * without being counted, or counted twice.
@@ -474,10 +474,10 @@ describe("getBalance", () => {
         settled: number;
         preconfirmed: number;
         available: number;
-        gated: number;
-        intentLocked: number;
+        contractLocked: number;
+        pendingSettlement: number;
         recoverable: number;
-        pendingRecovery: number;
+        deprecatedSignerLocked: number;
         unrolled: number;
         total: number;
         boarding: { total: number };
@@ -485,21 +485,21 @@ describe("getBalance", () => {
     }) => {
         const carrier = balance.available > 0 && balance.availableAssets.length > 0 ? 1000 : 0;
         expect(balance.settled + balance.preconfirmed).toBe(
-            balance.available + balance.gated + balance.intentLocked + carrier,
+            balance.available + balance.contractLocked + balance.pendingSettlement + carrier,
         );
         expect(balance.total).toBe(
             balance.boarding.total +
                 balance.settled +
                 balance.preconfirmed +
                 balance.recoverable +
-                balance.pendingRecovery +
+                balance.deprecatedSignerLocked +
                 balance.unrolled,
         );
     };
 
     const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
         intents.saveIntent({
-            intentTxId: `i-${txid.slice(0, 4)}`,
+            proofTxId: `i-${txid.slice(0, 4)}`,
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -508,7 +508,7 @@ describe("getBalance", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid, vout: 0 }],
+            proofInputs: [{ txid, vout: 0 }],
         });
 
     it("counts gated funds as owned but not as available (D1c)", async () => {
@@ -521,8 +521,8 @@ describe("getBalance", () => {
         // …minus the escrowed and the unknown-type contract, and minus the one
         // dust carrier the available assets ride on.
         expect(balance.available).toBe(49_000);
-        expect(balance.gated).toBe(20_000);
-        expect(balance.intentLocked).toBe(0);
+        expect(balance.contractLocked).toBe(20_000);
+        expect(balance.pendingSettlement).toBe(0);
         expectSplit(balance);
     });
 
@@ -553,7 +553,7 @@ describe("getBalance", () => {
         expect(balance.preconfirmed).toBe(0);
         expect(balance.available).toBe(49_000);
         expect(balance.recoverable).toBe(0);
-        expect(balance.pendingRecovery).toBe(0);
+        expect(balance.deprecatedSignerLocked).toBe(0);
         expectSplit(balance);
 
         // Assets follow the value: owned, never offered to generic spending.
@@ -622,7 +622,7 @@ describe("getBalance", () => {
         }
     });
 
-    it("counts a gated-and-locked VTXO once, as gated", async () => {
+    it("counts a gated-and-locked VTXO once, as contractLocked", async () => {
         const intents = new InMemoryIntentRepository();
         const { wallet } = await seededWallet({ intents });
         const escrowTxid = ESCROW_SCRIPT.slice(-2).repeat(32);
@@ -636,22 +636,37 @@ describe("getBalance", () => {
         });
 
         const balance = await wallet.getBalance();
-        expect(balance.gated).toBe(20_000);
-        expect(balance.intentLocked).toBe(0);
+        expect(balance.contractLocked).toBe(20_000);
+        expect(balance.pendingSettlement).toBe(0);
         expect(balance.available).toBe(49_000);
         expectSplit(balance);
     });
 
-    it("reports an ungated intent-locked VTXO as intentLocked", async () => {
+    it("reports an ungated intent-locked VTXO as pendingSettlement", async () => {
         const intents = new InMemoryIntentRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
         const balance = await wallet.getBalance();
-        expect(balance.intentLocked).toBe(40_000);
-        expect(balance.gated).toBe(20_000);
+        expect(balance.pendingSettlement).toBe(40_000);
+        expect(balance.contractLocked).toBe(20_000);
         expect(balance.available).toBe(9_000); // only MARKED_SCRIPT survives, minus its carrier
         expectSplit(balance);
+    });
+
+    it("mirrors each bucket into its deprecated alias", async () => {
+        const intents = new InMemoryIntentRepository();
+        const { wallet, defaultScript } = await seededWallet({ intents });
+        await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
+
+        const balance = await wallet.getBalance();
+        expect(balance.gated).toBe(20_000);
+        expect(balance.intentLocked).toBe(40_000);
+        expect([balance.gated, balance.intentLocked, balance.pendingRecovery]).toEqual([
+            balance.contractLocked,
+            balance.pendingSettlement,
+            balance.deprecatedSignerLocked,
+        ]);
     });
 
     it("gives assets the same owned/spendable split (D1e)", async () => {
@@ -905,7 +920,7 @@ describe("logUngatedInputs", () => {
 
         const lockedTxid = "e3".repeat(32);
         await intents.saveIntent({
-            intentTxId: "i",
+            proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
             registerProof: "",
@@ -914,7 +929,7 @@ describe("logUngatedInputs", () => {
             deleteProofMessage: "",
             partialForfeits: [],
             state: "batch_in_progress",
-            intentVtxos: [{ txid: lockedTxid, vout: 0 }],
+            proofInputs: [{ txid: lockedTxid, vout: 0 }],
         });
 
         const inputs = [

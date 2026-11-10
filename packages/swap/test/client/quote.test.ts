@@ -614,6 +614,19 @@ describe("verification, one failure per check", () => {
         expect(error.expected).toMatch(/at most/);
     });
 
+    it("refuses an onchain send's solo-refund delay past the refund window", async () => {
+        const { client } = await setup({
+            answer: (payload) =>
+                onchainSendAnswer(payload, CLOCK, { refundWithoutReceiverDelay: 0xffff * 512 }),
+        });
+        const error = await client
+            .quote({ to: BCRT1, amount: 100_000n, amountOn: "give" })
+            .catch((e) => e);
+        expect(error).toBeInstanceOf(QuoteVerificationFailed);
+        expect(error.check).toBe("refund_window");
+        expect(error.expected).toMatch(/solo-refund delay/);
+    });
+
     it("takes a longer refund window when the policy allows it", async () => {
         const long = { ...CLOCK, refundLocktime: NOW + DEFAULT_MAX_REFUND_WINDOW_SECONDS + 3600 };
         const { client } = await setup({

@@ -1,6 +1,8 @@
 /**
  * Minimal SQL execution interface that consumers implement
  * to connect their SQLite (or any SQL) database to the SDK.
+ * Share one executor object per connection across SDK repositories; separate wrappers
+ * and direct raw-driver calls bypass the SDK operation queue.
  *
  * Example for expo-sqlite:
  * ```

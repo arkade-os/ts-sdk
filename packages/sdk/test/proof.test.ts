@@ -1,21 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { Intent } from "../src/intent";
+import { craftToSpendTx, Intent, Proof, TAG_PROOF } from "../src/proof";
 import { Transaction } from "../src/utils/transaction";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
+    asset,
     getArkPsbtFields,
     MultisigTapscript,
     PrevArkTxField,
     VtxoScript,
-    type IntentCoin,
+    type ProofInput,
 } from "../src";
 
 function globalSignedMessage(tx: unknown): Uint8Array | undefined {
     return (tx as { global?: { genericSignedMessage?: Uint8Array } }).global?.genericSignedMessage;
 }
 
-describe("Intent", () => {
+describe("Registration", () => {
     // Minimal P2TR-shaped pkscript (OP_1 <32-byte x-only key>). The Intent
     // builder doesn't execute scripts; it only needs a witnessUtxo.
     const witnessUtxo = {
@@ -37,7 +38,7 @@ describe("Intent", () => {
                 witnessUtxo,
             };
 
-            const proof = Intent.create("hello", [input]);
+            const proof = Proof.create("hello", [input]);
 
             expect(proof.lockTime).toBe(0);
             // Per-input nSequence must still carry the BIP-68 value.
@@ -53,7 +54,7 @@ describe("Intent", () => {
                 witnessUtxo,
             };
 
-            const proof = Intent.create("msg", [input]);
+            const proof = Proof.create("msg", [input]);
 
             expect(proof.lockTime).toBe(0);
         });
@@ -65,7 +66,7 @@ describe("Intent", () => {
                 witnessUtxo,
             };
 
-            const proof = Intent.create("msg", [input]);
+            const proof = Proof.create("msg", [input]);
 
             expect(proof.lockTime).toBe(0);
         });
@@ -86,7 +87,7 @@ describe("Intent", () => {
                 },
             ];
 
-            const proof = Intent.create("msg", inputs);
+            const proof = Proof.create("msg", inputs);
 
             expect(proof.lockTime).toBe(0);
         });
@@ -108,15 +109,15 @@ describe("Intent", () => {
                 value: 1000,
                 tapTree: vs.encode(),
                 forfeitTapLeafScript: vs.leaves[0],
-                intentTapLeafScript: vs.leaves[0],
+                proofTapLeafScript: vs.leaves[0],
                 prevTx,
-            } as unknown as IntentCoin;
+            } as unknown as ProofInput;
         }
 
         it("puts the field on the coin's proof input, never on the synthetic input 0", () => {
             const prevTx = new Uint8Array(40).fill(3);
 
-            const proof = Intent.create("msg", [vtxoCoin(1, prevTx)]);
+            const proof = Proof.create("msg", [vtxoCoin(1, prevTx)]);
 
             expect(getArkPsbtFields(proof, 0, PrevArkTxField)).toHaveLength(0);
             const onCoin = getArkPsbtFields(proof, 1, PrevArkTxField);
@@ -129,7 +130,7 @@ describe("Intent", () => {
             // these two values, so they are part of the wire contract.
             const coin = vtxoCoin(5, new Uint8Array(40).fill(3));
 
-            const proof = Intent.create("msg", [coin]);
+            const proof = Proof.create("msg", [coin]);
 
             expect(proof.getInput(0).witnessUtxo!.amount).toBe(0n);
             expect(hex.encode(proof.getInput(0).witnessUtxo!.script)).toBe(
@@ -138,7 +139,7 @@ describe("Intent", () => {
         });
 
         it("attaches nothing when the coin carries no prevTx", () => {
-            const proof = Intent.create("msg", [vtxoCoin(9)]);
+            const proof = Proof.create("msg", [vtxoCoin(9)]);
 
             expect(getArkPsbtFields(proof, 1, PrevArkTxField)).toHaveLength(0);
         });
@@ -148,7 +149,7 @@ describe("Intent", () => {
         it("sets the 0x09 global field to the signed message", () => {
             const input = { txid: zeroTxid, index: 0, witnessUtxo };
 
-            const proof = Intent.create("hello", [input]);
+            const proof = Proof.create("hello", [input]);
 
             const value = globalSignedMessage(proof);
             expect(value).toBeDefined();
@@ -157,24 +158,47 @@ describe("Intent", () => {
 
         it("sets the 0x09 global field to the canonical encoded message for object messages", () => {
             const input = { txid: zeroTxid, index: 0, witnessUtxo };
-            const message: Intent.Message = { type: "delete", expire_at: 42 };
+            const message: Proof.Message = { type: "delete", expire_at: 42 };
 
-            const proof = Intent.create(message, [input]);
+            const proof = Proof.create(message, [input]);
 
             const value = globalSignedMessage(proof);
             expect(value).toBeDefined();
-            expect(new TextDecoder().decode(value)).toBe(Intent.encodeMessage(message));
+            expect(new TextDecoder().decode(value)).toBe(Proof.encodeMessage(message));
         });
 
         it("survives a PSBT round-trip so a co-signer recovers the message from wire bytes", () => {
             const input = { txid: zeroTxid, index: 0, witnessUtxo };
 
-            const proof = Intent.create("round-trip", [input]);
+            const proof = Proof.create("round-trip", [input]);
             const parsed = Transaction.fromPSBT(proof.toPSBT());
 
             const value = globalSignedMessage(parsed);
             expect(value).toBeDefined();
             expect(new TextDecoder().decode(value)).toBe("round-trip");
         });
+    });
+});
+
+describe("deprecated Intent names", () => {
+    it("keep working and leave the operator's tag unchanged", () => {
+        expect(Intent).toBe(Proof);
+        expect(asset.AssetInput.createIntent).toBe(asset.AssetInput.createProof);
+        expect(asset.AssetInputType.Intent).toBe(asset.AssetInputType.Proof);
+        expect(TAG_PROOF).toBe("ark-intent-proof-message");
+    });
+
+    it("sign a to_spend transaction built with that tag", () => {
+        const script = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(1)]);
+        const input = {
+            txid: new Uint8Array(32),
+            index: 0,
+            witnessUtxo: { script, amount: 1000n },
+        };
+        const toSpend = craftToSpendTx("tag", script, "ark-intent-proof-message");
+
+        const proof = Proof.create("tag", [input]);
+
+        expect(hex.encode(proof.getInput(0).txid!)).toBe(toSpend.id);
     });
 });

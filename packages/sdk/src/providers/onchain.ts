@@ -18,16 +18,22 @@ export const ESPLORA_URL: Record<NetworkName, string> = {
 export type ExplorerTransaction = {
     txid: string;
     /**
-     * Spent outpoints, as returned by Esplora's `/address/:addr/txs`; the electrum provider omits
-     * them. Used to recover a boarding output's commitment tx when `/outspends` omits the spender.
+     * Spent outpoints, as returned by Esplora's `/address/:addr/txs` and built from the raw tx by
+     * the electrum provider. `getBoardingTxs` reads a boarding output's spender (commitment tx)
+     * from them and asks `getTxOutspend(s)` only when no listed tx spends it, so a provider that
+     * sets this saves one outspend request per settled boarding output. Leave it unset when
+     * unknown: the outspend request then runs as before.
      */
     vin?: {
         txid: string;
         vout: number;
+        /** Set by Esplora; the electrum provider omits it. */
+        prevout?: { scriptpubkey_address?: string };
     }[];
     vout: {
         scriptpubkey_address: string;
-        value: string;
+        /** Output amount in satoshis, matching Esplora's numeric JSON field. */
+        value: number;
     }[];
     status: {
         confirmed: boolean;
@@ -88,6 +94,12 @@ export interface OnchainProvider {
      * @see getTxStatus
      */
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid?: string }[]>;
+
+    /**
+     * Fetch the spend status of one output, for providers that can answer it without reading the
+     * transaction's other outputs; callers fall back to {@link getTxOutspends} when absent.
+     */
+    getTxOutspend?(txid: string, vout: number): Promise<{ spent: boolean; txid?: string }>;
 
     /**
      * Fetch transactions associated with an address.

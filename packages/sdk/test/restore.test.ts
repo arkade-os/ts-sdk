@@ -1876,6 +1876,37 @@ describe("Wallet.restore", () => {
         }
     });
 
+    it("notifyIncomingFunds does not recreate the contract manager after disposal during onchain setup", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        await awaitWalletBooted(wallet);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const unsubscribe = vi.fn();
+        const watch = vi
+            .spyOn(wallet.onchainProvider, "watchAddresses")
+            .mockImplementation(async () => {
+                await gate;
+                return unsubscribe;
+            });
+        const pending = wallet.notifyIncomingFunds(() => {});
+        await until(() => watch.mock.calls.length > 0);
+        expect(watch).toHaveBeenCalledOnce();
+        await wallet.dispose();
+        const subscriptionCount = indexer.subscribeCalls.length;
+        release();
+        const stop = await pending;
+        try {
+            expect((wallet as any)._contractManager).toBeUndefined();
+            expect(indexer.subscribeCalls).toHaveLength(subscriptionCount);
+        } finally {
+            stop();
+            await wallet.dispose();
+        }
+        expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
     it("notifyIncomingFunds watches the full boarding-address set (plan §6-IV.2)", async () => {
         const { wallet } = await makeHdWalletForTest();
         try {
@@ -1903,6 +1934,8 @@ describe("Wallet.restore", () => {
         try {
             const baseline = await wallet.getBoardingAddress();
             const rotated1 = await wallet.getNewBoardingAddress();
+            // The contract manager's onchain watch shares this provider; keep it out of the count.
+            vi.spyOn(await wallet.getContractManager(), "syncOnchain").mockResolvedValue();
 
             // Record each subscription's address set + a per-call stop spy.
             const calls: string[][] = [];
@@ -2003,6 +2036,8 @@ describe("Wallet.restore", () => {
             const firstGate = new Promise<void>((r) => (releaseFirst = r));
             vi.spyOn(wallet.onchainProvider, "watchAddresses").mockImplementation(
                 async (addrs: string[]) => {
+                    // ContractManager's own onchain watcher shares this provider.
+                    if ((new Error().stack ?? "").includes("onchainWatcher")) return vi.fn();
                     calls.push(addrs);
                     if (calls.length === 1) {
                         // Block the INITIAL subscribe so we can rotate while it

@@ -231,6 +231,19 @@ describe("ElectrumOnchainProvider integration tests", () => {
         expect(spentOutput).toBeDefined();
         expect(spentOutput!.txid).toMatch(/^[0-9a-f]{64}$/);
         expect(spentOutput!.txid).not.toBe(fundingTxid);
+
+        const vout = aliceCoins[0].vout;
+        await waitFor(async () => (await provider.getTxOutspend(fundingTxid, vout)).spent);
+        const outspend = await provider.getTxOutspend(fundingTxid, vout);
+        expect(outspend).toEqual((await provider.getTxOutspends(fundingTxid))[vout]);
+
+        // The address history carries the spender's inputs, in the same byte order as the
+        // outspend answer: a byte-reversed txid would still look like a txid.
+        const spender = (await provider.getTransactions(alice.address)).find((tx) =>
+            tx.vin?.some((input) => input.txid === fundingTxid && input.vout === vout),
+        );
+        expect(spender).toBeDefined();
+        expect(spender!.txid).toBe(outspend.txid);
     });
 
     it("delivers funded txs to the watchAddresses callback", { timeout: 30_000 }, async () => {

@@ -1,6 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { p2tr, SigHash } from "@scure/btc-signer";
+import { hash160 } from "@scure/btc-signer/utils.js";
 
 import {
     arkade,
@@ -15,7 +16,7 @@ import {
     RestIndexerProvider,
     SingleKey,
     Transaction,
-    Intent,
+    Proof,
     Batch,
     RestEmulatorProvider,
     Extension,
@@ -30,6 +31,7 @@ import {
     createTestIdentity,
     faucetOffchain,
     faucetOnchain,
+    waitFor,
     waitForUtxo,
 } from "./utils";
 
@@ -49,7 +51,7 @@ function makeEmulatorExtensionOutput(
 }
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI.
 const ESPLORA_URL = "http://localhost:3000/api";
 const FUNDING_SATS = 1_000_000;
@@ -80,6 +82,81 @@ const offchainProgram = {
             tapscript: { signers: ["$user", "$server"] },
             arkadeScript: {
                 asm: [0, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// One payment per coin: output i must pay `$receiver` at least input i's value
+// (the pattern of delegatee's claim template).
+const pairedProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+    ],
+    functions: {
+        send: {
+            tapscript: { signers: ["$user", "$server"] },
+            arkadeScript: {
+                asm: [
+                    "PUSHCURRENTINPUTINDEX",
+                    "DUP",
+                    "INSPECTOUTPUTSCRIPTPUBKEY",
+                    1,
+                    "EQUALVERIFY",
+                    "$receiver",
+                    "EQUALVERIFY",
+                    "INSPECTOUTPUTVALUE",
+                    "PUSHCURRENTINPUTINDEX",
+                    "INSPECTINPUTVALUE",
+                    "GREATERTHANOREQUAL",
+                ],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// Hashlock covenant, server-signed: output 1 must pay `$receiver`.
+const hashlockProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "receiver", type: "pubkey" },
+        { name: "hash", type: "bytes20" },
+    ],
+    functions: {
+        claim: {
+            inputs: [{ name: "preimage", type: "bytes" }],
+            tapscript: {
+                signers: ["$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
+            },
+            arkadeScript: {
+                asm: [1, "INSPECTOUTPUTSCRIPTPUBKEY", 1, "EQUALVERIFY", "$receiver", "EQUAL"],
+            },
+        },
+    },
+} satisfies arkade.Program;
+
+// No covenant: two user-signed leaves, one behind a hashlock.
+const tapscriptProgram = {
+    version: 1,
+    params: [
+        { name: "server", type: "pubkey" },
+        { name: "user", type: "pubkey" },
+        { name: "hash", type: "bytes20" },
+    ],
+    functions: {
+        cooperative: { tapscript: { signers: ["$user", "$server"] } },
+        reveal: {
+            inputs: [{ name: "preimage", type: "bytes" }],
+            tapscript: {
+                signers: ["$user", "$server"],
+                asm: ["HASH160", "$hash", "EQUAL"],
+                witness: ["preimage"],
             },
         },
     },
@@ -244,8 +321,8 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
     /** Connect an Arkade client bound to the given signing identity. */
@@ -316,6 +393,107 @@ describe("arkade", () => {
         expect(signedArkTx).toBeTruthy();
     });
 
+    /** Wait until the indexer reports no spendable coin left at `pkScript`. */
+    async function waitForSpent(pkScript: Uint8Array) {
+        await waitFor(async () => {
+            const { vtxos } = await indexerProvider.getVtxos({
+                scripts: [hex.encode(pkScript)],
+                spendableOnly: true,
+            });
+            return vtxos.length === 0;
+        });
+    }
+
+    // Two coins of one covenant contract in one ark tx, each paying its own output.
+    it("TestOffchainMultiCoin", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const aliceAddress = await alice.wallet.getAddress();
+        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const contract = ark.contract(pairedProgram, {
+            receiver: getWitnessProgram(aliceAddress),
+        });
+
+        faucetOffchain(contract.address, 10000);
+        faucetOffchain(contract.address, 5000);
+        await waitForVtxo(contract.pkScript, 2);
+        const coins = (await contract.getUtxos()).sort((a, b) => b.value - a.value);
+
+        // One output for both coins: input 1 has no output 1 to pay. The emulator answers only
+        // "internal error" (its log names `OP_EQUALVERIFY failed vin=1`), so this pins the refusal
+        // to the emulator; the spend below, same coins with two outputs, rules out anything else.
+        await expect(
+            contract.functions.send().from(coins).to(alicePkScript, 15000n).send(),
+        ).rejects.toThrow(/Failed to submit tx to emulator/);
+
+        const { signedArkTx } = await contract.functions
+            .send()
+            .from(coins)
+            .to([
+                { script: alicePkScript, amount: 10000n },
+                { script: alicePkScript, amount: 5000n },
+            ])
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(contract.pkScript);
+    });
+
+    // Coins of two contracts, through two functions, in one ark tx: a user-signed
+    // covenant and a server-signed hashlock covenant with a condition witness. Built with
+    // `ark.transaction()`, so each `.from()` names its function.
+    it("TestOffchainTwoContracts", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const aliceAddress = await alice.wallet.getAddress();
+        const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
+        const preimage = crypto.getRandomValues(new Uint8Array(32));
+        const send = ark.contract(offchainProgram, { receiver: getWitnessProgram(aliceAddress) });
+        const claim = ark.contract(hashlockProgram, {
+            receiver: getWitnessProgram(aliceAddress),
+            hash: hash160(preimage),
+        });
+
+        faucetOffchain(send.address, 10000);
+        faucetOffchain(claim.address, 5000);
+        await waitForVtxo(send.pkScript);
+        await waitForVtxo(claim.pkScript);
+
+        const { signedArkTx } = await ark
+            .transaction()
+            .from(await send.getUtxos(), send.unlock.send())
+            .from(await claim.getUtxos(), claim.unlock.claim(preimage))
+            .to([
+                { script: alicePkScript, amount: 10000n },
+                { script: alicePkScript, amount: 5000n },
+            ])
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(send.pkScript);
+        await waitForSpent(claim.pkScript);
+    });
+
+    // arkd path (no covenant): two functions of one contract in one ark tx.
+    it("TestTapscriptTwoFunctions", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const ark = await connect(createTestIdentity());
+        const preimage = crypto.getRandomValues(new Uint8Array(32));
+        const contract = ark.contract(tapscriptProgram, { hash: hash160(preimage) });
+
+        faucetOffchain(contract.address, 10000);
+        faucetOffchain(contract.address, 5000);
+        await waitForVtxo(contract.pkScript, 2);
+        const [first, second] = await contract.getUtxos();
+
+        const { signedArkTx } = await contract.functions
+            .cooperative()
+            .from(first)
+            .from(second, contract.unlock.reveal(preimage))
+            .to(ArkAddress.decode(await alice.wallet.getAddress()).pkScript, 15000n)
+            .send();
+        expect(Transaction.fromPSBT(base64.decode(signedArkTx)).inputsLength).toBe(2);
+        await waitForSpent(contract.pkScript);
+    });
+
     // Settlement flow via intent + batch session (using arkade script)
     it("TestSettlement", { timeout: 120000 }, async () => {
         const alice = await createTestArkWallet();
@@ -359,7 +537,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -367,7 +545,7 @@ describe("arkade", () => {
             cosigners_public_keys: [sessionPubKey],
         };
 
-        // Create the intent proof. `script` is what marks this as a virtual output rather than a
+        // Create the proof. `script` is what marks this as a virtual output rather than a
         // boarding input, so the batch handler builds a forfeit for it.
         // `prevTx` carries the raw creating tx of each real proof input — the
         // emulator resolves the prevout pkScript from it.
@@ -379,7 +557,7 @@ describe("arkade", () => {
                     value: vtxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: vtxo.status,
                     script: vtxo.script,
                     createdAt: vtxo.createdAt,
@@ -390,7 +568,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -534,7 +712,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -552,7 +730,7 @@ describe("arkade", () => {
                     value: utxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: {
                         confirmed: utxo.status?.confirmed ?? false,
                         block_time: 0,
@@ -563,7 +741,7 @@ describe("arkade", () => {
             explorer,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -811,7 +989,7 @@ describe("arkade", () => {
             },
         ];
 
-        const settleMessage: Intent.RegisterMessage = {
+        const settleMessage: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -828,7 +1006,7 @@ describe("arkade", () => {
                     value: settleVtxo.value,
                     tapTree: settleTapTree,
                     forfeitTapLeafScript: settleArkadeLeaf,
-                    intentTapLeafScript: settleArkadeLeaf,
+                    proofTapLeafScript: settleArkadeLeaf,
                     status: settleVtxo.status,
                     script: settleVtxo.script,
                     createdAt: settleVtxo.createdAt,
@@ -839,7 +1017,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const settleIntentProof = Intent.create(
+        const settleIntentProof = Proof.create(
             settleMessage,
             [settleCoin],
             [...outputs, makeEmulatorExtensionOutput(1, settleArkadeScript, transferPacket)],

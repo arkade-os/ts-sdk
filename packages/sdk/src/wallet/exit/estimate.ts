@@ -93,15 +93,21 @@ export async function selectExitVtxos(opts: ExitOptions): Promise<ExitVtxo[]> {
     // deliberately bypasses the wallet's own VTXO listing, so contract
     // VTXOs the wallet does not track are exitable too.
     const res = await getNormalizedVtxos(opts.wallet.indexerProvider, { outpoints: opts.vtxos });
+    const scripts = [
+        ...new Set(res.vtxos.filter((vtxo) => !vtxo.isSpent).map((vtxo) => vtxo.script)),
+    ];
+    const contracts =
+        scripts.length === 0
+            ? []
+            : await collectContracts(opts.wallet.contractRepository, { script: scripts });
+    const byScript = new Map(contracts.map((contract) => [contract.script, contract]));
     const tapTrees = new Map<string, Uint8Array>();
     const out: ExitVtxo[] = [];
     for (const vtxo of res.vtxos) {
         if (vtxo.isSpent) continue;
         let tapTree = tapTrees.get(vtxo.script);
         if (!tapTree) {
-            const [contract] = await collectContracts(opts.wallet.contractRepository, {
-                script: vtxo.script,
-            });
+            const contract = byScript.get(vtxo.script);
             if (!contract) {
                 throw new Error(
                     `no contract registered for vtxo script ${vtxo.script} — register the contract before exiting`,
@@ -149,6 +155,12 @@ export type ExitLayout = {
 /** Shared step/sweep/splitter math used by `estimate` and `prepare`. */
 export async function computeExitLayout(opts: ExitOptions, feeRate: number): Promise<ExitLayout> {
     const { wallet, onchainWallet } = opts;
+    // Coins and the wallet key are inputs of the quote, not of the chain walk.
+    // Attach a handler now so a throw from the chain walk does not leave them unhandled.
+    const coinsPromise = onchainWallet.getCoins();
+    const pubkeyPromise = wallet.identity.xOnlyPublicKey();
+    void coinsPromise.catch(() => undefined);
+    void pubkeyPromise.catch(() => undefined);
     const vtxos = await selectExitVtxos(opts);
     if (vtxos.length === 0) throw new Error("no vtxos to exit");
 
@@ -206,44 +218,55 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
 
     // Per-VTXO sweep resolution; why the wallet key must come along: see `prepareUnrollTransaction`
     // in unroll.ts (here a VHTLC coin would be silently skipped as unexitable).
-    const walletDescriptor = hex.encode(await wallet.identity.xOnlyPublicKey());
+    const walletDescriptor = hex.encode(await pubkeyPromise);
+    const resolvedPaths = await Promise.allSettled(
+        vtxos.map(async (vtxo) => {
+            try {
+                return {
+                    vtxo,
+                    resolved: await resolveUnilateralPath({
+                        vtxo,
+                        scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
+                        contractRepository: wallet.contractRepository,
+                        walletDescriptor,
+                        currentTime: Date.now(),
+                    }),
+                };
+            } catch (e) {
+                if (e instanceof ExitPathError) return { vtxo, skipped: e.message };
+                throw e;
+            }
+        }),
+    );
     const infos: ExitVtxoInfo[] = [];
     const sweeps: ExitSweepPlan[] = [];
-    for (const vtxo of vtxos) {
+    for (const result of resolvedPaths) {
+        if (result.status === "rejected") throw result.reason;
+        const { vtxo } = result.value;
         const outpoint = `${vtxo.txid}:${vtxo.vout}`;
-        try {
-            const resolved = await resolveUnilateralPath({
-                vtxo,
-                scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
-                contractRepository: wallet.contractRepository,
-                walletDescriptor,
-                currentTime: Date.now(),
-            });
-            const sweepFee = sweepFeeFor(
-                resolved.selection,
-                opts.sweepAddress,
-                wallet.network,
-                feeRate,
-            );
-            if (vtxo.value - sweepFee < CHILD_OUTPUT_DUST) {
-                infos.push({
-                    outpoint,
-                    value: vtxo.value,
-                    skipped: `uneconomic: value ${vtxo.value} <= sweep fee + dust`,
-                });
-                continue;
-            }
-            const t = sequenceToTimelock(resolved.selection.sequence!);
-            const delay: ExitDelay = { type: t.type, value: Number(t.value) };
-            infos.push({ outpoint, value: vtxo.value, sweepFee, path: resolved.label, delay });
-            sweeps.push({ vtxo, resolved, sweepFee, delay });
-        } catch (e) {
-            if (e instanceof ExitPathError) {
-                infos.push({ outpoint, value: vtxo.value, skipped: e.message });
-                continue;
-            }
-            throw e;
+        if ("skipped" in result.value) {
+            infos.push({ outpoint, value: vtxo.value, skipped: result.value.skipped });
+            continue;
         }
+        const { resolved } = result.value;
+        const sweepFee = sweepFeeFor(
+            resolved.selection,
+            opts.sweepAddress,
+            wallet.network,
+            feeRate,
+        );
+        if (vtxo.value - sweepFee < CHILD_OUTPUT_DUST) {
+            infos.push({
+                outpoint,
+                value: vtxo.value,
+                skipped: `uneconomic: value ${vtxo.value} <= sweep fee + dust`,
+            });
+            continue;
+        }
+        const t = sequenceToTimelock(resolved.selection.sequence!);
+        const delay: ExitDelay = { type: t.type, value: Number(t.value) };
+        infos.push({ outpoint, value: vtxo.value, sweepFee, path: resolved.label, delay });
+        sweeps.push({ vtxo, resolved, sweepFee, delay });
     }
 
     // Splitter sizing. Two passes break the fee↔input-count circularity:
@@ -253,7 +276,7 @@ export async function computeExitLayout(opts: ExitOptions, feeRate: number): Pro
     // leaves a shortfall, re-pricing with one extra input ensures the quote
     // covers the deposit UTXO itself — otherwise depositing exactly the
     // quoted shortfall would leave prepare() one input short.
-    const coins = (await onchainWallet.getCoins()).filter((c) => c.status.confirmed);
+    const coins = (await coinsPromise).filter((c) => c.status.confirmed);
     const balance = coins.reduce((sum, c) => sum + c.value, 0);
     const fundingTotal = steps.reduce((sum, s) => sum + s.funding, 0);
     const splitterFeeFor = (inputCount: number): number => {

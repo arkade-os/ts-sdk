@@ -13,7 +13,12 @@ import {
 } from "../script/base";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
-import { ConditionWitness, setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
+import {
+    ConditionWitness,
+    getArkPsbtFields,
+    setArkPsbtField,
+    VtxoTaprootTree,
+} from "./unknownFields";
 import { assertAllowedSighashTypes, formatSighash, Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
@@ -39,7 +44,7 @@ export type OffchainTx = {
  *
  * Creates one checkpoint transaction per input and a virtual transaction that
  * combines all the checkpoints, sending to the specified outputs. This is the
- * core function for creating Arkade transactions.
+ * core function for creating virtual transactions.
  *
  * @param inputs - Array of virtual transaction inputs
  * @param outputs - Array of transaction outputs
@@ -402,8 +407,8 @@ export function isValidArkAddress(address: string): boolean {
 }
 
 /**
- * Minimal Ark provider surface required to submit and finalize an offchain
- * transaction. Both {@link ArkProvider} implementations satisfy it
+ * Minimal operator provider surface required to submit and finalize an offchain
+ * transaction. Both {@link OperatorProvider} implementations satisfy it
  * structurally, so declaring it here keeps this module free of a provider
  * import (and of the dependency cycle that would create).
  */
@@ -440,9 +445,9 @@ export interface OffchainTxSigner {
         checkpoints: Transaction[],
     ): Promise<{ arkTx: Transaction; userSignedCheckpoints?: Transaction[] }>;
     /**
-     * Add the owner's signature to a single server-returned checkpoint
-     * transaction. Only invoked when {@link signArkTx} returned no
-     * `userSignedCheckpoints` (the non-batch path).
+     * Add the owner's signature to a single checkpoint transaction (the local one
+     * before submit when one-shot). Only invoked when {@link signArkTx} returned
+     * no `userSignedCheckpoints` (the non-batch path).
      */
     signCheckpoint(checkpoint: Transaction): Promise<Transaction>;
 }
@@ -534,6 +539,8 @@ export function assertSubmittedArkTxid(
  * server at `submitTx`, before any of this runs. What it buys is a loud,
  * immediate failure instead of a caller reporting success, watching nothing
  * confirm, and learning the truth when the counterparty's refund lands.
+ * Under one-shot submit the server has already finalized when it runs, so it
+ * reports a bad response rather than preventing one.
  */
 export interface VerifyServerSignatures {
     /** The Ark server's key; x-only or compressed, both accepted. */
@@ -672,17 +679,20 @@ export function assertCheckpointsMatchInputs(
  * is unchanged; see {@link VerifyServerSignatures} for what it does and does
  * not prove.
  *
- * @returns The Ark transaction id and the server-signed checkpoint PSBTs
- * (the raw server response, for the wallet's bookkeeping).
+ * `options.oneShot` (default on): see `WalletConfig.oneShotSubmit`.
+ *
+ * @returns The Ark transaction id, final ark tx and checkpoint PSBTs from the
+ * raw server response (for the wallet's bookkeeping).
  */
 export async function submitOffchainTx(
     provider: OffchainTxSubmitProvider,
     offchainTx: OffchainTx,
     signer: OffchainTxSigner,
     hooks?: { beforeSubmit?: () => Promise<void>; afterFinalize?: () => Promise<void> },
-    options?: { verifyServerSignatures?: VerifyServerSignatures },
-): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
-    const { arkTx: signedArkTx, userSignedCheckpoints } = await signer.signArkTx(
+    options?: { verifyServerSignatures?: VerifyServerSignatures; oneShot?: boolean },
+): Promise<{ arkTxid: string; finalArkTx?: string; signedCheckpointTxs: string[] }> {
+    const oneShot = options?.oneShot !== false;
+    const { arkTx: signedArkTx, userSignedCheckpoints: batchSigned } = await signer.signArkTx(
         offchainTx.arkTx,
         offchainTx.checkpoints,
     );
@@ -693,11 +703,17 @@ export async function submitOffchainTx(
     // truncated arrays agree with each other while still dropping a checkpoint.
     // A miscounting signer is caught before submitTx, so it fails outright
     // instead of stranding a registered-but-unfinalizable tx on the server.
-    if (userSignedCheckpoints && userSignedCheckpoints.length !== offchainTx.checkpoints.length) {
+    if (batchSigned && batchSigned.length !== offchainTx.checkpoints.length) {
         throw new Error(
-            `signer returned ${userSignedCheckpoints.length} signed checkpoints, expected ${offchainTx.checkpoints.length}`,
+            `signer returned ${batchSigned.length} signed checkpoints, expected ${offchainTx.checkpoints.length}`,
         );
     }
+    const userSignedCheckpoints = (
+        batchSigned ??
+        (oneShot
+            ? await Promise.all(offchainTx.checkpoints.map((c) => signer.signCheckpoint(c.clone())))
+            : undefined)
+    )?.map((c) => withArkInputWitness(c, signedArkTx));
 
     // Mark pending before submitting — if the caller crashes between submit and
     // finalize, its recovery hook can retry from persisted state.
@@ -705,7 +721,10 @@ export async function submitOffchainTx(
 
     const response = await provider.submitTx(
         base64.encode(signedArkTx.toPSBT()),
-        offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT())),
+        (oneShot
+            ? userSignedCheckpoints!
+            : offchainTx.checkpoints.map((c) => withArkInputWitness(c, signedArkTx))
+        ).map((c) => base64.encode(c.toPSBT())),
     );
     assertSubmittedArkTxid(response, signedArkTx, "submitTx");
     const { arkTxid, signedCheckpointTxs } = response;
@@ -716,17 +735,19 @@ export async function submitOffchainTx(
     const matched = matchServerCheckpoints(signedCheckpointTxs, offchainTx.checkpoints, "submitTx");
 
     // Matching pins the checkpoint body, but the sighash type is declared
-    // outside it: a returned checkpoint is signed below, so what it asks to be
-    // signed under is checked here.
-    matched.forEach(({ server }, index) => {
-        try {
-            assertAllowedSighashTypes(server);
-        } catch (error) {
-            throw new ServerResponseMismatchError(
-                `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
-    });
+    // outside it: the two-step flow signs a returned checkpoint below, so what
+    // it asks to be signed under is checked here. One-shot signs only its own.
+    if (!oneShot) {
+        matched.forEach(({ server }, index) => {
+            try {
+                assertAllowedSighashTypes(server);
+            } catch (error) {
+                throw new ServerResponseMismatchError(
+                    `submitTx checkpoint ${index}: ${error instanceof Error ? error.message : String(error)}`,
+                );
+            }
+        });
+    }
 
     const verify = options?.verifyServerSignatures;
     if (verify) {
@@ -759,6 +780,8 @@ export async function submitOffchainTx(
         );
     }
 
+    const result = { arkTxid, finalArkTx: response.finalArkTx, signedCheckpointTxs };
+
     let finalCheckpoints: string[];
     if (userSignedCheckpoints) {
         // The signer's array is positional against `offchainTx.checkpoints`, so
@@ -766,14 +789,28 @@ export async function submitOffchainTx(
         const userByTxid = new Map(
             userSignedCheckpoints.map((c, i) => [offchainTx.checkpoints[i].id, c] as const),
         );
+        // An arkd without one-shot support rebuilds the checkpoints and drops
+        // our signatures, so it finalized only if every one still carries them.
+        if (
+            oneShot &&
+            matched.every(({ server, local }) =>
+                carriesTapscriptSigs(server, userByTxid.get(local.id)!),
+            )
+        ) {
+            await hooks?.afterFinalize?.();
+            return result;
+        }
         finalCheckpoints = matched.map(({ server, local }) => {
-            combineTapscriptSigs(userByTxid.get(local.id)!, server);
+            const userSigned = userByTxid.get(local.id)!;
+            combineTapscriptSigs(userSigned, server);
+            carryConditionWitness(userSigned, server);
             return base64.encode(server.toPSBT());
         });
     } else {
         finalCheckpoints = await Promise.all(
-            matched.map(async ({ server }) => {
+            matched.map(async ({ server, local }) => {
                 const signed = await signer.signCheckpoint(server);
+                carryConditionWitness(local, signed);
                 return base64.encode(signed.toPSBT());
             }),
         );
@@ -782,7 +819,47 @@ export async function submitOffchainTx(
     await provider.finalizeTx(arkTxid, finalCheckpoints);
     await hooks?.afterFinalize?.();
 
-    return { arkTxid, signedCheckpointTxs };
+    return result;
+}
+
+// A rebuilt checkpoint comes back without the condition witness (e.g. a swap
+// claim's preimage) our own copy carries, and finalizeTx checks the leaf's
+// condition against it. The taptree is rebuilt server-side, so only this field
+// is carried over, and only when the server's copy has none.
+function carryConditionWitness(ours: Transaction, server: Transaction): void {
+    if (getArkPsbtFields(server, 0, ConditionWitness).length > 0) return;
+    const [witness] = getArkPsbtFields(ours, 0, ConditionWitness);
+    if (witness) setArkPsbtField(server, 0, ConditionWitness, witness);
+}
+
+// arkd v0.9.24+ refuses, at submit, a checkpoint whose condition witness differs from that of
+// the ark tx input spending it, and a signer that attaches the witness while signing (a swap
+// claim's) leaves none on the unsigned checkpoint the two-step flow submits. Matching by txid
+// alone holds because the ark tx spends each checkpoint at vout 0 only; vout 1 is its anchor.
+function withArkInputWitness(checkpoint: Transaction, signedArkTx: Transaction): Transaction {
+    if (getArkPsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
+    for (let i = 0; i < signedArkTx.inputsLength; i++) {
+        const { txid } = signedArkTx.getInput(i);
+        if (!txid || hex.encode(txid) !== checkpoint.id) continue;
+        const [witness] = getArkPsbtFields(signedArkTx, i, ConditionWitness);
+        if (!witness) return checkpoint;
+        const carried = checkpoint.clone();
+        setArkPsbtField(carried, 0, ConditionWitness, witness);
+        return carried;
+    }
+    return checkpoint;
+}
+
+// Input 0 only: a checkpoint spends exactly one VTXO.
+function carriesTapscriptSigs(server: Transaction, userSigned: Transaction): boolean {
+    const entries = (tx: Transaction) =>
+        (tx.getInput(0).tapScriptSig ?? []).map(
+            ([{ pubKey, leafHash }, sig]) =>
+                hex.encode(pubKey) + hex.encode(leafHash) + hex.encode(sig),
+        );
+    const have = new Set(entries(server));
+    const want = entries(userSigned);
+    return want.length > 0 && want.every((entry) => have.has(entry));
 }
 
 /**
@@ -790,7 +867,7 @@ export async function submitOffchainTx(
  * is controlled by a single key — the "thin signer" path.
  *
  * Needs no wallet, repository, or contract state: just an identity that can
- * sign, an Ark provider, the inputs (already carrying their spend leaf and tap
+ * sign, an operator provider, the inputs (already carrying their spend leaf and tap
  * tree), the outputs, and the server unroll script. Used by the ArkadeCash sweep
  * to move bearer coins to the receiver's address without spinning up a full
  * background-managed wallet on shared repositories.
@@ -805,10 +882,11 @@ export async function signAndSubmitOffchainTx(params: {
     serverUnrollScript: CSVMultisigTapscript.Type;
     /** Forwarded to {@link submitOffchainTx}; omitted, nothing is checked. */
     verifyServerSignatures?: VerifyServerSignatures;
+    oneShot?: boolean;
 }): Promise<string> {
     const offchainTx = buildOffchainTx(params.inputs, params.outputs, params.serverUnrollScript);
     // Single key: every input is signed by the same identity (all indexes), and
-    // each server-returned checkpoint is signed the same way. No router, no
+    // each checkpoint is signed the same way. No router, no
     // batch popup — signing is in-process and free.
     const signer: OffchainTxSigner = {
         signArkTx: async (arkTx) => ({ arkTx: await params.identity.sign(arkTx) }),
@@ -816,6 +894,7 @@ export async function signAndSubmitOffchainTx(params: {
     };
     const { arkTxid } = await submitOffchainTx(params.provider, offchainTx, signer, undefined, {
         verifyServerSignatures: params.verifyServerSignatures,
+        oneShot: params.oneShot,
     });
     return arkTxid;
 }

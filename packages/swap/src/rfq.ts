@@ -18,7 +18,7 @@
  *
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
- * Lightning sends). Everything else is the user's own data or a trusted constant (the emulator key
+ * sends). Everything else is the user's own data or a trusted constant (the emulator key
  * defaults to the SDK's per-network pin). Anything address-shaped from the solver is compare-only:
  * a mismatch means refuse-to-fund, never "use theirs".
  *
@@ -32,10 +32,10 @@ import {
     assertTimerMs,
     VHTLC,
     asset,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     resolveEmulatorPubkey,
     toXOnly,
-    type ArkadeInfo,
+    type OperatorInfo,
     type IWallet,
 } from "@arkade-os/sdk";
 
@@ -901,7 +901,7 @@ const SEQUENCE_GRANULARITY_SECONDS = 512;
  * How long the sender's SOLO refund opens after the receiver's claim, seconds.
  *
  * The window a preimage-holding claimant has to finish before the funder can take the money back;
- * sized (reasoned, not measured) for the worst case, a full unilateral exit with the server gone.
+ * sized (reasoned, not measured) for the worst case, a full unilateral exit with the operator gone.
  * Mirrors `SOLO_REFUND_HEADROOM_SECONDS` in the reference solver's `src/core/timelocks.ts`: the
  * two must move together or a trader derives an address the solver never quoted. A multiple of
  * the BIP68 granularity so the encoded timelock equals this number.
@@ -910,7 +910,7 @@ export const SOLO_REFUND_HEADROOM_SECONDS = 8 * SEQUENCE_GRANULARITY_SECONDS;
 
 /** The solver's unilateral-claim delay, derived from the Arkade operator's reported
  * exit delay exactly as the reference solver derives it — both sides read the
- * SAME server, so the derivation (not a quote field) is what keeps the two
+ * SAME operator, so the derivation (not a quote field) is what keeps the two
  * scripts identical. */
 export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number => {
     if (
@@ -938,7 +938,7 @@ export const unilateralClaimDelay = (operatorExitDelaySeconds: number): number =
     );
 };
 
-/** VHTLC's `unilateralRefund` tier: sender + receiver, no server — LEVEL with
+/** VHTLC's `unilateralRefund` tier: sender + receiver, no operator — LEVEL with
  * `claimDelay`, not above it. Neither party can spend a two-signature leaf
  * alone, so separating it buys no safety and would only eat into the headroom that matters. */
 export const unilateralRefundDelay = (claimDelay: number): number => claimDelay;
@@ -999,10 +999,10 @@ const suiteVhtlc = (
  * the trader never needs to see `P`.
  *
  * Nine leaves unless `legacy`: VHTLC's six plus the emulator-covenant suite —
- * `nonInteractiveClaim` (server + emulator, pays the solver's `receiverPkScript`),
- * `nonInteractiveRefund` (server + solver + emulator, pays the trader's `refundPkScript`, no
+ * `nonInteractiveClaim` (operator, pays the solver's `receiverPkScript`),
+ * `nonInteractiveRefund` (operator + solver, pays the trader's `refundPkScript`, no
  * timelock or trader signature; see {@link VHTLC.Options.nonInteractiveParameters}), and
- * `nonInteractiveRefundWithoutReceiver` (server + emulator after `refundLocktime`).
+ * `nonInteractiveRefundWithoutReceiver` (operator after `refundLocktime`).
  */
 export function lightningSendContract(params: {
     /** Binding field #1: the solver's x-only key, from the quote. */
@@ -1013,7 +1013,7 @@ export function lightningSendContract(params: {
     operatorPubkey: Uint8Array;
     /** BOLT11 payment hash, hex — from the trader's OWN invoice decode. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info; all three unilateral
+    /** From {@link unilateralClaimDelay} over the trader's OWN operator info; all three unilateral
      * tiers derive from it. */
     claimDelay: number;
     /** Binding quote field. Optional only for rebuilding pre-upgrade scripts. */
@@ -1058,6 +1058,25 @@ export interface InvoiceFacts {
     expiresAt: number;
 }
 
+/** The quote's solo-refund CSV delay, refused unless it is a seconds rung at or above the claim's. */
+const quotedSoloRefundDelay = (
+    quote: RfqQuote,
+    claimDelay: number,
+    corridor: string,
+): number | undefined => {
+    const delay = quote.profile?.refund_without_receiver_delay;
+    if (delay === undefined) return undefined;
+    if (
+        !Number.isSafeInteger(delay) ||
+        delay < claimDelay ||
+        delay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
+        delay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
+    ) {
+        throw new Error(`${corridor} quote carries an invalid refund_without_receiver_delay`);
+    }
+    return delay;
+};
+
 /**
  * The pure core of {@link requestLightningSend}: derive the Arkade lockup from
  * the quote's binding fields plus the trader's own data, and refuse on a
@@ -1094,17 +1113,13 @@ export function deriveLightningSend(input: {
     if (quote.refund_locktime === undefined) {
         throw new Error("lightning-send quote is missing refund_locktime");
     }
-    const refundWithoutReceiverDelay = quote.profile?.refund_without_receiver_delay;
+    const refundWithoutReceiverDelay = quotedSoloRefundDelay(
+        quote,
+        input.claimDelay,
+        "lightning-send",
+    );
     if (refundWithoutReceiverDelay === undefined) {
         throw new Error("lightning-send quote is missing profile.refund_without_receiver_delay");
-    }
-    if (
-        !Number.isSafeInteger(refundWithoutReceiverDelay) ||
-        refundWithoutReceiverDelay < input.claimDelay ||
-        refundWithoutReceiverDelay % SEQUENCE_GRANULARITY_SECONDS !== 0 ||
-        refundWithoutReceiverDelay > 0xffff * SEQUENCE_GRANULARITY_SECONDS
-    ) {
-        throw new Error("lightning-send quote carries an invalid refund_without_receiver_delay");
     }
     if (refundWithoutReceiverDelay < quote.refund_locktime - input.now) {
         throw new Error("lightning-send quote lets the solo refund open before refund_locktime");
@@ -1196,12 +1211,15 @@ export async function requestLightningSend(
 }> {
     const rfqId = params.rfqId ?? newRfqId();
     // No preimage: a lightning send's P belongs to the payee.
-    const secrets = await provisionRefundKey(wallet);
+    // The refund key and the operator snapshot do not depend on each other. The address
+    // still comes from the key, so a rotating receive address cannot pair refund_address
+    // with a different refund script.
+    const [secrets, info] = await Promise.all([
+        provisionRefundKey(wallet),
+        wallet.getArkadeInfo({ requireLive: true }),
+    ]);
     const senderPubkey = secrets.pubkey;
-    // One address read for both refund_address and refundPkScript, so a rotating receive address
-    // cannot pair them with different scripts.
     const refundAddress = secrets.address;
-    const info = await wallet.getArkadeInfo({ requireLive: true });
 
     const quote = await transport.requestQuote(
         lightningSendRequest({ rfqId, invoice: params.invoice.raw, refundAddress, senderPubkey }),
@@ -1221,7 +1239,7 @@ export async function requestLightningSend(
     }
 
     const operatorPubkey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
-    const network = networkFromArkadeInfo(info);
+    const network = networkFromOperatorInfo(info);
     const derived = deriveLightningSend({
         quote,
         paymentHash: params.invoice.paymentHash,
@@ -1423,7 +1441,7 @@ export async function requestArkadeSwap(
             : resolveReceivePkScript(
                   receiveAddress,
                   ownPkScript,
-                  networkFromArkadeInfo(info).hrp,
+                  networkFromOperatorInfo(info).hrp,
                   toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
               );
     const pair = rfqPair(
@@ -1511,9 +1529,9 @@ export async function requestArkadeSwap(
 export const l1NetworkFromArk = (network: string): OnchainNetwork =>
     network === "bitcoin" ? "bitcoin" : network === "regtest" ? "regtest" : "testnet";
 
-/** The covenant terms the trader's OWN live server info supplies. */
-const serverTerms = (info: ArkadeInfo, emulatorPubkey: string | undefined) => {
-    const network = networkFromArkadeInfo(info);
+/** The covenant terms the trader's OWN live operator info supplies. */
+const operatorTerms = (info: OperatorInfo, emulatorPubkey: string | undefined) => {
+    const network = networkFromOperatorInfo(info);
     return {
         operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
         emulatorPubkey: toXOnly(
@@ -1623,8 +1641,8 @@ export const onchainReceiveRequest = (input: {
  * The pure core of {@link requestOnchainSend}: derive BOTH contracts locally
  * from the quote's binding fields plus the user's own data, and refuse on any
  * mismatch. Binding: `solver_pubkey`, `refund_locktime`, `htlc_pubkey`,
- * `htlc_locktime`, `min_confirmations`; `lockup_address` and `htlc_address`
- * are compare-only.
+ * `htlc_locktime`, `min_confirmations`, `refund_without_receiver_delay` when
+ * present; `lockup_address` and `htlc_address` are compare-only.
  */
 export function deriveOnchainSend(input: {
     quote: RfqQuote;
@@ -1653,6 +1671,8 @@ export function deriveOnchainSend(input: {
      * ({@link onchainSendProfile} reads it). */
     l1Network: OnchainNetwork;
     refundLocktime: number;
+    /** The quote's solo-refund delay; undefined when the lockup uses the base ladder. */
+    refundWithoutReceiverDelay: number | undefined;
     htlcLocktime: number;
     minConfirmations: number;
     expectedAmount: number;
@@ -1674,6 +1694,12 @@ export function deriveOnchainSend(input: {
     ) {
         throw new Error("onchain-send quote is missing a binding field");
     }
+    // Absent from a solver that still builds the base ladder.
+    const refundWithoutReceiverDelay = quotedSoloRefundDelay(
+        quote,
+        input.claimDelay,
+        "onchain-send",
+    );
 
     const contractParams = {
         solverPubkey: toXOnly(hex.decode(quote.solver_pubkey), "solver key"),
@@ -1681,6 +1707,7 @@ export function deriveOnchainSend(input: {
         operatorPubkey: input.operatorPubkey,
         paymentHash: input.paymentHash,
         claimDelay: input.claimDelay,
+        refundWithoutReceiverDelay,
         emulatorPubkey: input.emulatorPubkey,
         senderPubkey: input.senderPubkey,
         receiverPkScript: solverHex(receiverPkScriptHex, "profile.receiver_pk_script"),
@@ -1711,6 +1738,7 @@ export function deriveOnchainSend(input: {
         htlcParams,
         l1Network: input.l1Network,
         refundLocktime,
+        refundWithoutReceiverDelay,
         htlcLocktime,
         minConfirmations,
         expectedAmount: quoteExpectedSats(quote.to_amount, "to_amount"),
@@ -1785,7 +1813,11 @@ export async function requestOnchainSend(
     const rfqId = params.rfqId ?? newRfqId();
     // Both halves: the lockup's refund key and the HTLC's P. A supplied P is length-checked first:
     // the L1 claim leaf pins OP_SIZE 32, so any other length funds an unclaimable HTLC.
-    const secrets = await provisionClaimSecret(wallet, { preimage: params.preimage });
+    const [secrets, info, refundAddress] = await Promise.all([
+        provisionClaimSecret(wallet, { preimage: params.preimage }),
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
     if (secrets.mustPersistPreimage) {
         console.warn(
             "[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before funding",
@@ -1793,10 +1825,6 @@ export async function requestOnchainSend(
     }
     const paymentHash = hex.encode(secrets.paymentHash);
     const senderPubkey = secrets.pubkey;
-    const [info, refundAddress] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-    ]);
 
     const quote = await transport.requestQuote(
         onchainSendRequest({
@@ -1817,7 +1845,7 @@ export async function requestOnchainSend(
         quote,
         paymentHash,
         payoutPubkey: params.payoutPubkey,
-        ...serverTerms(info, params.emulatorPubkey),
+        ...operatorTerms(info, params.emulatorPubkey),
         l1Network: l1NetworkFromArk(info.network),
         refundAddress,
         senderPubkey,
@@ -2009,7 +2037,7 @@ export function lightningReceiveContract(params: {
     operatorPubkey: Uint8Array;
     /** `sha256(P)`, hex — the trader's OWN preimage hash. */
     paymentHash: string;
-    /** From {@link unilateralClaimDelay} over the trader's OWN server info. */
+    /** From {@link unilateralClaimDelay} over the trader's OWN operator info. */
     claimDelay: number;
     /** Emulator x-only key — see {@link requestLightningSend}'s parameter. */
     emulatorPubkey: Uint8Array;
@@ -2136,7 +2164,11 @@ const provisionReceive = async (
     params: { covclaimdPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
     persistBefore: "paying" | "funding",
 ) => {
-    const secrets = await provisionClaimSecret(wallet);
+    const [secrets, info, payoutAddress] = await Promise.all([
+        provisionClaimSecret(wallet),
+        wallet.getArkadeInfo({ requireLive: true }),
+        wallet.getAddress(),
+    ]);
     if (secrets.mustPersistPreimage) {
         console.warn(
             `[swap] this swap's preimage cannot be re-derived from the seed and MUST be persisted with the record before ${persistBefore}`,
@@ -2145,10 +2177,6 @@ const provisionReceive = async (
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const [info, payoutAddress] = await Promise.all([
-        wallet.getArkadeInfo({ requireLive: true }),
-        wallet.getAddress(),
-    ]);
     // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets covclaimd
     // claim dust and hand the solver `P`.
     const binds = bindsClaimAmount();
@@ -2275,7 +2303,7 @@ export async function requestLightningReceive(
         paymentHash,
         payoutPubkey,
         payoutAddress,
-        ...serverTerms(info, params.emulatorPubkey),
+        ...operatorTerms(info, params.emulatorPubkey),
     });
     const now = Math.floor(Date.now() / 1000);
     const { payDeadline } = verifyReceiveInvoice({
@@ -2459,7 +2487,7 @@ export async function requestOnchainReceive(
         payoutPubkey,
         payoutAddress,
         refundPubkey: params.refundPubkey,
-        ...serverTerms(info, params.emulatorPubkey),
+        ...operatorTerms(info, params.emulatorPubkey),
         l1Network: l1NetworkFromArk(info.network),
     });
     assertFundable({

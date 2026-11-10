@@ -25,6 +25,7 @@ import { assertPreimageMatches, gateError } from "./onchainHtlc";
 import {
     assertNoneSwept,
     boundedLockupSpend,
+    lockupAssetOutputs,
     lockupInputs,
     type LockupVtxo,
     operatorUnrollScript,
@@ -101,6 +102,7 @@ export async function pushClaim(
         partiallyClaimed?: boolean;
         /** @see operatorUnrollScript */
         network?: Network;
+        oneShot?: boolean;
     },
 ): Promise<{ txid: string; amount: number; left: number; spent: readonly LockupVtxo[] }> {
     if (input.vtxos.length === 0) throw new Error("nothing to claim: no funded outputs");
@@ -134,9 +136,13 @@ export async function pushClaim(
         provider: operator,
         inputs: lockupInputs(vtxos, input.contract, leaf),
         // One aggregate output: this leaf inspects nothing about the output set.
-        outputs: [{ script: input.destinationPkScript, amount: BigInt(locked) }],
+        outputs: [
+            { script: input.destinationPkScript, amount: BigInt(locked) },
+            ...lockupAssetOutputs(vtxos),
+        ],
         serverUnrollScript,
         verifyServerSignatures: { serverPubkey: input.contract.options.server },
+        oneShot: input.oneShot,
     });
     return { txid, amount: locked, left: live.length - vtxos.length, spent: vtxos };
 }
