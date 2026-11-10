@@ -171,58 +171,33 @@ type ArgsTuple<I extends readonly InputDef[]> = {
 };
 
 /**
- * Positional arguments for declared inputs, one per source parameter. Dotted input names group
- * into one struct or array argument at runtime; dotted or widened names stay loose.
+ * One segment's call arguments, one per source parameter (none when it declares no `inputs`).
+ * Dotted input names group into one struct or array argument at runtime; dotted or widened names
+ * stay loose.
  */
-type InputArgs<I extends readonly InputDef[]> = string extends I[number]["name"]
-    ? ArkadeNestedValue[]
-    : Extract<I[number]["name"], `${string}.${string}`> extends never
-      ? ArgsTuple<I>
-      : ArkadeNestedValue[];
+type SegmentArgs<S> = S extends { inputs: infer I extends readonly InputDef[] }
+    ? string extends I[number]["name"]
+        ? ArkadeNestedValue[]
+        : Extract<I[number]["name"], `${string}.${string}`> extends never
+          ? ArgsTuple<I>
+          : ArkadeNestedValue[]
+    : [];
 
-/** The script segments a call passes witness arguments to. */
-export type WitnessSegment = "tapscript" | "arkadeScript";
+type WitnessSegment = "tapscript" | "arkadeScript";
 
-type SegmentInputs<S> = S extends { inputs: infer I extends readonly InputDef[] } ? I : readonly [];
-
-/** `{ tapscript, arkadeScript }` call arguments, keyed by the segments that declare inputs. */
+/** A function's arguments, keyed by the segments that declare inputs. */
 type SplitArgs<F extends ArkadeFunction> = {
-    [K in WitnessSegment as SegmentInputs<F[K]> extends readonly [] ? never : K]: InputArgs<
-        SegmentInputs<F[K]>
-    >;
+    [K in WitnessSegment as SegmentArgs<F[K]> extends readonly [] ? never : K]: SegmentArgs<F[K]>;
 };
 
-/**
- * One function's call signature. Arguments are split by the segment whose witness they fill; the
- * flat positional form is deprecated and takes `arkadeScript` inputs, then `tapscript` inputs
- * (or the deprecated function-level `inputs`, in order).
- */
-type FunctionCall<F extends ArkadeFunction, R> = F extends {
-    inputs: infer I extends readonly InputDef[];
-}
-    ? {
-          (args: Partial<Record<WitnessSegment, ArkadeNestedValue[]>>): R;
-          /** @deprecated Pass `{ tapscript: [...], arkadeScript: [...] }`. */
-          (...args: InputArgs<I>): R;
-      }
-    : keyof SplitArgs<F> extends never
-      ? () => R
-      : {
-            (args: SplitArgs<F>): R;
-            /** @deprecated Pass `{ tapscript: [...], arkadeScript: [...] }`. */
-            (
-                ...args: [
-                    ...InputArgs<SegmentInputs<F["arkadeScript"]>>,
-                    ...InputArgs<SegmentInputs<F["tapscript"]>>,
-                ]
-            ): R;
-        };
+/** The call signature arguments for one function: nullary when no segment declares inputs. */
+type FnArgs<F extends ArkadeFunction> = {} extends SplitArgs<F> ? [] : [args: SplitArgs<F>];
 
 /** A contract's functions returning `R`: typed per function for a literal program, else loose. */
 type FunctionMap<P extends Program, R> = string extends keyof P["functions"]
     ? Record<string, (...args: ArkadeNestedValue[]) => R>
     : {
-          [K in keyof P["functions"]]: FunctionCall<P["functions"][K], R>;
+          [K in keyof P["functions"]]: (...args: FnArgs<P["functions"][K]>) => R;
       };
 
 /**
@@ -1489,86 +1464,22 @@ function flattenValue(
     ancestors.delete(value);
 }
 
-/**
- * Bind a call to its function's inputs, per witness segment. The deprecated positional form
- * takes `arkadeScript` inputs, then `tapscript` inputs, or the function-level `inputs` in order.
- */
+/** Bind a call's `{ tapscript, arkadeScript }` arguments to each segment's declared inputs. */
 function bindCall(
-    fn: CompiledProgramFunction,
-    callArgs: ArkadeNestedValue[],
+    { name, def }: CompiledProgramFunction,
+    [args]: ArkadeNestedValue[],
 ): ArkadeUnlocker["args"] {
-    const { def, name } = fn;
-    const tapscript = def.inputs
-        ? namedBy(def.inputs, def.tapscript.witness)
-        : (def.tapscript.inputs ?? []);
-    const arkadeScript = def.inputs
-        ? namedBy(def.inputs, def.arkadeScript?.witness)
-        : (def.arkadeScript?.inputs ?? []);
-    const [split] = callArgs;
-    if (callArgs.length === 1 && isSplitArgs(split)) {
-        return {
-            arkadeScript: bindInputs(
-                `${name} arkadeScript`,
-                arkadeScript,
-                split.arkadeScript ?? [],
-            ),
-            tapscript: bindInputs(`${name} tapscript`, tapscript, split.tapscript ?? []),
-        };
-    }
-    if (def.inputs) {
-        // Each segment's witness names only its own inputs, so both can read the flat binding.
-        const bound = bindInputs(name, def.inputs, callArgs);
-        return { tapscript: bound, arkadeScript: bound };
-    }
-    const covenantArgs = sourceParams(arkadeScript).length;
-    const expected = covenantArgs + sourceParams(tapscript).length;
-    if (callArgs.length !== expected) {
-        throw new Error(`${name}: expected ${expected} argument(s), got ${callArgs.length}`);
-    }
+    const { tapscript = [], arkadeScript = [] } = (args ?? {}) as Partial<
+        Record<WitnessSegment, ArkadeNestedValue[]>
+    >;
     return {
         arkadeScript: bindInputs(
             `${name} arkadeScript`,
+            def.arkadeScript?.inputs ?? [],
             arkadeScript,
-            callArgs.slice(0, covenantArgs),
         ),
-        tapscript: bindInputs(`${name} tapscript`, tapscript, callArgs.slice(covenantArgs)),
+        tapscript: bindInputs(`${name} tapscript`, def.tapscript.inputs ?? [], tapscript),
     };
-}
-
-/** The deprecated function-level inputs a segment's witness names, in declaration order. */
-function namedBy(inputs: readonly InputDef[], witness: readonly WitnessRef[] | undefined) {
-    return inputs.filter((input) => witness?.includes(input.name));
-}
-
-// ponytail: a lone struct argument whose only fields are `tapscript`/`arkadeScript` arrays reads as
-// the split form; dropping the deprecated positional form removes the ambiguity.
-function isSplitArgs(
-    value: unknown,
-): value is Partial<Record<WitnessSegment, ArkadeNestedValue[]>> {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-    const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) return false;
-    const entries = Object.entries(value);
-    return (
-        entries.length > 0 &&
-        entries.every(
-            ([key, args]) => (key === "tapscript" || key === "arkadeScript") && Array.isArray(args),
-        )
-    );
-}
-
-/** One call argument per source parameter: a struct or array binds its dotted inputs whole. */
-function sourceParams(inputs: readonly InputDef[]): string[] {
-    // Deprecated function-level inputs can hold a scalar and a struct under one name, one per
-    // segment; each takes its own argument.
-    return [
-        ...new Map(
-            inputs.map(({ name }) => {
-                const root = name.split(".")[0];
-                return [name.includes(".") ? `${root}.` : root, root];
-            }),
-        ).values(),
-    ];
 }
 
 /**
@@ -1585,7 +1496,7 @@ function bindInputs(
         if (declared.has(def.name)) throw new Error(`${label}: duplicate input '${def.name}'`);
         declared.add(def.name);
     }
-    const params = sourceParams(inputs);
+    const params = [...new Set(inputs.map(({ name }) => name.split(".")[0]))];
     if (callArgs.length !== params.length) {
         throw new Error(`${label}: expected ${params.length} argument(s), got ${callArgs.length}`);
     }

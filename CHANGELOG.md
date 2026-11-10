@@ -15,7 +15,7 @@ style and have not been backfilled.
 ### Breaking Changes
 
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
-- **`ArkadeUnlocker.args` is keyed by witness segment.** It holds `{ tapscript, arkadeScript }` maps of bound inputs instead of one flat map, since same-named inputs of the two segments are now independent. Only code that reads `args` from `contract.unlock.<name>()` must change; passing the unlocker to `.from()` is unaffected.
+- **Arkade contract calls group their arguments by witness.** `contract.functions.<name>({ arkadeScript: [...], tapscript: [...] })` replaces the flat positional call, which left it to argument order which arguments filled the covenant witness in the emulator packet and which the leaf's `ConditionWitness`, and needed a hidden `tapscript:` rename for same-named inputs. Programs declare inputs on the segment whose `witness` names them (`tapscript.inputs`, `arkadeScript.inputs`), where `programFromArtifact` now puts them; function-level `inputs` are no longer read, and `ArkadeUnlocker.args` holds one map per segment. Compiled scripts are unchanged, so a stored contract whose program declares function-level `inputs` keeps its address and syncs, but its functions that take arguments fail until it is spent through a contract re-created with those inputs moved onto its segments and the same params.
 - **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
   `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
   writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
@@ -98,8 +98,6 @@ style and have not been backfilled.
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
-
-- **Arkade contract calls group their arguments by witness.** `contract.functions.<name>({ arkadeScript: [...], tapscript: [...] })` says which arguments fill the covenant witness in the emulator packet and which fill the leaf's `ConditionWitness`; the flat positional call left that to argument order, and same-named inputs needed a hidden `tapscript:` rename. Programs declare inputs on the segment whose `witness` names them (`tapscript.inputs`, `arkadeScript.inputs`), which is where `programFromArtifact` now puts them. The positional call (covenant inputs, then leaf inputs) and function-level `inputs` still work and are deprecated, so stored contracts and existing callers keep working. Compiled scripts are unchanged, but an older SDK cannot call input-taking functions on a contract stored in the new shape.
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.

@@ -435,37 +435,10 @@ describe("Typed program params — authoritative when present", () => {
         ).toThrow(/parameter 'exit' expects int/);
     });
 
-    it("rejects bare parameter and input declarations", () => {
+    it("rejects bare parameter declarations", () => {
         const functions = { spend: { tapscript: { signers: [user] } } };
         expect(() => arkade.parseArtifact({ params: ["user"] as never, functions })).toThrow(
             /typed.*declarations/,
-        );
-        expect(() =>
-            arkade.parseArtifact({
-                functions: { spend: { ...functions.spend, inputs: ["preimage"] } },
-            }),
-        ).toThrow(/typed.*declarations/);
-        expect(() =>
-            arkade.parseArtifact({
-                functions: { spend: { tapscript: { signers: [user], inputs: ["preimage"] } } },
-            }),
-        ).toThrow(/typed.*declarations/);
-    });
-
-    it("rejects inputs declared on both a function and its segments", () => {
-        const preimage = { name: "preimage", type: "bytes" } as const;
-        const program: arkade.Program = {
-            version: 1,
-            params: [{ name: "user", type: "pubkey" }],
-            functions: {
-                spend: {
-                    inputs: [preimage],
-                    tapscript: { signers: ["$user"], inputs: [preimage], witness: ["preimage"] },
-                },
-            },
-        };
-        expect(() => new arkade.ArkadeProgramScript(program, { user }, keys)).toThrow(
-            /spend.*both/,
         );
     });
 });
@@ -568,9 +541,9 @@ describe("parseArtifact — structural validation", () => {
                     ...(field === "params" ? { params: value } : {}),
                     functions: {
                         spend: {
-                            ...(field === "inputs" ? { inputs: value } : {}),
                             tapscript: {
                                 signers: [user],
+                                ...(field === "inputs" ? { inputs: value } : {}),
                                 ...(field === "signatures" ? { signatures: value } : {}),
                             },
                         },
@@ -695,15 +668,16 @@ describe("Program name & full-feature artifact round-trip", () => {
             ],
             functions: {
                 claim: {
-                    inputs: [{ name: "preimage", type: "bytes" }],
                     tapscript: {
                         signers: ["$server"],
                         asm: ["HASH160", "$hash", "EQUALVERIFY"],
+                        inputs: [{ name: "preimage", type: "bytes" }],
                         witness: ["preimage"],
                     },
                     arkadeScript: {
                         asm: ["INSPECTOUTPUTVALUE", "$amount", HUGE, "EQUAL"],
-                        witness: [0, "$hash"],
+                        inputs: [{ name: "index", type: "int" }],
+                        witness: [0, "$hash", "index"],
                     },
                 },
                 reclaim: {
@@ -716,19 +690,6 @@ describe("Program name & full-feature artifact round-trip", () => {
                 },
                 refund: {
                     tapscript: { signers: ["$user", "$server"], cltv: 900_000n },
-                },
-                reveal: {
-                    tapscript: {
-                        signers: ["$user"],
-                        asm: ["SHA256", "$hash", "EQUALVERIFY"],
-                        inputs: [{ name: "secret", type: "bytes" }],
-                        witness: ["secret"],
-                    },
-                    arkadeScript: {
-                        asm: ["INSPECTOUTPUTVALUE", "$amount", "EQUAL"],
-                        inputs: [{ name: "secret", type: "bytes" }],
-                        witness: ["secret"],
-                    },
                 },
             },
         };

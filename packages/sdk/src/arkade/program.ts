@@ -164,11 +164,6 @@ export interface ArkadeSegment {
 export interface ArkadeFunction {
     /** Compiler spend group, used to resolve named covenant commitments. */
     group?: string;
-    /**
-     * @deprecated Declare `inputs` on `tapscript` and `arkadeScript` instead. Flat call inputs:
-     * each reaches the segments whose `witness` names it.
-     */
-    inputs?: readonly InputDef[];
     tapscript: TapscriptSegment;
     /** Present for covenant paths; absent for pure-tapscript paths (cancel/exit). */
     arkadeScript?: ArkadeSegment;
@@ -542,13 +537,6 @@ function compileFunctions(
         );
     }
     const defs = names.map((n) => functions[n]);
-    for (const [i, def] of defs.entries()) {
-        if (def.inputs && (def.tapscript.inputs || def.arkadeScript?.inputs)) {
-            throw new Error(
-                `ArkadeContract: function '${names[i]}' declares inputs on both the function and its segments`,
-            );
-        }
-    }
 
     const covenants = new Map<string, Uint8Array>();
     for (const [name, def] of Object.entries(functions)) {
@@ -700,7 +688,7 @@ export function parseArtifact(artifact: {
         if (tap !== undefined && (!tap || typeof tap !== "object" || Array.isArray(tap))) {
             throw new Error(`parseArtifact: function '${name}' tapscript must be an object`);
         }
-        declarations.push(fn.inputs, tap?.signatures, tap?.inputs, fn.arkadeScript?.inputs);
+        declarations.push(tap?.signatures, tap?.inputs, fn.arkadeScript?.inputs);
         if (
             tap?.emulatorIndex !== undefined &&
             (!Number.isInteger(tap.emulatorIndex) || tap.emulatorIndex < 0)
@@ -756,7 +744,6 @@ export function parseArtifact(artifact: {
             : undefined;
         functions[name] = {
             ...(fn.group !== undefined ? { group: fn.group } : {}),
-            ...(fn.inputs ? { inputs: fn.inputs } : {}),
             tapscript,
             ...(arkadeScript ? { arkadeScript } : {}),
         };
@@ -796,7 +783,6 @@ export function stringifyArtifact(program: Program): string {
         const tap = fn.tapscript;
         functions[name] = {
             ...(fn.group !== undefined ? { group: fn.group } : {}),
-            ...(fn.inputs ? { inputs: fn.inputs } : {}),
             tapscript: {
                 signers: tap.signers.map(token),
                 ...(tap.signatures ? { signatures: tap.signatures } : {}),

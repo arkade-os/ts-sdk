@@ -79,7 +79,6 @@ export {
     type WitnessRef,
     type Utxo,
     type ArkadeUnlocker,
-    type WitnessSegment,
     type ArkadeSpendResult,
     type CallableFunctions,
     type ContractFunctions,

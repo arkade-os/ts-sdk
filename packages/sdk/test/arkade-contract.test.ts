@@ -40,8 +40,8 @@ const payTo = [
 
 // `satisfies arkade.Program` (not `: arkade.Program`) preserves the literal
 // type, and `inputs: [...] as const` keeps it a tuple — so the contract's
-// `functions.claim` is typed `(preimage: Uint8Array) => ...` with exact arity,
-// rather than falling back to the loose `(...args: ArkadeArgValue[])`.
+// `functions.claim` is typed `({ tapscript: [preimage: Uint8Array] }) => ...`
+// with exact arity, rather than falling back to the loose `(...args: ArkadeArgValue[])`.
 function htlcProgram() {
     return {
         version: 1,
@@ -53,10 +53,10 @@ function htlcProgram() {
         ],
         functions: {
             claim: {
-                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 tapscript: {
                     signers: ["$server"],
                     asm: ["HASH160", "$hash", "EQUALVERIFY"],
+                    inputs: [{ name: "preimage", type: "bytes" }] as const,
                     witness: ["preimage"],
                 },
                 arkadeScript: { asm: payTo, witness: [0] },
@@ -70,46 +70,15 @@ function htlcProgram() {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function _typecheckStrongInputs(ark: arkade.Arkade) {
     const c = ark.contract(htlcProgram(), {});
-    c.functions.claim(new Uint8Array(32)); // ok: `preimage` is a Uint8Array
+    c.functions.claim({ tapscript: [new Uint8Array(32)] }); // ok: `preimage` is a Uint8Array
     // @ts-expect-error preimage must be Uint8Array, not a number
-    c.functions.claim(123);
-    // @ts-expect-error claim takes exactly one argument
+    c.functions.claim({ tapscript: [123] });
+    // @ts-expect-error claim takes its tapscript argument
     c.functions.claim();
+    // @ts-expect-error claim's arkadeScript declares no inputs
+    c.functions.claim({ tapscript: [new Uint8Array(32)], arkadeScript: [0n] });
     // @ts-expect-error no such function
     c.functions.nope();
-
-    const split = ark.contract(splitProgram(), {});
-    split.functions.claim({ tapscript: [new Uint8Array(32)], arkadeScript: [0n] });
-    // @ts-expect-error the arkadeScript arguments are required
-    split.functions.claim({ tapscript: [new Uint8Array(32)] });
-    // @ts-expect-error preimage must be Uint8Array, not a number
-    split.functions.claim({ tapscript: [1n], arkadeScript: [0n] });
-    split.unlock.claim(0n, new Uint8Array(32)); // deprecated: arkadeScript, then tapscript
-}
-
-function splitProgram() {
-    return {
-        version: 1,
-        params: [
-            { name: "hash", type: "bytes20" },
-            { name: "server", type: "pubkey" },
-        ],
-        functions: {
-            claim: {
-                tapscript: {
-                    signers: ["$server"],
-                    asm: ["HASH160", "$hash", "EQUALVERIFY"],
-                    inputs: [{ name: "preimage", type: "bytes" }] as const,
-                    witness: ["preimage"],
-                },
-                arkadeScript: {
-                    asm: payTo,
-                    inputs: [{ name: "index", type: "int" }] as const,
-                    witness: ["index"],
-                },
-            },
-        },
-    } satisfies arkade.Program;
 }
 
 // Pure-tapscript program (no arkadeScript) — the non-covenant branch, which is
@@ -287,7 +256,10 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const preimage = new Uint8Array(32).fill(0x42);
         // a valid 34-byte p2tr output for the `.to(...)`
         const out = new Uint8Array([0x51, 0x20, ...receiver]);
-        const { txid } = await contract.functions.claim(preimage).to(out, AMOUNT).send();
+        const { txid } = await contract.functions
+            .claim({ tapscript: [preimage] })
+            .to(out, AMOUNT)
+            .send();
         expect(txid).toBeTruthy();
 
         const tx = Transaction.fromPSBT(base64.decode(captured.arkTx!));
@@ -329,7 +301,9 @@ describe("arkade.Arkade / ArkadeContract", () => {
         const { ark } = await connect({ identity: stubIdentity(receiver) });
         expect(() => new arkade.ArkadeContract(ark, exitProgram())).toThrow(/not bound/);
         const contract = ark.contract(htlcProgram(), args);
-        expect(() => (contract.functions.claim as any)(123n)).toThrow(/expects bytes/);
+        expect(() => (contract.functions.claim as any)({ tapscript: [123n] })).toThrow(
+            /expects bytes/,
+        );
     });
 
     it("rejects an external leaf signer before signing", async () => {
@@ -538,9 +512,6 @@ describe("arkade.Arkade / ArkadeContract", () => {
             ],
         });
         expect(() => ark.contract(program, { digest: new Uint8Array(31) })).toThrow(/32-byte/);
-        expect(program.functions.claim.tapscript.inputs).toEqual([
-            { name: "preimage", type: "bytes32" },
-        ]);
         const contract = ark.contract(program, { digest: new Uint8Array(32) });
         const covenantBytes = new Uint8Array(32).fill(1),
             condition = new Uint8Array(32).fill(2);
@@ -551,66 +522,20 @@ describe("arkade.Arkade / ArkadeContract", () => {
         expect(() => call(Number.MAX_SAFE_INTEGER + 1, condition)).toThrow(/safe integer/);
         expect(() => call(1n, 3n)).toThrow(/bytes/);
         expect(() => call(1n, new Uint8Array(31))).toThrow(/32-byte/);
-        expect(() => contract.functions.claim({ arkadeScript: [covenant, 1n] } as any)).toThrow(
-            /claim tapscript: expected 1 argument/,
-        );
-        const build = (builder: arkade.ArkadeTransactionBuilder) =>
-            builder
-                .from(COIN)
-                .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
-                .build();
-        const { arkTx, checkpoints } = await build(call(1n, condition));
-        for (const tx of [arkTx, checkpoints[0]]) {
-            expect(getArkPsbtFields(tx, 0, ConditionWitness)[0]).toEqual([condition]);
-        }
-        const packetOf = (tx: Transaction) =>
-            Array.from({ length: tx.outputsLength }, (_, i) => tx.getOutput(i))
-                .filter((out) => out.script && Extension.isExtension(out.script))
-                .map((out) => Extension.fromBytes(out.script!).getEmulatorPacket())[0]!;
-        expect(RawWitness.decode(packetOf(arkTx).entries[0].witness!)).toEqual([
-            new Uint8Array([1]),
-            covenantBytes,
-        ]);
-        // Deprecated positional call: covenant inputs, then leaf inputs. A row stored before
-        // segment inputs holds them in one function-level list, the leaf input renamed when it
-        // collides with a covenant input, and binds the same way.
-        const { tapscript, arkadeScript } = program.functions.claim;
-        const leaf = type === "bytes32" ? "tapscript:preimage" : "preimage";
-        const stored = ark.contract(
-            {
-                ...program,
-                functions: {
-                    claim: {
-                        inputs: [...arkadeScript!.inputs!, { name: leaf, type: "bytes32" }],
-                        tapscript: { ...tapscript, inputs: undefined, witness: [leaf] },
-                        arkadeScript: { ...arkadeScript!, inputs: undefined },
-                    },
-                },
-            },
-            { digest: new Uint8Array(32) },
-        );
-        for (const target of [contract, stored]) {
-            const positional = await build(target.functions.claim(covenant, 1n, condition));
-            expect(getArkPsbtFields(positional.arkTx, 0, ConditionWitness)[0]).toEqual([condition]);
-            expect(packetOf(positional.arkTx).entries[0].witness).toEqual(
-                packetOf(arkTx).entries[0].witness,
-            );
-        }
-    });
-
-    it("takes split arguments for a program that declares inputs per function", async () => {
-        const { ark } = await connect();
-        const contract = ark.contract(htlcProgram(), args);
-        const preimage = new Uint8Array(32).fill(0x42);
-        const { arkTx } = await contract.functions
-            .claim({ tapscript: [preimage] })
+        const { arkTx, checkpoints } = await call(1n, condition)
             .from(COIN)
             .to(new Uint8Array([0x51, 0x20, ...receiver]), AMOUNT)
             .build();
-        expect(getArkPsbtFields(arkTx, 0, ConditionWitness)[0]).toEqual([preimage]);
-        expect(() => contract.functions.claim({ arkadeScript: [preimage] } as any)).toThrow(
-            /claim arkadeScript: expected 0 argument/,
-        );
+        for (const tx of [arkTx, checkpoints[0]]) {
+            expect(getArkPsbtFields(tx, 0, ConditionWitness)[0]).toEqual([condition]);
+        }
+        const packet = Array.from({ length: arkTx.outputsLength }, (_, i) => arkTx.getOutput(i))
+            .filter((out) => out.script && Extension.isExtension(out.script))
+            .map((out) => Extension.fromBytes(out.script!).getEmulatorPacket())[0]!;
+        expect(RawWitness.decode(packet.entries[0].witness!)).toEqual([
+            new Uint8Array([1]),
+            covenantBytes,
+        ]);
     });
 
     it("takes struct and array params whole by name, at deploy and at call", async () => {

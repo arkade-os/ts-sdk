@@ -55,7 +55,6 @@ const liquidationProgram = {
     ],
     functions: {
         liquidate: {
-            inputs: [{ name: "signature", type: "signature" }],
             tapscript: { signers: ["$server"] },
             arkadeScript: {
                 asm: [
@@ -74,6 +73,7 @@ const liquidationProgram = {
                     0,
                     "EQUAL",
                 ],
+                inputs: [{ name: "signature", type: "signature" }],
                 witness: ["signature"],
             },
         },
@@ -149,7 +149,7 @@ describe("liquidation (oracle-signed asset burn)", () => {
         const wrongSig = schnorr.sign(numberToBytesBE(49_999n, 32), ORACLE_PRIV);
         await expect(
             liquidation.functions
-                .liquidate(wrongSig)
+                .liquidate({ arkadeScript: [wrongSig] })
                 .from(liqCoin)
                 .withAsset(burn)
                 .to(randomP2TR(), BigInt(CONTRACT_AMOUNT))
@@ -159,7 +159,7 @@ describe("liquidation (oracle-signed asset burn)", () => {
         // oracle signs the liquidation price → burn authorized
         const oracleSig = schnorr.sign(LIQUIDATION_PRICE, ORACLE_PRIV);
         const { txid } = await liquidation.functions
-            .liquidate(oracleSig)
+            .liquidate({ arkadeScript: [oracleSig] })
             .from(liqCoin)
             .withAsset(burn)
             .to(randomP2TR(), BigInt(CONTRACT_AMOUNT))

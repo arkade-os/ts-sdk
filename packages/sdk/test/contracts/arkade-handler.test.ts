@@ -74,10 +74,10 @@ function htlcProgram() {
         ],
         functions: {
             claim: {
-                inputs: [{ name: "preimage", type: "bytes" }] as const,
                 tapscript: {
                     signers: ["$server"],
                     asm: ["HASH160", "$hash", "EQUALVERIFY"],
+                    inputs: [{ name: "preimage", type: "bytes" }] as const,
                     witness: ["preimage"],
                 },
                 arkadeScript: { asm: payTo, witness: [0] },
@@ -387,10 +387,10 @@ describe("ArkadeContractHandler", () => {
                 ],
                 functions: {
                     claim: {
-                        inputs: [{ name: "preimage", type: "bytes" }] as const,
                         tapscript: {
                             signers: ["$user", "$server"],
                             asm: ["HASH160", "$hash", "EQUALVERIFY"],
+                            inputs: [{ name: "preimage", type: "bytes" }] as const,
                             witness: ["preimage"],
                         },
                     },
