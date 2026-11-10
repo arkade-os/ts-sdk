@@ -84,6 +84,12 @@ export async function renewProgramContractOutputs(
     if (twice) throw new Error(`renewProgramContractOutputs: coin ${twice} listed twice`);
 
     const legs = targets.map(({ contract, coin, fn = "renew" }) => {
+        // The proof spends it through the contract's tree, so a mismatch fails at arkd unclearly.
+        if (coin.script.toLowerCase() !== hex.encode(contract.pkScript)) {
+            throw new Error(
+                `renewProgramContractOutputs: coin ${coin.txid}:${coin.vout} is not locked by its contract`,
+            );
+        }
         const compiled = contract.vtxoScript.functionByName(fn);
         if (!compiled?.arkadeScript) {
             throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);

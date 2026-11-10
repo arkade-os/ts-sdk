@@ -204,6 +204,21 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).not.toHaveBeenCalled();
     });
 
+    it("refuses a coin its contract does not lock, before signing", async () => {
+        const { ark, target, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+        const other = ark.contract(renewable, { owner: xOnly() });
+
+        await expect(
+            arkade.renewProgramContractOutputs(ark, [{ ...target, contract: other }]),
+        ).rejects.toThrow(
+            `coin ${target.coin.txid}:${target.coin.vout} is not locked by its contract`,
+        );
+        expect(ark.emulator!.submitIntent).not.toHaveBeenCalled();
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
     it("refuses a coin listed twice", async () => {
         const { ark, target, registerIntent } = await keeper(() => {
             throw new Error("no stream expected");
