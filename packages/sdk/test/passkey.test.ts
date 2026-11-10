@@ -311,6 +311,14 @@ describe("PRF passkeys", () => {
             expect(error).toBeInstanceOf(PrfUnavailable);
             expect((error as PrfUnavailable).credentialId).toEqual(client.held[0].id);
         }
+        const client = new FakeAuthenticator();
+        client.get = async () => {
+            throw new DOMException("gone", "AbortError");
+        };
+        const failed = await make(client).catch((e: unknown) => e);
+        expect(failed).toBeInstanceOf(PasskeyUnconfirmed);
+        expect((failed as PrfUnavailable).credentialId).toEqual(client.held[0].id);
+        expect((failed as Error).cause).toMatchObject({ name: "AbortError" });
         const error = await evaluatePrf({
             rpId: rp.id,
             salt,

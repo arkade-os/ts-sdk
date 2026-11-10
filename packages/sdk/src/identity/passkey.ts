@@ -115,8 +115,9 @@ export async function prfSupport(): Promise<"yes" | "no" | "unknown"> {
  * that changes its secret later is not caught here; it derives other words on the next sign-in.
  *
  * @throws PrfUnavailable when the authenticator cannot do PRF or gives another secret on reuse
- * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation; this and
- *   PrfUnavailable carry the new passkey's `credentialId`, since the passkey exists by then
+ * @throws PasskeyUnconfirmed when the passkey fails its first use right after creation, for any
+ *   reason (`cause` holds the error); this and PrfUnavailable carry the new passkey's
+ *   `credentialId`, since the passkey exists by then
  * @throws PasskeyCancelled when the user dismisses the prompt
  */
 export async function createPrfPasskey(o: {
@@ -146,8 +147,15 @@ export async function createPrfPasskey(o: {
     return confirmPrf(cred, credentialId, o, client).then(
         (prf) => ({ credentialId, prf }),
         (e) => {
-            if (e instanceof PrfUnavailable) e.credentialId = credentialId;
-            throw e;
+            const err =
+                e instanceof PrfUnavailable
+                    ? e
+                    : new PasskeyUnconfirmed(
+                          "This passkey could not be used again right after it was made.",
+                          { cause: e },
+                      );
+            err.credentialId = credentialId;
+            throw err;
         },
     );
 }
@@ -164,20 +172,12 @@ async function confirmPrf(
         throw new PrfUnavailable("This passkey cannot derive a key.");
     // Copied before the next ceremony: a client may reuse the buffer for its result.
     const made = out.results?.first ? secret(out.results.first) : null;
-    const used = (
-        await evaluatePrf({
-            rpId: o.rp.id,
-            salt: o.salt,
-            credentialIds: [credentialId],
-            client,
-        }).catch((e) => {
-            throw e instanceof PasskeyCancelled
-                ? new PasskeyUnconfirmed(
-                      "This passkey could not be used again right after it was made.",
-                  )
-                : e;
-        })
-    ).prf;
+    const { prf: used } = await evaluatePrf({
+        rpId: o.rp.id,
+        salt: o.salt,
+        credentialIds: [credentialId],
+        client,
+    });
     if (made && !same(made, used)) {
         throw new PrfUnavailable("This passkey gave a different secret on its next use.");
     }

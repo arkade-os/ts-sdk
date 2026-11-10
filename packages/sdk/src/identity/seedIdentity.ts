@@ -389,6 +389,11 @@ export class MnemonicIdentity extends SeedIdentity {
      * sync account) can sign. The derivation follows Breez's seedless-restore implementation, so
      * with the default 12 words the same passkey and label give the same words as a Breez wallet.
      *
+     * Each call makes a new passkey with its own words: offer {@link fromPasskey} first, and store
+     * `credentialId`. The browser's picker shows only `userName`, so make it tell wallets apart.
+     * Reusing an existing passkey's `userId` replaces that passkey, and its words, on most
+     * authenticators.
+     *
      * @example
      * ```typescript
      * const { identity, mnemonic, credentialId } = await MnemonicIdentity.createPasskey({
@@ -420,7 +425,9 @@ export class MnemonicIdentity extends SeedIdentity {
 
     /**
      * Re-derives the identity of a passkey made by {@link createPasskey}. Without `credentialIds`
-     * the browser offers every passkey for `rpId`.
+     * the browser offers every passkey for `rpId`, and the one picked decides the wallet: another
+     * passkey gives other words, not an error. Pass the stored `credentialId` where there is one;
+     * the returned `credentialId` says which passkey was used.
      */
     static async fromPasskey(
         o: { rpId: string; credentialIds?: Uint8Array[] } & PasskeySource & MnemonicOptions,

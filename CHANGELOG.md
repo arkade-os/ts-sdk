@@ -97,11 +97,14 @@ style and have not been backfilled.
   salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
   the BIP39 entropy for 12 words, as Breez's SDK derives them, so the same passkey and
   label give the same words as a Breez wallet; each label is a separate wallet.
-  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads. A passkey is used once right after creation and refused
-  (`PasskeyUnconfirmed`) if that use fails, and refused (`PrfUnavailable`) if it gives
-  no 32-byte secret or one different from the secret it returned at creation (an
-  authenticator that returns none at creation has nothing to compare against); both
-  carry the new passkey's `credentialId`, so an app can fall back to that passkey. The
+  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads.
+  Without `credentialIds`, the passkey the user picks decides the wallet. A passkey is
+  used once right after creation and refused (`PasskeyUnconfirmed`) if that use fails
+  for any reason, with the underlying error as `cause`, and refused (`PrfUnavailable`)
+  if it gives no 32-byte secret or one different from the secret it returned at
+  creation (an authenticator that returns none at creation has nothing to compare
+  against); both carry the new passkey's `credentialId`, so an app can fall back to
+  that passkey. The
   primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
   exported; every call that prompts takes a `client` in place of
   `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
