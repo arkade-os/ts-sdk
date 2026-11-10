@@ -59,6 +59,11 @@ Custom transports should throw `SolverUnavailable` for retryable connection fail
 Exhaustion across multiple solvers throws `SolverRoutesUnavailable` with each attempt's solver
 identity and error. Neither error authorizes retrying acceptance after funding began.
 
+Advertised-feed failures, including `fetchImpl` rejections, are retryable with routing enabled;
+the fetch interface cannot distinguish a network failure from a custom callback's dependency error.
+Complete application authentication before quoting. Cancellation (`AbortError`) stops the operation;
+set `failover: false` if any feed failure must be surfaced without another solver attempt.
+
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with

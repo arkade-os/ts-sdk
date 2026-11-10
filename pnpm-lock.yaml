@@ -119,8 +119,8 @@ importers:
         specifier: workspace:*
         version: link:../sdk
       '@arkade-os/solver-discovery':
-        specifier: file:../../vendor/arkade-os-solver-discovery-0.3.0-routing-c1f70dd.tgz
-        version: file:vendor/arkade-os-solver-discovery-0.3.0-routing-c1f70dd.tgz
+        specifier: file:../../vendor/arkade-os-solver-discovery-0.3.0-routing-b5b414d.tgz
+        version: file:vendor/arkade-os-solver-discovery-0.3.0-routing-b5b414d.tgz
       '@noble/ciphers':
         specifier: 2.1.1
         version: 2.1.1
@@ -153,8 +153,8 @@ packages:
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
     engines: {node: '>=6.0.0'}
 
-  '@arkade-os/solver-discovery@file:vendor/arkade-os-solver-discovery-0.3.0-routing-c1f70dd.tgz':
-    resolution: {integrity: sha512-YFxioCavLjJsDqvRzUb1b0pn8oMSv4t6LyknvbvUxlXwGUrzuRlzEo1vmVwON/A3Uc5b13TsjF1bcVKgrd//sw==, tarball: file:vendor/arkade-os-solver-discovery-0.3.0-routing-c1f70dd.tgz}
+  '@arkade-os/solver-discovery@file:vendor/arkade-os-solver-discovery-0.3.0-routing-b5b414d.tgz':
+    resolution: {integrity: sha512-+g/PNpNvxAh9KnUEsbScnt8kgZoTyf3AHhacLzdncgrlDweNrgnBySXvIBu9A6STENmtjDwAqgP8hS7cg9Npqg==, tarball: file:vendor/arkade-os-solver-discovery-0.3.0-routing-b5b414d.tgz}
     version: 0.3.0
     engines: {node: '>=20.19'}
 
@@ -3697,7 +3697,7 @@ snapshots:
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
 
-  '@arkade-os/solver-discovery@file:vendor/arkade-os-solver-discovery-0.3.0-routing-c1f70dd.tgz':
+  '@arkade-os/solver-discovery@file:vendor/arkade-os-solver-discovery-0.3.0-routing-b5b414d.tgz':
     dependencies:
       '@noble/curves': 2.4.0
       '@noble/hashes': 2.4.0
