@@ -97,11 +97,10 @@ export class AmountMismatch extends Error {
 }
 
 /**
- * The amount cannot cross this encoding without an unsafe narrowing — a quote
- * field arriving as a JSON number past 2^53, a non-canonical decimal string, or
- * a `bigint` too large for a foreign `number` amount.
- *
- * Boundary: the RFQ adapter, both directions; core's payment rails.
+ * An unsafe amount encoding: a JSON number past 2^53, non-canonical decimal string,
+ * or bigint too large for a foreign number. Applies to RFQ adapters and core payment rails.
+ * With solver routing, malformed incoming RFQ replies wrap this error in
+ * `SolverResponseInvalid.cause` so the client can try another solver.
  */
 export class AmountEncodingUnsupported extends Error {
     override readonly name = "AmountEncodingUnsupported";

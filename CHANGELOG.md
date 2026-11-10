@@ -636,7 +636,7 @@ style and have not been backfilled.
 
 ### Internal
 
-- **Solver routing defaults are documented at the API boundary.** `SolverRoutingPolicy` TSDoc specifies selection precedence, preference lookup, cost estimates and custom-transport failures; the README links to that contract. `selectMarket` receives discovery order before routing preferences, and usage counting accepts the canonical direction key.
+- **Solver routing defaults are documented at the API boundary.** `SolverRoutingPolicy` TSDoc specifies selection precedence, preference lookup, cost estimates and custom-transport failures; the README links to that contract. `selectMarket` receives discovery order before routing preferences, usage counting accepts the canonical direction key, and candidate feed requests and routed amount-error wrapping are explicit.
 - **Solver cost ranking accepts portable fetch adapters.** The vendored discovery snapshot uses the package's `FetchLike` interface, preserving minimal custom transports and global `fetch` callers without changing runtime code.
 - **Routing identity and disclosure boundaries are explicit.** Source comments identify canonical persisted asset IDs, independent responder checks and asset RFQ data already disclosed before reference-feed fallback.
 - **The routing policy describes repeated request disclosure.** Opt-in quote attempts can disclose an invoice or other request details to multiple solvers; each candidate still passes full verification before funding.

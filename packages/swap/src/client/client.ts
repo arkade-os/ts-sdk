@@ -93,7 +93,8 @@ export interface AcceptOptions {
 }
 
 export interface SwapClient {
-    /** Eligible solvers in current preference order, without negotiating or accepting a swap. */
+    /** Eligible solvers in routing order, without negotiating or accepting a swap.
+     * Cost estimates may fetch advertised feeds; debounce frequent UI calls. */
     candidates(input: QuoteInput): Promise<readonly SolverCandidate[]>;
 
     /**
@@ -186,7 +187,9 @@ export interface SwapClient {
      * veto before an RFQ round trip discloses an invoice or amount.
      */
     resolve(input: QuoteInput): Promise<RouteResolution>;
-    /** Verified, binding terms; no swap is persisted, funded or watched. Advisory health may update. */
+    /** Verified, binding terms; no swap is persisted, funded or watched. Advisory health may update.
+     * Routing errors include SolverUnavailable, SolverResponseInvalid and SolverRoutesUnavailable;
+     * narrow them with instanceof, separately from the closed SwapError taxonomy. */
     quote(input: QuoteInput): Promise<Quote>;
     /**
      * Make the quote durable, then move the value: record and secrets are at rest before anything
