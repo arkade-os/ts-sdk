@@ -122,8 +122,9 @@ describe("Worker ArkadeCash", () => {
         const claimed = await message(wallet, "claim", note.toString());
         if (claimed.payload?.action !== "claim") throw new Error("expected cash claim");
         expect(claimed.payload.swept).toBe(5000);
-        expect(claimed.payload.claimTxIds).toHaveLength(1);
-        expect(claimed.payload.claimTxIds?.[0]).not.toBe("a".repeat(64));
+        expect(claimed.payload.claims).toHaveLength(1);
+        expect(claimed.payload.claims?.[0].txid).not.toBe("a".repeat(64));
+        expect(claimed.payload.claims?.[0].amount).toBe(5000);
     });
 
     it("rejects an operator mismatch before sweeping", async () => {
@@ -217,7 +218,7 @@ describe("Page-side ArkadeCash requests", () => {
                 payload: {
                     action: "claim",
                     swept: 5000,
-                    claimTxIds: ["c".repeat(64)],
+                    claims: [{ txid: "c".repeat(64), amount: 5000 }],
                     recovering: { amount: 0, vtxos: [] },
                     unclaimed: { amount: 0, vtxos: [] },
                 },

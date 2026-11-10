@@ -330,15 +330,13 @@ import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 export type { ArkadeCashRequest, ArkadeCashResponse } from "./arkadeCash/messages";
-export type { ArkadeCashRecord, ArkadeCashAction } from "./arkadeCash/tracker";
+export type { ArkadeCashRecord, ArkadeCashAction, ArkadeCashTx } from "./arkadeCash/tracker";
 export type { ArkadeCashStatus, ArkadeCashStatusReport } from "./arkadeCash/status";
 export {
     addArkadeCashRecord,
     arkadeCashId,
     arkadeCashResolver,
     createArkadeCashTracker,
-    fundArkadeCashRecord,
-    markArkadeCashClaimed,
 } from "./arkadeCash/tracker";
 export { readArkadeCash } from "./arkadeCash/status";
 import {

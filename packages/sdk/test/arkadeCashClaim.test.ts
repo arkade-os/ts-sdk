@@ -322,7 +322,7 @@ describe("claimCash drain-pending accounting", () => {
 
         expect(finalizeTx).toHaveBeenCalledOnce();
         expect(result.swept).toBe(CASH_VALUE);
-        expect(result.claimTxIds).toEqual(["b".repeat(64)]);
+        expect(result.claims).toEqual([{ txid: "b".repeat(64), amount: CASH_VALUE }]);
         expect(result.unclaimed.amount).toBe(0);
         expect(result.unclaimed.vtxos).toEqual([]);
     });

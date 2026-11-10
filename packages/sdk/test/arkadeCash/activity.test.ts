@@ -4,10 +4,18 @@ import {
     addArkadeCashRecord,
     arkadeCashActivity,
     createArkadeCashTracker,
-    fundArkadeCashRecord,
-    markArkadeCashClaimed,
+    type ArkadeCashRecord,
 } from "../../src/arkadeCash/tracker";
 import { TxType } from "../../src/wallet";
+
+const record = (fields: Partial<ArkadeCashRecord> & { id: string }): ArkadeCashRecord => ({
+    action: "issued",
+    createdAt: 1,
+    outcome: "available",
+    issues: [],
+    claims: [],
+    ...fields,
+});
 
 describe("ArkadeCash activity records", () => {
     it("exposes typed worker operations without exposing token payloads in activities", () => {
@@ -19,7 +27,10 @@ describe("ArkadeCash activity records", () => {
     it("labels issuance and redemption without exposing the bearer secret", async () => {
         const records = createArkadeCashTracker();
         const cashId = "script-id";
-        fundArkadeCashRecord(records, cashId, 5_000, ["funding"], 500);
+        addArkadeCashRecord(
+            records,
+            record({ id: cashId, createdAt: 500, issues: [{ txid: "funding", amount: 5_000 }] }),
+        );
 
         const [issued] = await arkadeCashActivity(records, [
             {
@@ -37,7 +48,17 @@ describe("ArkadeCash activity records", () => {
         });
         expect(JSON.stringify(issued)).not.toContain("tarkadecash1");
 
-        markArkadeCashClaimed(records, cashId, 5_000, "claimed", ["claim"], 1_500);
+        addArkadeCashRecord(
+            records,
+            record({
+                id: cashId,
+                action: "claimed",
+                createdAt: 1_500,
+                outcome: "claimed",
+                issues: [{ txid: "funding", amount: 5_000 }],
+                claims: [{ txid: "claim", amount: 5_000 }],
+            }),
+        );
         const [claimed] = await arkadeCashActivity(records, [
             {
                 key: { arkTxid: "claim", commitmentTxid: "", boardingTxid: "" },
@@ -49,14 +70,17 @@ describe("ArkadeCash activity records", () => {
         ]);
         expect(claimed.intent).toMatchObject({ label: "Cash claimed", metadata: { cashId } });
         expect(records.get(cashId)).toMatchObject({
-            issueTxIds: ["funding"],
-            claimTxIds: ["claim"],
+            issues: [{ txid: "funding", amount: 5_000 }],
+            claims: [{ txid: "claim", amount: 5_000 }],
         });
     });
 
     it("keeps injection into the worker out of the correlation API", async () => {
         const records = createArkadeCashTracker();
-        fundArkadeCashRecord(records, "cash-id", 1, ["funding"], 500);
+        addArkadeCashRecord(
+            records,
+            record({ id: "cash-id", createdAt: 500, issues: [{ txid: "funding", amount: 1 }] }),
+        );
         const activities = await arkadeCashActivity(records, [
             {
                 key: { arkTxid: "funding", commitmentTxid: "", boardingTxid: "" },
@@ -72,7 +96,10 @@ describe("ArkadeCash activity records", () => {
 
     it("returns only correlated rows, not the normal history again", async () => {
         const records = createArkadeCashTracker();
-        fundArkadeCashRecord(records, "cash-id", 1, ["funding"], 500);
+        addArkadeCashRecord(
+            records,
+            record({ id: "cash-id", createdAt: 500, issues: [{ txid: "funding", amount: 1 }] }),
+        );
         const activities = await arkadeCashActivity(records, [
             {
                 key: { arkTxid: "funding", commitmentTxid: "", boardingTxid: "" },
@@ -94,8 +121,14 @@ describe("ArkadeCash activity records", () => {
 
     it("splits one funding transaction across each voucher contribution", async () => {
         const records = createArkadeCashTracker();
-        fundArkadeCashRecord(records, "small", 3_000, ["batch"], 500);
-        fundArkadeCashRecord(records, "large", 5_000, ["batch"], 500);
+        addArkadeCashRecord(
+            records,
+            record({ id: "small", createdAt: 500, issues: [{ txid: "batch", amount: 3_000 }] }),
+        );
+        addArkadeCashRecord(
+            records,
+            record({ id: "large", createdAt: 500, issues: [{ txid: "batch", amount: 5_000 }] }),
+        );
         const activities = await arkadeCashActivity(records, [
             {
                 key: { arkTxid: "batch", commitmentTxid: "", boardingTxid: "" },
@@ -113,24 +146,14 @@ describe("ArkadeCash activity records", () => {
 
     it("retains per-voucher shares when the worker injects public records", async () => {
         const records = createArkadeCashTracker();
-        addArkadeCashRecord(records, {
-            id: "small",
-            action: "issued",
-            amount: 3_000,
-            createdAt: 1,
-            outcome: "available",
-            issueTxIds: ["batch"],
-            claimTxIds: [],
-        });
-        addArkadeCashRecord(records, {
-            id: "large",
-            action: "issued",
-            amount: 5_000,
-            createdAt: 1,
-            outcome: "available",
-            issueTxIds: ["batch"],
-            claimTxIds: [],
-        });
+        addArkadeCashRecord(
+            records,
+            record({ id: "small", issues: [{ txid: "batch", amount: 3_000 }] }),
+        );
+        addArkadeCashRecord(
+            records,
+            record({ id: "large", issues: [{ txid: "batch", amount: 5_000 }] }),
+        );
         const activities = await arkadeCashActivity(records, [
             {
                 key: { arkTxid: "batch", commitmentTxid: "", boardingTxid: "" },
@@ -141,5 +164,34 @@ describe("ArkadeCash activity records", () => {
             },
         ]);
         expect(activities.map((activity) => activity.amount)).toEqual([-3_000, -5_000]);
+    });
+
+    it("sums the voucher's per-transaction claim shares into one activity", async () => {
+        const records = createArkadeCashTracker();
+        addArkadeCashRecord(
+            records,
+            record({
+                id: "multi",
+                action: "claimed",
+                outcome: "claimed",
+                claims: [
+                    { txid: "t1", amount: 3_000 },
+                    { txid: "t2", amount: 2_000 },
+                ],
+            }),
+        );
+        const received = (arkTxid: string, amount: number) => ({
+            key: { arkTxid, commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxReceived,
+            amount,
+            createdAt: 2,
+            settled: true,
+        });
+        const activities = await arkadeCashActivity(records, [
+            received("t1", 9_999),
+            received("t2", 9_999),
+        ]);
+        // The shares come from the record (3k + 2k), not from the txs' own 9,999.
+        expect(activities.map((activity) => activity.amount)).toEqual([5_000]);
     });
 });

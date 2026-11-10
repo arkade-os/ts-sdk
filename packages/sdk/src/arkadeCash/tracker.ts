@@ -6,19 +6,24 @@ import { ArkadeCash } from ".";
 
 export type ArkadeCashAction = "issued" | "claimed";
 
+/** One transaction of a voucher and the voucher's share of it, in sats. */
+export interface ArkadeCashTx {
+    txid: string;
+    amount: number;
+}
+
 export interface ArkadeCashRecord {
     id: string;
     action: ArkadeCashAction;
-    amount: number;
     createdAt: number;
     outcome: string;
-    issueTxIds: string[];
-    claimTxIds: string[];
+    issues: ArkadeCashTx[];
+    claims: ArkadeCashTx[];
 }
 
 export class ArkadeCashTracker {
     readonly records = new Map<string, ArkadeCashRecord>();
-    readonly contributions = new Map<string, Map<string, number>>();
+
     get(id: string): ArkadeCashRecord | undefined {
         return this.records.get(id);
     }
@@ -32,62 +37,9 @@ export function createArkadeCashTracker(): ArkadeCashTracker {
     return new ArkadeCashTracker();
 }
 
-/** Inject a public record and recover its per-transaction voucher shares. */
+/** Inject a public record. */
 export function addArkadeCashRecord(records: ArkadeCashTracker, record: ArkadeCashRecord): void {
     records.records.set(record.id, record);
-    const contributions = records.contributions.get(record.id) ?? new Map<string, number>();
-    for (const txid of [...record.issueTxIds, ...record.claimTxIds]) {
-        contributions.set(txid, record.amount);
-    }
-    records.contributions.set(record.id, contributions);
-}
-
-export function fundArkadeCashRecord(
-    records: ArkadeCashTracker,
-    cashId: string,
-    amount: number,
-    issueTxIds: string[],
-    createdAt: number,
-): void {
-    const previous = records.get(cashId);
-    records.records.set(cashId, {
-        id: cashId,
-        action: previous?.action === "claimed" ? "claimed" : "issued",
-        amount,
-        createdAt: previous?.createdAt ?? createdAt,
-        outcome: "available",
-        issueTxIds: [...new Set([...(previous?.issueTxIds ?? []), ...issueTxIds])],
-        claimTxIds: previous?.claimTxIds ?? [],
-    });
-    const contributions = records.contributions.get(cashId) ?? new Map<string, number>();
-    for (const txid of issueTxIds) contributions.set(txid, amount);
-    records.contributions.set(cashId, contributions);
-}
-
-export function markArkadeCashClaimed(
-    records: ArkadeCashTracker,
-    cashId: string,
-    amount: number,
-    outcome: string,
-    claimTxIds: string[],
-    createdAt: number,
-    contribution?: { txid: string; amount: number },
-): void {
-    const previous = records.get(cashId);
-    records.records.set(cashId, {
-        id: cashId,
-        action: "claimed",
-        amount,
-        createdAt,
-        outcome,
-        issueTxIds: previous?.issueTxIds ?? [],
-        claimTxIds: [...new Set([...(previous?.claimTxIds ?? []), ...claimTxIds])],
-    });
-    if (contribution) {
-        const contributions = records.contributions.get(cashId) ?? new Map<string, number>();
-        contributions.set(contribution.txid, contribution.amount);
-        records.contributions.set(cashId, contributions);
-    }
 }
 
 export function arkadeCashId(cash: ArkadeCash): string {
@@ -100,11 +52,11 @@ export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver
         resolve(tx) {
             const txids = new Set(Object.values(tx.key));
             return records.list().flatMap((record) => {
-                const issueTxId = record.issueTxIds.find((id) => txids.has(id));
-                const claimTxId = record.claimTxIds.find((id) => txids.has(id));
-                if (!issueTxId && !claimTxId) return [];
-                const direction = claimTxId ? "claimed" : "issued";
-                const amount = records.contributions.get(record.id)?.get(claimTxId ?? issueTxId!);
+                const issue = record.issues.find((entry) => txids.has(entry.txid));
+                const claim = record.claims.find((entry) => txids.has(entry.txid));
+                const match = claim ?? issue;
+                if (!match) return [];
+                const direction = claim ? "claimed" : "issued";
                 return [
                     {
                         groupId: `arkade-cash:${record.id}`,
@@ -112,7 +64,7 @@ export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver
                         kind: "arkade-cash",
                         outcome: record.outcome,
                         metadata: { cashId: record.id, direction },
-                        amount,
+                        amount: match.amount,
                     },
                 ];
             });

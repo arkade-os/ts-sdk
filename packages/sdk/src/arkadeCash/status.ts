@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { arkadeCashId } from "./tracker";
+import { arkadeCashId, type ArkadeCashTx } from "./tracker";
 import { ArkadeCash } from ".";
 import type { VirtualCoin } from "../wallet";
 import type { IndexerProvider } from "../providers/indexer";
@@ -20,8 +20,17 @@ export type ArkadeCashStatus =
 export interface ArkadeCashStatusReport {
     status: ArkadeCashStatus;
     amount: number;
-    issueTxIds: string[];
-    claimTxIds: string[];
+    /** Funding transactions, each with the voucher's own share of it. */
+    issues: ArkadeCashTx[];
+    /** Spending transactions, each with the voucher's own share of it. */
+    claims: ArkadeCashTx[];
+}
+
+/** Sum coin values per transaction id, keeping first-seen order. */
+function groupByTxid(coins: { txid: string; value: number }[]): ArkadeCashTx[] {
+    const totals = new Map<string, number>();
+    for (const { txid, value } of coins) totals.set(txid, (totals.get(txid) ?? 0) + value);
+    return [...totals].map(([txid, amount]) => ({ txid, amount }));
 }
 
 export async function readArkadeCash(
@@ -102,7 +111,11 @@ export function classifyArkadeCash(
                             ? "expired"
                             : "available",
         amount: eligible.reduce((sum, coin) => sum + (isVtxoSpent(coin) ? 0 : coin.value), 0),
-        issueTxIds: [...new Set(eligible.map((coin) => coin.txid))],
-        claimTxIds: [...new Set(eligible.flatMap((coin) => (coin.arkTxId ? [coin.arkTxId] : [])))],
+        issues: groupByTxid(eligible),
+        claims: groupByTxid(
+            eligible.flatMap((coin) =>
+                coin.arkTxId ? [{ txid: coin.arkTxId, value: coin.value }] : [],
+            ),
+        ),
     };
 }

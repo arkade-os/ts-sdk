@@ -18,8 +18,8 @@ describe("classifyArkadeCash", () => {
         expect(result).toEqual({
             status: "available",
             amount: 5_000,
-            issueTxIds: ["a".repeat(64)],
-            claimTxIds: [],
+            issues: [{ txid: "a".repeat(64), amount: 5_000 }],
+            claims: [],
         });
         expect("token" in result).toBe(false);
     });
@@ -71,5 +71,33 @@ describe("classifyArkadeCash", () => {
                 timestamp: new Date(),
             }).status,
         ).toBe("claimed");
+    });
+
+    it("groups coins by funding transaction and by spending transaction", () => {
+        const funding = (vout: number, value: number, arkTxId?: string): VirtualCoin => ({
+            ...live(),
+            vout,
+            value,
+            isSpent: arkTxId !== undefined,
+            arkTxId,
+        });
+        const result = classifyArkadeCash(
+            [
+                funding(0, 3_000, "s".repeat(64)),
+                funding(1, 2_000, "s".repeat(64)),
+                funding(2, 4_000, "t".repeat(64)),
+                { ...funding(0, 1_500), txid: "b".repeat(64) },
+            ],
+            1_000n,
+            { timestamp: new Date() },
+        );
+        expect(result.issues).toEqual([
+            { txid: "a".repeat(64), amount: 9_000 },
+            { txid: "b".repeat(64), amount: 1_500 },
+        ]);
+        expect(result.claims).toEqual([
+            { txid: "s".repeat(64), amount: 5_000 },
+            { txid: "t".repeat(64), amount: 4_000 },
+        ]);
     });
 });
