@@ -144,6 +144,47 @@ describe("solver quote failover", () => {
         expect(attempted).toEqual([]);
     });
 
+    it("excludes a paused solver from candidates, resolution and quote attempts", async () => {
+        const { client, attempted } = await setup({
+            routing: { preferences: () => ({ disabled: [solverId(first, "regtest")] }) },
+        });
+        expect((await client.candidates(input())).map(({ card }) => card.solver)).toEqual([
+            "second",
+        ]);
+        expect(await client.resolve(input())).toMatchObject({
+            eligible: 1,
+            market: { solver: "second" },
+        });
+        expect((await client.quote(input())).market).toMatchObject({ solver: "second" });
+        expect(attempted).toEqual(["second"]);
+        await client[Symbol.asyncDispose]();
+    });
+
+    it("refuses a direction with every solver paused before opening a transport", async () => {
+        const { client, attempted } = await setup({
+            routing: {
+                preferences: () => ({
+                    disabled: [solverId(first, "regtest"), solverId(second, "regtest")],
+                }),
+            },
+        });
+        expect(await client.candidates(input())).toEqual([]);
+        expect(await client.resolve(input())).toMatchObject({ eligible: 0 });
+        await expect(client.quote(input())).rejects.toMatchObject({ name: "UnsupportedRoute" });
+        expect(attempted).toEqual([]);
+        await client[Symbol.asyncDispose]();
+    });
+
+    it("does not bypass a pause or change an explicit market pin", async () => {
+        const { client, attempted } = await setup({
+            selectMarket: (candidates) => candidates[0],
+            routing: { preferences: () => ({ disabled: [solverId(first, "regtest")] }) },
+        });
+        await expect(client.quote(input())).rejects.toMatchObject({ name: "UnsupportedRoute" });
+        expect(attempted).toEqual([]);
+        await client[Symbol.asyncDispose]();
+    });
+
     it("can order solvers while failover is disabled", async () => {
         const { client, attempted } = await setup({ routing: { failover: false } });
         await expect(client.quote(input())).rejects.toMatchObject({ reason: "rate_limited" });
@@ -184,16 +225,17 @@ describe("solver quote failover", () => {
         expect(secondTransport.sent).toEqual([]);
     });
 
-    it("retains the accepted solver after uncertain funding", async () => {
+    it("retains the quoted solver after pausing it and uncertain funding", async () => {
         const wallet = await acceptWallet();
         const repository = new InMemoryAssetSwapRepository();
         const attempted: string[] = [];
+        let disabled: string[] = [];
         const client = createSwapClient({
             wallet: wallet.wallet,
             repository,
             discovery: { snapshot: [first, second] },
             emulatorPubkey: EMULATOR_PUBKEY_HEX,
-            policy: { drive: "manual", solverRouting: {} },
+            policy: { drive: "manual", solverRouting: { preferences: () => ({ disabled }) } },
             transportFor: ({ card }) => {
                 attempted.push(card.solver);
                 return card.solver === "first"
@@ -206,6 +248,7 @@ describe("solver quote failover", () => {
             },
         });
         const quote = await client.quote(input());
+        disabled = [solverId(second, "regtest")];
         vi.spyOn(wallet.wallet, "send").mockRejectedValue(new Error("submission uncertain"));
         await expect(client.accept(quote)).rejects.toThrow("submission uncertain");
         const records = await collectSwapRecords(repository);

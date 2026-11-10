@@ -82,6 +82,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **Solver pauses preserve cards and priorities.** Routing preferences accept disabled solver IDs, excluded before candidate enumeration, advertised-cost feeds and new quotes. Applications can combine global card pauses with direction-specific choices; issued quotes and accepted swaps keep their selected solver.
+
 - **Swap clients can prioritize solvers and fail over before acceptance.** Optional per-direction routing supports saved priority, successful usage and amount-aware advertised cost. Quote preparation tries another eligible solver after a candidate-local failure, preserves cancellation and closes its transports on disposal; accepted quotes, uncertain funding and recovery retain their original solver. Existing explicit selection and single-solver defaults remain compatible.
 - **Solver routing defaults are documented at the API boundary.** `SolverRoutingPolicy` TSDoc specifies selection precedence and preference lookup behavior; the README links to that contract.
 - **Solver cost ranking accepts portable fetch adapters.** The vendored discovery snapshot uses the package's `FetchLike` interface, preserving minimal custom transports and global `fetch` callers without changing runtime code.

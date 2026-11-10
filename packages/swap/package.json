@@ -112,7 +112,7 @@
     "license": "MIT",
     "dependencies": {
         "@arkade-os/sdk": "workspace:*",
-        "@arkade-os/solver-discovery": "file:../../vendor/arkade-os-solver-discovery-0.3.0-routing-df7e0ee.tgz",
+        "@arkade-os/solver-discovery": "file:../../vendor/arkade-os-solver-discovery-0.3.0-routing-c1f70dd.tgz",
         "@noble/ciphers": "2.1.1",
         "@noble/curves": "2.4.0",
         "@noble/hashes": "2.4.0",

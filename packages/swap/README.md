@@ -32,6 +32,7 @@ const client = createSwapClient({
             preferences: async ({ network, direction }) => ({
                 mode: "usage", // "manual" | "usage" | "cost"
                 priority: savedPriorities[direction] ?? [],
+                disabled: disabledSolverIds[direction] ?? [],
                 usage: completedSolverUsage(await client.swaps(), network, direction),
             }),
         },

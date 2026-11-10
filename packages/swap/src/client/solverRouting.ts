@@ -34,7 +34,9 @@ export interface SolverRoutingPolicy {
      * An explicit `selectMarket` remains an authoritative pin or veto and disables failover. */
     readonly failover?: boolean;
     /** Read current preferences before selection. Absent means discovery order; rejection stops
-     * the operation before negotiation. Modes, priority and usage follow {@link SolverRoutingPreferences}. */
+     * the operation before negotiation. Modes, priority, usage and disabled solver IDs follow
+     * {@link SolverRoutingPreferences}. Pauses apply to new candidate selection; issued quotes
+     * and accepted swaps retain their selected solver. */
     readonly preferences?: (
         context: SolverRoutingContext,
     ) => SolverRoutingPreferences | Promise<SolverRoutingPreferences>;
