@@ -337,7 +337,9 @@ style and have not been backfilled.
   its coins until arkd drops it. It subscribes to batch events before
   registering, as `Wallet.settle` does, so a batch that starts while the
   intent is being registered is not missed; the new `Batch.prime` does the
-  subscribing for both.
+  subscribing for both. A renewal the server would charge an intent fee for
+  is refused before anything is signed: the covenant keeps each output equal
+  to its input, so no fee can be paid and arkd would reject the intent.
 
 ### Changed
 

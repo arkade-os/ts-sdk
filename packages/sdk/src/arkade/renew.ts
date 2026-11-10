@@ -1,6 +1,7 @@
 import { base64, hex } from "@scure/base";
 import { RawWitness } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
+import { Estimator } from "../arkfee";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
 import {
@@ -16,6 +17,7 @@ import type { OperatorProvider } from "../providers/ark";
 import { TreeSignerSession, type SignerSession } from "../tree/signingSession";
 import { withPrevTxs } from "../utils/prevoutTx";
 import type { VirtualCoin } from "../wallet";
+import { normalizeVtxo, toOffchainInputFeeParams } from "../wallet/vtxo";
 import { Batch } from "../wallet/batch";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
@@ -75,6 +77,24 @@ export async function renewProgramContractOutputs(
         );
         return { contract, coin, compiled, witness: RawWitness.encode(stack) };
     });
+
+    // Outputs must equal inputs for the covenant to pass, so a renewal cannot pay a fee. Evaluated
+    // per coin: the server's programs can charge nothing for some amounts or expiries.
+    const { fees } = await arkProvider.getInfo();
+    const fee = new Estimator(fees?.intentFee ?? {}).evaluate(
+        legs.map(({ coin }) => toOffchainInputFeeParams(normalizeVtxo(coin))),
+        [],
+        legs.map(({ contract, coin }) => ({
+            amount: BigInt(coin.value),
+            script: hex.encode(contract.pkScript),
+        })),
+        [],
+    );
+    if (fee.satoshis > 0) {
+        throw new Error(
+            `renewProgramContractOutputs: the server charges ${fee.satoshis} sats, which a covenant renewal cannot pay`,
+        );
+    }
 
     const coins = await withPrevTxs(
         legs.map(({ contract, coin, compiled }) => ({

@@ -16,8 +16,11 @@ const renewable = arkade.programFromArtifact(
     ),
 );
 
-/** A keeper's client whose server serves `stream` once the intent is registered. */
-async function keeper(stream: (signal: AbortSignal) => AsyncIterableIterator<never>) {
+/** A keeper's client whose server serves `stream` and advertises `info` on top of the basics. */
+async function keeper(
+    stream: (signal: AbortSignal) => AsyncIterableIterator<never>,
+    info: Record<string, unknown> = {},
+) {
     const server = xOnly();
     const registerIntent = vi.fn(async () => "intent-1");
     const ark = await arkade.Arkade.connect({
@@ -31,6 +34,7 @@ async function keeper(stream: (signal: AbortSignal) => AsyncIterableIterator<nev
                     signerPubkey: "02" + hex.encode(server),
                     checkpointTapscript: hex.encode(checkpoint),
                     unilateralExitDelay: 20n,
+                    ...info,
                 } as any;
             },
             registerIntent,
@@ -156,6 +160,41 @@ describe("renewProgramContractOutputs", () => {
             /stream closed/,
         );
         expect(order).toEqual(["subscribed", "registered"]);
+    });
+
+    it("refuses a renewal the server would charge a fee for", async () => {
+        const { ark, target, registerIntent } = await keeper(
+            () => {
+                throw new Error("no stream expected");
+            },
+            { fees: { intentFee: { offchainInput: "100.0" }, txFeeRate: "0" } },
+        );
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /charges 100 sats/,
+        );
+        expect(ark.emulator!.submitIntent).not.toHaveBeenCalled();
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
+    it("renews when the server's fee program charges these coins nothing", async () => {
+        const { ark, target, registerIntent } = await keeper(
+            () =>
+                (async function* () {
+                    throw new Error("stream closed");
+                })(),
+            {
+                fees: {
+                    intentFee: { offchainInput: "amount > 10000.0 ? 100.0 : 0.0" },
+                    txFeeRate: "0",
+                },
+            },
+        );
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /stream closed/,
+        );
+        expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
     it("leaves no listener on the caller's signal", async () => {
