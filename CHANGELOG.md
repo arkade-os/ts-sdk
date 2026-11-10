@@ -102,6 +102,11 @@ style and have not been backfilled.
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
 
+- **`waitForIncomingFunds` takes a `NotifiesIncomingFunds` capability instead
+  of the `Wallet` class.** The new exported interface declares only
+  `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
+  helper. Type-level only, non-breaking.
+
 ### Added
 
 - **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`

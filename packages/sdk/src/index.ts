@@ -186,6 +186,7 @@ import {
     type VtxoReservation,
     type WaitForIncomingFundsOptions,
     IncomingFunds,
+    NotifiesIncomingFunds,
     selectVirtualCoins,
     BoardingUtxoGroup,
     type ArkadeCashClaimResult,
@@ -1007,6 +1008,7 @@ export type {
     VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,
+    NotifiesIncomingFunds,
     // Identity options
     SeedIdentityOptions,
     MnemonicOptions,
