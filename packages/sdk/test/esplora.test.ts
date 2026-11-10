@@ -228,4 +228,21 @@ describe("EsploraProvider", () => {
             expect(mockFetch).toHaveBeenCalledTimes(1);
         });
     });
+
+    describe("getMedianTimePast", () => {
+        it("returns the median-time-past for the requested block height", async () => {
+            mockFetch
+                .mockResolvedValueOnce(textResponse("block-hash"))
+                .mockResolvedValueOnce(jsonResponse({ mediantime: 1_700_000_000 }));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+
+            await expect(provider.getMedianTimePast(800_000)).resolves.toBe(1_700_000_000);
+            expect(mockFetch).toHaveBeenNthCalledWith(
+                1,
+                "http://localhost:3000/block-height/800000",
+            );
+            expect(mockFetch).toHaveBeenNthCalledWith(2, "http://localhost:3000/block/block-hash");
+        });
+    });
 });

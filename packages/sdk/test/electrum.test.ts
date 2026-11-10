@@ -178,7 +178,7 @@ describe("ElectrumOnchainProvider", () => {
     });
 
     describe("getCoins", () => {
-        it("maps listunspent results to Coin shape", async () => {
+        it("maps listunspent results to Coin shape without fetching block headers", async () => {
             wsMock.request.mockResolvedValueOnce([
                 {
                     tx_hash: "abcd1234",
@@ -203,7 +203,10 @@ describe("ElectrumOnchainProvider", () => {
                     txid: "abcd1234",
                     vout: 0,
                     value: 100_000,
-                    status: { confirmed: true, block_height: 500 },
+                    status: {
+                        confirmed: true,
+                        block_height: 500,
+                    },
                 },
                 {
                     txid: "ef567890",
@@ -214,10 +217,23 @@ describe("ElectrumOnchainProvider", () => {
             ]);
         });
 
+        it("does not fetch headers for coins at different confirmed heights", async () => {
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "aa", tx_pos: 1, value: 1, height: 500 },
+                { tx_hash: "bb", tx_pos: 0, value: 2, height: 501 },
+            ]);
+
+            const coins = await provider.getCoins(REGTEST_ADDRESS);
+
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
+            expect(coins.map((coin) => coin.status.block_height)).toEqual([500, 501]);
+        });
+
         it("returns empty array when no unspents", async () => {
             wsMock.request.mockResolvedValueOnce([]);
             const coins = await provider.getCoins(REGTEST_ADDRESS);
             expect(coins).toEqual([]);
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -422,6 +438,15 @@ describe("ElectrumOnchainProvider", () => {
             const tip = await provider.getChainTip();
             expect(tip.time).toBe(MEDIAN);
             expect(tip.time).not.toBe(TIP_TIME);
+        });
+
+        it("returns median-time-past for an arbitrary block height", async () => {
+            mockBatch(wsMock.request, [headerAt(TIP_TIME), ...WINDOW_TIMES.map(headerAt)]);
+
+            expect(await provider.getMedianTimePast(100)).toBe(MEDIAN);
+            expect(headerCalls().map((call) => call[1])).toEqual([
+                100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90,
+            ]);
         });
 
         it("asks for exactly the ten blocks below the tip", async () => {

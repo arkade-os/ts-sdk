@@ -70,6 +70,22 @@ style and have not been backfilled.
   which forbid `bigint`. `Market` is also no longer an alias of `CardMarketRef`
   but a superset: a `Market` can still be used as a ref, but a ref no longer
   assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
+- **Custom onchain providers need `getMedianTimePast` to settle seconds-locked
+  boarding coins.** Seconds-based boarding expiry is judged on consensus
+  median-time-past, not the local clock, and a coin whose expiry cannot be
+  established is neither settled nor swept rather than guessed. On a provider
+  without the optional `OnchainProvider.getMedianTimePast`, such coins stay
+  where they are until it is implemented; block-locked coins and VTXO renewal
+  are unaffected. The built-in Esplora and Electrum providers implement it.
+- **`hasBoardingTxExpired` judges seconds-based delays on median-time-past.**
+  It takes two new optional arguments, `chainTipMedianTime` and
+  `confirmationParentMedianTime`, and with a seconds-based timelock returns
+  `false` unless both are given; it no longer compares `block_time` with the
+  local clock. Block-based delays need only the coin's `block_height` and
+  `chainTipHeight`, no longer a `block_time`. Callers on the three-argument
+  form must pass the median times, from `OnchainProvider.getMedianTimePast`
+  at the confirmation height minus one and at the tip, or seconds-locked
+  coins never read as expired.
 
 - **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
   `scope`.** A custom `ContractRepository` must persist and round-trip
@@ -369,6 +385,36 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Expired boarding UTXOs held under a deprecated signer are now swept.**
+  After the operator rotated its signer, deposits made to a boarding address on
+  the old key showed in history but were never recovered: the sweep fetched
+  boarding coins for the current signer only, found nothing, and its "no
+  expired boarding UTXOs" result is silenced by the poll loop, so they sat
+  unswept with no error. A boarding exit leaf is the user's key plus a CSV, so
+  a unilateral sweep needs no operator and works for any signer. The poll now
+  fetches every address history shows (current and deprecated signers) once,
+  sweeps all of it, and still settles only current-signer coins, which the
+  server would reject otherwise. A failed lookup at a deprecated-signer address
+  is bounded, skipped for that poll and retried on the next, both in boarding
+  discovery and in the deprecated-signer migration pass, so it cannot block
+  current-signer work; a current-signer failure still fails it, as before.
+  Discovery also includes index-zero baseline addresses for deprecated signers,
+  including when their persisted row coalesced onto `default`. If the signer
+  rotates during discovery, the poll rediscovers before selecting settlement
+  inputs and checks again immediately before intent registration; an abort
+  there does not count as a settle failure, so it does not lengthen the
+  backoff. Expiry is now
+  read from each coin's own CSV
+  exit leaf rather than the wallet's current boarding delay, in the sweep, the
+  periodic settle and `Wallet.settle` alike, so a rotation that changed the
+  delay can no longer leave a coin that settle skips and the sweep ignores, or
+  the reverse. Block-based expiry no longer requires a block timestamp;
+  seconds-based expiry uses the confirmation parent's and current tip's
+  consensus median-time-past values, not the local clock. A coin whose expiry
+  cannot be established (no block height, a failed chain-tip or median-time
+  lookup) is left out of settlement and the sweep, while the other coins and
+  VTXO renewal go ahead.
+
 - **The automatic cosign sweep takes boarding coins only.** `needsOnchainSweep`
   selected coins by scope, so any contract registered with `scope: "onchain"`
   or `"both"` had its onchain coins swept into the wallet's boarding address
@@ -570,6 +616,14 @@ style and have not been backfilled.
   signing, so the unsigned checkpoints the two-step flow submits carried none.
   `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
   before submitting, in both flows.
+
+### Performance
+
+- **Electrum `getCoins` avoids per-height block-header lookups.**
+  `listunspent` already supplies confirmation status and height, so balance and
+  coin-selection reads no longer fetch a header for every distinct coin height.
+  Transaction-history reads still fetch block timestamps where they are needed;
+  boarding expiry uses consensus median-time-past.
 
 ### Breaking Changes
 

@@ -96,11 +96,12 @@ import type { BatchExpiryPolicy } from "./batchExpiry";
 import { toTimelock } from "./timelockPolicy";
 import { runWalletRestoreHooks } from "./restoreHooks";
 import { assertValidServerUnrollScript } from "./checkpointExitDelay";
+import { READ_TIMEOUT_MS } from "../utils/fetch";
 import {
     assertAllowedSighashTypes,
     assertCheckpointsMatchInputs,
     buildOffchainTx,
-    hasBoardingTxExpired,
+    classifyBoardingExpiry,
     signAndSubmitOffchainTx,
     submitOffchainTx,
     type OffchainTxSigner,
@@ -162,6 +163,7 @@ import { DelegateVtxo } from "../script/delegate";
 import { DelegateManagerImpl, findDestinationOutputIndex, IDelegateManager } from "./delegate";
 import { IndexedDBContractRepository, IndexedDBWalletRepository } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import { DefaultContractHandler } from "../contracts/handlers/default";
 import { arkadeServiceUrl, resolveArkadeService } from "../arkade/service";
 import type {
     ContractManagerConfig,
@@ -576,6 +578,18 @@ export async function spendableVtxosExcludingLocked<T extends { txid: string; vo
         return vtxos;
     }
     return excludeLockedOutpoints(vtxos, locked);
+}
+
+/** Drops coins an in-flight settle is spending or an unresolved intent locks. */
+function excludeUnselectable(
+    coins: ExtendedCoin[],
+    pending: ReadonlySet<string>,
+    locked: ReadonlySet<string>,
+): ExtendedCoin[] {
+    return coins.filter((coin) => {
+        const key = `${coin.txid}:${coin.vout}`;
+        return !pending.has(key) && !locked.has(key);
+    });
 }
 
 /**
@@ -1819,8 +1833,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Every boarding tapscript whose UTXOs belong to this wallet (rotation spreads them over
-     * several addresses), deduplicated by scriptPubKey. Always includes the index-0 baseline,
-     * which covers the equal-delay case where that row coalesced onto `default`.
+     * several addresses), deduplicated by scriptPubKey. Includes index-0 `default` rows when a
+     * baseline boarding script coalesced with one.
      *
      * @param allowedSigners - x-only operator keys whose persisted boarding rows are included;
      *   defaults to the current signer (the foreign-ASP guard). Migration widens it to old signers.
@@ -1832,31 +1846,49 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const byScript = new Map<string, DefaultVtxo.Script>();
         const add = (s: DefaultVtxo.Script) => byScript.set(hex.encode(s.pkScript), s);
 
+        const currentServerPubKey = this.boardingTapscript.options.serverPubKey;
+        const currentServerSigner = toXOnlySignerHex(hex.encode(currentServerPubKey));
+        const signers = new Set([currentServerSigner, ...(allowedSigners ?? [])]);
         const boardingCsv =
             this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        // Index-0 baseline boarding (identity x-only key) — always in scope.
-        add(
-            new DefaultVtxo.Script({
-                pubKey: await this.identity.xOnlyPublicKey(),
-                serverPubKey: this.boardingTapscript.options.serverPubKey,
-                csvTimelock: boardingCsv,
-            }),
-        );
+        // Index-0 baseline boarding (identity x-only key) is in scope for every queried signer.
+        const baselinePubkey = await this.identity.xOnlyPublicKey();
+        for (const signer of signers) {
+            add(
+                new DefaultVtxo.Script({
+                    pubKey: baselinePubkey,
+                    serverPubKey: hex.decode(signer),
+                    csvTimelock: boardingCsv,
+                }),
+            );
+        }
         // Current display boarding tapscript (may be a rotated index).
         add(this.boardingTapscript);
-        // Every persisted boarding contract, read from the repository directly so fund discovery
-        // doesn't force contract-manager initialization.
-        const serverPubKeyHex = hex.encode(this.boardingTapscript.options.serverPubKey);
-        const allowed = allowedSigners ?? new Set([toXOnlySignerHex(serverPubKeyHex)]);
+        // The baseline boarding script can coalesce onto a `default` row when their CSV delays
+        // match. Read those index-zero defaults too, preserving the historical delay after rotation.
+        const baselinePubkeyHex = toXOnlySignerHex(hex.encode(baselinePubkey));
+        const allowed = signers;
         const boardingContracts = await collectContracts(this.contractRepository, {
-            type: ["boarding"],
+            type: ["boarding", "default"],
         });
         for (const c of boardingContracts) {
-            // Only allowed signers, else a previous signer's row emits a spurious script and wasted
-            // provider calls on every read. Both sides x-only so a compressed key can't drop a row.
-            if (!allowed.has(toXOnlySignerHex(c.params.serverPubKey))) continue;
             try {
-                add(BoardingContractHandler.createScript(c.params));
+                // Only allowed servers, else a previous ASP's row emits a spurious script and
+                // wasted provider calls on every read. Both sides x-only, so compressed keys match.
+                const serverSigner = toXOnlySignerHex(c.params.serverPubKey);
+                if (!allowed.has(serverSigner)) continue;
+                if (
+                    c.type === "default" &&
+                    (serverSigner === currentServerSigner ||
+                        toXOnlySignerHex(c.params.pubKey) !== baselinePubkeyHex)
+                ) {
+                    continue;
+                }
+                add(
+                    c.type === "default"
+                        ? DefaultContractHandler.createScript(c.params)
+                        : BoardingContractHandler.createScript(c.params),
+                );
             } catch (e) {
                 // Skip a malformed row rather than abort fund discovery, but
                 // surface it so repo corruption is detectable.
@@ -1879,15 +1911,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * @param allowedSigners - x-only-hex operator keys whose boarding addresses to
      *   fetch (passed through to {@link getBoardingTapscripts}).
+     * @param skipFailedSigners - x-only-hex server keys whose address lookups may fail: that
+     *   address is left out of the result and its cache untouched, instead of failing the whole
+     *   fetch. A lookup under any other signer still rejects.
      */
-    async getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]> {
+    async getBoardingUtxosForSigners(
+        allowedSigners: Set<string>,
+        skipFailedSigners?: ReadonlySet<string>,
+    ): Promise<BoardingUtxoGroup[]> {
         // Before the fetch: a clear() landing during it disposes this manager, so its sync writes
         // nothing, where resolving it afterwards would build a new one on the wiped repositories.
         const manager = await this.getContractManager();
-        const tapscripts = await this.getBoardingTapscripts(allowedSigners);
-        const fetched = await Promise.all(
-            tapscripts.map((t) => this.onchainProvider.getCoins(t.onchainAddress(this.network))),
+        const candidates = await this.getBoardingTapscripts(allowedSigners);
+        const results = await Promise.all(
+            candidates.map((t) => this.fetchBoardingCoins(t, skipFailedSigners)),
         );
+        // A skipped address is left out entirely, so its stored state is untouched.
+        const tapscripts = candidates.filter((_, i) => results[i] !== undefined);
+        const fetched = results.filter((coins) => coins !== undefined);
         const scripts = tapscripts.map((t) => hex.encode(t.pkScript));
         try {
             await manager.syncOnchain(scripts, new Map(scripts.map((s, i) => [s, fetched[i]])));
@@ -1929,6 +1970,38 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
     }
 
+    /** `undefined` when a lookup under one of `skipFailedSigners` failed or timed out. */
+    private async fetchBoardingCoins(
+        tapscript: DefaultVtxo.Script,
+        skipFailedSigners?: ReadonlySet<string>,
+    ): Promise<Coin[] | undefined> {
+        const address = tapscript.onchainAddress(this.network);
+        const serverPubKey = toXOnlySignerHex(hex.encode(tapscript.options.serverPubKey));
+        if (!skipFailedSigners?.has(serverPubKey)) return this.onchainProvider.getCoins(address);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            return await Promise.race([
+                this.onchainProvider.getCoins(address),
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(
+                        () =>
+                            reject(
+                                new Error(
+                                    `Boarding address lookup timed out after ${READ_TIMEOUT_MS}ms`,
+                                ),
+                            ),
+                        READ_TIMEOUT_MS,
+                    );
+                }),
+            ]);
+        } catch (e) {
+            console.warn(`Skipping boarding address ${address}: lookup failed`, e);
+            return undefined;
+        } finally {
+            if (timer !== undefined) clearTimeout(timer);
+        }
+    }
+
     /**
      * Fetch and cache boarding UTXOs at current and historical boarding addresses, each annotated
      * with its own address's tapscript so spends use the right per-index leaves. Current-signer
@@ -1955,10 +2028,30 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getBoardingUtxos(),
             this.lockedOutpoints(),
         ]);
-        return utxos.filter((coin) => {
-            const key = `${coin.txid}:${coin.vout}`;
-            return !this._pendingSpendOutpoints.has(key) && !locked.has(key);
-        });
+        return excludeUnselectable(utxos, this._pendingSpendOutpoints, locked);
+    }
+
+    /**
+     * @internal {@link getSelectableBoardingUtxos} for every boarding address history shows,
+     * current and deprecated signers, grouped by signer. Only the boarding sweep reads it: a
+     * unilateral exit needs no operator, so it recovers coins that `settle` must not take.
+     */
+    async getSelectableBoardingUtxoGroups(): Promise<BoardingUtxoGroup[]> {
+        // A deprecated signer's address is recovery-only, so a failed lookup waits for the next
+        // poll rather than aborting the settle and renewal that share it.
+        const [groups, locked] = await Promise.all([
+            this.getBoardingUtxosForSigners(
+                this.watchedBoardingSigners(),
+                new Set(this._deprecatedSigners.keys()),
+            ),
+            this.lockedOutpoints(),
+        ]);
+        // A superset of what `getBoardingUtxos` fetches, so the balance flag stays accurate.
+        this.boardingLoaded = true;
+        return groups.map((group) => ({
+            ...group,
+            coins: excludeUnselectable(group.coins, this._pendingSpendOutpoints, locked),
+        }));
     }
 
     /** Boarding coins from the store, no network call; pending and confirmed spends excluded. */
@@ -3851,23 +3944,19 @@ export class Wallet
 
             let amount = 0;
 
-            const exitScript = CSVMultisigTapscript.decode(
-                hex.decode(this.boardingTapscript.exitScript),
+            const confirmedBoarding = (await this.getSelectableBoardingUtxos()).filter(
+                (utxo) => utxo.status.confirmed,
             );
-
-            const boardingTimelock = exitScript.params.timelock;
-
-            // For block-based timelocks, fetch the chain tip height
-            let chainTipHeight: number | undefined;
-            if (boardingTimelock.type === "blocks") {
-                const tip = await this.onchainProvider.getChainTip();
-                chainTipHeight = tip.height;
-            }
-
-            const boardingUtxos = (await this.getSelectableBoardingUtxos()).filter(
-                (utxo) =>
-                    utxo.status.confirmed &&
-                    !hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
+            const { expired, unknown } = await classifyBoardingExpiry(
+                confirmedBoarding,
+                () => this.onchainProvider.getChainTip(),
+                this.onchainProvider.getMedianTimePast?.bind(this.onchainProvider),
+            );
+            const unsettleable = new Set(
+                [...expired, ...unknown].map((utxo) => `${utxo.txid}:${utxo.vout}`),
+            );
+            const boardingUtxos = confirmedBoarding.filter(
+                (utxo) => !unsettleable.has(`${utxo.txid}:${utxo.vout}`),
             );
 
             const filteredBoardingUtxos = [];
@@ -4131,8 +4220,8 @@ export class Wallet
                 yield* stream;
             })();
 
-            registering = true;
             onRegistrationAttempt?.();
+            registering = true;
             const intentId = await this.safeRegisterIntent(intent, params.inputs);
 
             await this.persistIntentSnapshot(

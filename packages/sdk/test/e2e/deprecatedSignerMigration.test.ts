@@ -6,7 +6,9 @@ import {
     InMemoryWalletRepository,
     RestArkProvider,
     SingleKey,
+    VtxoManager,
     Wallet,
+    type RelativeTimelock,
 } from "../../src";
 import {
     beforeEachFaucet,
@@ -15,6 +17,7 @@ import {
     faucetOffchain,
     faucetOnchain,
     getOperatorInfo,
+    mineBlocks,
     rotateArkdSigner,
     ROTATE_SIGNER_HOOK_TIMEOUT_MS,
     waitFor,
@@ -106,9 +109,13 @@ describe("deprecated-signer migration (real rotation)", () => {
         await rotateArkdSigner({ activeSignerPriv: A_SEC, deprecatedSigners: [] });
     };
 
-    const makeWallet = async (useMnemonic = false): Promise<Wallet> =>
+    const makeWallet = async (
+        useMnemonic = false,
+        boardingTimelock?: RelativeTimelock,
+    ): Promise<Wallet> =>
         Wallet.create({
             identity: createTestIdentity(useMnemonic),
+            boardingTimelock,
             arkProvider: new RestArkProvider(operatorUrl),
             onchainProvider: new EsploraProvider("http://localhost:3000/api", {
                 forcePolling: true,
@@ -510,4 +517,75 @@ describe("deprecated-signer migration (real rotation)", () => {
             }
         });
     }
+
+    // ── 6. Boarding UTXO, EXPIRED signer and elapsed boarding delay → sweep ──
+    //
+    // Cooperative migration is closed, so the only way out is the unilateral exit
+    // leaf: the user's key plus a CSV, which needs no operator. A short boarding
+    // delay stands in for the stack's 180 blocks; the mechanism is the same.
+    it("sweeps an expired boarding UTXO held under a deprecated signer", {
+        timeout: 300_000,
+    }, async () => {
+        const boardingTimelock: RelativeTimelock = { type: "blocks", value: 20n };
+        const wallet = await makeWallet(false, boardingTimelock);
+        let sweeper: VtxoManager | undefined;
+        try {
+            expect(hex.encode(wallet.arkServerPublicKey)).toBe(await xonly(A_SEC));
+
+            faucetOnchain(await wallet.getBoardingAddress(), 100_000);
+            await waitFor(
+                async () => {
+                    const u = await wallet.getBoardingUtxos();
+                    return u.length >= 1 && u.every((c) => c.status.confirmed);
+                },
+                { timeout: 30_000, interval: 2000 },
+            );
+            const [stale] = await wallet.getBoardingUtxos();
+
+            await rotateArkdSigner({
+                activeSignerPriv: B_SEC,
+                deprecatedSigners: [
+                    { priv: A_SEC, cutoffDate: Math.floor(Date.now() / 1000) - 86_400 },
+                ],
+            });
+            const vtxoManager = await wallet.getVtxoManager();
+            const status = await poll(async () => {
+                const s = await vtxoManager.getDeprecatedSignerStatus();
+                return s.some((x) => x.boardingCount > 0) ? s : null;
+            });
+            expect(status[0]).toMatchObject({ status: "EXPIRED", boardingCount: 1 });
+
+            // Wait for esplora to index the blocks, so the sweep sees an expired coin.
+            mineBlocks(21);
+            await waitFor(
+                async () =>
+                    (await wallet.onchainProvider.getChainTip()).height >=
+                    stale.status.block_height! + 21,
+                { timeout: 30_000, interval: 1000 },
+            );
+
+            // Its own poll: `wallet`'s manager is off (`settlementConfig: false`).
+            sweeper = new VtxoManager(wallet, { boardingUtxoSweep: true, pollIntervalMs: 2_000 });
+
+            await waitFor(
+                async () => {
+                    const [outspend] = (
+                        await wallet.onchainProvider.getTxOutspends(stale.txid)
+                    ).slice(stale.vout, stale.vout + 1);
+                    return outspend?.spent === true;
+                },
+                { timeout: 90_000, interval: 3_000 },
+            );
+
+            // The output lands on the boarding address of the ACTIVE signer, with a fee taken.
+            const swept = await wallet.getBoardingUtxos();
+            expect(swept).toHaveLength(1);
+            expect(swept[0].txid).not.toBe(stale.txid);
+            expect(swept[0].value).toBeLessThan(stale.value);
+            expect(swept[0].value).toBeGreaterThan(stale.value - 5_000);
+        } finally {
+            await sweeper?.dispose().catch(() => undefined);
+            await wallet.dispose().catch(() => undefined);
+        }
+    });
 });
