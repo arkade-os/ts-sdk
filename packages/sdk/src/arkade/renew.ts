@@ -139,42 +139,45 @@ export async function renewProgramContractOutputs(
     // Checked last thing before registering: an intent nobody joins holds the coins until arkd
     // drops it, and from here an abort can only leave it there.
     if (opts.signal?.aborted) throw new Error(ABORTED);
-    const intentId = await arkProvider.registerIntent({ proof: signedProof, message });
-
-    const handler = createArkadeBatchHandler(
-        intentId,
-        coins.map((coin, k) => ({ ...coin, arkadeScriptBytes: legs[k].compiled.arkadeScript! })),
-        undefined,
-        signedProof,
-        message,
-        session,
-        arkProvider,
-        emulator,
-        network,
-        legs.map(({ contract, coin }) => ({
-            address: contract.address,
-            amount: coin.value,
-            ...(coin.assets?.length ? { assets: coin.assets } : {}),
-        })),
-    );
     const abort = new AbortController();
     let onAbort = () => {};
-    // Batch.join sees the abort only on its next event; a batch that never starts would hang.
-    const aborted = new Promise<never>((_, reject) => {
-        onAbort = () => {
-            abort.abort();
-            reject(new Error(ABORTED));
-        };
-    });
-    if (opts.signal?.aborted) onAbort();
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
     try {
-        const stream = arkProvider.getEventStream(abort.signal, [
-            sessionKey,
-            ...coins.map((c) => `${c.txid}:${c.vout}`),
-        ]);
+        // Subscribed before registering: a batch started meanwhile would otherwise go unseen.
+        const events = Batch.prime(
+            arkProvider.getEventStream(abort.signal, [sessionKey, ...outpoints]),
+        );
+        const intentId = await arkProvider.registerIntent({ proof: signedProof, message });
+
+        const handler = createArkadeBatchHandler(
+            intentId,
+            coins.map((coin, k) => ({
+                ...coin,
+                arkadeScriptBytes: legs[k].compiled.arkadeScript!,
+            })),
+            undefined,
+            signedProof,
+            message,
+            session,
+            arkProvider,
+            emulator,
+            network,
+            legs.map(({ contract, coin }) => ({
+                address: contract.address,
+                amount: coin.value,
+                ...(coin.assets?.length ? { assets: coin.assets } : {}),
+            })),
+        );
+        // Batch.join sees the abort only on its next event; a batch that never starts would hang.
+        const aborted = new Promise<never>((_, reject) => {
+            onAbort = () => {
+                abort.abort();
+                reject(new Error(ABORTED));
+            };
+        });
+        if (opts.signal?.aborted) onAbort();
+        opts.signal?.addEventListener("abort", onAbort, { once: true });
         const commitmentTxid = await Promise.race([
-            Batch.join(stream, handler, { abortController: abort }),
+            Batch.join(events, handler, { abortController: abort }),
             aborted,
         ]);
         return { commitmentTxid, intentId };

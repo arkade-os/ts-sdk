@@ -334,7 +334,10 @@ style and have not been backfilled.
   the server's is refused before anything is registered, since no owner signs
   a renewal. The caller's `signal` ends the wait for a batch; one aborted
   before registration registers nothing, since an intent nobody joins holds
-  its coins until arkd drops it.
+  its coins until arkd drops it. It subscribes to batch events before
+  registering, as `Wallet.settle` does, so a batch that starts while the
+  intent is being registered is not missed; the new `Batch.prime` does the
+  subscribing for both.
 
 ### Changed
 

@@ -139,6 +139,25 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).not.toHaveBeenCalled();
     });
 
+    it("subscribes to batch events before registering the intent", async () => {
+        const order: string[] = [];
+        const { ark, target, registerIntent } = await keeper(() =>
+            (async function* () {
+                order.push("subscribed");
+                throw new Error("stream closed");
+            })(),
+        );
+        registerIntent.mockImplementation(async () => {
+            order.push("registered");
+            return "intent-1";
+        });
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /stream closed/,
+        );
+        expect(order).toEqual(["subscribed", "registered"]);
+    });
+
     it("leaves no listener on the caller's signal", async () => {
         const { ark, target } = await keeper(() =>
             (async function* () {
