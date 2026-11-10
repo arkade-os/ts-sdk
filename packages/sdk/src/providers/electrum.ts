@@ -857,7 +857,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                     scriptpubkey_address: scriptHex
                         ? (this.chain.addressForScript(scriptHex) ?? "")
                         : "",
-                    value: (output.amount ?? 0n).toString(),
+                    value: Number(output.amount ?? 0n),
                 });
             }
             vin = Array.from({ length: tx.inputsLength }, (_, k) => tx.getInput(k))
