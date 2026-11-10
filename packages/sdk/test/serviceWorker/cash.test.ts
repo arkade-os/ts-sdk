@@ -191,15 +191,15 @@ describe("Worker ArkadeCash", () => {
         } as never)) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
 
         if (response.payload?.action !== "activities") throw new Error("expected activities");
-        const [activity] = response.payload.activities;
-        expect(response.payload.activities).toHaveLength(1);
-        // The page's funding and sweep survive next to the recovery record's settle.
-        expect(activity.txs.map((t) => t.key.arkTxid).sort()).toEqual([
-            "funding",
-            "settle",
-            "sweep",
-        ]);
-        expect(activity.intent).toMatchObject({ outcome: "recovered" });
+        // Funding is the issue; the page's sweep and the recovery settle are claims.
+        const [claimed, issued] = response.payload.activities.sort((a, b) =>
+            a.id.localeCompare(b.id),
+        );
+        expect(response.payload.activities).toHaveLength(2);
+        expect(issued.txs.map((t) => t.key.arkTxid)).toEqual(["funding"]);
+        expect(claimed.txs.map((t) => t.key.arkTxid).sort()).toEqual(["settle", "sweep"]);
+        expect(claimed.intent).toMatchObject({ outcome: "recovered" });
+        expect(issued.intent).toMatchObject({ outcome: "recovered" });
     });
 
     it("exposes the created token", async () => {

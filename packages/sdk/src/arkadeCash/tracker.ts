@@ -98,7 +98,7 @@ export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver
                 const direction = claim ? "claimed" : "issued";
                 return [
                     {
-                        groupId: `arkade-cash:${record.id}`,
+                        groupId: `arkade-cash:${record.id}:${direction}`,
                         label: direction === "issued" ? "Cash issued" : "Cash claimed",
                         kind: "arkade-cash",
                         outcome: record.outcome,

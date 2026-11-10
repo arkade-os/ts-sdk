@@ -91,7 +91,7 @@ describe("ArkadeCash activity records", () => {
                 settled: true,
             },
         ]);
-        expect(activities[0].id).toBe("arkade-cash:cash-id");
+        expect(activities[0].id).toBe("arkade-cash:cash-id:issued");
         expect(activities[0].intent?.metadata).toEqual({ cashId: "cash-id", direction: "issued" });
     });
 
@@ -117,7 +117,7 @@ describe("ArkadeCash activity records", () => {
                 settled: true,
             },
         ]);
-        expect(activities.map((activity) => activity.id)).toEqual(["arkade-cash:cash-id"]);
+        expect(activities.map((activity) => activity.id)).toEqual(["arkade-cash:cash-id:issued"]);
     });
 
     it("splits one funding transaction across each voucher contribution", async () => {
@@ -140,8 +140,8 @@ describe("ArkadeCash activity records", () => {
             },
         ]);
         expect(activities.map((activity) => [activity.id, activity.amount])).toEqual([
-            ["arkade-cash:small", -3_000],
-            ["arkade-cash:large", -5_000],
+            ["arkade-cash:small:issued", -3_000],
+            ["arkade-cash:large:issued", -5_000],
         ]);
     });
 
@@ -239,5 +239,42 @@ describe("ArkadeCash activity records", () => {
         );
         expect(merged.outcome).toBe("recovered");
         expect(merged.claims.map((claim) => claim.txid)).toEqual(["sweep", "settle"]);
+    });
+
+    it("keeps issuing and reclaiming one voucher as two activities", async () => {
+        const records = createArkadeCashTracker();
+        addArkadeCashRecord(
+            records,
+            record({
+                id: "v",
+                action: "claimed",
+                outcome: "claimed",
+                issues: [{ txid: "funding", amount: 5_000 }],
+                claims: [{ txid: "claim", amount: 5_000 }],
+            }),
+        );
+        const tx = (arkTxid: string, type: TxType, createdAt: number) => ({
+            key: { arkTxid, commitmentTxid: "", boardingTxid: "" },
+            type,
+            amount: 5_000,
+            createdAt,
+            settled: true,
+        });
+        const activities = await arkadeCashActivity(records, [
+            tx("funding", TxType.TxSent, 1),
+            tx("claim", TxType.TxReceived, 2),
+        ]);
+        expect(
+            activities
+                .map((activity) => [
+                    activity.intent?.label,
+                    activity.intent?.metadata?.direction,
+                    activity.amount,
+                ])
+                .sort(),
+        ).toEqual([
+            ["Cash claimed", "claimed", 5_000],
+            ["Cash issued", "issued", -5_000],
+        ]);
     });
 });
