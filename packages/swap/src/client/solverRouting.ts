@@ -28,16 +28,20 @@ export interface SolverRoutingContext {
 
 /** Optional direction-specific policy for quote preparation; accepted swaps keep their solver. */
 export interface SolverRoutingPolicy {
-    /** Try another candidate on solver-local quote failure; defaults to true. Invalid terms
-     * are discarded before funding and every candidate must pass full verification.
+    /** Try another candidate on solver-local quote failure; defaults to true. Every candidate
+     * passes full verification before funding. Custom transports throw {@link SolverUnavailable}
+     * for retryable failures; exhausted attempts throw {@link SolverRoutesUnavailable}.
      * Attempts may disclose the same invoice or request details to multiple solvers.
-     * An explicit `selectMarket` remains an authoritative pin or veto and disables failover. */
+     * Feed/fetchImpl failures are retryable; AbortError stops the operation. Authenticate before
+     * quoting, or set false to surface feed errors. Explicit `selectMarket` disables failover. */
     readonly failover?: boolean;
     /** Read current preferences before selection. Absent means discovery order; rejection stops
      * the operation before negotiation. Modes, priority, usage and disabled solver IDs follow
      * {@link SolverRoutingPreferences}. `preferFirst` precedes heuristic ordering without disabling
-     * failover. Pauses apply to new candidate selection; issued quotes
-     * and accepted swaps retain their selected solver. */
+     * failover. Cost estimates include directional flat fees, feed prices and carrier charges:
+     * most received for exact give, least deposited for exact take; unavailable estimates follow.
+     * They do not poll every RFQ solver or guarantee the cheapest final quote. Pauses affect new
+     * selection; issued quotes and accepted swaps retain their selected solver. */
     readonly preferences?: (
         context: SolverRoutingContext,
     ) => SolverRoutingPreferences | Promise<SolverRoutingPreferences>;
@@ -114,7 +118,7 @@ export class SolverRoutesUnavailable extends AggregateError {
     }
 }
 
-/** Count completed swaps for a `solverDirectionKey` or `SolverRoutingContext.direction`. */
+/** Count unique successful swap IDs for a `solverDirectionKey` or `SolverRoutingContext.direction`. */
 export const completedSolverUsage = (
     swaps: readonly Swap[],
     network: string,

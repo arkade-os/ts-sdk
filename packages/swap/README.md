@@ -44,32 +44,6 @@ const quote = await client.quote({ to: invoice });
 await client.accept(quote);
 ```
 
-Persist preferences in your application's storage. Usage counts unique successful swap IDs, not
-quote attempts. `candidates()` enumerates eligible markets without negotiating RFQs. Signed solver
-preference IDs include network, source, name and the claimed discovery key; quote responder checks
-remain independent. Direction keys keep reversed routes separate.
-
-`preferFirst` is a soft preference for one eligible solver in that direction. The rest follow
-the selected ordering mode, and quote preparation can still fail over if the preferred solver
-fails. Missing or paused preferences fall back to the remaining enabled solvers. Use `selectMarket`
-for an authoritative single-solver selection; it keeps its existing failover-disabled behavior.
-
-Cost mode orders advertised estimates at the requested amount: most received for exact give,
-least deposited for exact take. Estimates include directional flat fees, feed prices and carrier
-charges; unavailable estimates follow comparable ones. This does not query every RFQ solver or
-guarantee the cheapest final quote. Existing fee ceilings and confirmation checks still apply;
-final fee-ceiling rejection does not retry acceptance. Low-level `/protocol` requests remain
-single-solver primitives; use this client for shared routing behavior.
-
-Custom transports should throw `SolverUnavailable` for retryable connection failures or timeouts.
-Exhaustion across multiple solvers throws `SolverRoutesUnavailable` with each attempt's solver
-identity and error. Neither error authorizes retrying acceptance after funding began.
-
-Advertised-feed failures, including `fetchImpl` rejections, are retryable with routing enabled;
-the fetch interface cannot distinguish a network failure from a custom callback's dependency error.
-Complete application authentication before quoting. Cancellation (`AbortError`) stops the operation;
-set `failover: false` if any feed failure must be surfaced without another solver attempt.
-
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
