@@ -186,18 +186,8 @@ for (const observation of [recovery, remoteRecovery]) {
 assert.equal(remoteRecovery.destination.txid, remote.payout);
 assert.match(services.backendBinarySha256, /^[0-9a-f]{64}$/);
 assert.equal(services.identities.length, 13);
-for (const [name, input] of [
-    ["arkd", "arkd"],
-    ["arkd-signer", "signer"],
-    ["emulator", "emulator"],
-    ["delegatee", "delegatee"],
-    ["arkd-wallet", "wallet"],
-]) {
-    assert.equal(
-        services.identities.find((service) => service.name === name)?.configuredImage,
-        services.inputs[input],
-    );
-}
+for (const { name, configuredImage } of services.identities)
+    assert.equal(configuredImage, services.images[name], `Unexpected image for ${name}`);
 assert.equal(cleanup.volumesDeleted, false);
 assert.deepEqual(
     new Set(cleanup.stoppedContainerIds),

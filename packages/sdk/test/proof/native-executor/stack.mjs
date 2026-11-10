@@ -4,16 +4,8 @@ import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { command, docker, owned, published, save, sdk, waitFor } from "./common.mjs";
 
-export const inputs = {
-    regtestCommit: "a1b4fdc859b41281d00d16596408055f254225bf",
-    arkd: "ghcr.io/arkade-os/arkd@sha256:b08707af9f0db7509d7bbfa8cbe2a2b58129434986b31852ce0280171db82ecc",
-    signer: "ghcr.io/arkade-os/arkd-signer@sha256:ee9306e17a1db93c0e8acbfb5742fd1c1797ff19dc2c760e59a7578b1825ae5d",
-    emulator:
-        "ghcr.io/arkade-os/emulator@sha256:6539005abbaffee44a3a2f82072f49b0f926f32043bda12ab14658dc87f8889f",
-    delegatee:
-        "ghcr.io/arkade-os/delegatee@sha256:b49dd1ab434ac8472439a3e1f5bd676bcac06528ae8629e9a7017047e5f0c315",
-    wallet: "ghcr.io/arkade-os/arkd-wallet@sha256:1dec9aa6ffd71ce50fded2f6a0211ffe61b4306bc12d1158c6efe395fc7d1e07",
-};
+// Image versions come from this regtest commit's .env.defaults; bump the pin to change them.
+export const inputs = { regtestCommit: "a1b4fdc859b41281d00d16596408055f254225bf" };
 export async function createStack(output) {
     assert.equal(process.version, "v24.22.1");
     assert.equal(
@@ -39,6 +31,8 @@ export async function createStack(output) {
     const config = JSON.parse(
         await docker(
             "compose",
+            "--env-file",
+            "regtest/.env.defaults",
             "--profile",
             "*",
             "-f",
@@ -64,13 +58,11 @@ export async function createStack(output) {
         "arkd",
     ];
     config.name = project;
+    const { emulator, delegatee } = config.services;
     config.services = Object.fromEntries(services.map((name) => [name, config.services[name]]));
-    config.services["arkd-wallet"].image = inputs.wallet;
-    config.services["arkd-signer"].image = inputs.signer;
     config.services["arkd-signer"].environment.ARKD_SIGNER_SECRET_KEY =
         randomBytes(32).toString("hex");
     const arkd = config.services.arkd;
-    arkd.image = inputs.arkd;
     Object.assign(arkd.environment, {
         ARKD_BOARDING_EXIT_DELAY: "1536",
         ARKD_CHECKPOINT_EXIT_DELAY: "512",
@@ -87,7 +79,7 @@ export async function createStack(output) {
         ARK_ONCHAIN_OUTPUT_FEE: "0.0",
     });
     config.services.emulator = {
-        image: inputs.emulator,
+        image: emulator.image,
         ports: [{ target: 7073 }],
         environment: {
             EMULATOR_PORT: "7073",
@@ -97,7 +89,7 @@ export async function createStack(output) {
         },
     };
     config.services.delegatee = {
-        image: inputs.delegatee,
+        image: delegatee.image,
         ports: [{ target: 7080 }],
         environment: {
             DELEGATEE_ARK_URL: "arkd:7070",
@@ -140,6 +132,9 @@ export async function createStack(output) {
     };
     await save(state.composeFile, config);
     state.services = Object.keys(config.services);
+    state.images = Object.fromEntries(
+        Object.entries(config.services).map(([name, service]) => [name, service.image]),
+    );
     state.privateKeyFile = join(run, "private/owner.json");
     state.database = join(run, "private/wallet.sqlite");
     await save(join(run, "private/state.json"), state);
@@ -289,6 +284,7 @@ export async function startStack(state) {
     }
     await save(join(state.run, "public/services.json"), {
         inputs,
+        images: state.images,
         identities,
         backendBinarySha256: state.backendBinarySha256,
         emulator: info,
