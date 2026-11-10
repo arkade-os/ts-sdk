@@ -154,6 +154,46 @@ describe("renewProgramContractOutputs", () => {
         expect(old[0].settledBy).toBe(commitmentTxid);
     });
 
+    it("withdraws an aborted renewal's intent, so a retry registers", {
+        timeout: 120000,
+    }, async () => {
+        const caller = new AbortController();
+        // Aborts once the intent is registered, before any batch can start.
+        const abortsOnRegister = Object.assign(Object.create(arkProvider), {
+            async registerIntent(intent: Parameters<RestArkProvider["registerIntent"]>[0]) {
+                const intentId = await arkProvider.registerIntent(intent);
+                caller.abort();
+                return intentId;
+            },
+        }) as RestArkProvider;
+        const keeper = await arkade.Arkade.connect({
+            arkade: abortsOnRegister,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const contract = keeper.contract(renewable, {
+            owner: await createTestIdentity().xOnlyPublicKey(),
+        });
+        faucetOffchain(contract.address, 5000);
+        const [coin] = await spendableAt(contract.pkScript, 1);
+
+        await expect(
+            arkade.renewProgramContractOutputs(keeper, [{ contract, coin }], {
+                signal: caller.signal,
+            }),
+        ).rejects.toThrow(/aborted before the batch completed/);
+
+        // A left intent would hold the coin, failing this with "duplicated input".
+        const { commitmentTxid } = await arkade.renewProgramContractOutputs(keeper, [
+            { contract, coin },
+        ]);
+        const { vtxos: old } = await indexer.getVtxos({
+            outpoints: [{ txid: coin.txid, vout: coin.vout }],
+        });
+        expect(old[0].settledBy).toBe(commitmentTxid);
+    });
+
     it("refuses a function that is not a covenant", { timeout: 60000 }, async () => {
         const { keeper, contract } = await renewableContract();
         faucetOffchain(contract.address, 5000);

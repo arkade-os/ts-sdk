@@ -56,6 +56,7 @@ async function keeper(
 ) {
     const server = xOnly();
     const registerIntent = vi.fn(async () => "intent-1");
+    const deleteIntent = vi.fn(async () => {});
     const ark = await arkade.Arkade.connect({
         arkade: {
             async getInfo() {
@@ -71,6 +72,7 @@ async function keeper(
                 } as any;
             },
             registerIntent,
+            deleteIntent,
             getEventStream: stream,
         } as any,
         emulator: { submitIntent: vi.fn(async ({ proof }) => proof) } as any,
@@ -83,13 +85,42 @@ async function keeper(
         script: hex.encode(contract.pkScript),
         status: { confirmed: true },
     } as unknown as VirtualCoin;
-    return { ark, target: { contract, coin }, registerIntent };
+    return { ark, target: { contract, coin }, registerIntent, deleteIntent };
+}
+
+/** A stub batch handler that lets every step through; `onBatchFinalization` is where forfeits go. */
+function passingHandler(onBatchFinalization: () => Promise<void> = async () => {}) {
+    vi.mocked(createArkadeBatchHandler).mockReturnValueOnce({
+        onBatchStarted: async () => ({ skip: false }),
+        onTreeSigningStarted: async () => ({ skip: false }),
+        onTreeNonces: async () => ({ fullySigned: true }),
+        onBatchFinalization,
+    });
+}
+
+/** Server events taking a batch to finalization, then `last` after a tick. */
+async function* batchUpTo(last: object) {
+    const node = new Transaction();
+    node.addInput({ txid: new Uint8Array(32), index: 0 });
+    node.addOutput({ script: new Uint8Array([0x51]), amount: 1000n });
+    yield { type: SettlementEventType.BatchStarted };
+    yield {
+        type: SettlementEventType.TreeTx,
+        batchIndex: 0,
+        chunk: { txid: node.id, tx: base64.encode(node.toPSBT()), children: {} },
+    };
+    yield { type: SettlementEventType.TreeSigningStarted };
+    yield { type: SettlementEventType.TreeNonces };
+    yield { type: SettlementEventType.BatchFinalization };
+    // A tick for an honoured abort to reject the renewal before `last` arrives.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    yield last;
 }
 
 describe("renewProgramContractOutputs", () => {
     it("gives up when the caller's signal aborts before a batch starts", async () => {
         const streams: AbortSignal[] = [];
-        const { ark, target } = await keeper((signal) => {
+        const { ark, target, deleteIntent } = await keeper((signal) => {
             streams.push(signal);
             return (async function* () {
                 await new Promise((resolve) => signal.addEventListener("abort", resolve));
@@ -102,6 +133,7 @@ describe("renewProgramContractOutputs", () => {
             arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(streams[0]?.aborted).toBe(true);
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
     });
 
     it("refuses a covenant leaf that needs a key besides the server's", async () => {
@@ -135,7 +167,7 @@ describe("renewProgramContractOutputs", () => {
     });
 
     it("registers no intent when the caller aborts while the proof is being signed", async () => {
-        const { ark, target, registerIntent } = await keeper(() => {
+        const { ark, target, registerIntent, deleteIntent } = await keeper(() => {
             throw new Error("no stream expected");
         });
         const caller = new AbortController();
@@ -152,6 +184,7 @@ describe("renewProgramContractOutputs", () => {
             arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(registerIntent).not.toHaveBeenCalled();
+        expect(deleteIntent).not.toHaveBeenCalled();
     });
 
     it("refuses a coin listed twice", async () => {
@@ -297,37 +330,79 @@ describe("renewProgramContractOutputs", () => {
 
     it("returns the commitment when the caller aborts while the forfeits are sent", async () => {
         const caller = new AbortController();
-        vi.mocked(createArkadeBatchHandler).mockReturnValueOnce({
-            onBatchStarted: async () => ({ skip: false }),
-            onTreeSigningStarted: async () => ({ skip: false }),
-            onTreeNonces: async () => ({ fullySigned: true }),
-            // arkd can commit the batch from here on, whatever the caller does.
-            onBatchFinalization: async () => caller.abort(),
-        });
-        const node = new Transaction();
-        node.addInput({ txid: new Uint8Array(32), index: 0 });
-        node.addOutput({ script: new Uint8Array([0x51]), amount: 1000n });
-        const { ark, target } = await keeper(
+        // arkd can commit the batch from here on, whatever the caller does.
+        passingHandler(async () => caller.abort());
+        const { ark, target, deleteIntent } = await keeper(
             () =>
-                (async function* () {
-                    yield { type: SettlementEventType.BatchStarted };
-                    yield {
-                        type: SettlementEventType.TreeTx,
-                        batchIndex: 0,
-                        chunk: { txid: node.id, tx: base64.encode(node.toPSBT()), children: {} },
-                    };
-                    yield { type: SettlementEventType.TreeSigningStarted };
-                    yield { type: SettlementEventType.TreeNonces };
-                    yield { type: SettlementEventType.BatchFinalization };
-                    // A tick for an honoured abort to reject the renewal before this arrives.
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                    yield { type: SettlementEventType.BatchFinalized, commitmentTxid: "commit-1" };
-                })() as AsyncIterableIterator<never>,
+                batchUpTo({
+                    type: SettlementEventType.BatchFinalized,
+                    commitmentTxid: "commit-1",
+                }) as AsyncIterableIterator<never>,
         );
 
         await expect(
             arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
         ).resolves.toEqual({ commitmentTxid: "commit-1", intentId: "intent-1" });
+        expect(deleteIntent).not.toHaveBeenCalled();
+    });
+
+    it("deletes its intent with an emulator-signed delete proof when the batch fails", async () => {
+        const { ark, target, registerIntent, deleteIntent } = await keeper(() =>
+            (async function* () {
+                throw new Error("stream closed");
+            })(),
+        );
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /stream closed/,
+        );
+        const [deleted] = deleteIntent.mock.calls[0] as unknown as [
+            { proof: string; message: { type: string } },
+        ];
+        expect(deleted.message.type).toBe("delete");
+        expect(ark.emulator!.submitIntent).toHaveBeenCalledWith(deleted);
+        // Same coins, and the same outputs the covenant checks, as the registration.
+        const [registered] = registerIntent.mock.calls[0] as unknown as [{ proof: string }];
+        const [del, reg] = [deleted, registered].map(({ proof }) =>
+            Transaction.fromPSBT(base64.decode(proof)),
+        );
+        const outs = (tx: Transaction) =>
+            Array.from({ length: tx.outputsLength }, (_, i) => tx.getOutput(i));
+        expect(del.inputsLength).toBe(reg.inputsLength);
+        expect(del.getInput(1).txid).toEqual(reg.getInput(1).txid);
+        expect(outs(del)).toEqual(outs(reg));
+    });
+
+    it("keeps its intent when the batch fails after the forfeits are sent", async () => {
+        passingHandler();
+        const { ark, target, deleteIntent } = await keeper(
+            () =>
+                batchUpTo({
+                    type: SettlementEventType.BatchFailed,
+                    reason: "batch failed",
+                }) as AsyncIterableIterator<never>,
+        );
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /batch failed/,
+        );
+        expect(deleteIntent).not.toHaveBeenCalled();
+    });
+
+    it("reports the batch's failure when deleting the intent fails too", async () => {
+        const { ark, target, deleteIntent } = await keeper(() =>
+            (async function* () {
+                throw new Error("stream closed");
+            })(),
+        );
+        deleteIntent.mockRejectedValueOnce(new Error("arkd unreachable"));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /stream closed/,
+        );
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
     });
 
     it("leaves no listener on the caller's signal", async () => {

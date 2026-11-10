@@ -19,6 +19,7 @@ import { withPrevTxs } from "../utils/prevoutTx";
 import type { VirtualCoin } from "../wallet";
 import { normalizeVtxo, toOffchainInputFeeParams } from "../wallet/vtxo";
 import { Batch } from "../wallet/batch";
+import { isNoMatchingIntentsError } from "../wallet/intentReconciliation";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
 import { staticWitness } from "./program";
@@ -44,8 +45,9 @@ export interface ProgramContractRenewTarget {
  * proof after running each covenant and co-signs the forfeits, so a keeper can keep coins alive
  * while their owners are offline. Returns the commitment txid.
  *
- * `signal` is honoured until the batch's forfeits are being sent; from then on the renewal waits
- * for the batch to finalize or fail, since it may commit either way.
+ * A renewal that fails or is aborted after registering deletes its intent, freeing the coins for a
+ * retry. `signal` is honoured until the batch's forfeits are being sent; from then on the renewal
+ * waits for the batch to finalize or fail, since it may commit either way.
  */
 export async function renewProgramContractOutputs(
     client: Arkade,
@@ -159,27 +161,38 @@ export async function renewProgramContractOutputs(
         expire_at: 0,
         cosigners_public_keys: [sessionKey],
     };
-    const proof = Proof.create(message, coins, [
+    const outputs = [
         ...legs.map(({ contract, coin }) => ({
             script: contract.pkScript,
             amount: BigInt(coin.value),
         })),
         Extension.create(packets).txOut(),
-    ]);
-    const signedProof = await emulator.submitIntent({
-        proof: base64.encode(proof.toPSBT()),
-        message,
-    });
-    // Checked last thing before registering: an intent nobody joins holds the coins until arkd
-    // drops it, and from here an abort can only leave it there.
+    ];
+    const deleteMessage: Proof.DeleteMessage = { type: "delete", expire_at: 0 };
+    // The delete proof is signed up front, as Wallet.settle does, so a failure can always withdraw
+    // the intent. It carries the same outputs, so the emulator runs the covenant on it and signs.
+    const [signedProof, deleteProof] = await Promise.all(
+        [message, deleteMessage].map((m) =>
+            emulator.submitIntent({
+                proof: base64.encode(Proof.create(m, coins, outputs).toPSBT()),
+                message: m,
+            }),
+        ),
+    );
+    // Checked last thing before registering, which an abort would otherwise have to undo.
     if (opts.signal?.aborted) throw new Error(ABORTED);
     const abort = new AbortController();
     let onAbort = () => {};
+    let registering = false;
+    // Once the forfeits go out the batch can commit without us: an abort from then on would
+    // report a spent coin as unrenewed, so the renewal runs to its outcome instead.
+    let forfeiting = false;
     try {
         // Subscribed before registering: a batch started meanwhile would otherwise go unseen.
         const events = Batch.prime(
             arkProvider.getEventStream(abort.signal, [sessionKey, ...outpoints]),
         );
+        registering = true;
         const intentId = await arkProvider.registerIntent({ proof: signedProof, message });
 
         const handler = createArkadeBatchHandler(
@@ -201,9 +214,6 @@ export async function renewProgramContractOutputs(
                 ...(coin.assets?.length ? { assets: coin.assets } : {}),
             })),
         );
-        // Once the forfeits go out the batch can commit without us: an abort from then on would
-        // report a spent coin as unrenewed, so the renewal runs to its outcome instead.
-        let forfeiting = false;
         // Batch.join sees the abort only on its next event; a batch that never starts would hang.
         const aborted = new Promise<never>((_, reject) => {
             onAbort = () => {
@@ -229,6 +239,21 @@ export async function renewProgramContractOutputs(
             aborted,
         ]);
         return { commitmentTxid, intentId };
+    } catch (error) {
+        // A left intent holds the coins until arkd drops it, failing retries with "duplicated
+        // input". Not once forfeiting: the batch may still commit them.
+        if (registering && !forfeiting) {
+            await arkProvider
+                .deleteIntent({ proof: deleteProof, message: deleteMessage })
+                .catch((e) => {
+                    if (isNoMatchingIntentsError(e)) return;
+                    console.warn(
+                        `renewProgramContractOutputs: failed to delete the intent for [${outpoints.join(",")}]; retries fail until arkd drops it`,
+                        e,
+                    );
+                });
+        }
+        throw error;
     } finally {
         opts.signal?.removeEventListener("abort", onAbort);
         abort.abort();

@@ -333,11 +333,15 @@ style and have not been backfilled.
   refused when the handler is built. A function whose leaf names any key but
   the server's is refused before anything is registered, since no owner signs
   a renewal. The caller's `signal` ends the wait for a batch; one aborted
-  before registration registers nothing, since an intent nobody joins holds
-  its coins until arkd drops it. Once the forfeits are being sent the signal
-  is ignored and the renewal waits for the batch's outcome: arkd can commit
-  it by then, and an abort would report spent coins as unrenewed and lose the
-  commitment txid. It subscribes to batch events before
+  before registration registers nothing. A renewal that fails or is aborted
+  after registering deletes its intent with a delete proof the emulator signs
+  up front alongside the registration, as `Wallet.settle` does; a left intent
+  held the coins until arkd dropped it, failing retries with "duplicated
+  input". `EmulatorProvider.submitIntent` accepts a delete message for this.
+  Once the forfeits are being sent the signal is ignored and the intent kept,
+  and the renewal waits for the batch's outcome: arkd can commit it by then,
+  and an abort would report spent coins as unrenewed and lose the commitment
+  txid. It subscribes to batch events before
   registering, as `Wallet.settle` does, so a batch that starts while the
   intent is being registered is not missed; the new `Batch.prime` does the
   subscribing for both. A renewal the server would charge an intent fee for
