@@ -476,7 +476,7 @@ const balance = await wallet.getBalance()
 | `preconfirmed` | Owned offchain funds not yet finalized in a batch. |
 | `available` | What `send` and every other automatic coin selection can spend now. |
 | `contractLocked` | Held by a contract that generic spending refuses (chiefly swap escrow); only that contract can spend it ([Contract Management](#contract-management)). |
-| `pendingSettlement` | Committed to an in-flight settlement intent; back in `available` when the intent ends. Always `0` without `storage.intentRepository`. |
+| `pendingSettlement` | Committed to an in-flight batch registration; back in `available` when the registration ends. Always `0` without `storage.intentRepository`. |
 | `reserved` | Held by [`reserveVtxos`](#holding-vtxos-for-your-own-use) until released. |
 | `recoverable` | Swept or subdust virtual outputs that [`recoverVtxos`](#recovery-reclaim-swept-vtxos) can reclaim; `getRecoverableBalance()` gives what a batch would return today. |
 | `deprecatedSignerLocked` | Under an operator signer past its cutoff, which the operator no longer cosigns; recovers once swept and re-settled. |
@@ -1199,7 +1199,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
-  IndexedDBIntentRepository,
+  IndexedDBBatchRegistrationRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -1209,10 +1209,10 @@ const bus = new MessageBus(walletRepo, contractRepo, {
   messageHandlers: [new WalletMessageHandler()],
   tickIntervalMs: 10_000, // default 10s
   // Optional, same opt-in as `storage.intentRepository` on a main-thread
-  // wallet. Omit it and the worker persists no settlement intent, reconciles
-  // none on restart, and counts intent-locked VTXOs as available
+  // wallet. Omit it and the worker persists no batch registration, reconciles
+  // none on restart, and counts registration-locked virtual outputs as available
   // (`pendingSettlement` stays 0).
-  intentRepository: new IndexedDBIntentRepository(),
+  intentRepository: new IndexedDBBatchRegistrationRepository(),
 })
 
 bus.start()
@@ -1300,7 +1300,7 @@ Limits must be 1–500. History pages are ordered by `(createdAt, transaction ke
 by their script and intent transaction ID. Filters must stay the same across
 pages. Repository collection reads use pages directly; `collectVtxos`,
 `collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
-`collectIntents` traverse all pages when a complete snapshot is required.
+`collectBatchRegistrations` traverse all pages when a complete snapshot is required.
 Wallet spending paths consume every VTXO or UTXO page before coin selection.
 In `@arkade-os/swap`, RFQ page `since` values use Unix seconds instead.
 
@@ -1318,7 +1318,7 @@ do {
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, `IntentRepository`,
+`WalletRepository`, `ContractRepository`, `BatchRegistrationRepository`,
 `VirtualTxRepository`, and `AssetSwapRepository` (in `@arkade-os/swap`) each
 declare a `readonly version` field with a literal type. All built-in
 implementations set this to the current version. If you maintain a custom
