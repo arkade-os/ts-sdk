@@ -321,8 +321,8 @@ style and have not been backfilled.
   `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
   longer reports a txid it did not submit.
 
-- **`renewArkadeVtxos` renews covenant VTXOs without an owner key.** A
-  covenant coin whose owner is offline was swept at batch expiry unless the
+- **`renewProgramContractOutputs` renews covenant VTXOs without an owner
+  key.** A covenant coin whose owner is offline was swept at batch expiry unless the
   app hand-rolled the intent, the emulator packet and a batch handler that
   still demanded a signer. The helper registers one intent for any number of
   coins, each through a covenant function that lets proof input k+1 through

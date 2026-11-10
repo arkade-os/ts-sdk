@@ -49,7 +49,7 @@ async function keeper(stream: (signal: AbortSignal) => AsyncIterableIterator<nev
     return { ark, target: { contract, coin }, registerIntent };
 }
 
-describe("renewArkadeVtxos", () => {
+describe("renewProgramContractOutputs", () => {
     it("gives up when the caller's signal aborts before a batch starts", async () => {
         const streams: AbortSignal[] = [];
         const { ark, target } = await keeper((signal) => {
@@ -62,7 +62,7 @@ describe("renewArkadeVtxos", () => {
         setTimeout(() => caller.abort(), 50);
 
         await expect(
-            arkade.renewArkadeVtxos(ark, [target], { signal: caller.signal }),
+            arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(streams[0]?.aborted).toBe(true);
     });
@@ -91,7 +91,7 @@ describe("renewArkadeVtxos", () => {
             status: { confirmed: true },
         } as unknown as VirtualCoin;
 
-        await expect(arkade.renewArkadeVtxos(ark, [{ contract, coin }])).rejects.toThrow(
+        await expect(arkade.renewProgramContractOutputs(ark, [{ contract, coin }])).rejects.toThrow(
             /needs a signature besides the server's/,
         );
         expect(registerIntent).not.toHaveBeenCalled();
@@ -112,7 +112,7 @@ describe("renewArkadeVtxos", () => {
         };
 
         await expect(
-            arkade.renewArkadeVtxos(ark, [target], { signal: caller.signal }),
+            arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(registerIntent).not.toHaveBeenCalled();
     });
@@ -122,7 +122,7 @@ describe("renewArkadeVtxos", () => {
             throw new Error("no stream expected");
         });
 
-        await expect(arkade.renewArkadeVtxos(ark, [target, target])).rejects.toThrow(
+        await expect(arkade.renewProgramContractOutputs(ark, [target, target])).rejects.toThrow(
             /listed twice/,
         );
         expect(registerIntent).not.toHaveBeenCalled();
@@ -134,7 +134,7 @@ describe("renewArkadeVtxos", () => {
         });
 
         await expect(
-            arkade.renewArkadeVtxos(ark, [target], { signal: AbortSignal.abort() }),
+            arkade.renewProgramContractOutputs(ark, [target], { signal: AbortSignal.abort() }),
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(registerIntent).not.toHaveBeenCalled();
     });
@@ -148,7 +148,7 @@ describe("renewArkadeVtxos", () => {
         const caller = new AbortController();
 
         await expect(
-            arkade.renewArkadeVtxos(ark, [target], { signal: caller.signal }),
+            arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
         ).rejects.toThrow(/stream closed/);
         expect(getEventListeners(caller.signal, "abort")).toHaveLength(0);
     });

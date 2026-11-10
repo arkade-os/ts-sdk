@@ -41,7 +41,7 @@ export {
     type ArkadeExtendedCoin,
     type ArkadeExtendedVirtualCoin,
 } from "./batch";
-export { renewArkadeVtxos, type ArkadeRenewTarget } from "./renew";
+export { renewProgramContractOutputs, type ProgramContractRenewTarget } from "./renew";
 export { programFromArtifact, isContractArtifact, type ContractArtifact } from "./artifact";
 export {
     ArkadeProgramScript,

@@ -21,10 +21,10 @@ import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
 import { witnessRefToBytes } from "./program";
 
-const ABORTED = "renewArkadeVtxos: aborted before the batch completed";
+const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
 
 /** A covenant VTXO and the function that renews it. */
-export interface ArkadeRenewTarget {
+export interface ProgramContractRenewTarget {
     // `<any>`, as in ArkadeTransactionBuilder: a contract of a literal program is not assignable
     // to ArkadeContract<Program>, and renewal reads nothing program-specific.
     contract: ArkadeContract<any>;
@@ -42,31 +42,33 @@ export interface ArkadeRenewTarget {
  * proof after running each covenant and co-signs the forfeits, so a keeper can keep coins alive
  * while their owners are offline. Returns the commitment txid.
  */
-export async function renewArkadeVtxos(
+export async function renewProgramContractOutputs(
     client: Arkade,
-    targets: ArkadeRenewTarget[],
+    targets: ProgramContractRenewTarget[],
     opts: { session?: SignerSession; signal?: AbortSignal } = {},
 ): Promise<{ commitmentTxid: string; intentId: string }> {
     const { emulator, indexer, network } = client;
     const arkProvider = client.arkProvider as OperatorProvider;
     if (!emulator || !indexer || typeof arkProvider.registerIntent !== "function") {
         throw new Error(
-            "renewArkadeVtxos: the Arkade client needs an emulator, an indexer and a full OperatorProvider",
+            "renewProgramContractOutputs: the Arkade client needs an emulator, an indexer and a full OperatorProvider",
         );
     }
-    if (targets.length === 0) throw new Error("renewArkadeVtxos: nothing to renew");
+    if (targets.length === 0) throw new Error("renewProgramContractOutputs: nothing to renew");
     const outpoints = targets.map(({ coin }) => `${coin.txid}:${coin.vout}`);
     const twice = outpoints.find((o, i) => outpoints.indexOf(o) !== i);
-    if (twice) throw new Error(`renewArkadeVtxos: coin ${twice} listed twice`);
+    if (twice) throw new Error(`renewProgramContractOutputs: coin ${twice} listed twice`);
 
     const legs = targets.map(({ contract, coin, fn = "renew" }) => {
         const compiled = contract.vtxoScript.functionByName(fn);
         if (!compiled?.arkadeScript) {
-            throw new Error(`renewArkadeVtxos: ${fn} is not a covenant function`);
+            throw new Error(`renewProgramContractOutputs: ${fn} is not a covenant function`);
         }
         // No owner signs a renewal: a leaf naming any key but the server's could never complete.
         if (compiled.signerKeys.some((key) => !equalBytes(key, contract.keys.serverKey))) {
-            throw new Error(`renewArkadeVtxos: ${fn} needs a signature besides the server's`);
+            throw new Error(
+                `renewProgramContractOutputs: ${fn} needs a signature besides the server's`,
+            );
         }
         const stack = (compiled.def.arkadeScript?.witness ?? []).map((ref) =>
             witnessRefToBytes(ref, {}, contract.args),

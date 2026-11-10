@@ -20,7 +20,7 @@ import {
 const ARK_SERVER_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
 
-describe("renewArkadeVtxos", () => {
+describe("renewProgramContractOutputs", () => {
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
     const indexer = new RestIndexerProvider(ARK_SERVER_URL);
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
@@ -66,7 +66,7 @@ describe("renewArkadeVtxos", () => {
         faucetOffchain(contract.address, 7000);
         const coins = await spendableAt(contract.pkScript, 2);
 
-        const { commitmentTxid } = await arkade.renewArkadeVtxos(
+        const { commitmentTxid } = await arkade.renewProgramContractOutputs(
             keeper,
             coins.map((coin) => ({ contract, coin })),
         );
@@ -98,7 +98,7 @@ describe("renewArkadeVtxos", () => {
         });
         const [coin] = await spendableAt(contract.pkScript, 1);
 
-        await arkade.renewArkadeVtxos(keeper, [{ contract, coin }]);
+        await arkade.renewProgramContractOutputs(keeper, [{ contract, coin }]);
 
         const [renewed] = await spendableAt(contract.pkScript, 1, [`${coin.txid}:${coin.vout}`]);
         expect(renewed.value).toBe(2000);
@@ -111,7 +111,7 @@ describe("renewArkadeVtxos", () => {
         const [coin] = await spendableAt(contract.pkScript, 1);
 
         await expect(
-            arkade.renewArkadeVtxos(keeper, [{ contract, coin, fn: "unilateral" }]),
+            arkade.renewProgramContractOutputs(keeper, [{ contract, coin, fn: "unilateral" }]),
         ).rejects.toThrow(/unilateral is not a covenant function/);
     });
 });
