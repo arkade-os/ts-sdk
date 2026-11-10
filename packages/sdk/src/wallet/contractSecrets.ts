@@ -173,11 +173,20 @@ async function provisionDescriptor(wallet: IWallet): Promise<string> {
  * never built, and the refund path is on the same key as the quote-time refund address.
  */
 export async function provisionRefundKey(wallet: IWallet): Promise<ProvisionedKey> {
-    const descriptor = await identityDescriptor(wallet.identity);
+    // Two identity reads on purpose: the descriptor is the first, the guard below is the
+    // second, and a hand-rolled identity that answers differently must still fail here.
+    // The guard read is in flight during signer resolution. `getAddress` stays after the
+    // guard so a failing identity is not also asked for an address.
+    const descriptorPromise = identityDescriptor(wallet.identity);
+    const identityPubkeyPromise = wallet.identity.xOnlyPublicKey();
+    void identityPubkeyPromise.catch(() => undefined);
+    const descriptor = await descriptorPromise;
     const signer = await contractSigner(wallet, descriptor);
-    const pubkey = await signer.xOnlyPublicKey();
+    const [pubkey, identityPubkey] = await Promise.all([
+        signer.xOnlyPublicKey(),
+        identityPubkeyPromise,
+    ]);
     // The refund path and refund destination must be one key, or the user cannot recover funds.
-    const identityPubkey = await wallet.identity.xOnlyPublicKey();
     if (!equalBytes(pubkey, identityPubkey)) {
         throw new Error(
             "provisionRefundKey: descriptor pubkey does not match wallet identity — " +
@@ -214,7 +223,6 @@ export async function provisionClaimSecret(
     // A fresh HD index, so each artifact's preimage is uniquely derivable (unlike the refund key).
     const descriptor = await provisionDescriptor(wallet);
     const signer = await contractSigner(wallet, descriptor);
-    const pubkey = await signer.xOnlyPublicKey();
     const claim = async (): Promise<
         Pick<ProvisionedClaimSecret, "preimage" | "preimageSalt" | "mustPersistPreimage">
     > => {
@@ -244,7 +252,11 @@ export async function provisionClaimSecret(
             return { preimage: randomBytes(32), mustPersistPreimage: true };
         }
     };
-    const { preimage, preimageSalt, mustPersistPreimage } = await claim();
+    // The pubkey read and the preimage derivation both need the signer and nothing else.
+    const [pubkey, { preimage, preimageSalt, mustPersistPreimage }] = await Promise.all([
+        signer.xOnlyPublicKey(),
+        claim(),
+    ]);
     return {
         descriptor,
         pubkey,

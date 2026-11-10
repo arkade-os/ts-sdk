@@ -37,7 +37,7 @@ export class PrevTxUnavailableError extends Error {
  * Resolve raw wire-format bytes for each txid, batched and de-duplicated.
  *
  * Emulator v0.0.7+ requires the raw tx behind every input of a submitted ark tx
- * or intent proof (`PrevArkTxField`) and of an onchain tx (`PrevoutTxField`).
+ * or proof (`PrevArkTxField`) and of an onchain tx (`PrevoutTxField`).
  * The value is a serialized `wire.MsgTx`, *not* a PSBT — `Transaction.toBytes()`
  * with the default `(withScriptSig=false, withWitness=false)` is exactly the
  * preimage the emulator hashes to check the tx against the outpoint.
@@ -143,8 +143,13 @@ export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Pr
     if (pending.length === 0) return;
 
     const resolved = new Map<string, Uint8Array>();
-    for (const txid of new Set(pending.map((p) => p.txid))) {
-        resolved.set(txid, await source.getRawTransaction(txid));
+    const txids = [...new Set(pending.map((p) => p.txid))];
+    // Same failure as the old loop: the first txid's rejection, in request order.
+    const fetched = await Promise.allSettled(txids.map((txid) => source.getRawTransaction(txid)));
+    for (let i = 0; i < fetched.length; i++) {
+        const result = fetched[i];
+        if (result.status === "rejected") throw result.reason;
+        resolved.set(txids[i], result.value);
     }
     for (const { index, txid } of pending) {
         setArkPsbtField(tx, index, PrevoutTxField, resolved.get(txid)!);
@@ -152,13 +157,13 @@ export async function attachPrevoutTxs(tx: Transaction, source: RawTxSource): Pr
 }
 
 /**
- * A coin an intent proof spends, carrying the raw previous tx the emulator needs
+ * A coin a proof spends, carrying the raw previous tx the emulator needs
  * to resolve its prevout pkScript.
  */
 export type WithPrevTx<T> = T & { prevTx?: Uint8Array };
 
 /**
- * Fill in `prevTx` on every coin an intent proof will spend, in one batched
+ * Fill in `prevTx` on every coin a proof will spend, in one batched
  * lookup. The proof's synthetic input 0 needs nothing — the emulator synthesises
  * a one-output tx for it — so this covers exactly the coins, which land on proof
  * inputs `1..n`.

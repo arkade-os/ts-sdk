@@ -6,7 +6,7 @@
  * reads as permanent, one it surfaces as `needs_recovery`. A factory that
  * caught either would turn a state the trader must act on into a retry.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -101,7 +101,8 @@ const fakeContracts = (over: { unspent?: typeof FUNDED; swept?: typeof FUNDED } 
 
 const FUNDED = [{ txid: "11".repeat(32), vout: 0, value: 60_000, recoverable: false }];
 
-const walletFor = (identity = SENDER) => ({ identity }) as unknown as IWallet;
+const walletFor = (identity = SENDER, oneShotSubmit?: boolean) =>
+    ({ identity, oneShotSubmit }) as unknown as IWallet;
 
 const swap = (): LightningSendSwap =>
     ({
@@ -136,13 +137,14 @@ const refunderWith = async (
         stored?: RfqSwapRecord | null;
         wallet?: IWallet;
         network?: () => Promise<Network>;
+        operator?: ArkProvider;
     } = {},
 ) => {
     const repository = new InMemoryAssetSwapRepository();
     const stored = input.stored === null ? undefined : (input.stored ?? (await record()));
     if (stored) await repository.saveRfqSwap(stored);
     return arkadeRefunder({
-        operator: fakeOperator(),
+        operator: input.operator ?? fakeOperator(),
         contracts: input.contracts ?? fakeContracts({ unspent: FUNDED }),
         wallet: input.wallet ?? walletFor(),
         repository,
@@ -157,6 +159,20 @@ describe("arkadeRefunder", () => {
 
         expect(result?.amount).toBe(60_000);
         expect(result?.txid).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("keeps the two-step flow when the wallet opted out of one-shot submit", async () => {
+        const operator = fakeOperator();
+        const submitTx = vi.spyOn(operator, "submitTx");
+        const finalizeTx = vi.spyOn(operator, "finalizeTx");
+        const refund = await refunderWith({ operator, wallet: walletFor(SENDER, false) });
+        await refund(swap());
+
+        const [checkpoint] = submitTx.mock.calls[0][1];
+        expect(
+            Transaction.fromPSBT(base64.decode(checkpoint)).getInput(0).tapScriptSig ?? [],
+        ).toEqual([]);
+        expect(finalizeTx).toHaveBeenCalledTimes(1);
     });
 
     it("floors the checkpoint script against the caller's network, not the operator's", async () => {

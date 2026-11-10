@@ -6,7 +6,7 @@ import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
 import { ConditionWitness, PrevArkTxField, VtxoTaprootTree } from "../utils/unknownFields";
 import { hex } from "@scure/base";
-import { getSequence, VtxoScript } from "../script/base";
+import { getSequence, proofTapLeafScriptOf, VtxoScript } from "../script/base";
 import { ExtendedCoin } from "../wallet";
 import type { WithPrevTx } from "../utils/prevoutTx";
 
@@ -22,28 +22,32 @@ import type { WithPrevTx } from "../utils/prevoutTx";
 type TransactionGlobal = PSBTKeyMapKeys<typeof PSBTGlobal>;
 
 /**
- * A coin an intent proof proves ownership of. `prevTx` carries the raw wire
+ * An input of a {@link Proof}: an output it proves ownership of. `prevTx` carries the raw wire
  * bytes of the transaction that created it — required by emulator v0.0.7+ on
- * every real input of a submitted proof. {@link Intent.create} is synchronous,
+ * every real input of a submitted proof. {@link Proof.create} is synchronous,
  * so the bytes are supplied rather than fetched; `withPrevTxs` fills them in.
  */
-export type IntentCoin = WithPrevTx<ExtendedCoin>;
+export type ProofInput = WithPrevTx<ExtendedCoin>;
 
 /**
- * Intent proof implementation for Bitcoin message signing.
+ * A signed BIP322-style PSBT carrying a message. Its inputs are Bitcoin outputs,
+ * its signature proves the user controls them, and its message says what to do
+ * with them.
  *
- * Intent proof defines a standard for signing Bitcoin messages as well as proving
- * ownership of outputs.
+ * A proof is a deliberately invalid PSBT, so it can never be broadcast. Signing
+ * a proof means signing the PSBT as a regular transaction.
+ */
+export type Proof = Transaction;
+
+/**
+ * Utilities for creating and inspecting {@link Proof}s.
  *
- * This namespace provides utilities for creating and validating Intent proof.
- *
- * It is greatly inspired by BIP322.
  * @see https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki
  *
  * @example
  * ```typescript
- * // Create a Intent proof
- * const proof = Intent.create(
+ * // Create an unsigned proof
+ * const proof = Proof.create(
  *   "Hello Bitcoin!",
  *   [input],
  *   [output]
@@ -51,36 +55,32 @@ export type IntentCoin = WithPrevTx<ExtendedCoin>;
  *
  * // Sign the proof
  * const signedProof = await identity.sign(proof);
- *
+ * ```
  */
-export namespace Intent {
-    // Intent proof is a special invalid psbt containing the inputs to prove ownership
-    // signing the proof means signing the psbt as a regular transaction
-    export type Proof = Transaction;
-
+export namespace Proof {
     /**
-     * Creates a new Intent proof unsigned transaction.
+     * Creates an unsigned {@link Proof}.
      *
      * This function constructs a special transaction that can be signed to prove
      * ownership of onchain and virtual outputs. The proof includes the message to be
      * signed and the inputs/outputs that demonstrate ownership.
      *
-     * @param message - The Intent message to be signed, either raw string of Message object
+     * @param message - The message to be signed, either a raw string or a Message object
      * @param ins - Array of transaction inputs to prove ownership of
      * @param outputs - Optional array of transaction outputs
-     * @returns An unsigned Intent proof transaction
+     * @returns An unsigned proof
      */
     export function create(
         message: string | Message,
-        ins: (TransactionInput | IntentCoin)[],
+        ins: (TransactionInput | ProofInput)[],
         outputs: TransactionOutput[] = [],
     ): Proof {
         if (typeof message !== "string") {
             message = encodeMessage(message);
         }
 
-        if (ins.length == 0) throw new Error("intent proof requires at least one input");
-        const inputs = ins.map(prepareCoinAsIntentProofInput);
+        if (ins.length == 0) throw new Error("proof requires at least one input");
+        const inputs = ins.map(prepareProofInput);
         validateInputs(inputs);
         validateOutputs(outputs);
 
@@ -92,9 +92,9 @@ export namespace Intent {
     }
 
     /**
-     * Compute the fee paid by an intent proof transaction.
+     * Compute the fee paid by a proof.
      *
-     * @param proof - Intent proof transaction
+     * @param proof - The proof
      * @returns The fee in satoshis
      */
     export function fee(proof: Proof): number {
@@ -102,20 +102,20 @@ export namespace Intent {
         for (let i = 0; i < proof.inputsLength; i++) {
             const input = proof.getInput(i);
             if (input.witnessUtxo === undefined)
-                throw new Error("intent proof input requires witness utxo");
+                throw new Error("proof input requires witness utxo");
             sumOfInputs += input.witnessUtxo.amount;
         }
 
         let sumOfOutputs = 0n;
         for (let i = 0; i < proof.outputsLength; i++) {
             const output = proof.getOutput(i);
-            if (output.amount === undefined) throw new Error("intent proof output requires amount");
+            if (output.amount === undefined) throw new Error("proof output requires amount");
             sumOfOutputs += output.amount;
         }
 
         if (sumOfOutputs > sumOfInputs) {
             throw new Error(
-                `intent proof output amount is greater than input amount: ${sumOfOutputs} > ${sumOfInputs}`,
+                `proof output amount is greater than input amount: ${sumOfOutputs} > ${sumOfInputs}`,
             );
         }
 
@@ -142,9 +142,9 @@ export namespace Intent {
     export type Message = RegisterMessage | DeleteMessage | GetPendingTxMessage;
 
     /**
-     * Serialize an intent message to the canonical JSON string used for signing.
+     * Serialize a proof message to the canonical JSON string used for signing.
      *
-     * @param message - Intent message payload
+     * @param message - Proof message payload
      * @returns Canonical string form of the message
      */
     export function encodeMessage(message: Message): string {
@@ -171,10 +171,26 @@ export namespace Intent {
     }
 }
 
+/** @deprecated Use {@link ProofInput}. */
+export type IntentCoin = ProofInput;
+
+/** @deprecated Use {@link Proof}. */
+export const Intent = Proof;
+
+/** @deprecated Use {@link Proof}. */
+export namespace Intent {
+    export type Proof = Transaction;
+    export type RegisterMessage = Proof.RegisterMessage;
+    export type DeleteMessage = Proof.DeleteMessage;
+    export type GetPendingTxMessage = Proof.GetPendingTxMessage;
+    export type Message = Proof.Message;
+}
+
 export const OP_RETURN_EMPTY_PKSCRIPT = new Uint8Array([OP.RETURN]);
 const ZERO_32 = new Uint8Array(32).fill(0);
 const MAX_INDEX = 0xffffffff;
-export const TAG_INTENT_PROOF = "ark-intent-proof-message";
+/** Tag in the proof message hash. The operator verifies this exact string, so it must not change. */
+export const TAG_PROOF = "ark-intent-proof-message";
 
 type ValidatedTxInput = TransactionInput & {
     witnessUtxo: { script: Uint8Array; amount: bigint };
@@ -188,10 +204,9 @@ type ValidatedTxOutput = TransactionOutput & {
 };
 
 function validateInput(input: TransactionInput): input is ValidatedTxInput {
-    if (input.index === undefined) throw new Error("intent proof input requires index");
-    if (input.txid === undefined) throw new Error("intent proof input requires txid");
-    if (input.witnessUtxo === undefined)
-        throw new Error("intent proof input requires witness utxo");
+    if (input.index === undefined) throw new Error("proof input requires index");
+    if (input.txid === undefined) throw new Error("proof input requires txid");
+    if (input.witnessUtxo === undefined) throw new Error("proof input requires witness utxo");
     return true;
 }
 
@@ -200,8 +215,8 @@ function validateInputs(inputs: TransactionInput[]): asserts inputs is Validated
 }
 
 function validateOutput(output: TransactionOutput): output is ValidatedTxOutput {
-    if (output.amount === undefined) throw new Error("intent proof output requires amount");
-    if (output.script === undefined) throw new Error("intent proof output requires script");
+    if (output.amount === undefined) throw new Error("proof output requires amount");
+    if (output.script === undefined) throw new Error("proof output requires script");
     return true;
 }
 
@@ -210,19 +225,19 @@ function validateOutputs(outputs: TransactionOutput[]): asserts outputs is Valid
 }
 
 /**
- * Creates the "to_spend" transaction used by both intent proofs and BIP-322.
+ * Creates the "to_spend" transaction used by both proofs and BIP-322.
  *
  * The message is hashed with the given tagged-hash tag before being placed
  * into the scriptSig as `OP_0 <hash>`.
  *
  * @param message - The message to embed
  * @param pkScript - The scriptPubKey of the signer's address
- * @param tag - Tagged-hash tag (defaults to the Arkade intent proof tag)
+ * @param tag - Tagged-hash tag (defaults to {@link TAG_PROOF})
  */
 export function craftToSpendTx(
     message: string,
     pkScript: Uint8Array,
-    tag: string = TAG_INTENT_PROOF,
+    tag: string = TAG_PROOF,
 ): Transaction {
     const messageHash = hashMessage(message, tag);
     const tx = new Transaction({
@@ -343,16 +358,16 @@ function craftToSignTx(
     return tx;
 }
 
-function hashMessage(message: string, tag: string = TAG_INTENT_PROOF): Uint8Array {
+function hashMessage(message: string, tag: string = TAG_PROOF): Uint8Array {
     return schnorr.utils.taggedHash(tag, new TextEncoder().encode(message));
 }
 
-function prepareCoinAsIntentProofInput(coin: IntentCoin | TransactionInput): TransactionInput {
+function prepareProofInput(coin: ProofInput | TransactionInput): TransactionInput {
     if (!("tapTree" in coin)) {
         return coin;
     }
     const vtxoScript = VtxoScript.decode(coin.tapTree);
-    const sequence = getSequence(coin.intentTapLeafScript);
+    const sequence = getSequence(proofTapLeafScriptOf(coin));
 
     const unknown = [VtxoTaprootTree.encode(coin.tapTree)];
     if (coin.extraWitness) {
@@ -372,7 +387,7 @@ function prepareCoinAsIntentProofInput(coin: IntentCoin | TransactionInput): Tra
             script: vtxoScript.pkScript,
         },
         sequence,
-        tapLeafScript: [coin.intentTapLeafScript],
+        tapLeafScript: [proofTapLeafScriptOf(coin)],
         unknown,
     };
 }

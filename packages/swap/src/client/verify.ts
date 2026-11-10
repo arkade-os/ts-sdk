@@ -303,7 +303,7 @@ const CSV_GRANULARITY_SECONDS = 512;
  */
 export const verifyRefundWindow = (input: {
     readonly refundLocktime: number;
-    /** Lightning send's solo-refund CSV delay. */
+    /** A send's solo-refund CSV delay. */
     readonly refundWithoutReceiverDelay?: number;
     readonly now: number;
     readonly maxSeconds?: number;

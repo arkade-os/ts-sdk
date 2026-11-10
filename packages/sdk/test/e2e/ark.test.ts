@@ -992,7 +992,8 @@ describe("Common", () => {
                 expect(bob).toBeDefined();
 
                 // Get addresses
-                const bobPubkey = await bob.identity.xOnlyPublicKey();
+                // arkd v0.9.25 rejects x-only cosigner keys; signer sessions send them compressed.
+                const bobPubkey = await bob.identity.compressedPublicKey();
                 const aliceAddress = await alice.wallet.getAddress();
                 const bobAddress = await bob.wallet.getAddress();
                 expect(aliceAddress).toBeDefined();

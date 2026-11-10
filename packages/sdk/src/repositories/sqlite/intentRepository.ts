@@ -3,13 +3,13 @@ import {
     ArkIntent,
     ArkIntentState,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
-    isTerminalIntentState,
+    isTerminalBatchRegistrationState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { SQLExecutor } from "./types";
-import { runInTransaction } from "./transaction";
+import { getSerializedExecutor, runInTransaction } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
 
 interface IntentRow {
@@ -32,16 +32,15 @@ interface IntentRow {
     intent_vtxos_json: string;
 }
 
-export class SQLiteIntentRepository implements IntentRepository {
+export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepository {
     readonly version = 1 as const;
+    private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly t: string;
 
-    constructor(
-        private readonly db: SQLExecutor,
-        options?: { prefix?: string },
-    ) {
+    constructor(db: SQLExecutor, options?: { prefix?: string }) {
+        this.db = getSerializedExecutor(db);
         this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.t = `${this.prefix}intents`;
     }
@@ -83,20 +82,20 @@ export class SQLiteIntentRepository implements IntentRepository {
         await this.ensureInit();
         // Route through the same serialized write chain as saveIntent so a
         // clear can't interleave with an in-flight transaction on this executor.
-        await runInTransaction(this.db, async () => {
-            await this.db.run(`DELETE FROM ${this.t}`);
+        await runInTransaction(this.db, async (tx) => {
+            await tx.run(`DELETE FROM ${this.t}`);
         });
     }
 
     async saveIntent(intent: ArkIntent): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
-        await runInTransaction(this.db, async () => {
+        await runInTransaction(this.db, async (tx) => {
             // Upsert by the primary key only. INSERT OR REPLACE would also fire
             // on the intent_id unique index, silently deleting the *other* row
             // that holds it; ON CONFLICT(intent_tx_id) updates in place and lets
             // an intent_id collision surface as a constraint error instead.
-            await this.db.run(
+            await tx.run(
                 `INSERT INTO ${this.t}
                  (intent_tx_id, intent_id, state, valid_from, valid_until,
                   created_at, updated_at, register_proof, register_proof_message,
@@ -122,8 +121,8 @@ export class SQLiteIntentRepository implements IntentRepository {
                   signer_descriptor = excluded.signer_descriptor,
                   intent_vtxos_json = excluded.intent_vtxos_json`,
                 [
-                    intent.intentTxId,
-                    intent.intentId ?? null,
+                    intent.proofTxId,
+                    intent.registrationId ?? null,
                     intent.state,
                     intent.validFrom ?? null,
                     intent.validUntil ?? null,
@@ -138,7 +137,7 @@ export class SQLiteIntentRepository implements IntentRepository {
                     intent.cancellationReason ?? null,
                     JSON.stringify(intent.partialForfeits),
                     intent.signerDescriptor ?? null,
-                    JSON.stringify(intent.intentVtxos),
+                    JSON.stringify(intent.proofInputs),
                 ],
             );
         });
@@ -173,7 +172,7 @@ export class SQLiteIntentRepository implements IntentRepository {
             }
             if (batch.length < batchSize) break;
         }
-        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
+        return pageResult(rows, page.limit, (intent) => intent.proofTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
@@ -181,7 +180,7 @@ export class SQLiteIntentRepository implements IntentRepository {
         const rows = await this.db.all<IntentRow>(`SELECT * FROM ${this.t}`);
         const out: Outpoint[] = [];
         for (const r of rows) {
-            if (isTerminalIntentState(r.state as ArkIntentState)) continue;
+            if (isTerminalBatchRegistrationState(r.state as ArkIntentState)) continue;
             for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
@@ -192,8 +191,8 @@ export class SQLiteIntentRepository implements IntentRepository {
 
 function rowToIntent(r: IntentRow): ArkIntent {
     return {
-        intentTxId: r.intent_tx_id,
-        intentId: r.intent_id ?? undefined,
+        proofTxId: r.intent_tx_id,
+        registrationId: r.intent_id ?? undefined,
         state: r.state as ArkIntentState,
         validFrom: r.valid_from ?? undefined,
         validUntil: r.valid_until ?? undefined,
@@ -208,6 +207,11 @@ function rowToIntent(r: IntentRow): ArkIntent {
         cancellationReason: r.cancellation_reason ?? undefined,
         partialForfeits: JSON.parse(r.partial_forfeits_json),
         signerDescriptor: r.signer_descriptor ?? undefined,
-        intentVtxos: JSON.parse(r.intent_vtxos_json),
+        proofInputs: JSON.parse(r.intent_vtxos_json),
     };
 }
+
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export const SQLiteIntentRepository = SQLiteBatchRegistrationRepository;
+/** @deprecated Use {@link SQLiteBatchRegistrationRepository}. */
+export type SQLiteIntentRepository = SQLiteBatchRegistrationRepository;

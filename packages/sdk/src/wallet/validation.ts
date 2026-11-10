@@ -33,11 +33,11 @@ export const ErrUnvalidatedOffchainOutput = (address: string) =>
     );
 export const ErrIntentOutputNotFound = (index: number, kind: "onchain" | "offchain") =>
     new ServerResponseMismatchError(
-        `${kind} output ${index} of the intent proof is not present in what the server built`,
+        `${kind} output ${index} of the proof is not present in what the server built`,
     );
 export const ErrUnvalidatedIntentOutput = (index: number) =>
     new ServerResponseMismatchError(
-        `offchain output ${index} of the intent proof cannot be validated: virtual output tree signing did not run`,
+        `offchain output ${index} of the proof cannot be validated: virtual output tree signing did not run`,
     );
 
 // Malformed recipient list from the caller, not a server response: plain
@@ -144,7 +144,7 @@ export function validateBatchRecipientsWithoutTree(
     }
 }
 
-/** An output the user signed into the intent proof. */
+/** An output the user signed into the proof. */
 export interface DeclaredOutput {
     index: number;
     script: Bytes;
@@ -153,7 +153,7 @@ export interface DeclaredOutput {
 }
 
 /**
- * The paying outputs a signed intent proof commits to. Zero-amount outputs are
+ * The paying outputs a signed proof commits to. Zero-amount outputs are
  * the proof's own placeholder and any extension packet, neither of which pays.
  */
 export function declaredIntentOutputs(
@@ -178,7 +178,7 @@ export function declaredIntentOutputs(
 
 /**
  * {@link validateBatchRecipients} against the outputs the user already signed
- * into the intent proof. Assets are not covered: a packet carries no amount, so
+ * into the proof. Assets are not covered: a packet carries no amount, so
  * an intent whose asset assignment matters wants the explicit list.
  */
 export function validateBatchAgainstIntent(

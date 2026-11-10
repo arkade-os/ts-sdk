@@ -3,6 +3,8 @@ import type { Outpoint } from "../../wallet";
 import {
     WalletRepository,
     WalletState,
+    type AtomicWalletState,
+    applyWalletStateUpdate,
     VtxoRepositoryKey,
     assertHistoryPageFilter,
     compareHistoryCursors,
@@ -41,7 +43,15 @@ import { RealmLike } from "./types";
 export class RealmWalletRepository implements WalletRepository {
     readonly version = 2 as const;
 
-    constructor(private readonly realm: RealmLike) {}
+    /** persistentWalletState is the caller's backing-store assertion, not adapter detection. */
+    constructor(
+        private readonly realm: RealmLike,
+        options?: { persistentWalletState?: boolean },
+    ) {
+        if (options?.persistentWalletState === true) {
+            this.atomicWalletState = { ...this.atomicWalletState, persistent: true };
+        }
+    }
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -321,6 +331,36 @@ export class RealmWalletRepository implements WalletRepository {
     }
 
     // ── Wallet state ───────────────────────────────────────────────────
+
+    readonly atomicWalletState: AtomicWalletState = {
+        version: 1,
+        update: async (updater) => {
+            await this.ensureInit();
+            this.realm.write(() => {
+                const row = [
+                    ...this.realm
+                        .objects<WalletStateObject>("ArkWalletState")
+                        .filtered("key == $0", "state"),
+                ][0];
+                const current: WalletState = row
+                    ? {
+                          settings: row.settingsJson ? JSON.parse(row.settingsJson) : undefined,
+                          lastSyncTime: row.lastSyncTime ?? undefined,
+                      }
+                    : {};
+                const state = applyWalletStateUpdate(current, updater);
+                this.realm.create(
+                    "ArkWalletState",
+                    {
+                        key: "state",
+                        lastSyncTime: state.lastSyncTime,
+                        settingsJson: state.settings ? JSON.stringify(state.settings) : null,
+                    },
+                    "modified",
+                );
+            });
+        },
+    };
 
     async getWalletState(): Promise<WalletState | null> {
         await this.ensureInit();

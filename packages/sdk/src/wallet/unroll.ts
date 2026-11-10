@@ -336,10 +336,15 @@ export async function prepareUnrollTransaction(
     vtxoTxIds: string[],
     outputAddress: string,
 ): Promise<Transaction> {
-    const chainTip = await wallet.onchainProvider.getChainTip();
+    // Tip, the stored coins, and the wallet key are independent. The per-coin
+    // confirmation and path lookups below need all three and nothing from each other.
+    const [chainTip, storedVtxos, walletDescriptor] = await Promise.all([
+        wallet.onchainProvider.getChainTip(),
+        wallet.getVtxos({ withUnrolled: true }),
+        wallet.identity.xOnlyPublicKey().then((key) => hex.encode(key)),
+    ]);
 
-    let vtxos = await wallet.getVtxos({ withUnrolled: true });
-    vtxos = vtxos.filter((vtxo) => vtxoTxIds.includes(vtxo.txid));
+    const vtxos = storedVtxos.filter((vtxo) => vtxoTxIds.includes(vtxo.txid));
 
     if (vtxos.length === 0) {
         throw new Error("No vtxos to complete unroll");
@@ -349,14 +354,6 @@ export async function prepareUnrollTransaction(
     let totalAmount = 0n;
     const txWeightEstimator = TxWeightEstimator.create();
 
-    // The wallet's key has to come along: a handler that cannot place the
-    // wallet among a contract's parties answers wrongly in one of two ways —
-    // VHTLC offers no path at all, so the sweep fails with no-unilateral-path,
-    // while the Arkade handler drops its signer filter and offers leaves this
-    // wallet cannot sign, one of which the shortest-delay pick would pre-sign.
-    // Raw x-only hex is what the rest of the SDK passes as the descriptor (see
-    // `assertSpendableNow`); `resolveRole` accepts it alongside `tr(...)`.
-    const walletDescriptor = hex.encode(await wallet.identity.xOnlyPublicKey());
     for (const vtxo of vtxos) {
         if (!canSweepOnchain(vtxo)) {
             throw new Error(
@@ -364,31 +361,50 @@ export async function prepareUnrollTransaction(
                     `(use unroll first), or its exit output was already spent`,
             );
         }
+    }
 
-        const txStatus = await wallet.onchainProvider.getTxStatus(vtxo.txid);
-        if (!txStatus.confirmed) {
-            throw new Error(`tx ${vtxo.txid} is not confirmed`);
-        }
+    // The wallet's key has to come along: a handler that cannot place the
+    // wallet among a contract's parties answers wrongly in one of two ways —
+    // VHTLC offers no path at all, so the sweep fails with no-unilateral-path,
+    // while the Arkade handler drops its signer filter and offers leaves this
+    // wallet cannot sign, one of which the shortest-delay pick would pre-sign.
+    // Raw x-only hex is what the rest of the SDK passes as the descriptor (see
+    // `assertSpendableNow`); `resolveRole` accepts it alongside `tr(...)`.
+    // Settled in list order so the first coin's failure is still the one thrown.
+    const prepared = await Promise.allSettled(
+        vtxos.map(async (vtxo) => {
+            const [txStatus, resolved] = await Promise.all([
+                wallet.onchainProvider.getTxStatus(vtxo.txid),
+                resolveUnilateralPath({
+                    vtxo,
+                    scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
+                    contractRepository: wallet.contractRepository,
+                    walletDescriptor,
+                    currentTime: Date.now(),
+                }),
+            ]);
+            if (!txStatus.confirmed) {
+                throw new Error(`tx ${vtxo.txid} is not confirmed`);
+            }
 
-        const resolved = await resolveUnilateralPath({
-            vtxo,
-            scriptHex: hex.encode(VtxoScript.decode(vtxo.tapTree).pkScript),
-            contractRepository: wallet.contractRepository,
-            walletDescriptor,
-            currentTime: Date.now(),
-        });
-        const spendingLeaf = resolved.selection.leaf;
-        const sequence = resolved.selection.sequence!;
+            const spendingLeaf = resolved.selection.leaf;
+            const sequence = resolved.selection.sequence!;
 
-        // preserve the historical precondition: the sweep must be valid NOW
-        const timelock = sequenceToTimelock(sequence);
-        const elapsed =
-            timelock.type === "blocks"
-                ? chainTip.height >= txStatus.blockHeight + Number(timelock.value)
-                : chainTip.time >= txStatus.blockTime + Number(timelock.value);
-        if (!elapsed) {
-            throw new Error(`no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`);
-        }
+            // preserve the historical precondition: the sweep must be valid NOW
+            const timelock = sequenceToTimelock(sequence);
+            const elapsed =
+                timelock.type === "blocks"
+                    ? chainTip.height >= txStatus.blockHeight + Number(timelock.value)
+                    : chainTip.time >= txStatus.blockTime + Number(timelock.value);
+            if (!elapsed) {
+                throw new Error(`no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`);
+            }
+            return { vtxo, spendingLeaf, sequence };
+        }),
+    );
+    for (const result of prepared) {
+        if (result.status === "rejected") throw result.reason;
+        const { vtxo, spendingLeaf, sequence } = result.value;
 
         totalAmount += BigInt(vtxo.value);
         inputs.push({
