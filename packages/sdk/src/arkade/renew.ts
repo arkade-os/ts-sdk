@@ -25,6 +25,16 @@ import type { Arkade, ArkadeContract } from "./contract";
 import { staticWitness } from "./program";
 
 const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
+/** What the renewal and its batch handler call on the server. */
+const SERVER_METHODS = [
+    "registerIntent",
+    "deleteIntent",
+    "getEventStream",
+    "confirmRegistration",
+    "submitTreeNonces",
+    "submitTreeSignatures",
+    "submitSignedForfeitTxs",
+] as const satisfies readonly (keyof OperatorProvider)[];
 
 /** A covenant VTXO and the function that renews it. */
 export interface ProgramContractRenewTarget {
@@ -56,9 +66,16 @@ export async function renewProgramContractOutputs(
 ): Promise<{ commitmentTxid: string; intentId: string }> {
     const { emulator, indexer, network } = client;
     const arkProvider = client.arkProvider as OperatorProvider;
-    if (!emulator || !indexer || typeof arkProvider.registerIntent !== "function") {
+    if (!emulator || !indexer) {
         throw new Error(
-            "renewProgramContractOutputs: the Arkade client needs an emulator, an indexer and a full OperatorProvider",
+            "renewProgramContractOutputs: the Arkade client needs an emulator and an indexer",
+        );
+    }
+    // A provider missing any of these would fail after registering, with the intent left behind.
+    const missing = SERVER_METHODS.filter((m) => typeof arkProvider[m] !== "function");
+    if (missing.length > 0) {
+        throw new Error(
+            `renewProgramContractOutputs: the server provider lacks ${missing.join(", ")}`,
         );
     }
     if (targets.length === 0) throw new Error("renewProgramContractOutputs: nothing to renew");

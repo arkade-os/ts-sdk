@@ -332,7 +332,8 @@ style and have not been backfilled.
   inputs and inputs without an Arkade script, whose forfeits need a key, are
   refused when the handler is built. A function whose leaf names any key but
   the server's is refused before anything is registered, since no owner signs
-  a renewal. The caller's `signal` ends the wait for a batch; one aborted
+  a renewal, and so is a server provider lacking a method the renewal or its
+  batch calls. The caller's `signal` ends the wait for a batch; one aborted
   before registration registers nothing. A renewal that fails or is aborted
   after registering deletes its intent with a delete proof the emulator signs
   up front alongside the registration, as `Wallet.settle` does; a left intent

@@ -74,6 +74,10 @@ async function keeper(
             registerIntent,
             deleteIntent,
             getEventStream: stream,
+            confirmRegistration: vi.fn(),
+            submitTreeNonces: vi.fn(),
+            submitTreeSignatures: vi.fn(),
+            submitSignedForfeitTxs: vi.fn(),
         } as any,
         emulator: { submitIntent: vi.fn(async ({ proof }) => proof) } as any,
         indexer: { getVtxos: vi.fn(), getVirtualTxs },
@@ -185,6 +189,19 @@ describe("renewProgramContractOutputs", () => {
         ).rejects.toThrow(/aborted before the batch completed/);
         expect(registerIntent).not.toHaveBeenCalled();
         expect(deleteIntent).not.toHaveBeenCalled();
+    });
+
+    it("refuses a server provider missing a method the batch needs, before signing", async () => {
+        const { ark, target, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+        delete (ark.arkProvider as { deleteIntent?: unknown }).deleteIntent;
+
+        await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(
+            /server provider lacks deleteIntent/,
+        );
+        expect(ark.emulator!.submitIntent).not.toHaveBeenCalled();
+        expect(registerIntent).not.toHaveBeenCalled();
     });
 
     it("refuses a coin listed twice", async () => {
