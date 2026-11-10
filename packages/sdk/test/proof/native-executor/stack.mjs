@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { command, directory, docker, owned, published, save, sdk, waitFor } from "./common.mjs";
+import { command, docker, owned, published, save, sdk, waitFor } from "./common.mjs";
 
 export const inputs = {
-    arkdCommit: "e0cbfd5d9c6dfc56924d39284edfa76ca8c5cbdd",
-    regtestCommit: "8afc1eb8455fdc20a1df1237aff3787bd6913494",
+    regtestCommit: "a1b4fdc859b41281d00d16596408055f254225bf",
+    arkd: "ghcr.io/arkade-os/arkd@sha256:b08707af9f0db7509d7bbfa8cbe2a2b58129434986b31852ce0280171db82ecc",
+    signer: "ghcr.io/arkade-os/arkd-signer@sha256:ee9306e17a1db93c0e8acbfb5742fd1c1797ff19dc2c760e59a7578b1825ae5d",
     emulator:
         "ghcr.io/arkade-os/emulator@sha256:6539005abbaffee44a3a2f82072f49b0f926f32043bda12ab14658dc87f8889f",
     delegatee:
         "ghcr.io/arkade-os/delegatee@sha256:b49dd1ab434ac8472439a3e1f5bd676bcac06528ae8629e9a7017047e5f0c315",
-    wallet: "ghcr.io/arkade-os/arkd-wallet@sha256:9c4092115440039e87f1fc7e053c388d508abb36edbe9fe07c9e0a140948edd2",
+    wallet: "ghcr.io/arkade-os/arkd-wallet@sha256:1dec9aa6ffd71ce50fded2f6a0211ffe61b4306bc12d1158c6efe395fc7d1e07",
 };
 export async function createStack(output) {
     assert.equal(process.version, "v24.22.1");
@@ -58,41 +59,24 @@ export async function createStack(output) {
         "mempool_api",
         "mempool_web",
         "arkd-wallet",
+        "arkd-signer",
+        "redis",
         "arkd",
     ];
     config.name = project;
     config.services = Object.fromEntries(services.map((name) => [name, config.services[name]]));
-    config.services.redis = {
-        image: "redis:7-alpine",
-        healthcheck: {
-            test: ["CMD", "redis-cli", "ping"],
-            interval: "2s",
-            timeout: "2s",
-            retries: 30,
-        },
-        volumes: [{ type: "volume", source: "redis_data", target: "/data" }],
-    };
     config.services["arkd-wallet"].image = inputs.wallet;
-    config.services["arkd-wallet"].environment.ARKD_WALLET_SIGNER_KEY =
+    config.services["arkd-signer"].image = inputs.signer;
+    config.services["arkd-signer"].environment.ARKD_SIGNER_SECRET_KEY =
         randomBytes(32).toString("hex");
     const arkd = config.services.arkd;
-    arkd.image = `${project}:arkd`;
-    arkd.build = { context: directory, dockerfile: "Dockerfile" };
-    arkd.depends_on.postgres = { condition: "service_healthy" };
-    arkd.depends_on.redis = { condition: "service_healthy" };
+    arkd.image = inputs.arkd;
     Object.assign(arkd.environment, {
         ARKD_BOARDING_EXIT_DELAY: "1536",
         ARKD_CHECKPOINT_EXIT_DELAY: "512",
         ARKD_UNILATERAL_EXIT_DELAY: "1024",
         ARKD_PUBLIC_UNILATERAL_EXIT_DELAY: "1024",
         ARKD_VTXO_TREE_EXPIRY: "6144",
-        ARKD_DB_TYPE: "postgres",
-        ARKD_EVENT_DB_TYPE: "postgres",
-        ARKD_LIVE_STORE_TYPE: "redis",
-        ARKD_PG_DB_URL: "postgresql://postgres@postgres:5432/projection?sslmode=disable",
-        ARKD_PG_EVENT_DB_URL: "postgresql://postgres@postgres:5432/event?sslmode=disable",
-        ARKD_PG_DB_AUTOCREATE: "true",
-        ARKD_REDIS_URL: "redis://redis:6379/0",
         ARKD_INDEXER_EXPOSURE: "public",
         ARKD_SESSION_DURATION: "10",
         ARKD_UNLOCKER_PASSWORD: "secret",
@@ -166,8 +150,7 @@ export async function startStack(state) {
         command("docker", ["compose", "-p", state.project, "-f", state.composeFile, ...args], {
             timeout: 1200000,
         });
-    await compose("build", "--pull", "arkd");
-    await compose("pull", ...state.services.filter((name) => name !== "arkd"));
+    await compose("pull", ...state.services);
     await compose(
         "up",
         "-d",
@@ -200,7 +183,16 @@ export async function startStack(state) {
     assert.equal(JSON.parse(await rpc("listwallets")).length, 1);
     const address = await rpc("getnewaddress");
     await rpc("generatetoaddress", 101, address);
-    await compose("up", "-d", "arkd-wallet", "arkd");
+    // arkd exits if arkd-wallet isn't listening yet, and the proof disables restarts.
+    await compose("up", "-d", "arkd-wallet");
+    const wallet = await owned(state, `${state.prefix}arkd-wallet`);
+    await waitFor("arkd-wallet", () =>
+        docker("exec", wallet.Id, "nc", "-z", "127.0.0.1", "6060").then(
+            () => true,
+            () => false,
+        ),
+    );
+    await compose("up", "-d", "arkd");
     const arkd = await owned(state, `${state.prefix}arkd`);
     state.arkUrl = published(arkd, 7070);
     const adminUrl = published(arkd, 7071);

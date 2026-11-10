@@ -184,10 +184,11 @@ for (const observation of [recovery, remoteRecovery]) {
     assert.equal(observation.decoy.isSpent, false);
 }
 assert.equal(remoteRecovery.destination.txid, remote.payout);
-assert.equal(services.inputs.arkdCommit, "e0cbfd5d9c6dfc56924d39284edfa76ca8c5cbdd");
 assert.match(services.backendBinarySha256, /^[0-9a-f]{64}$/);
-assert.equal(services.identities.length, 12);
+assert.equal(services.identities.length, 13);
 for (const [name, input] of [
+    ["arkd", "arkd"],
+    ["arkd-signer", "signer"],
     ["emulator", "emulator"],
     ["delegatee", "delegatee"],
     ["arkd-wallet", "wallet"],

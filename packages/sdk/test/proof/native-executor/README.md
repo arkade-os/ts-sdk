@@ -1,6 +1,6 @@
 # Native executor funded proof
 
-For reviewers of the opt-in `NativeExecutor`, this runs real funding and spends against a fresh, isolated Bitcoin regtest, public arkd source build, pinned emulator and delegatee images. It exercises the existing wallet, ContractManager and SQLite repositories. It does not use the execution journal.
+For reviewers of the opt-in `NativeExecutor`, this runs real funding and spends against a fresh, isolated Bitcoin regtest with pinned arkd v0.9.25, signer, wallet, emulator and delegatee images. It exercises the existing wallet, ContractManager and SQLite repositories. It does not use the execution journal.
 
 From the repository root, with Node **24.22.1**, pnpm **10.25.0**, Docker Engine and Compose:
 
@@ -17,7 +17,7 @@ The proof boards 200,000 fresh regtest sats, funds a 50,000-sat position and an 
 
 Delegatee is paused before its position receives funds. The parent waits for every wallet actor's process-close event and checks those PIDs are gone before resuming that one labeled delegatee container. It observes the full 50,000-sat payout before reopening the same SQLite wallet. Recovery is forbidden from submitting transactions. A separate keyless audit process decodes the indexed creating transaction, checkpoint and payout, checks script/value lineage, exact recorded native proposal bytes, process ordering, service identities and source/build hashes.
 
-`timed-savings.json` is the checked-in arkadec 0.1.0 optimized artifact; its embedded source must match `timed-savings.ark`. It includes a renewal branch, but this proof exercises only the matured offchain release branch. The Dockerfile builds public arkd commit `e0cbfd5d9c6dfc56924d39284edfa76ca8c5cbdd` with Go 1.26.9; `stack.mjs` pins the published wallet/emulator/delegatee digests. The actual running binary and all service image identities are recorded. No prior financial receipt is reused.
+`timed-savings.json` is the checked-in arkadec 0.1.0 optimized artifact; its embedded source must match `timed-savings.ark`. It includes a renewal branch, but this proof exercises only the matured offchain release branch. `stack.mjs` pins the `regtest` submodule commit and the published arkd, arkd-signer, wallet, emulator and delegatee digests; a submodule bump must update the pin. The actual running binary and all service image identities are recorded. No prior financial receipt is reused.
 
 Each run prints its UUID directory under `.tmp/native-executor/`. `public/audit.json` is produced only after all assertions and owned-container cleanup pass; `public/manifest.json` hashes the explicit evidence set. `private/` contains local-only fixture keys, SQLite and logs. CI uploads only public JSON and explicitly excludes keys, databases, WALs, generated Compose/environment files and logs. Never publish `private/` or Docker inspect output containing environment secrets.
 
