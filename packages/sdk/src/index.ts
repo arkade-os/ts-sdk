@@ -459,12 +459,25 @@ import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletReposi
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
-import { InMemoryIntentRepository } from "./repositories/inMemory/intentRepository";
+import {
+    InMemoryBatchRegistrationRepository,
+    InMemoryIntentRepository,
+} from "./repositories/inMemory/intentRepository";
 import { InMemoryVirtualTxRepository } from "./repositories/inMemory/virtualTxRepository";
-import { IndexedDBIntentRepository } from "./repositories/indexedDB/intentRepository";
+import {
+    IndexedDBBatchRegistrationRepository,
+    IndexedDBIntentRepository,
+} from "./repositories/indexedDB/intentRepository";
 import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTxRepository";
-import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
+import {
+    isTerminalBatchRegistrationState,
+    isTerminalIntentState,
+    BATCH_REGISTRATION_TERMINAL_STATES,
+    INTENT_TERMINAL_STATES,
+} from "./repositories/intentRepository";
 import type {
+    BatchRegistrationRepository,
+    BatchRegistrationState,
     IntentRepository,
     BatchRegistration,
     ArkIntent,
@@ -508,7 +521,7 @@ export {
     collectTransactionHistory,
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
-export { collectIntents } from "./repositories/intentRepository";
+export { collectBatchRegistrations, collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -825,11 +838,15 @@ export {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    InMemoryBatchRegistrationRepository,
     InMemoryIntentRepository,
     InMemoryVirtualTxRepository,
+    IndexedDBBatchRegistrationRepository,
     IndexedDBIntentRepository,
     IndexedDBVirtualTxRepository,
+    isTerminalBatchRegistrationState,
     isTerminalIntentState,
+    BATCH_REGISTRATION_TERMINAL_STATES,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
     // Proof
@@ -1185,6 +1202,8 @@ export type {
     StoredVtxo,
     ContractRepository,
     ContractFilter,
+    BatchRegistrationRepository,
+    BatchRegistrationState,
     IntentRepository,
     BatchRegistration,
     ArkIntent,

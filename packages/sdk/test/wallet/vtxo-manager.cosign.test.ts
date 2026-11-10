@@ -60,6 +60,7 @@ function makeWallet(opts: {
             ),
         getBoardingAddress: vi.fn().mockResolvedValue(BOARDING),
         boardingTapscript: {
+            options: { serverPubKey: new Uint8Array(32).fill(0x02) },
             exitScript: hex.encode(exitScript.script),
             pkScript: new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]),
             exit: vi.fn().mockReturnValue([

@@ -1037,6 +1037,7 @@ export interface IWallet extends IReadonlyWallet {
     settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string>;
 
     /**

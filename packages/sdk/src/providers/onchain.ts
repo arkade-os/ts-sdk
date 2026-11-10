@@ -148,6 +148,12 @@ export interface OnchainProvider {
     }>;
 
     /**
+     * Fetch consensus median-time-past for a block at the given height. Providers that do not
+     * implement this cannot determine seconds-based relative-lock expiry from chain data.
+     */
+    getMedianTimePast?(height: number): Promise<number>;
+
+    /**
      * Watch a set of addresses and invoke the callback when transactions are observed.
      *
      * @param addresses - Addresses to monitor
@@ -761,6 +767,35 @@ export class EsploraProvider implements OnchainProvider {
             time: tip[0].mediantime,
             hash,
         };
+    }
+
+    async getMedianTimePast(height: number): Promise<number> {
+        if (!Number.isInteger(height) || height < 0) {
+            throw new Error(`Invalid block height for median-time-past: ${height}`);
+        }
+        const hashResponse = await baseFetch(`${this.baseUrl}/block-height/${height}`);
+        if (!hashResponse.ok) {
+            throw new Error(
+                `Failed to get block hash at height ${height}: ${hashResponse.statusText}`,
+            );
+        }
+        const hash = (await hashResponse.text()).trim();
+        if (!hash) throw new Error(`No block hash returned at height ${height}`);
+
+        const blockResponse = await baseFetch(`${this.baseUrl}/block/${hash}`);
+        if (!blockResponse.ok) {
+            throw new Error(`Failed to get block ${hash}: ${blockResponse.statusText}`);
+        }
+        const block = await blockResponse.json();
+        if (
+            !block ||
+            typeof block !== "object" ||
+            typeof block.mediantime !== "number" ||
+            !Number.isFinite(block.mediantime)
+        ) {
+            throw new Error(`Invalid block median-time-past at height ${height}`);
+        }
+        return block.mediantime;
     }
 
     private async broadcastPackage(parent: string, child: string): Promise<string> {

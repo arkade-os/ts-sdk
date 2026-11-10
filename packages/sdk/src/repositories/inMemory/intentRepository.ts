@@ -3,13 +3,13 @@ import {
     ArkIntent,
     assertIntentIdUnique,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
     isTerminalIntentState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
-export class InMemoryIntentRepository implements IntentRepository {
+export class InMemoryBatchRegistrationRepository implements BatchRegistrationRepository {
     readonly version = 1 as const;
     private byId = new Map<string, ArkIntent>();
 
@@ -59,3 +59,8 @@ const clone = (i: ArkIntent): ArkIntent => ({
     proofInputs: i.proofInputs.map((o) => ({ ...o })),
     partialForfeits: [...i.partialForfeits],
 });
+
+/** @deprecated Use {@link InMemoryBatchRegistrationRepository}. */
+export const InMemoryIntentRepository = InMemoryBatchRegistrationRepository;
+/** @deprecated Use {@link InMemoryBatchRegistrationRepository}. */
+export type InMemoryIntentRepository = InMemoryBatchRegistrationRepository;
