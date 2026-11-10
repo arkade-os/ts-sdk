@@ -8,6 +8,7 @@ import {
     type Contract,
     type IWallet,
 } from "../src";
+import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
 import {
     NativeExecutor,
     type Arkade,
@@ -526,6 +527,31 @@ describe("SDK native template execution", () => {
         expect(s.send).not.toHaveBeenCalled();
     });
 
+    it.each([
+        [1, true],
+        [0, false],
+    ])("spends a position funded beside asset change at vout %i", async (assetVout, spends) => {
+        const s = await setup();
+        const group = AssetGroup.create(
+            AssetId.create("cc".repeat(32), 0),
+            null,
+            [AssetInput.create(0, 5n)],
+            [AssetOutput.create(assetVout, 5n)],
+            [],
+        );
+        s.source.addOutput({ script: hex.decode(`5120${"33".repeat(32)}`), amount: 1_000n });
+        s.source.addOutput(Extension.create([Packet.create([group])]).txOut());
+        s.coin.txid = s.source.id;
+        const run = s.executor.execute(await s.importTemplate(), s.coin);
+        if (spends) {
+            await run;
+            expect(s.send).toHaveBeenCalledOnce();
+        } else {
+            await expect(run).rejects.toThrow(/carries assets/);
+            expect(s.send).not.toHaveBeenCalled();
+        }
+    });
+
     it("verifies the tracked amount against the actual creating transaction", async () => {
         const s = await setup();
         s.coin.value++;
@@ -541,6 +567,22 @@ describe("SDK native template execution", () => {
         await expect(
             s.executor.importTemplate(template(), { "artifact-id": csvArtifact }),
         ).rejects.toThrow(/CSV/);
+        expect(s.contract.register).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["hash condition", ["OP_SHA256", "<lock>", "OP_EQUAL", "OP_VERIFY"]],
+        ["CLTV", ["500", "OP_CHECKLOCKTIMEVERIFY", "OP_DROP"]],
+    ])("rejects a %s leaf without witness metadata before funding", async (_, prefix) => {
+        const s = await setup();
+        const guarded = structuredClone(artifact);
+        guarded.constructorInputs.push({ name: "lock", type: "bytes32" });
+        guarded.functions[0].leaves[0].asm.unshift(...prefix);
+        const doc = template();
+        Object.assign(doc.inputs[0].contract.arguments, { lock: "22".repeat(32) });
+        await expect(s.executor.importTemplate(doc, { "artifact-id": guarded })).rejects.toThrow(
+            /conditions/,
+        );
         expect(s.contract.register).not.toHaveBeenCalled();
     });
 

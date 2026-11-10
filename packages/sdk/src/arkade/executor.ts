@@ -5,6 +5,7 @@ import { toXOnly } from "../utils/keys";
 import { resolvePrevTxs } from "../utils/prevoutTx";
 import { Transaction } from "../utils/transaction";
 import { Extension } from "../extension";
+import { Packet as AssetPacket } from "../extension/asset";
 import type { DelegateeProvider, DelegateeDelegation } from "../providers/delegatee";
 import { programFromArtifact, type ContractArtifact } from "./artifact";
 import { Arkade, ArkadeContract, type ArkadeParamValue, type ArkadeSpendResult } from "./contract";
@@ -62,12 +63,14 @@ function nativeFunction(program: Program, name: string): void {
         fn.arkadeScript.witness?.length ||
         fn.tapscript.witness?.length ||
         fn.tapscript.signatures?.length ||
+        fn.tapscript.asm?.length ||
         fn.tapscript.csv ||
+        fn.tapscript.cltv !== undefined ||
         fn.tapscript.emulator !== name ||
         fn.tapscript.signers.some((s) => s !== "$server")
     ) {
         throw new Error(
-            "NativeExecutor: the selected leaf requires unsupported witnesses, signers or CSV",
+            "NativeExecutor: the selected leaf requires unsupported conditions, witnesses, signers, CSV or CLTV",
         );
     }
 }
@@ -455,6 +458,12 @@ export class NativeExecutor {
                 if (!script || !Extension.isExtension(script)) continue;
                 if (++extensions > 1) throw new Error("NativeExecutor: multiple source extensions");
                 for (const packet of Extension.fromBytes(script).getPackets()) {
+                    // Wallet.send may put asset change beside a BTC-only position.
+                    if (packet instanceof AssetPacket) {
+                        if (packet.groups.some((g) => g.outputs.some((o) => o.vout === coin.vout)))
+                            throw new Error("NativeExecutor: position carries assets");
+                        continue;
+                    }
                     // Delegatee regenerates emulator (1) and consumes advertisement (5).
                     // This subset cannot route assets or application packets.
                     if (packet.type() !== 1 && packet.type() !== 5) {
