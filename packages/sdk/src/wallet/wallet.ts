@@ -6961,6 +6961,16 @@ export async function waitForIncomingFunds(
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
 
+    // The stop handle comes from the caller's implementation, so it may throw. A broken
+    // stop() must not keep the promise from settling, and it must not be silent.
+    const stopSafely = (stop: () => void) => {
+        try {
+            stop();
+        } catch (e) {
+            console.warn("waitForIncomingFunds teardown failed", e);
+        }
+    };
+
     return new Promise<IncomingFunds>((resolve, reject) => {
         // One teardown path for every exit, so nothing outlives the promise.
         const settle = (deliver: () => void) => {
@@ -6969,13 +6979,7 @@ export async function waitForIncomingFunds(
 
             if (timeoutId !== undefined) clearTimeout(timeoutId);
             if (onAbort) signal?.removeEventListener("abort", onAbort);
-            // stopFunc() comes from the caller's implementation, so it may throw.
-            // Catch it so deliver() still runs and the promise always settles.
-            try {
-                stopFunc?.();
-            } catch {
-                // Ignore: nothing else to do, but the promise must still settle.
-            }
+            if (stopFunc) stopSafely(stopFunc);
             deliver();
         };
 
@@ -7008,7 +7012,7 @@ export async function waitForIncomingFunds(
                 .then((stop) => {
                     stopFunc = stop;
                     // May have settled before the handle arrived; don't leak it.
-                    if (settled) stop();
+                    if (settled) stopSafely(stop);
                 })
                 .catch((error) => {
                     // Else a caller whose providers are down hangs forever on an unhandled rejection.
