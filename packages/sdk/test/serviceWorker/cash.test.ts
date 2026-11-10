@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../../src/utils/transaction";
 import { ArkadeCash } from "../../src/arkadeCash";
-import { Wallet } from "../../src/wallet/wallet";
+import { ArkadeCashCreateError, Wallet } from "../../src/wallet/wallet";
 import { InMemoryContractRepository } from "../../src/repositories/inMemory/contractRepository";
 import { InMemoryWalletRepository } from "../../src/repositories/inMemory/walletRepository";
 import { SingleKey } from "../../src/identity/singleKey";
@@ -137,18 +137,12 @@ describe("Worker ArkadeCash", () => {
         expect((err as { error?: Error }).error?.message).toContain("another operator");
     });
 
-    it("exposes the created token and preserves its recoverable error", async () => {
+    it("exposes the created token", async () => {
         const wallet = await fakeWallet(cash());
         vi.spyOn(wallet, "createCash").mockResolvedValue("tarkadecash1example");
         const created = await message(wallet, "create", undefined, 5000);
         if (created.payload?.action !== "create") throw new Error("expected cash creation");
         expect(created.payload.token).toBe("tarkadecash1example");
-        const error = Object.assign(new Error("tentative"), { cash: "recover-me" });
-        vi.spyOn(wallet, "createCash").mockRejectedValue(error);
-        const failed = await message(wallet, "create", undefined, 5000);
-        expect((failed as { error?: unknown }).error).toBe(error);
-        expect((failed as { error?: { cash?: string } }).error?.cash).toBe("recover-me");
-        expect((failed as { cash?: string }).cash).toBe("recover-me");
     });
 });
 
@@ -191,6 +185,25 @@ describe("Page-side ArkadeCash requests", () => {
     afterEach(() => {
         vi.useRealTimers();
         vi.unstubAllGlobals();
+    });
+
+    it("rejects a funded-but-failed create with the recoverable token across the clone", async () => {
+        const worker = await fakeWallet(cash());
+        vi.spyOn(worker, "createCash").mockRejectedValue(
+            new ArkadeCashCreateError("tarkadecash1recover", new Error("send failed")),
+        );
+        const handler = new WalletMessageHandler();
+        await handler.start(
+            { arkProvider: worker.arkProvider, wallet: worker, readonlyWallet: worker },
+            { walletRepository: worker.walletRepository } as never,
+        );
+        const page = pageWallet((request) => handler.handleMessage(request));
+
+        const failure = await page.arkadeCash({ action: "create", amount: 5000 }).catch((e) => e);
+
+        expect(failure).toBeInstanceOf(ArkadeCashCreateError);
+        expect((failure as ArkadeCashCreateError).cash).toBe("tarkadecash1recover");
+        expect(((failure as ArkadeCashCreateError).cause as Error).message).toBe("send failed");
     });
 
     it("waits for a claim that finishes long after the 50s message deadline", async () => {

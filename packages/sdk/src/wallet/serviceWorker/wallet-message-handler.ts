@@ -52,6 +52,7 @@ import {
     type NormalizedVtxoPage,
 } from "../vtxo";
 import {
+    ArkadeCashCreateError,
     filterFlatVtxos,
     ReadonlyWallet,
     spendableVtxosExcludingLocked,
@@ -142,6 +143,59 @@ export function deserializeAggregateError(payload: SerializedAggregateError): Ag
         return err;
     });
     return new AggregateError(errs, payload.message);
+}
+
+/**
+ * Wire envelope for an {@link ArkadeCashCreateError}. A raw `Error` loses its
+ * `cash` field to structured clone, and the token is the only way to recover
+ * the funded output, so it travels as a plain object instead.
+ */
+export type SerializedArkadeCashCreateError = {
+    name: "ArkadeCashCreateError";
+    message: string;
+    cash: string;
+    cause: { name: string; message: string };
+};
+
+/** Page-side guard for a {@link SerializedArkadeCashCreateError} that survived the clone. */
+export function isSerializedArkadeCashCreateError(
+    value: unknown,
+): value is SerializedArkadeCashCreateError {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<SerializedArkadeCashCreateError>;
+    return (
+        v.name === "ArkadeCashCreateError" &&
+        typeof v.message === "string" &&
+        typeof v.cash === "string" &&
+        !!v.cause &&
+        typeof v.cause.name === "string" &&
+        typeof v.cause.message === "string"
+    );
+}
+
+/** Worker-side serializer for a real {@link ArkadeCashCreateError}. */
+export function serializeArkadeCashCreateError(
+    error: ArkadeCashCreateError,
+): SerializedArkadeCashCreateError {
+    const cause = error.cause;
+    return {
+        name: "ArkadeCashCreateError",
+        message: error.message,
+        cash: error.cash,
+        cause:
+            cause instanceof Error
+                ? { name: cause.name, message: cause.message }
+                : { name: "Error", message: String(cause) },
+    };
+}
+
+/** Page-side reconstructor: rebuild an {@link ArkadeCashCreateError} from the wire form. */
+export function deserializeArkadeCashCreateError(
+    payload: SerializedArkadeCashCreateError,
+): ArkadeCashCreateError {
+    const cause = new Error(payload.cause.message);
+    cause.name = payload.cause.name;
+    return new ArkadeCashCreateError(payload.cash, cause);
 }
 
 export class ReadonlyWalletError extends Error {
@@ -288,8 +342,6 @@ export type RequestArkadeCash = RequestEnvelope & {
 export type ResponseArkadeCash = ResponseEnvelope & {
     type: "ARKADE_CASH";
     payload?: import("../../arkadeCash/messages").ArkadeCashResponse;
-    /** Clone-safe recovery token if creating the voucher funded it but then failed. */
-    cash?: string;
 };
 
 /** Cash actions that run sends or sweeps: no bus deadline on either side. */
@@ -1364,11 +1416,14 @@ export class WalletMessageHandler
                                     payload: { action: "create", token },
                                 });
                             } catch (error) {
-                                const cash = (error as { cash?: unknown }).cash;
+                                // A funded-but-failed create must hand its token
+                                // back: a raw Error would lose `cash` in the clone.
+                                if (!(error instanceof ArkadeCashCreateError)) throw error;
                                 return this.tagged({
                                     id,
-                                    error: error as Error,
-                                    ...(typeof cash === "string" ? { cash } : {}),
+                                    error: serializeArkadeCashCreateError(
+                                        error,
+                                    ) as unknown as Error,
                                 });
                             }
                         }

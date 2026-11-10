@@ -160,6 +160,8 @@ import {
     ResponseArkadeCash,
     isLongRunningCashAction,
     deserializeAggregateError,
+    deserializeArkadeCashCreateError,
+    isSerializedArkadeCashCreateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
 import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
@@ -608,20 +610,22 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         };
         // `create` and `claim` run sends and sweeps with no deadline on either
         // side (see `WalletMessageHandler.isLongRunning`); the rest are reads.
-        const response = isLongRunningCashAction(request)
-            ? await this.sendMessageWithRetry(message, {
-                  onEvent: () => {},
-                  isComplete: (resp) => resp.type === "ARKADE_CASH",
-              })
-            : await this.sendMessage(message);
-        const cashEnvelope = response as ResponseArkadeCash;
-        if (cashEnvelope.error && cashEnvelope.cash) {
-            const restored = restoreErrorName(cashEnvelope);
-            Object.assign(restored, { cash: cashEnvelope.cash });
-            throw restored;
+        try {
+            const response = isLongRunningCashAction(request)
+                ? await this.sendMessageWithRetry(message, {
+                      onEvent: () => {},
+                      isComplete: (resp) => resp.type === "ARKADE_CASH",
+                  })
+                : await this.sendMessage(message);
+            return (response as ResponseArkadeCash).payload;
+        } catch (error) {
+            // Rejects like an in-process `Wallet.createCash`: the funded token
+            // rides on the error's `cash`.
+            if (isSerializedArkadeCashCreateError(error)) {
+                throw deserializeArkadeCashCreateError(error);
+            }
+            throw error;
         }
-        if (cashEnvelope.error) throw restoreErrorName(cashEnvelope);
-        return cashEnvelope.payload;
     }
 
     public readonly walletRepository: WalletRepository;
