@@ -7,7 +7,15 @@ import { sha256 } from "@scure/btc-signer/utils.js";
 import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
 import { Transaction } from "../src/utils/transaction";
 import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { SettlementEventType } from "../src/providers/ark";
+import { createArkadeBatchHandler } from "../src/arkade/batch";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
+
+// The real handler by default; a test stubs it to drive a batch without real trees.
+vi.mock("../src/arkade/batch", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../src/arkade/batch")>();
+    return { ...actual, createArkadeBatchHandler: vi.fn(actual.createArkadeBatchHandler) };
+});
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const renewable = arkade.programFromArtifact(
@@ -285,6 +293,41 @@ describe("renewProgramContractOutputs", () => {
             /CSV timelock/,
         );
         expect(registerIntent).not.toHaveBeenCalled();
+    });
+
+    it("returns the commitment when the caller aborts while the forfeits are sent", async () => {
+        const caller = new AbortController();
+        vi.mocked(createArkadeBatchHandler).mockReturnValueOnce({
+            onBatchStarted: async () => ({ skip: false }),
+            onTreeSigningStarted: async () => ({ skip: false }),
+            onTreeNonces: async () => ({ fullySigned: true }),
+            // arkd can commit the batch from here on, whatever the caller does.
+            onBatchFinalization: async () => caller.abort(),
+        });
+        const node = new Transaction();
+        node.addInput({ txid: new Uint8Array(32), index: 0 });
+        node.addOutput({ script: new Uint8Array([0x51]), amount: 1000n });
+        const { ark, target } = await keeper(
+            () =>
+                (async function* () {
+                    yield { type: SettlementEventType.BatchStarted };
+                    yield {
+                        type: SettlementEventType.TreeTx,
+                        batchIndex: 0,
+                        chunk: { txid: node.id, tx: base64.encode(node.toPSBT()), children: {} },
+                    };
+                    yield { type: SettlementEventType.TreeSigningStarted };
+                    yield { type: SettlementEventType.TreeNonces };
+                    yield { type: SettlementEventType.BatchFinalization };
+                    // A tick for an honoured abort to reject the renewal before this arrives.
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    yield { type: SettlementEventType.BatchFinalized, commitmentTxid: "commit-1" };
+                })() as AsyncIterableIterator<never>,
+        );
+
+        await expect(
+            arkade.renewProgramContractOutputs(ark, [target], { signal: caller.signal }),
+        ).resolves.toEqual({ commitmentTxid: "commit-1", intentId: "intent-1" });
     });
 
     it("leaves no listener on the caller's signal", async () => {

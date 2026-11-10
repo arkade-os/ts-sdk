@@ -43,6 +43,9 @@ export interface ProgramContractRenewTarget {
  * Renews covenant VTXOs into a new batch without any owner key: the emulator signs the intent
  * proof after running each covenant and co-signs the forfeits, so a keeper can keep coins alive
  * while their owners are offline. Returns the commitment txid.
+ *
+ * `signal` is honoured until the batch's forfeits are being sent; from then on the renewal waits
+ * for the batch to finalize or fail, since it may commit either way.
  */
 export async function renewProgramContractOutputs(
     client: Arkade,
@@ -198,9 +201,13 @@ export async function renewProgramContractOutputs(
                 ...(coin.assets?.length ? { assets: coin.assets } : {}),
             })),
         );
+        // Once the forfeits go out the batch can commit without us: an abort from then on would
+        // report a spent coin as unrenewed, so the renewal runs to its outcome instead.
+        let forfeiting = false;
         // Batch.join sees the abort only on its next event; a batch that never starts would hang.
         const aborted = new Promise<never>((_, reject) => {
             onAbort = () => {
+                if (forfeiting) return;
                 abort.abort();
                 reject(new Error(ABORTED));
             };
@@ -208,7 +215,17 @@ export async function renewProgramContractOutputs(
         if (opts.signal?.aborted) onAbort();
         opts.signal?.addEventListener("abort", onAbort, { once: true });
         const commitmentTxid = await Promise.race([
-            Batch.join(events, handler, { abortController: abort }),
+            Batch.join(
+                events,
+                {
+                    ...handler,
+                    onBatchFinalization: (...args) => {
+                        forfeiting = true;
+                        return handler.onBatchFinalization(...args);
+                    },
+                },
+                { abortController: abort },
+            ),
             aborted,
         ]);
         return { commitmentTxid, intentId };

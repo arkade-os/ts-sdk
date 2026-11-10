@@ -334,7 +334,10 @@ style and have not been backfilled.
   the server's is refused before anything is registered, since no owner signs
   a renewal. The caller's `signal` ends the wait for a batch; one aborted
   before registration registers nothing, since an intent nobody joins holds
-  its coins until arkd drops it. It subscribes to batch events before
+  its coins until arkd drops it. Once the forfeits are being sent the signal
+  is ignored and the renewal waits for the batch's outcome: arkd can commit
+  it by then, and an abort would report spent coins as unrenewed and lose the
+  commitment txid. It subscribes to batch events before
   registering, as `Wallet.settle` does, so a batch that starts while the
   intent is being registered is not missed; the new `Batch.prime` does the
   subscribing for both. A renewal the server would charge an intent fee for
