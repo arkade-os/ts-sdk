@@ -247,8 +247,8 @@ export class DelegateeManagerImpl implements IDelegateeManager {
             variables,
             options,
         );
-        // The service fills <COSIGNER_KEY> with its key: the same address proves it is GetInfo's,
-        // and commits to the same tapscripts.
+        // The same address proves the service resolved the template under GetInfo's keys and
+        // commits to the same tapscripts.
         if (delegation.status !== "active") {
             throw new Error(`delegatee watch ${delegation.address} is ${delegation.status}`);
         }

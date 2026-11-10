@@ -53,11 +53,18 @@ export const ciphertextOf = (packetBase64: string): Uint8Array => {
     throw new Error("no 0x01 TLV");
 };
 
+const amountBytes = (amount: bigint): Uint8Array => {
+    const bytes = new Uint8Array(8);
+    new DataView(bytes.buffer).setBigUint64(0, amount, false);
+    return bytes;
+};
+
 /** delegatee's side of the scheme: recover P from a sealed packet. */
 export async function openClaimPacket(
     packetBase64: string,
     recipientSecretKey: Uint8Array,
     templateId: string = DELEGATEE_CLAIM_TEMPLATE_ID,
+    minAmount?: bigint,
 ): Promise<Uint8Array> {
     const sealedPacket = ciphertextOf(packetBase64);
     const ephemeralPub = sealedPacket.subarray(0, 33);
@@ -76,6 +83,7 @@ export async function openClaimPacket(
                 additionalData: Uint8Array.from([
                     ...ephemeralPub,
                     ...new TextEncoder().encode(templateId),
+                    ...(minAmount === undefined ? [] : amountBytes(minAmount)),
                 ]) as BufferSource,
             },
             aesKey,

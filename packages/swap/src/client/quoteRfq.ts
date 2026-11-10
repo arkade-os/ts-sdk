@@ -23,6 +23,7 @@ import {
 } from "@arkade-os/sdk";
 import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
+import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
 import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
@@ -666,9 +667,17 @@ const quoteLightningReceive = async (
     const paymentHash = hex.encode(secrets.paymentHash);
     const lightning = input.corridors.get("lightning").deps;
     const sealTo = sealingKey(lightning);
+    // Only an exact-out BTC take names, in sats, what the lockup must carry. Anything else
+    // would go unbound, and delegatee would claim dust and hand the solver `P`.
+    const sealsAmount = pinned.on === "take" && input.legs.take.assetId === BTC_ASSET_ID;
+    const binds = bindsClaimAmount();
     const claimPacket =
-        sealTo !== undefined
-            ? await sealClaimPacket({ preimage: secrets.preimage, encryptionPubkey: sealTo })
+        sealTo !== undefined && (!binds || sealsAmount)
+            ? await sealClaimPacket({
+                  preimage: secrets.preimage,
+                  encryptionPubkey: sealTo,
+                  minAmount: binds ? pinned.value : undefined,
+              })
             : undefined;
 
     const wire = await input.transport.requestQuote(

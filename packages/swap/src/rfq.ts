@@ -64,6 +64,7 @@ import {
     type ProvisionedClaimSecret,
     type ProvisionedKey,
 } from "@arkade-os/sdk";
+import { bindsClaimAmount } from "./claimAmountGate";
 import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
@@ -2159,7 +2160,7 @@ export function deriveLightningReceive(input: {
 /** Both receive flows' setup; `persistBefore` names the step the warning is for. */
 const provisionReceive = async (
     wallet: IWallet,
-    params: { encryptionPubkey?: Uint8Array },
+    params: { encryptionPubkey?: Uint8Array; amount: number; amountSide: "from" | "to" },
     persistBefore: "paying" | "funding",
 ) => {
     const [secrets, info, payoutAddress] = await Promise.all([
@@ -2175,9 +2176,17 @@ const provisionReceive = async (
     const preimage = secrets.preimage;
     const paymentHash = hex.encode(secrets.paymentHash);
     const payoutPubkey = secrets.pubkey;
-    const claimPacket = params.encryptionPubkey
-        ? await sealClaimPacket({ preimage, encryptionPubkey: params.encryptionPubkey })
-        : undefined;
+    // Exact-in leaves the lockup's amount to the quote, and an unbound packet lets delegatee
+    // claim dust and hand the solver `P`.
+    const binds = bindsClaimAmount();
+    const claimPacket =
+        params.encryptionPubkey && (!binds || params.amountSide === "to")
+            ? await sealClaimPacket({
+                  preimage,
+                  encryptionPubkey: params.encryptionPubkey,
+                  minAmount: binds ? BigInt(params.amount) : undefined,
+              })
+            : undefined;
     return { secrets, paymentHash, payoutPubkey, info, payoutAddress, claimPacket };
 };
 
