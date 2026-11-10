@@ -1,5 +1,17 @@
 import { Transaction } from "./utils/transaction";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
+export {
+    createPrfPasskey,
+    evaluatePrf,
+    mnemonicFromPrf,
+    prfSupport,
+    DEFAULT_PASSKEY_LABEL,
+    PrfUnavailable,
+    PasskeyCancelled,
+    PasskeyUnconfirmed,
+} from "./identity/passkey";
+export type { WebAuthnClient } from "./identity/passkey";
+export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
