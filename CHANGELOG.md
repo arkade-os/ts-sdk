@@ -363,6 +363,14 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **The automatic cosign sweep takes boarding coins only.** `needsOnchainSweep`
+  selected coins by scope, so any contract registered with `scope: "onchain"`
+  or `"both"` had its onchain coins swept into the wallet's boarding address
+  near CSV maturity, and settled into Arkade by a later poll. It now takes only
+  `boarding` contracts and the `default` row an equal-delay boarding script
+  coalesced onto. Onchain sync and balances still cover every onchain-scoped
+  contract.
+
 - **Explorer transaction output values are numeric satoshis across providers.**
   `ExplorerTransaction.vout.value` was typed as a string even though Esplora
   REST responses and the WebSocket validator use numbers. The type and Electrum

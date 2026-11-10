@@ -679,6 +679,17 @@ describe("needsOnchainSweep", () => {
         expect(needsOnchainSweep(coin, contract, { height: 100, time: 0 })).toBe(false);
     });
 
+    it("never takes an onchain-scoped contract that is not boarding", () => {
+        const tip = { height: 1108 - 50, time: 0 };
+        for (const contract of [
+            { type: "vhtlc", scope: "onchain", params: { csvTimelock: "1008" } },
+            { type: "vhtlc", scope: "both", params: { csvTimelock: "1008" } },
+            { type: "default", scope: "onchain", params: { csvTimelock: "1008" } },
+        ] as any[]) {
+            expect(needsOnchainSweep(coin, contract, tip)).toBe(false);
+        }
+    });
+
     it("takes a both-scoped contract's boarding coin but never its unrolled VTXO", () => {
         const contract = { type: "default", scope: "both", params: { csvTimelock: "1008" } } as any;
         const unrolled = { status: { confirmed: true, block_height: 100 } } as any;
@@ -689,8 +700,7 @@ describe("needsOnchainSweep", () => {
 
     it("caps the renew window at 144 blocks on a 1008-block CSV", () => {
         const contract = {
-            type: "default",
-            scope: "onchain",
+            type: "boarding",
             params: { csvTimelock: "1008" },
         } as any;
         const at = (tip: number) => needsOnchainSweep(coin, contract, { height: tip, time: 0 });
@@ -707,8 +717,7 @@ describe("needsOnchainSweep", () => {
         } as any;
         const sequence = timelockToSequence({ type: "seconds", value: 604_672n });
         const contract = {
-            type: "default",
-            scope: "onchain",
+            type: "boarding",
             params: { csvTimelock: String(sequence) },
         } as any;
         const maturity = T + 604_672;
