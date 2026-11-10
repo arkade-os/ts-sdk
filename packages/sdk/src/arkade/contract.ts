@@ -41,7 +41,7 @@
  * } satisfies Program;
  *
  * const arkade = await Arkade.connect({ arkade: ark, emulator, indexer, identity, network });
- * // `server` is declared in `params`, so it defaults to the client's server key.
+ * // `server` is declared in `params`, so it defaults to the client's operator key.
  * const htlc = arkade.contract(htlcProgram, { hash, receiver, amount: 10_000n });
  * // `preimage` is typed Uint8Array; calling `claim()` with no args is a type error.
  * const { txid } = await htlc.functions.claim(preimage).to(receiver, 10_000n).send();
@@ -51,19 +51,25 @@
  */
 
 import { hex } from "@scure/base";
-import { RawWitness } from "@scure/btc-signer";
+import { DEFAULT_SEQUENCE, RawWitness } from "@scure/btc-signer";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network, NetworkName } from "../networks";
 import { DEFAULT_NETWORK, getNetwork, networks, resolveEmulatorPubkey } from "../networks";
-import type { ArkadeInfo, ArkProvider } from "../providers/ark";
+import type { ArkadeInfo, OperatorProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
 import type { IndexerProvider } from "../providers/indexer";
+import type { OnchainProvider } from "../providers/onchain";
 import type { Identity } from "../identity";
 import type { ArkadeBroadcaster, Asset, VirtualCoin } from "../wallet";
 import { getNormalizedVtxos, isVtxoSpent } from "../wallet";
-import { CSVMultisigTapscript } from "../script/tapscript";
+import {
+    CLTVMultisigTapscript,
+    ConditionCSVMultisigTapscript,
+    CSVMultisigTapscript,
+    decodeTapscript,
+} from "../script/tapscript";
 import type { TapLeafScript } from "../script/base";
 import { toXOnly } from "../utils/keys";
 import { timelockToSequence } from "../utils/timelock";
@@ -77,9 +83,10 @@ import {
     type EmulatorSubmitOptions,
 } from "../utils/arkTransaction";
 import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
-import { attachPrevArkTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
+import { attachPrevArkTxs, attachPrevoutTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
+import { prepareOwnedInput, submitOnchainSpend } from "../contracts/onchainSpend";
 import { Transaction } from "../utils/transaction";
-import { ANCHOR_PKSCRIPT } from "../utils/anchor";
+import { ANCHOR_PKSCRIPT, CHILD_DUST_AMOUNT } from "../utils/anchor";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
 import type { ExtensionPacket } from "../extension/packet";
@@ -201,7 +208,7 @@ export interface Utxo {
      */
     script?: string;
     /**
-     * Whether the server swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
+     * Whether the operator swept the coin's batch, as {@link ArkadeContract.getUtxos} reports it. A
      * swept coin can't be spent offchain, so `.from()` refuses it; recover it into a batch instead.
      */
     isSwept?: boolean;
@@ -268,15 +275,18 @@ export type CallableFunctions = Record<
 // --- Arkade client ---------------------------------------------------------
 
 /** What {@link Arkade} needs from the Arkade server; see {@link ArkadeConnectOptions.arkade}. */
-export type ArkadeServerProvider = Pick<ArkProvider, "getInfo"> & Partial<ArkadeBroadcaster>;
+export type ArkadeServerProvider = Pick<OperatorProvider, "getInfo"> &
+    Partial<ArkadeBroadcaster & Pick<OperatorProvider, "cosignOnchainTx">>;
 
 /** Fields shared by both forms of {@link ArkadeConnectOptions}. */
 interface ArkadeConnectCommonOptions {
+    /** Onchain provider for onchain spends; defaults to the service's when `service` is used. */
+    onchain?: Pick<OnchainProvider, "getRawTransaction" | "broadcastTransaction">;
     /** Signer for paths that require a user signature; optional for watch-only. */
     identity?: Identity;
     /**
-     * Network for address derivation. Defaults to the network the server
-     * reports on `getInfo` — or the SDK default when the server names none.
+     * Network for address derivation. Defaults to the network the operator
+     * reports on `getInfo` — or the SDK default when the operator names none.
      */
     network?: Network;
     /**
@@ -321,9 +331,9 @@ export interface ArkadeConnectServiceOptions extends ArkadeConnectCommonOptions 
 /** The provider form: hand over providers you already hold (e.g. a wallet's). */
 export interface ArkadeConnectProviderOptions extends ArkadeConnectCommonOptions {
     /**
-     * The Arkade server provider. Only `getInfo` is required (enough to derive, register and
+     * The operator provider. Only `getInfo` is required (enough to derive, register and
      * inspect contracts); without `submitTx`/`finalizeTx`, `.send()` throws. So a caller already
-     * holding `wallet.getArkadeInfo()` can connect without a second `/v1/info` round-trip.
+     * holding `wallet.getOperatorInfo()` can connect without a second `/v1/info` round-trip.
      */
     arkade: ArkadeServerProvider;
     /**
@@ -365,11 +375,12 @@ type EventHandle = {
 };
 
 /**
- * A connected Arkade client holding the providers and resolved network constants (server key,
+ * A connected Arkade client holding the providers and resolved network constants (operator key,
  * co-signer key, checkpoint closure), so creating contracts is synchronous.
  */
 export class Arkade {
     readonly arkProvider: ArkadeServerProvider;
+    readonly onchain?: Pick<OnchainProvider, "getRawTransaction" | "broadcastTransaction">;
     /** The co-signing service, or undefined for emulator-less (pure tapscript) usage. */
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
@@ -401,6 +412,7 @@ export class Arkade {
 
     private constructor(fields: {
         arkProvider: ArkadeServerProvider;
+        onchain?: Pick<OnchainProvider, "getRawTransaction" | "broadcastTransaction">;
         emulator: EmulatorProvider | undefined;
         network: Network;
         serverKey: Uint8Array;
@@ -415,6 +427,7 @@ export class Arkade {
         ownsContractManager?: boolean;
     }) {
         this.arkProvider = fields.arkProvider;
+        this.onchain = fields.onchain;
         this.emulator = fields.emulator;
         this.network = fields.network;
         this.serverKey = fields.serverKey;
@@ -430,7 +443,7 @@ export class Arkade {
     }
 
     /**
-     * Connect and resolve the server key, checkpoint closure and (if present) the co-signer key.
+     * Connect and resolve the operator key, checkpoint closure and (if present) the cosigner key.
      *
      * @example
      * ```typescript
@@ -466,7 +479,7 @@ export class Arkade {
 
         const serverKey = toXOnly(hex.decode(info.signerPubkey), "ark signer key");
         const checkpoint = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
-        // Server-reported network, so a test-network server doesn't yield mainnet addresses.
+        // The network the operator reports, so a test network doesn't yield mainnet addresses.
         const network =
             opts.network ??
             (Object.hasOwn(networks, info.network)
@@ -508,6 +521,7 @@ export class Arkade {
 
         return new Arkade({
             arkProvider,
+            onchain: opts.onchain ?? resolved?.onchainProvider,
             emulator,
             network,
             serverKey,
@@ -592,7 +606,7 @@ export class Arkade {
      * the program's literal type, so `functions` is strongly typed.
      *
      * Declared `server`/`user` params default to the client's keys. Compiler
-     * artifacts reserve the server key and exit delay to the connected server.
+     * artifacts reserve the operator key and exit delay to the connected operator.
      * Struct and array params are passed whole by name (see {@link ArkadeNestedValue}).
      */
     contract<const P extends Program>(
@@ -677,7 +691,7 @@ export class ArkadeContract<P extends Program = Program> {
 
     /**
      * Rebuild a callable contract from a persisted `"arkade"` row. Compiles with the stored keys,
-     * not the client's current ones, so script and address survive a server signer rotation.
+     * not the client's current ones, so script and address survive a rotation of the operator's signer.
      */
     static fromContract(client: Arkade, contract: Contract): ArkadeContract {
         if (contract.type !== "arkade") {
@@ -861,7 +875,7 @@ export class ArkadeContract<P extends Program = Program> {
             scripts: [scriptHex],
             spendableOnly: true,
         });
-        // Re-checked locally: the server's `spendableOnly` is not a fact to lean on.
+        // Re-checked locally: the operator's `spendableOnly` is not a fact to lean on.
         return vtxos.filter((v) => !isVtxoSpent(v) && !v.isUnrolled);
     }
 
@@ -886,6 +900,7 @@ export class ArkadeTransactionBuilder {
     private readonly extraPackets: ExtensionPacket[] = [];
     private readonly inputs: ContractInput[] = [];
     private changeScript?: Uint8Array;
+    private feeSats?: bigint;
 
     /** @internal */
     constructor(
@@ -959,6 +974,12 @@ export class ArkadeTransactionBuilder {
     /** Destination for any surplus (inputs − outputs). Required when the spend is not exact. */
     change(script: Uint8Array): this {
         this.changeScript = script;
+        return this;
+    }
+
+    /** Onchain only: the fee taken out of the surplus; without `.change()` it must equal the surplus. */
+    onchainFee(sats: bigint): this {
+        this.feeSats = sats;
         return this;
     }
 
@@ -1103,6 +1124,106 @@ export class ArkadeTransactionBuilder {
         return { arkTx, checkpoints, inputs };
     }
 
+    /** Assemble the unsigned onchain spend of a coin sitting at the contract address. */
+    async buildOnchain(): Promise<Transaction> {
+        if (this.fundingCoins.length > 0) throw new Error("fund() is not supported onchain");
+        if (this.assetSpecs.length > 0 || this.extraPackets.length > 0) {
+            throw new Error("withAsset() and withPacket() are not supported onchain");
+        }
+        if (this.outputs.length === 0) {
+            throw new Error("ArkadeTransactionBuilder: at least one output is required");
+        }
+        const onchain = this.client.onchain;
+        if (!onchain) {
+            throw new Error("onchain spends require an `onchain` provider on the Arkade client");
+        }
+        if (this.inputs.length !== 1) {
+            throw new Error("onchain spends take exactly one coin: call from(coin) once");
+        }
+        const { coin, unlocker } = this.inputs[0];
+        const { contract, fn } = unlocker;
+        if (fn.arkadeScript && this.serverSigns(unlocker)) {
+            throw new Error(
+                "covenant onchain spends require a leaf without the Arkade server key (the emulator's onchain endpoint refuses leaves containing it)",
+            );
+        }
+        const outputsSum = this.outputs.reduce((s, o) => s + (o.amount ?? 0n), 0n);
+        const surplus = BigInt(coin.value) - outputsSum;
+        if (surplus < 0n) throw new Error("ArkadeTransactionBuilder: insufficient input");
+        const outputs = [...this.outputs];
+        if (this.changeScript) {
+            const fee = this.feeSats;
+            if (fee === undefined) throw new Error("onchain .change() requires .onchainFee(sats)");
+            if (fee > surplus) throw new Error(`onchainFee ${fee} exceeds surplus ${surplus}`);
+            const changeAmount = surplus - fee;
+            if (changeAmount < BigInt(CHILD_DUST_AMOUNT)) {
+                throw new Error(`onchain change ${changeAmount} is below dust`);
+            }
+            outputs.push({ script: this.changeScript, amount: changeAmount });
+        } else if (this.feeSats !== surplus) {
+            throw new Error(
+                `onchain surplus ${surplus} without .change() must equal .onchainFee() (got ${this.feeSats})`,
+            );
+        }
+        const { sequence, lockTime } = this.leafTimelocks(fn);
+
+        const tx = new Transaction({ version: 2, lockTime });
+        tx.addInput({ txid: hex.decode(coin.txid), index: coin.vout, sequence });
+        for (const o of outputs) tx.addOutput(o);
+
+        const condition = (fn.def.tapscript.witness ?? []).map((w) => witnessBytes(unlocker, w));
+        prepareOwnedInput(tx, {
+            index: 0,
+            coin: { value: coin.value, script: hex.encode(contract.pkScript) },
+            path: { leaf: fn.tapLeafScript, extraWitness: condition },
+            tapTree: contract.tapTree,
+        });
+        if (fn.arkadeScript) {
+            const stack = (fn.def.arkadeScript?.witness ?? []).map((w) =>
+                witnessBytes(unlocker, w),
+            );
+            attachExtension(tx, [
+                EmulatorPacket.create([
+                    { vin: 0, script: fn.arkadeScript, witness: RawWitness.encode(stack) },
+                ]) as ExtensionPacket,
+            ]);
+            await attachPrevoutTxs(tx, onchain);
+        }
+        return tx;
+    }
+
+    /** Build, cosign and broadcast the onchain spend; returns its txid. */
+    async sendOnchain(): Promise<string> {
+        const tx = await this.buildOnchain();
+        const client = this.client;
+        const unlocker = this.inputs[0].unlocker;
+        const signed = await this.signArk(tx, this.userInputIndexes(this.inputs));
+        return submitOnchainSpend(signed, this.serverSigns(unlocker) ? new Set([0]) : new Set(), {
+            arkProvider: client.arkProvider,
+            emulator: client.emulator,
+            onchainProvider: client.onchain!,
+        });
+    }
+
+    private serverSigns({ fn }: ArkadeUnlocker): boolean {
+        const { serverKey } = this.client;
+        return fn.signerKeys.some((k) => equalBytes(k, serverKey));
+    }
+
+    private leafTimelocks(fn: ArkadeUnlocker["fn"]): { sequence?: number; lockTime: number } {
+        const tapscript = decodeTapscript(fn.leafScript);
+        if (CLTVMultisigTapscript.is(tapscript)) {
+            return {
+                sequence: DEFAULT_SEQUENCE - 1,
+                lockTime: Number(tapscript.params.absoluteTimelock),
+            };
+        }
+        if (CSVMultisigTapscript.is(tapscript) || ConditionCSVMultisigTapscript.is(tapscript)) {
+            return { sequence: timelockToSequence(tapscript.params.timelock), lockTime: 0 };
+        }
+        return { lockTime: 0 };
+    }
+
     /** Build, submit and return the finalized transaction. */
     async send(options?: EmulatorSubmitOptions): Promise<ArkadeSpendResult> {
         const beforeEmulatorSubmit = options?.beforeEmulatorSubmit;
@@ -1140,7 +1261,7 @@ export class ArkadeTransactionBuilder {
 
         const userInputs = this.userInputIndexes(inputs);
 
-        // arkd refuses an input signed by the server alone; a covenant leaf adds the emulator's key.
+        // The operator refuses an input it alone signed; a covenant leaf adds the emulator's key.
         const serverOnly = inputs.find(
             ({ unlocker }, i) => !unlocker.fn.arkadeScript && !userInputs.includes(i),
         );
@@ -1194,7 +1315,7 @@ export class ArkadeTransactionBuilder {
         );
         return {
             txid: res.arkTxid,
-            // Required by ArkadeBroadcaster; RestArkProvider.submitTx rejects a response without it.
+            // Required by ArkadeBroadcaster; RestOperatorProvider.submitTx rejects a response without it.
             signedArkTx: res.finalArkTx!,
             signedCheckpointTxs: res.signedCheckpointTxs,
         };
@@ -1371,7 +1492,7 @@ function bindInputs(
  * Attach packets as an Extension OP_RETURN, mutating `tx`. Placement per the on-chain rules:
  * merge into an existing extension, else insert before the P2A anchor, else append.
  */
-function attachExtension(tx: Transaction, newPackets: ExtensionPacket[]): void {
+export function attachExtension(tx: Transaction, newPackets: ExtensionPacket[]): void {
     for (let i = 0; i < tx.outputsLength; i++) {
         const out = tx.getOutput(i);
         if (!out?.script || !Extension.isExtension(out.script)) continue;

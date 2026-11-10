@@ -19,7 +19,6 @@ import {
     WalletRepository,
     ContractRepository,
     arkade,
-    Extension,
     EmulatorPacket,
     networks,
     Transaction,
@@ -30,7 +29,7 @@ import {
     ExitDataSource,
     NormalizedExtendedVirtualCoin,
 } from "../../src";
-import { ANCHOR_PKSCRIPT } from "../../src/utils/anchor";
+import { attachExtension } from "../../src/arkade/contract";
 import type { ExtensionPacket } from "../../src/extension";
 import { hex } from "@scure/base";
 
@@ -43,7 +42,7 @@ export const arkdExec = "docker exec -t arkd";
 export const ESPLORA_API_URL = "http://localhost:3000/api";
 
 /** Regtest arkd. Wallets take it as a provider — the URL is not wallet config. */
-export const ARK_URL = "http://localhost:7070";
+export const OPERATOR_URL = "http://localhost:7070";
 
 /**
  * Default budget for a shell-out. Every `execSync` here MUST carry one:
@@ -161,7 +160,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -186,7 +185,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -213,7 +212,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -260,7 +259,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkProvider: new RestArkProvider(ARK_URL),
+        arkProvider: new RestArkProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -442,17 +441,19 @@ export function createOverrideInfoArkProvider(
 // ../arkd/internal/test/e2e/utils_test.go), adapted to this repo's two-file,
 // profiled compose project (`arkade-regtest`) launched by `regtest.mjs`.
 
-export interface ServerSignerInfo {
+export interface OperatorSignerInfo {
     /** Active signer pubkey, hex exactly as arkd's `/v1/info` returns it. */
     signerPubkey: string;
     deprecatedSigners: { pubkey: string; cutoffDate?: string }[];
 }
 
 /** Read the current active + deprecated signer set from `GET /v1/info`. */
-export async function getServerInfo(arkUrl: string = ARK_URL): Promise<ServerSignerInfo> {
-    const res = await fetch(`${arkUrl}/v1/info`);
+export async function getOperatorInfo(
+    operatorUrl: string = OPERATOR_URL,
+): Promise<OperatorSignerInfo> {
+    const res = await fetch(`${operatorUrl}/v1/info`);
     if (!res.ok) {
-        throw new Error(`getServerInfo: ${res.status} ${res.statusText}`);
+        throw new Error(`getOperatorInfo: ${res.status} ${res.statusText}`);
     }
     const j: any = await res.json();
     return {
@@ -493,9 +494,9 @@ export type DeprecatedSignerSpec = string | { priv: string; cutoffDate?: number 
 export async function rotateArkdSigner(params: {
     activeSignerPriv: string;
     deprecatedSigners?: DeprecatedSignerSpec[];
-    arkUrl?: string;
-}): Promise<ServerSignerInfo> {
-    const { activeSignerPriv, arkUrl = ARK_URL } = params;
+    operatorUrl?: string;
+}): Promise<OperatorSignerInfo> {
+    const { activeSignerPriv, operatorUrl = OPERATOR_URL } = params;
     const deprecated = (params.deprecatedSigners ?? []).map((d) =>
         typeof d === "string" ? { priv: d, cutoffDate: undefined as number | undefined } : d,
     );
@@ -538,10 +539,10 @@ export async function rotateArkdSigner(params: {
     );
 
     const deadline = Date.now() + ROTATE_POLL_TIMEOUT_MS;
-    let lastInfo: ServerSignerInfo | undefined;
+    let lastInfo: OperatorSignerInfo | undefined;
     while (Date.now() < deadline) {
         try {
-            lastInfo = await getServerInfo(arkUrl);
+            lastInfo = await getOperatorInfo(operatorUrl);
             const activeOk = toXOnly(lastInfo.signerPubkey) === expectedActive;
             const advertised = new Set(lastInfo.deprecatedSigners.map((s) => toXOnly(s.pubkey)));
             // Set equality, not containment: `every` is vacuously true for an
@@ -588,7 +589,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     repos: SharedRepos;
     unilateralExitDelay: bigint;
 }): Promise<TestArkWallet> {
-    const realProvider = new RestArkProvider(ARK_URL);
+    const realProvider = new RestArkProvider(OPERATOR_URL);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a
@@ -713,40 +714,7 @@ export function addEmulatorPacket(
         })),
     );
 
-    // Try to merge into an existing extension output.
-    for (let i = 0; i < tx.outputsLength; i++) {
-        const out = tx.getOutput(i);
-        if (!out?.script) continue;
-        if (!Extension.isExtension(out.script)) continue;
-        const existing = Extension.fromBytes(out.script);
-        const merged = Extension.create([...existing.getPackets(), packet as ExtensionPacket]);
-        tx.updateOutput(i, { script: merged.serialize(), amount: 0n });
-        return;
-    }
-
-    // No existing extension — insert a new one.
-    const ext = Extension.create([packet as ExtensionPacket]);
-    const newOut = ext.txOut();
-
-    // If the last output is the P2A anchor, swap it: [..., anchor] → [..., ext, anchor].
-    const lastIdx = tx.outputsLength - 1;
-    const lastOut = tx.getOutput(lastIdx);
-    if (
-        lastOut?.script &&
-        lastOut.script.length === ANCHOR_PKSCRIPT.length &&
-        lastOut.script.every((b, j) => b === ANCHOR_PKSCRIPT[j])
-    ) {
-        // @scure Transaction has no `insertOutput`. Rebuild the last two outputs:
-        // overwrite slot lastIdx with the extension and append the anchor.
-        tx.updateOutput(lastIdx, {
-            script: newOut.script,
-            amount: newOut.amount,
-        });
-        tx.addOutput({ script: lastOut.script, amount: lastOut.amount ?? 0n });
-        return;
-    }
-
-    tx.addOutput({ script: newOut.script, amount: newOut.amount });
+    attachExtension(tx, [packet as ExtensionPacket]);
 }
 
 /**

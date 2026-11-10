@@ -8,21 +8,21 @@ export class MockEventSource {
     readonly url: string;
     readyState = 1;
     closed = false;
-    private listeners = new Map<string, Set<(event: unknown) => void>>();
+    private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
 
     constructor(url = "") {
         this.url = url;
         MockEventSource.instances.push(this);
     }
 
-    addEventListener(type: string, handler: (event: unknown) => void) {
+    addEventListener(type: string, handler: (event: MessageEvent) => void) {
         if (!this.listeners.has(type)) {
             this.listeners.set(type, new Set());
         }
         this.listeners.get(type)!.add(handler);
     }
 
-    removeEventListener(type: string, handler: (event: unknown) => void) {
+    removeEventListener(type: string, handler: (event: MessageEvent) => void) {
         this.listeners.get(type)?.delete(handler);
     }
 
@@ -49,7 +49,7 @@ export class MockEventSource {
 
     private emit(type: string, event: unknown) {
         for (const handler of this.listeners.get(type) ?? []) {
-            handler(event);
+            handler(event as MessageEvent);
         }
     }
 }

@@ -10,7 +10,7 @@ import {
     DEFAULT_ARKADE_SERVER_URL,
     type NetworkName,
 } from "../networks";
-import { type ArkadeInfo, type ArkProvider, RestArkProvider } from "../providers/ark";
+import { type ArkadeInfo, type OperatorProvider, RestOperatorProvider } from "../providers/ark";
 import { type EmulatorProvider, RestEmulatorProvider } from "../providers/emulator";
 import { type IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers/onchain";
@@ -18,19 +18,21 @@ import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers
 /**
  * The Arkade deployment to talk to.
  *
- * - `{ network: "bitcoin" }` — the hosted mainnet deployment, including its covenant co-signer
- *   ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network with a one-liner.
- * - `{ operatorUrl, emulatorUrl? }` — a specific operator. A custom operator does not imply the default
+ * - `{ network: "bitcoin" }`: the hosted mainnet deployment, including the operator's cosigner
+ *   that emulates Arkade Script ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network
+ *   with a one-liner.
+ * - `{ operatorUrl, emulatorUrl? }`: a specific operator. A custom operator does not imply the default
  *   emulator: without `emulatorUrl`, covenant (`arkadeScript`) paths stay disabled.
  */
 export type ArkadeService = { network: "bitcoin" } | { operatorUrl: string; emulatorUrl?: string };
 
 /** The providers and operator info an {@link ArkadeService} resolves to. */
 export interface ResolvedArkadeService {
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     indexerProvider: IndexerProvider;
     onchainProvider: OnchainProvider;
-    /** The covenant co-signer; absent for an `operatorUrl` service without `emulatorUrl`. */
+    /** The operator's cosigner that emulates Arkade Script; absent for an `operatorUrl` service
+     * without `emulatorUrl`. */
     emulator?: EmulatorProvider;
     info: ArkadeInfo;
 }
@@ -49,10 +51,10 @@ export function arkadeServiceUrl(service: ArkadeService): string {
  */
 export async function resolveArkadeService(
     service: ArkadeService,
-    opts: { arkProvider?: ArkProvider; info?: ArkadeInfo } = {},
+    opts: { arkProvider?: OperatorProvider; info?: ArkadeInfo } = {},
 ): Promise<ResolvedArkadeService> {
     const operatorUrl = arkadeServiceUrl(service);
-    const arkProvider = opts.arkProvider ?? new RestArkProvider(operatorUrl);
+    const arkProvider = opts.arkProvider ?? new RestOperatorProvider(operatorUrl);
     const info = opts.info ?? (await arkProvider.getInfo());
 
     if ("network" in service && service.network !== info.network) {

@@ -1,11 +1,12 @@
 import { hex } from "@scure/base";
 import { assertTimerMs } from "../../utils/time";
-import { Wallet, extractArkProviderUrl, type ProviderConnectionState } from "../wallet";
+import type { Transaction } from "@scure/btc-signer";
+import { Wallet, extractOperatorProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
     ArkadeBroadcaster,
     ArkadeReader,
-    GetArkadeInfoOptions,
+    GetOperatorInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -19,6 +20,7 @@ import type {
     ExtendedCoin,
     Recipient,
     SendParams,
+    SendOnchainParams,
 } from "..";
 import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
@@ -109,7 +111,7 @@ export function warnOnRemovedBackgroundFields(bg: unknown): void {
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *     arkProvider: new RestArkProvider(),
+ *     operatorProvider: new RestOperatorProvider(),
  *     onchainProvider: new EsploraProvider(),
  *     storage: { ... },
  *     background: {
@@ -185,7 +187,7 @@ export class ExpoWallet
         // Persist wallet params so the background handler can rehydrate
         // without a network call. Only works with AsyncStorageTaskQueue.
         if ("persistConfig" in taskQueue) {
-            const arkServerUrl = extractArkProviderUrl(wallet.arkProvider);
+            const arkServerUrl = extractOperatorProviderUrl(wallet.arkProvider);
 
             if (typeof arkServerUrl === "string" && arkServerUrl.length > 0) {
                 const timelock = wallet.offchainTapscript.options.csvTimelock;
@@ -310,8 +312,13 @@ export class ExpoWallet
         return this.wallet.getBoardingAddress();
     }
 
-    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        return this.wallet.getArkadeInfo(opts);
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.wallet.getOperatorInfo(opts);
+    }
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+        return this.getOperatorInfo(opts);
     }
 
     getArkadeReader(): Promise<ArkadeReader> {
@@ -412,6 +419,14 @@ export class ExpoWallet
 
     send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         return this.wallet.send(...args);
+    }
+
+    cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        return this.wallet.cosignOnchainTx(psbt);
+    }
+
+    sendOnchain(params: SendOnchainParams): Promise<string> {
+        return this.wallet.sendOnchain(params);
     }
 
     get assetManager(): IAssetManager {

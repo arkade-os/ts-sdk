@@ -6,6 +6,8 @@ import {
     IReadonlyWallet,
     isSubdust,
     Outpoint,
+    SendOnchainParams,
+    SettleParams,
     VirtualCoin,
 } from ".";
 import {
@@ -19,7 +21,13 @@ import {
     type NormalizedExtendedVirtualCoin,
     type TimeHeight,
 } from "./vtxo";
-import { ArkadeInfo, ArkProvider, SettlementEvent } from "../providers/ark";
+import {
+    ArkadeInfo,
+    OperatorProvider,
+    OnchainCosignRejectedError,
+    SettlementEvent,
+} from "../providers/ark";
+import { isCosignFallback } from "../contracts/onchainSpend";
 import { ArkErrorName, isArkError, maybeArkError } from "../providers/errors";
 import type { BoardingUtxoGroup } from "./wallet";
 import type { Contract, ExtendedContractVtxo } from "../contracts/types";
@@ -28,14 +36,18 @@ import {
     classifyAgainstSignerSet,
     isCooperativelyMigratable,
     signerSetFromInfo,
+    toXOnlySignerHex,
     type SignerClassification,
     type SignerSet,
     type SignerStatus,
 } from "./signerRotation";
-import { hasBoardingTxExpired } from "../utils/arkTransaction";
-import { CSVMultisigTapscript } from "../script/tapscript";
+import {
+    type BoardingExpiry,
+    classifyBoardingExpiry,
+    decodeBoardingExit,
+} from "../utils/arkTransaction";
 import { hex } from "@scure/base";
-import { getSequence, scriptFromTapLeafScript, VtxoScript } from "../script/base";
+import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Estimator } from "../arkfee";
@@ -43,7 +55,7 @@ import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
-import { getDustAmount, getSelectableBoardingUtxos, markSdkPicked } from "./utils";
+import { getDustAmount, getSelectableBoardingUtxoGroups, markSdkPicked } from "./utils";
 import { logExcludedVtxos, outpointReasons } from "../contracts/spendability";
 
 /**
@@ -83,13 +95,22 @@ export function selectPendingRecoveryOutpoints(
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     network: Network;
+    settle(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
+    ): Promise<string>;
     /**
      * Descriptor-aware signer: routes each input to the identity or its per-index descriptor
      * (rotated boarding), so a sweep batching several boarding addresses signs each correctly.
      */
     signOnchainBoardingTx(tx: Transaction): Promise<Transaction>;
+    /** Optional so older wallet objects keep working; absent disables the cosign-first sweep. */
+    sendOnchain?(params: SendOnchainParams): Promise<string>;
+    /** Outpoints the cosign sweep should renew now; absent disables it. */
+    getOnchainSweepInputs?(): Promise<Outpoint[]>;
 }
 
 function isSweepCapable(wallet: IWallet): wallet is IWallet & SweepCapableWallet {
@@ -115,6 +136,13 @@ function assertSweepCapable(wallet: IWallet): asserts wallet is IWallet & SweepC
  * Static: two distinct wallets on one origin just take turns, which is acceptable.
  */
 const BOARDING_POLL_LOCK_NAME = "arkade-boarding-poll";
+
+class BoardingSignerChangedError extends Error {
+    constructor() {
+        super("Boarding signer changed before intent registration");
+        this.name = "BoardingSignerChangedError";
+    }
+}
 
 /**
  * Web Locks name serializing imported-contract recovery (arkcash) across
@@ -157,10 +185,10 @@ async function runWithCrossInstanceLock(name: string, fn: () => Promise<void>): 
 export const MAX_VTXOS_PER_SETTLEMENT = 50;
 
 /**
- * Maximum number of inputs the server accepts in a single intent proof
+ * Maximum number of inputs the server accepts in a single proof
  * (get-pending-tx and friends). Larger input sets must be split into batches.
  */
-export const MAX_INPUTS_PER_INTENT = 20;
+export const MAX_INPUTS_PER_PROOF = 20;
 
 /**
  * Order VTXOs highest-value first (new array). For value-driven paths (recovery, manual full
@@ -405,13 +433,13 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Default behavior: virtual output renewal at 3 days, boarding sweep enabled, polling every minute
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  * });
  *
  * // Custom expiry threshold of 24 hours
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *   },
@@ -420,7 +448,7 @@ export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
  * // Explicitly disable
  * const wallet = await Wallet.create({
  *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: false,
  * });
  * ```
@@ -470,7 +498,7 @@ export interface SettlementConfig {
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *     vtxoThreshold: 259_200,
  *     boardingUtxoSweep: true,
@@ -805,7 +833,7 @@ export interface DeprecatedSignerMigrationReport {
  * `Wallet`; absent on watch-only or mock wallets.
  */
 interface MigrationCapableWallet {
-    arkProvider: ArkProvider;
+    arkProvider: OperatorProvider;
     arkServerPublicKey: Uint8Array;
     onchainProvider: OnchainProvider;
     rotateServerSigner(newServerPubKey: Uint8Array, checkpointTapscript: string): Promise<void>;
@@ -824,9 +852,13 @@ interface MigrationCapableWallet {
     sendSelectedVtxosToSelf(inputs: ExtendedVirtualCoin[], now?: TimeHeight): Promise<string>;
     /**
      * Grouped boarding discovery over a signer set, returning the address↔signer association
-     * {@link ExtendedCoin} cannot carry.
+     * {@link ExtendedCoin} cannot carry. A failed or stalled lookup under one of
+     * `skipFailedSigners` leaves that address out instead of failing the call.
      */
-    getBoardingUtxosForSigners(allowedSigners: Set<string>): Promise<BoardingUtxoGroup[]>;
+    getBoardingUtxosForSigners(
+        allowedSigners: Set<string>,
+        skipFailedSigners?: ReadonlySet<string>,
+    ): Promise<BoardingUtxoGroup[]>;
 }
 
 function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapableWallet {
@@ -952,7 +984,7 @@ function mergeSignerReports(...reportLists: DeprecatedSignerReport[][]): Depreca
  * ```typescript
  * const wallet = await Wallet.create({
  *   identity,
- *   arkProvider: new RestArkProvider(),
+ *   operatorProvider: new RestOperatorProvider(),
  *   settlementConfig: {
  *      // Seconds before virtual output expiry to trigger renewal
  *      vtxoThreshold: 259_200, // 3 days
@@ -996,8 +1028,18 @@ export interface IVtxoManager {
         options?: RenewVtxosOptions,
     ): Promise<string>;
 
+    /**
+     * Boarding inputs whose own timelock has elapsed, at every boarding address the wallet shows,
+     * including those under a deprecated signer.
+     */
     getExpiredBoardingUtxos(): Promise<ExtendedCoin[]>;
 
+    /**
+     * Sweep the expired boarding inputs from {@link getExpiredBoardingUtxos} back to the current
+     * boarding address via the unilateral exit path, which needs no operator.
+     *
+     * @returns The broadcast transaction ID
+     */
     sweepExpiredBoardingUtxos(): Promise<string>;
 
     /**
@@ -1551,7 +1593,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *  identity,
-     *  arkProvider: new RestArkProvider(),
+     *  operatorProvider: new RestOperatorProvider(),
      *  settlementConfig: {
      *      vtxoThreshold: 86_400 // 24 hours
      *  },
@@ -1815,6 +1857,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * Get boarding inputs whose timelock has expired: they can no longer be onboarded via
      * `settle()` and must be swept back to a fresh boarding address via the unilateral exit path.
+     * Covers every boarding address the wallet shows, including those under a deprecated signer,
+     * and judges each input by the timelock of its own address.
      *
      * @returns Array of expired boarding inputs
      *
@@ -1828,25 +1872,44 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```
      */
     async getExpiredBoardingUtxos(prefetchedUtxos?: ExtendedCoin[]): Promise<ExtendedCoin[]> {
-        const boardingUtxos = prefetchedUtxos ?? (await this.wallet.getBoardingUtxos());
-        const boardingTimelock = this.getBoardingTimelock();
+        const boardingUtxos =
+            prefetchedUtxos ??
+            (await getSelectableBoardingUtxoGroups(this.wallet, this.getCurrentSigner())).flatMap(
+                (g) => g.coins,
+            );
+        return (await this.boardingExpiry(boardingUtxos)).expired;
+    }
 
-        let chainTipHeight: number | undefined;
-        if (boardingTimelock.type === "blocks") {
-            const tip = await this.getOnchainProvider().getChainTip();
-            chainTipHeight = tip.height;
+    /**
+     * Renew the boarding coins nearing cosign cut-off through an arkd
+     * cosignature; unrolled outputs are never swept here. Returns the txid, or
+     * undefined when nothing qualified or the cosign path is unavailable.
+     */
+    async sweepOnchainCoins(): Promise<string | undefined> {
+        if (!isSweepCapable(this.wallet) || !this.wallet.sendOnchain) return undefined;
+        const inputs = await this.wallet.getOnchainSweepInputs?.();
+        if (!inputs?.length) return undefined;
+        const boarding = await this.wallet.getBoardingAddress();
+        try {
+            const txid = await this.wallet.sendOnchain({ outputs: [], inputs, sweepTo: boarding });
+            // Its one output renews boarding coins; like the CSV sweep's, the poll must not settle it.
+            this.knownBoardingUtxos.add(`${txid}:0`);
+            return txid;
+        } catch (e) {
+            if (!isCosignFallback(e)) throw e;
+            if (e instanceof OnchainCosignRejectedError) {
+                console.warn("Onchain cosign sweep rejected, falling back to CSV exit:", e.message);
+            }
+            return undefined;
         }
-
-        return boardingUtxos.filter((utxo) =>
-            hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
-        );
     }
 
     /**
      * Sweep expired boarding inputs back to a fresh boarding address via the unilateral exit path:
      * one pure onchain tx (no Arkade server) spending every expired input via the CSV exit script
      * into a single boarding-address output, which restarts the timelock. Skipped if the output
-     * after fees would be below dust.
+     * after fees would be below dust. Covers boarding inputs under a deprecated signer too: the
+     * exit leaf is the user's key plus a CSV, so it never needs the operator.
      *
      * @returns The broadcast transaction ID
      * @throws Error if no expired boarding inputs are found
@@ -1857,7 +1920,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * ```typescript
      * const wallet = await Wallet.create({
      *   identity,
-     *   arkProvider: new RestArkProvider(),
+     *   operatorProvider: new RestOperatorProvider(),
      *   settlementConfig: {
      *     boardingUtxoSweep: true,
      *   },
@@ -1894,19 +1957,26 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
 
-        // Representative leaf, for size estimation only: every boarding exit leaf shares one
-        // template (Alice + CSV). The per-UTXO leaf is resolved in the input loop below.
-        const exitTapLeafScript = this.getSweepWallet().boardingTapscript.exit();
+        // Each coin spends through the exit leaf of the boarding address it sits on: rotation and
+        // signer changes leave coins at addresses whose leaf differs from the current one.
+        const inputs = expiredUtxos.map((utxo) => {
+            const exit = decodeBoardingExit(utxo);
+            if (!exit) {
+                throw new Error(
+                    `Boarding sweep: no CSV exit leaf for UTXO ${utxo.txid}:${utxo.vout}`,
+                );
+            }
+            return { utxo, ...exit };
+        });
 
-        // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
-        const leafScript = exitTapLeafScript[1];
-        const leafScriptSize = leafScript.length - 1; // minus version byte
-        const controlBlockSize = exitTapLeafScript[0].merklePath.length * 32;
         // Exit path witness: 1 Schnorr signature (64 bytes)
         const leafWitnessSize = 64;
 
         const estimator = TxWeightEstimator.create();
-        for (const _ of expiredUtxos) {
+        for (const { leaf } of inputs) {
+            // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
+            const leafScriptSize = leaf[1].length - 1; // minus version byte
+            const controlBlockSize = leaf[0].merklePath.length * 32;
             estimator.addTapscriptInput(leafWitnessSize, leafScriptSize, controlBlockSize);
         }
         estimator.addOutputAddress(boardingAddress, this.getNetwork());
@@ -1924,28 +1994,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const tx = new Transaction();
 
-        for (const utxo of expiredUtxos) {
-            // Use the tapTree of the boarding address THIS UTXO sits on: per-derivation rotation
-            // can leave unspent UTXOs at previous boarding addresses.
-            const utxoScript = VtxoScript.decode(utxo.tapTree);
-            const utxoExitLeaf = utxoScript.leaves.find(
-                (leaf) =>
-                    CSVMultisigTapscript.isScriptValid(scriptFromTapLeafScript(leaf)) === true,
-            );
-            if (!utxoExitLeaf) {
-                throw new Error(
-                    `Boarding sweep: no CSV exit leaf for UTXO ${utxo.txid}:${utxo.vout}`,
-                );
-            }
+        for (const { utxo, script, leaf } of inputs) {
             tx.addInput({
                 txid: utxo.txid,
                 index: utxo.vout,
                 witnessUtxo: {
-                    script: utxoScript.pkScript,
+                    script: script.pkScript,
                     amount: BigInt(utxo.value),
                 },
-                tapLeafScript: [utxoExitLeaf],
-                sequence: getSequence(utxoExitLeaf),
+                tapLeafScript: [leaf],
+                sequence: getSequence(leaf),
             });
         }
 
@@ -1984,8 +2042,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Status of every deprecated server signer the wallet holds funds under (VTXO and boarding,
      * merged per signer), without migrating.
      *
-     * @remarks Not a pure repository/info read: boarding holdings fan out per boarding address
-     * (`getCoins` round trips) and refresh the UTXO cache via `saveUtxos`.
+     * @remarks This is no longer a pure repository/info read: surfacing boarding
+     * holdings fans out per boarding address (`getCoins` round trips) and
+     * syncs those coins into the contract manager's store.
      */
     async getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]> {
         const wallet = this.requireMigrationCapableWallet();
@@ -2365,14 +2424,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // `active` lets one fetch cover both.
         const allowed = new Set<string>([signerSet.active, ...signerSet.deprecated.keys()]);
 
-        const groups = await wallet.getBoardingUtxosForSigners(allowed);
+        // A deprecated address is recovery-only: a stalled lookup must not hold up the poll.
+        const groups = await wallet.getBoardingUtxosForSigners(
+            allowed,
+            new Set(signerSet.deprecated.keys()),
+        );
 
-        // Boarding-output expiry is PER GROUP: a rotation may change the boarding exit delay.
-        let chainTipHeight: number | undefined;
-        if (groups.some((g) => g.csvTimelock.type === "blocks")) {
-            const tip = await wallet.onchainProvider.getChainTip();
-            chainTipHeight = tip.height;
-        }
+        const { expired: csvExpired, unknown } = await classifyBoardingExpiry(
+            groups.flatMap((group) => group.coins),
+            () => wallet.onchainProvider.getChainTip(),
+            wallet.onchainProvider.getMedianTimePast?.bind(wallet.onchainProvider),
+        );
+        const unsettleable = new Set(
+            [...csvExpired, ...unknown].map((coin) => `${coin.txid}:${coin.vout}`),
+        );
 
         const reportsBySigner = new Map<string, DeprecatedSignerReport>();
         const migratable: ClassifiedBoarding[] = [];
@@ -2412,17 +2477,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             for (const coin of confirmed) {
                 // Two independent gates: signer cutoff AND this row's own CSV expiry.
-                const boardingExpired = hasBoardingTxExpired(
-                    coin,
-                    group.csvTimelock,
-                    chainTipHeight,
-                );
-                if (isCooperativelyMigratable(cls.status) && !boardingExpired) {
+                const csvBlocked = unsettleable.has(`${coin.txid}:${coin.vout}`);
+                if (isCooperativelyMigratable(cls.status) && !csvBlocked) {
                     migratable.push({ coin, classification: cls });
                 } else if (cls.status === "EXPIRED") {
                     expired.push({ coin, classification: cls });
                 }
-                // Migratable signer but CSV-expired: leaves via the unilateral sweep instead.
+                // Migratable signer but CSV-expired, or of unknown expiry: not migrated.
             }
         }
 
@@ -2571,29 +2632,36 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.wallet;
     }
 
-    private getBoardingTimelock() {
-        const wallet = this.getSweepWallet();
-        const exitScript = CSVMultisigTapscript.decode(
-            hex.decode(wallet.boardingTapscript.exitScript),
+    /** The signer `settle` can cooperate with: the one the wallet's boarding address is built on. */
+    private getCurrentSigner(): string {
+        return toXOnlySignerHex(
+            hex.encode(this.getSweepWallet().boardingTapscript.options.serverPubKey),
         );
-        return exitScript.params.timelock;
+    }
+
+    private boardingExpiry(coins: ExtendedCoin[]): Promise<BoardingExpiry> {
+        return classifyBoardingExpiry(
+            coins,
+            () => this.getOnchainProvider().getChainTip(),
+            this.getOnchainProvider().getMedianTimePast?.bind(this.getOnchainProvider()),
+        );
     }
 
     private getOnchainProvider() {
         return this.getSweepWallet().onchainProvider;
     }
 
-    private getArkProvider() {
+    private getOperatorProvider() {
         return this.getSweepWallet().arkProvider;
     }
 
     /**
-     * Unlike {@link getArkProvider}, doesn't require boarding-sweep capability. Undefined when no
+     * Unlike {@link getOperatorProvider}, doesn't require boarding-sweep capability. Undefined when no
      * provider is wired, which callers treat as "no limit".
      */
-    private getInfoProvider(): ArkProvider | undefined {
+    private getInfoProvider(): OperatorProvider | undefined {
         // Narrow cast, so an incompatible future IWallet.arkProvider is a type error here.
-        return (this.wallet as { arkProvider?: ArkProvider }).arkProvider;
+        return (this.wallet as { arkProvider?: OperatorProvider }).arkProvider;
     }
 
     private getNetwork() {
@@ -2798,14 +2866,28 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             // and N-1 collide on the server's duplicated-input check.
             await runWithCrossInstanceLock(BOARDING_POLL_LOCK_NAME, async () => {
                 // Both passes pick from it, so neither takes an input an in-flight settle holds.
-                const boardingUtxos = await getSelectableBoardingUtxos(this.wallet);
+                let currentSigner = this.getCurrentSigner();
+                let groups = await getSelectableBoardingUtxoGroups(this.wallet, currentSigner);
+                if (this.getCurrentSigner() !== currentSigner) {
+                    currentSigner = this.getCurrentSigner();
+                    groups = await getSelectableBoardingUtxoGroups(this.wallet, currentSigner);
+                }
+                const signerStable = this.getCurrentSigner() === currentSigner;
+                // The server rejects an input under a deprecated signer, so only the sweep takes
+                // those: a unilateral exit works for any signer.
+                const settleable = signerStable
+                    ? groups.filter((g) => g.serverPubKey === currentSigner).flatMap((g) => g.coins)
+                    : [];
+                const boardingUtxos = groups.flatMap((g) => g.coins);
 
                 // Settle, then sweep: sequential to avoid racing for the same inputs.
                 try {
-                    await this.runPeriodicSettle(boardingUtxos);
+                    await this.runPeriodicSettle(settleable, currentSigner);
                 } catch (e) {
-                    hadError = true;
-                    console.error("Error during periodic settle:", e);
+                    if (!(e instanceof BoardingSignerChangedError)) {
+                        hadError = true;
+                        console.error("Error during periodic settle:", e);
+                    }
                 }
 
                 const sweepEnabled =
@@ -2813,8 +2895,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     (this.settlementConfig?.boardingUtxoSweep ??
                         DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
                 if (sweepEnabled) {
+                    let utxos = boardingUtxos;
                     try {
-                        await this.sweepExpiredBoardingUtxos(boardingUtxos);
+                        if (await this.sweepOnchainCoins()) {
+                            utxos = await this.wallet.getBoardingUtxos();
+                        }
+                    } catch (e) {
+                        console.error("Error cosign-sweeping onchain coins:", e);
+                    }
+                    try {
+                        await this.sweepExpiredBoardingUtxos(utxos);
                     } catch (e) {
                         if (
                             !(e instanceof Error) ||
@@ -2867,30 +2957,21 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Skips expired boarding (swept instead) and in-flight boarding (knownBoardingUtxos); omits
      * VTXOs while the event-driven renewal runs, to avoid double-spending.
      */
-    private async runPeriodicSettle(boardingUtxos: ExtendedCoin[]): Promise<void> {
-        // If expiry can't be determined, bail entirely rather than settle an input sweep also
-        // targets.
-        let expiredSet: Set<string>;
-        try {
-            const boardingTimelock = this.getBoardingTimelock();
-            let chainTipHeight: number | undefined;
-            if (boardingTimelock.type === "blocks") {
-                const tip = await this.getOnchainProvider().getChainTip();
-                chainTipHeight = tip.height;
-            }
-            const expired = boardingUtxos.filter((utxo) =>
-                hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight),
-            );
-            expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
-        } catch (e) {
-            throw e instanceof Error ? e : new Error(String(e));
-        }
+    private async runPeriodicSettle(
+        boardingUtxos: ExtendedCoin[],
+        expectedSigner: string,
+    ): Promise<void> {
+        // A coin of unknown expiry is left out rather than settled: the sweep may also target it.
+        const { expired, unknown } = await this.boardingExpiry(boardingUtxos);
+        const unsettleable = new Set(
+            [...expired, ...unknown].map((utxo) => `${utxo.txid}:${utxo.vout}`),
+        );
 
         const unsettledBoarding = boardingUtxos.filter(
             (u) =>
                 u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
-                !expiredSet.has(`${u.txid}:${u.vout}`),
+                !unsettleable.has(`${u.txid}:${u.vout}`),
         );
 
         let expiringVtxos: NormalizedExtendedVirtualCoin[] = [];
@@ -2922,7 +3003,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const dustAmount = getDustAmount(this.wallet);
 
-        const info = await this.getArkProvider().getInfo();
+        const info = await this.getOperatorProvider().getInfo();
         const { fees, vtxoMaxAmount } = info;
         const estimator = new Estimator(fees.intentFee);
 
@@ -2998,6 +3079,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                         inputs: [...filteredBoarding, ...filteredVtxos],
                         outputs: [{ address: arkAddress, amount: totalAmount }],
                     }),
+                    undefined,
+                    {
+                        onPhase: (phase) => {
+                            if (
+                                phase === "registration_attempt" &&
+                                this.getCurrentSigner() !== expectedSigner
+                            ) {
+                                throw new BoardingSignerChangedError();
+                            }
+                        },
+                    },
                 );
 
                 for (const u of filteredBoarding) {
@@ -3005,7 +3097,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 }
                 success = true;
             } catch (e) {
-                if (e instanceof Error && e.name === "VtxoReservedError") {
+                if (e instanceof BoardingSignerChangedError) {
+                    // Rotation, not a failure: the next poll retries under the new signer.
+                    skipWithoutBackoff = true;
+                    throw e;
+                } else if (e instanceof Error && e.name === "VtxoReservedError") {
                     // A concurrent spend holds an input; nothing failed.
                     skipWithoutBackoff = true;
                 } else if (e instanceof Error && e.message.includes("VTXO_ALREADY_SPENT")) {

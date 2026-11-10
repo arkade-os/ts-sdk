@@ -94,7 +94,7 @@ describe("Wallet", () => {
                         contractRepository: new InMemoryContractRepository(),
                     },
                 }),
-            ).rejects.toThrow(/indexerProvider is required when arkProvider is provided/);
+            ).rejects.toThrow(/indexerProvider is required when operatorProvider is provided/);
         });
 
         it("has the delegate and server-info requests in flight together", async () => {
@@ -1164,7 +1164,7 @@ describe("Wallet", () => {
         });
 
         const storedIntent = (over: Partial<ArkIntent> = {}): ArkIntent => ({
-            intentTxId: "i1",
+            proofTxId: "i1",
             state: "waiting_for_batch",
             createdAt: 1,
             updatedAt: 1,
@@ -1173,11 +1173,11 @@ describe("Wallet", () => {
             deleteProof: "dp",
             deleteProofMessage: JSON.stringify({ type: "delete", expire_at: 0 }),
             partialForfeits: [],
-            intentVtxos: [{ txid: "v", vout: 0 }],
+            proofInputs: [{ txid: "v", vout: 0 }],
             ...over,
         });
         const intentIds = async (repo: IntentRepository) =>
-            (await collectIntents(repo)).map((i) => i.intentTxId);
+            (await collectIntents(repo)).map((i) => i.proofTxId);
 
         it("wipes intents once none is pending", async () => {
             const intentRepository = new InMemoryIntentRepository();
@@ -1224,7 +1224,7 @@ describe("Wallet", () => {
                 const intentRepository = new InMemoryIntentRepository();
                 await intentRepository.saveIntent(storedIntent());
                 await intentRepository.saveIntent(
-                    storedIntent({ intentTxId: "i2", intentVtxos: [{ txid: "w", vout: 0 }] }),
+                    storedIntent({ proofTxId: "i2", proofInputs: [{ txid: "w", vout: 0 }] }),
                 );
                 const deleteIntent = vi
                     .fn()
@@ -2466,6 +2466,70 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 
+    it("resolves a committed settle and still rotates boarding when the onchain sync fails", async () => {
+        const boardingScript = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        });
+        const boardingInput = {
+            ...input,
+            forfeitTapLeafScript: boardingScript.forfeit(),
+            proofTapLeafScript: boardingScript.forfeit(),
+            tapTree: boardingScript.encode(),
+        } as ExtendedCoin;
+        const stream = {
+            next: vi.fn().mockResolvedValue({ done: false, value: { type: "batch_started" } }),
+            return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+        const batchJoinSpy = vi.spyOn(Batch, "join").mockResolvedValue("commitment-txid");
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent: vi.fn().mockResolvedValue(undefined),
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            _settlingOutpoints: new Set<string>(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            logUngatedInputs: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue({
+                assertAnnotatable: vi.fn().mockResolvedValue(undefined),
+                annotateVtxos: vi.fn().mockResolvedValue([]),
+                markOnchainSpendPending: vi.fn().mockResolvedValue(undefined),
+                syncOnchain: vi.fn().mockRejectedValue(new Error("subscribe failed")),
+            }),
+            safeRegisterIntent: vi.fn().mockResolvedValue("intent-id"),
+            createBatchHandler: vi.fn().mockReturnValue({} as Batch.Handler),
+            updateDbAfterSettle: (Wallet.prototype as any).updateDbAfterSettle,
+            maybeRotateBoardingAfterBoard: vi.fn().mockResolvedValue(undefined),
+            persistIntentSnapshot: vi.fn().mockResolvedValue(undefined),
+        };
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(thisArg, {
+                inputs: [boardingInput],
+                outputs: [],
+            }),
+        ).resolves.toBe("commitment-txid");
+        expect(thisArg.maybeRotateBoardingAfterBoard).toHaveBeenCalledWith([boardingInput]);
+        warn.mockRestore();
+        batchJoinSpy.mockRestore();
+    });
+
     // Regression coverage for the no-params (auto-select) settle branch, which
     // selects all spendable inputs itself and applies MAX_VTXOS_PER_SETTLEMENT.
     describe("no-params auto-select cap", () => {
@@ -2491,7 +2555,7 @@ describe("Wallet._settleImpl", () => {
                 createdAt: new Date(),
                 isUnrolled: false,
                 forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-                intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
                 tapTree: new Uint8Array(),
             }) as any;
 
@@ -2801,7 +2865,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
     const annotated = (input: VirtualCoin): any => ({
         ...input,
         forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
         tapTree: new Uint8Array(64),
     });
 
@@ -3033,7 +3097,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const annotatedInput: any = {
             ...input,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
         };
 
@@ -3094,8 +3158,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const expectedForfeit = tapscriptNew.forfeit();
         expect(changeVtxo.forfeitTapLeafScript[0]).toEqual(expectedForfeit[0]);
         expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
-        expect(changeVtxo.intentTapLeafScript[0]).toEqual(expectedForfeit[0]);
-        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
+        expect(changeVtxo.proofTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.proofTapLeafScript[1])).toBe(hex.encode(expectedForfeit[1]));
 
         // `primaryAddress` (the address `saveTransactions` is keyed by)
         // also derives from the snapshot tapscript + server key, not from
@@ -3113,49 +3177,29 @@ describe("Wallet.updateDbAfterSettle", () => {
     const PRIMARY_ADDR = "ark1primaryaddress";
     const DELEGATE_SCRIPT = "cd".repeat(34);
     const DELEGATE_ADDR = "ark1delegateaddress";
-    const BOARDING_ADDR = "bc1boardingaddr";
-
-    // Per-address boarding-UTXO buckets keyed by address. `updateDbAfterSettle`
-    // resolves the source address of each boarding input from its tapTree, so
-    // the mock must return the right bucket per address (not a single global
-    // list) to exercise the address-aware cleanup (plan §6-III.4).
     const makeThisArg = (overrides: {
         annotateVtxos: ReturnType<typeof vi.fn>;
         contracts: { script: string; address: string }[];
-        currentBoardingUtxos?: any[];
-        boardingUtxosByAddress?: Record<string, any[]>;
-        network?: any;
     }) => {
         const saveVtxos = vi.fn().mockResolvedValue(undefined);
-        const saveUtxos = vi.fn().mockResolvedValue(undefined);
-        const deleteUtxos = vi.fn().mockResolvedValue(undefined);
-        const byAddress = overrides.boardingUtxosByAddress;
-        const getUtxos = vi
-            .fn()
-            .mockImplementation(async (address: string) =>
-                byAddress ? (byAddress[address] ?? []) : (overrides.currentBoardingUtxos ?? []),
-            );
+        const syncOnchain = vi.fn().mockResolvedValue(undefined);
+        const markOnchainSpendPending = vi.fn().mockResolvedValue(undefined);
         const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
         const getContractManager = vi.fn().mockResolvedValue({
             annotateVtxos: overrides.annotateVtxos,
             getContracts,
+            syncOnchain,
+            markOnchainSpendPending,
         });
         return {
             thisArg: {
-                walletRepository: {
-                    saveVtxos,
-                    saveUtxos,
-                    deleteUtxos,
-                    getUtxosPage: async (address: string) => ({ items: await getUtxos(address) }),
-                },
+                walletRepository: { saveVtxos },
                 getContractManager,
-                getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),
-                network: overrides.network ?? { bech32: "bcrt", hrp: "tark" },
+                network: { bech32: "bcrt", hrp: "tark" },
             } as any,
             saveVtxos,
-            saveUtxos,
-            deleteUtxos,
-            getUtxos,
+            syncOnchain,
+            markOnchainSpendPending,
         };
     };
 
@@ -3172,7 +3216,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             value,
             status: { confirmed: true },
             forfeitTapLeafScript: tapscript.forfeit(),
-            intentTapLeafScript: tapscript.forfeit(),
+            proofTapLeafScript: tapscript.forfeit(),
             tapTree: tapscript.encode(),
         }) as ExtendedCoin;
 
@@ -3192,7 +3236,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             expiresAt: new Date(1_700_000_000),
             script,
             forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            proofTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
             tapTree: new Uint8Array(64),
         }) as unknown as ExtendedCoin;
 
@@ -3242,29 +3286,17 @@ describe("Wallet.updateDbAfterSettle", () => {
         expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
     });
 
-    it("removes a settled boarding input from the bucket of the address it sits on", async () => {
-        const network = { bech32: "bcrt", hrp: "tark" } as any;
+    it("syncs the onchain script a settled boarding input sits on", async () => {
         const boardingScript = new DefaultVtxo.Script({
             pubKey: TEST_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
             csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
-        const boardingAddr = boardingScript.onchainAddress(network);
         const boardingInput = makeBoardingCoin(boardingScript, "b");
-        const otherUtxo = {
-            txid: "c".repeat(64),
-            vout: 0,
-            value: 1000,
-            status: { confirmed: true },
-        };
         const annotateVtxos = vi.fn().mockResolvedValue([]);
-        const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
+        const { thisArg, saveVtxos, syncOnchain, markOnchainSpendPending } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-            network,
-            boardingUtxosByAddress: {
-                [boardingAddr]: [{ txid: boardingInput.txid, vout: 0, value: 10_000 }, otherUtxo],
-            },
         });
 
         await (Wallet.prototype as any).updateDbAfterSettle.call(
@@ -3274,16 +3306,15 @@ describe("Wallet.updateDbAfterSettle", () => {
         );
 
         expect(saveVtxos).not.toHaveBeenCalled();
-        // Cleanup targets the bucket of the address the UTXO actually sits on.
-        expect(getUtxos).toHaveBeenCalledWith(boardingAddr);
-        expect(deleteUtxos).toHaveBeenCalledWith(boardingAddr);
-        expect(saveUtxos).toHaveBeenCalledWith(boardingAddr, [otherUtxo]);
+        expect(markOnchainSpendPending).toHaveBeenCalledWith(
+            [{ txid: boardingInput.txid, vout: 0 }],
+            "commitment-tx",
+            { skipUnknown: true },
+        );
+        expect(syncOnchain).toHaveBeenCalledWith([hex.encode(boardingScript.pkScript)]);
     });
 
-    it("settling a boarding UTXO from a PREVIOUS boarding address cleans up that historical bucket only (plan §6-III.4)", async () => {
-        const network = { bech32: "bcrt", hrp: "tark" } as any;
-        // Two distinct boarding addresses (different owner pubkeys) — a current
-        // and a rotated-away "previous" one.
+    it("settling a boarding UTXO from a PREVIOUS boarding address syncs that script only (plan §6-III.4)", async () => {
         const currentScript = new DefaultVtxo.Script({
             pubKey: TEST_PUB_KEY,
             serverPubKey: TEST_SERVER_PUB_KEY,
@@ -3294,37 +3325,12 @@ describe("Wallet.updateDbAfterSettle", () => {
             serverPubKey: TEST_SERVER_PUB_KEY,
             csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         });
-        const currentAddr = currentScript.onchainAddress(network);
-        const previousAddr = previousScript.onchainAddress(network);
-        expect(previousAddr).not.toBe(currentAddr);
-
-        // Settle a UTXO received at the PREVIOUS boarding address.
+        expect(previousScript.pkScript).not.toEqual(currentScript.pkScript);
         const previousInput = makeBoardingCoin(previousScript, "d");
-        const leftoverAtPrevious = {
-            txid: "e".repeat(64),
-            vout: 0,
-            value: 2000,
-            status: { confirmed: true },
-        };
-        const untouchedAtCurrent = {
-            txid: "f".repeat(64),
-            vout: 0,
-            value: 3000,
-            status: { confirmed: true },
-        };
-
         const annotateVtxos = vi.fn().mockResolvedValue([]);
-        const { thisArg, deleteUtxos, saveUtxos, getUtxos } = makeThisArg({
+        const { thisArg, syncOnchain } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-            network,
-            boardingUtxosByAddress: {
-                [previousAddr]: [
-                    { txid: previousInput.txid, vout: 0, value: 10_000 },
-                    leftoverAtPrevious,
-                ],
-                [currentAddr]: [untouchedAtCurrent],
-            },
         });
 
         await (Wallet.prototype as any).updateDbAfterSettle.call(
@@ -3333,12 +3339,7 @@ describe("Wallet.updateDbAfterSettle", () => {
             "commitment-tx",
         );
 
-        // Only the previous bucket is rewritten; the current bucket is untouched.
-        expect(getUtxos).toHaveBeenCalledWith(previousAddr);
-        expect(getUtxos).not.toHaveBeenCalledWith(currentAddr);
-        expect(deleteUtxos).toHaveBeenCalledWith(previousAddr);
-        expect(deleteUtxos).not.toHaveBeenCalledWith(currentAddr);
-        expect(saveUtxos).toHaveBeenCalledWith(previousAddr, [leftoverAtPrevious]);
+        expect(syncOnchain).toHaveBeenCalledExactlyOnceWith([hex.encode(previousScript.pkScript)]);
     });
 
     it("rethrows when a settled VTXO has no script", async () => {

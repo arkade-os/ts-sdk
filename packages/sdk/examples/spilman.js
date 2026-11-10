@@ -14,7 +14,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     EsploraProvider,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     buildOffchainTx,
     VtxoScript,
@@ -46,7 +46,7 @@ async function main() {
     const bobWallet = await Wallet.create({
         identity: bob,
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -56,7 +56,7 @@ async function main() {
     const aliceWallet = await Wallet.create({
         identity: alice,
         onchainProvider: new EsploraProvider("http://localhost:3000/api"),
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        operatorProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -70,8 +70,8 @@ async function main() {
     console.log("Chain tip:", chainTip);
 
     // offchain paths:
-    //   update: (Alice + Bob + Ark Server)
-    //   refund: (Alice + Ark Server at chainTip + 10 blocks)
+    //   update: (Alice + Bob + operator)
+    //   refund: (Alice + operator at chainTip + 10 blocks)
     //
     // onchain paths:
     //   unilateralUpdate: (Alice + Bob after 1 block)
@@ -116,7 +116,7 @@ async function main() {
 
     // Get the virtual coins for the Spilman Channel address
     console.log("Fetching virtual coins...");
-    const arkProvider = new RestArkProvider("http://localhost:7070");
+    const arkProvider = new RestOperatorProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
         scripts: [hex.encode(virtualSpilmanChannel.pkScript)],

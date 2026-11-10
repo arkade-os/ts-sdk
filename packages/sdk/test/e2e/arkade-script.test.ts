@@ -16,7 +16,7 @@ import {
     RestIndexerProvider,
     SingleKey,
     Transaction,
-    Intent,
+    Proof,
     Batch,
     RestEmulatorProvider,
     Extension,
@@ -51,7 +51,7 @@ function makeEmulatorExtensionOutput(
 }
 
 const EMULATOR_URL = "http://localhost:7073";
-const ARK_SERVER_URL = "http://localhost:7070";
+const OPERATOR_URL = "http://localhost:7070";
 // mempool serves the Esplora REST API under `/api`; the root path is the HTML UI.
 const ESPLORA_URL = "http://localhost:3000/api";
 const FUNDING_SATS = 1_000_000;
@@ -321,8 +321,8 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
-    const indexerProvider = new RestIndexerProvider(ARK_SERVER_URL);
+    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
     /** Connect an Arkade client bound to the given signing identity. */
@@ -537,7 +537,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -545,7 +545,7 @@ describe("arkade", () => {
             cosigners_public_keys: [sessionPubKey],
         };
 
-        // Create the intent proof. `script` is what marks this as a virtual output rather than a
+        // Create the proof. `script` is what marks this as a virtual output rather than a
         // boarding input, so the batch handler builds a forfeit for it.
         // `prevTx` carries the raw creating tx of each real proof input — the
         // emulator resolves the prevout pkScript from it.
@@ -557,7 +557,7 @@ describe("arkade", () => {
                     value: vtxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: vtxo.status,
                     script: vtxo.script,
                     createdAt: vtxo.createdAt,
@@ -568,7 +568,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -712,7 +712,7 @@ describe("arkade", () => {
             },
         ];
 
-        const message: Intent.RegisterMessage = {
+        const message: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -730,7 +730,7 @@ describe("arkade", () => {
                     value: utxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: {
                         confirmed: utxo.status?.confirmed ?? false,
                         block_time: 0,
@@ -741,7 +741,7 @@ describe("arkade", () => {
             explorer,
         );
 
-        const intentProof = Intent.create(
+        const intentProof = Proof.create(
             message,
             [coin],
             [...outputs, makeEmulatorExtensionOutput(1, arkadeScriptBytes)],
@@ -989,7 +989,7 @@ describe("arkade", () => {
             },
         ];
 
-        const settleMessage: Intent.RegisterMessage = {
+        const settleMessage: Proof.RegisterMessage = {
             type: "register",
             onchain_output_indexes: [],
             valid_at: 0,
@@ -1006,7 +1006,7 @@ describe("arkade", () => {
                     value: settleVtxo.value,
                     tapTree: settleTapTree,
                     forfeitTapLeafScript: settleArkadeLeaf,
-                    intentTapLeafScript: settleArkadeLeaf,
+                    proofTapLeafScript: settleArkadeLeaf,
                     status: settleVtxo.status,
                     script: settleVtxo.script,
                     createdAt: settleVtxo.createdAt,
@@ -1017,7 +1017,7 @@ describe("arkade", () => {
             indexerProvider,
         );
 
-        const settleIntentProof = Intent.create(
+        const settleIntentProof = Proof.create(
             settleMessage,
             [settleCoin],
             [...outputs, makeEmulatorExtensionOutput(1, settleArkadeScript, transferPacket)],

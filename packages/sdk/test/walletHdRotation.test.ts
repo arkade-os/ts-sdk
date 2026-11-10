@@ -1003,7 +1003,7 @@ describe("Wallet HD rotation", () => {
                 commitmentTxIds: [],
                 script: hex.encode(tapscript.pkScript),
                 forfeitTapLeafScript: tapscript.forfeit(),
-                intentTapLeafScript: tapscript.forfeit(),
+                proofTapLeafScript: tapscript.forfeit(),
                 tapTree: tapscript.encode(),
             };
         }
@@ -1224,7 +1224,7 @@ describe("Wallet HD rotation", () => {
                 isSpent: false,
                 script: hex.encode(cosignerScript.pkScript),
                 forfeitTapLeafScript: cosignerScript.forfeit(),
-                intentTapLeafScript: cosignerScript.forfeit(),
+                proofTapLeafScript: cosignerScript.forfeit(),
                 tapTree: cosignerScript.encode(),
             };
 
@@ -1492,7 +1492,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             commitmentTxIds: [],
             script: hex.encode(tapscript.pkScript),
             forfeitTapLeafScript: tapscript.forfeit(),
-            intentTapLeafScript: tapscript.forfeit(),
+            proofTapLeafScript: tapscript.forfeit(),
             tapTree: tapscript.encode(),
         };
     }
@@ -1822,7 +1822,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         await wallet.dispose();
     });
 
-    // The proof is chunked at MAX_INPUTS_PER_INTENT, but an interrupted send
+    // The proof is chunked at MAX_INPUTS_PER_PROOF, but an interrupted send
     // spent whatever it spent: its checkpoints are matched against every VTXO
     // of the run, not just the chunk whose proof surfaced the tx.
     it("finalizes a pending tx whose input falls in a later proof chunk", async () => {
