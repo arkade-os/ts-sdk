@@ -192,15 +192,20 @@ describe("waitForIncomingFunds", () => {
 
     it("cleans up when the subscription throws synchronously", async () => {
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const controller = new AbortController();
+        const addListener = vi.spyOn(controller.signal, "addEventListener");
+        const removeListener = vi.spyOn(controller.signal, "removeEventListener");
         const { wallet } = fakeWallet(() => {
             throw new Error("subscribe exploded");
         });
 
-        await expect(waitForIncomingFunds(wallet, { timeoutMs: 30_000 })).rejects.toThrow(
-            "subscribe exploded",
-        );
+        await expect(
+            waitForIncomingFunds(wallet, { signal: controller.signal, timeoutMs: 30_000 }),
+        ).rejects.toThrow("subscribe exploded");
 
-        // cancel() ran, so the timer was cleared (and with it the abort listener).
+        // cancel() ran, so the timer and the abort listener are both gone.
         expect(vi.getTimerCount()).toBe(0);
+        expect(addListener).toHaveBeenCalledWith("abort", expect.any(Function));
+        expect(removeListener).toHaveBeenCalledWith("abort", addListener.mock.calls[0]?.[1]);
     });
 });
