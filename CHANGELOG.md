@@ -490,6 +490,8 @@ style and have not been backfilled.
   must match the captured template, artifact and variables; restored handles
   require re-import before delegation. Post-submit refresh failures are reported
   without hiding the accepted transaction result; submission failures still reject.
+  Importing onto a contract already registered without a plan, e.g. by `on()`,
+  now persists the plan, so `restore()` works after a restart.
 
 - **Native template validation rejects invalid requests before avoidable work.**
   Missing `packets` policy is named explicitly, and delegation rejects invalid

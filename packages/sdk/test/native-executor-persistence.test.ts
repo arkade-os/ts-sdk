@@ -335,22 +335,22 @@ describe("NativeExecutor with existing SQLite contracts", () => {
         expect(db!.prepare("SELECT * FROM ark_contracts").all()).toEqual(before);
     });
 
-    it("keeps document-only legacy imports usable without silently backfilling a plan", async () => {
+    it("persists the plan onto a contract registered before the import", async () => {
         const session = await open();
-        const original = await session.native.importTemplate(document);
-        const script = hex.encode(original.contract.pkScript);
-        await manager!.updateContract(script, {
-            metadata: {
-                genericallySpendable: false,
-                nativeExecution: { document, variables: {} },
-            },
-        });
-        const before = db!.prepare("SELECT * FROM ark_contracts").all();
+        const execution = await session.native.importTemplate(document);
+        const script = hex.encode(execution.contract.pkScript);
+        await manager!.updateContract(script, { metadata: { custom: 1 } });
         await expect(session.native.restore(script)).rejects.toThrow(
             /no persisted native execution plan/,
         );
+
         await session.native.importTemplate(document);
-        expect(db!.prepare("SELECT * FROM ark_contracts").all()).toEqual(before);
+        await close();
+        const next = await open();
+        const restored = await next.native.restore(script);
+        expect(hex.encode(restored.destination)).toBe(document.outputs[0].locking);
+        const [row] = await manager!.getContracts({ script });
+        expect(row.metadata).toMatchObject({ custom: 1, genericallySpendable: false });
     });
 
     it.each([
@@ -445,7 +445,7 @@ describe("NativeExecutor with existing SQLite contracts", () => {
     });
 
     it.each([true, false, undefined])(
-        "preserves an existing %s gate across import and reopen",
+        "keeps an existing %s gate and application metadata across import and reopen",
         async (gate) => {
             const first = await open();
             const args = Object.fromEntries(
@@ -477,16 +477,30 @@ describe("NativeExecutor with existing SQLite contracts", () => {
                 expect(execution.contract.address).toBe(legacy.address);
             }
             expect(upgraded.wallet.send).not.toHaveBeenCalled();
-            expect(db!.prepare("SELECT * FROM ark_contracts").all()).toEqual(before);
+            const after = db!.prepare("SELECT * FROM ark_contracts").all();
+            if (gate === true) expect(after).toEqual(before);
             await close();
 
             const reopened = await open(TEST_PUB_KEY);
             const [stored] = await manager!.getContracts({ script: original.script });
-            expect(stored).toEqual(original);
+            if (gate === true) expect(stored).toEqual(original);
+            else {
+                expect(stored).toEqual({
+                    ...original,
+                    metadata: {
+                        app: { position: "legacy-1" },
+                        genericallySpendable: false,
+                        nativeExecution: expect.objectContaining({
+                            plan: expect.objectContaining({ functionName: "cancel" }),
+                        }),
+                    },
+                });
+                await reopened.native.restore(original.script);
+            }
             const restored = arkade.ArkadeContract.fromContract(reopened.client, stored);
             expect(restored.pkScript).toEqual(legacy.pkScript);
             expect(restored.address).toBe(legacy.address);
-            expect(db!.prepare("SELECT * FROM ark_contracts").all()).toEqual(before);
+            expect(db!.prepare("SELECT * FROM ark_contracts").all()).toEqual(after);
         },
     );
 });

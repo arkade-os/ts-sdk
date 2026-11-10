@@ -52,7 +52,13 @@ const template = () => ({
 });
 
 async function setup() {
-    const manager = { refreshOutpoints: vi.fn(), refreshVtxos: vi.fn() };
+    const manager = {
+        refreshOutpoints: vi.fn(),
+        refreshVtxos: vi.fn(),
+        updateContract: vi.fn(async (_script: string, updates: Partial<Contract>) =>
+            Object.assign(registered, updates),
+        ),
+    };
     const coin = { txid: "aa".repeat(32), vout: 0, value: 50_000, isSpent: false, assets: [] };
     const source = new Transaction();
     source.addInput({ txid: "99".repeat(32), index: 0 });
@@ -505,10 +511,9 @@ describe("SDK native template execution", () => {
     it.each([undefined, false])("keeps the existing closed spend gate %s", async (gate) => {
         const s = await setup();
         s.registered.metadata = gate === undefined ? undefined : { genericallySpendable: gate };
-        const before = structuredClone(s.registered);
         await s.executor.fund(await s.importTemplate(), 50_000);
         expect(s.wallet.send).toHaveBeenCalledOnce();
-        expect(s.registered).toEqual(before);
+        expect(s.registered.metadata?.genericallySpendable).toBe(false);
     });
 
     it("rejects an application packet rather than silently dropping its state", async () => {

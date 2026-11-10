@@ -72,6 +72,10 @@ function nativeFunction(program: Program, name: string): void {
     }
 }
 
+function hasPlan(saved: unknown): saved is { plan: unknown } {
+    return !!saved && typeof saved === "object" && Object.hasOwn(saved, "plan");
+}
+
 function readPlan(value: unknown): { functionName: string; destination: Uint8Array } {
     const plan = object(
         value,
@@ -239,31 +243,39 @@ export class NativeExecutor {
             variables: Object.freeze({ ...variables }),
         };
         destination = destination.slice();
-        await this.manager();
-        const registered = await contract.register({
-            metadata: {
-                genericallySpendable: false,
-                nativeExecution: {
-                    document: JSON.parse(delegation.document),
-                    variables: { ...delegation.variables },
-                    plan: { version: 1, functionName, destinationHex: hex.encode(destination) },
-                },
+        const metadata = () => ({
+            genericallySpendable: false,
+            nativeExecution: {
+                document: JSON.parse(delegation.document),
+                variables: { ...delegation.variables },
+                plan: { version: 1, functionName, destinationHex: hex.encode(destination) },
             },
         });
-        if (
-            registered.script !== hex.encode(contract.pkScript) ||
-            registered.address !== contract.address
-        ) {
-            throw new Error(
-                "NativeExecutor: registered contract does not match derived script or address",
-            );
-        }
-        if (registered.metadata?.genericallySpendable === true) {
-            throw new Error("NativeExecutor: existing contract permits generic spending");
-        }
-        const saved = registered.metadata?.nativeExecution;
-        if (saved && typeof saved === "object" && Object.hasOwn(saved, "plan")) {
-            const plan = readPlan((saved as ObjectValue).plan);
+        return this.serialize(async () => {
+            const manager = await this.manager();
+            let registered = await contract.register({ metadata: metadata() });
+            if (
+                registered.script !== hex.encode(contract.pkScript) ||
+                registered.address !== contract.address
+            ) {
+                throw new Error(
+                    "NativeExecutor: registered contract does not match derived script or address",
+                );
+            }
+            if (registered.metadata?.genericallySpendable === true) {
+                throw new Error("NativeExecutor: existing contract permits generic spending");
+            }
+            if (!hasPlan(registered.metadata?.nativeExecution)) {
+                // An earlier register() or on() saved the row without a plan; restore() needs one.
+                registered = await manager.updateContract(registered.script, {
+                    metadata: { ...registered.metadata, ...metadata() },
+                });
+            }
+            const saved = registered.metadata?.nativeExecution;
+            if (!hasPlan(saved)) {
+                throw new Error("NativeExecutor: native execution plan was not persisted");
+            }
+            const plan = readPlan(saved.plan);
             if (
                 plan.functionName !== functionName ||
                 hex.encode(plan.destination) !== hex.encode(destination)
@@ -272,8 +284,8 @@ export class NativeExecutor {
                     "NativeExecutor: conflicting native execution plan for existing contract",
                 );
             }
-        }
-        return this.own(contract, functionName, destination, delegation);
+            return this.own(contract, functionName, destination, delegation);
+        });
     }
 
     /**
@@ -293,10 +305,8 @@ export class NativeExecutor {
             throw new Error("NativeExecutor: existing contract permits generic spending");
         }
         const saved = stored.metadata?.nativeExecution;
-        if (!saved || typeof saved !== "object" || !Object.hasOwn(saved, "plan")) {
-            throw new Error("NativeExecutor: no persisted native execution plan");
-        }
-        const { functionName, destination } = readPlan((saved as ObjectValue).plan);
+        if (!hasPlan(saved)) throw new Error("NativeExecutor: no persisted native execution plan");
+        const { functionName, destination } = readPlan(saved.plan);
         const contract = ArkadeContract.fromContract(this.arkade, stored);
         if (hex.encode(contract.pkScript) !== lookup || contract.address !== stored.address) {
             throw new Error(
@@ -408,8 +418,7 @@ export class NativeExecutor {
             throw new Error("NativeExecutor: invalid source outpoint");
         }
         const beforeEmulatorSubmit = options?.beforeEmulatorSubmit;
-        const previous = executionTails.get(this.wallet) ?? Promise.resolve();
-        const run = previous.then(async () => {
+        return this.serialize(async () => {
             const manager = await this.manager();
             this.check(execution);
             await manager.refreshOutpoints([sourceOutpoint]);
@@ -467,6 +476,11 @@ export class NativeExecutor {
             }
             return result;
         });
+    }
+
+    /** Native imports and executions sharing one wallet object run one at a time. */
+    private serialize<T>(task: () => Promise<T>): Promise<T> {
+        const run = (executionTails.get(this.wallet) ?? Promise.resolve()).then(task);
         executionTails.set(
             this.wallet,
             run.catch(() => undefined),
