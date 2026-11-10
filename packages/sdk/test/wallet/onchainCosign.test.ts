@@ -673,10 +673,11 @@ describe("wallet.getOnchainSweepInputs", () => {
 
 describe("needsOnchainSweep", () => {
     const coin = { status: { confirmed: true, block_height: 100, fromExplorer: true } } as any;
+    const csv = { type: "blocks", value: 1008n } as const;
 
     it("never takes an unrolled coin of an offchain-scoped contract", () => {
         const contract = { type: "default", scope: "offchain" } as any;
-        expect(needsOnchainSweep(coin, contract, { height: 100, time: 0 })).toBe(false);
+        expect(needsOnchainSweep(coin, contract, csv, { height: 100, time: 0 })).toBe(false);
     });
 
     it("never takes an onchain-scoped contract that is not boarding", () => {
@@ -686,7 +687,7 @@ describe("needsOnchainSweep", () => {
             { type: "vhtlc", scope: "both", params: { csvTimelock: "1008" } },
             { type: "default", scope: "onchain", params: { csvTimelock: "1008" } },
         ] as any[]) {
-            expect(needsOnchainSweep(coin, contract, tip)).toBe(false);
+            expect(needsOnchainSweep(coin, contract, csv, tip)).toBe(false);
         }
     });
 
@@ -694,8 +695,16 @@ describe("needsOnchainSweep", () => {
         const contract = { type: "default", scope: "both", params: { csvTimelock: "1008" } } as any;
         const unrolled = { status: { confirmed: true, block_height: 100 } } as any;
         const tip = { height: 1108 - 50, time: 0 };
-        expect(needsOnchainSweep(coin, contract, tip)).toBe(true);
-        expect(needsOnchainSweep(unrolled, contract, tip)).toBe(false);
+        expect(needsOnchainSweep(coin, contract, csv, tip)).toBe(true);
+        expect(needsOnchainSweep(unrolled, contract, csv, tip)).toBe(false);
+    });
+
+    it("never takes a both-scoped default row whose CSV is not the boarding CSV", () => {
+        const contract = { type: "default", scope: "both", params: { csvTimelock: "1008" } } as any;
+        const boarding = { type: "blocks", value: 144n } as const;
+        expect(needsOnchainSweep(coin, contract, boarding, { height: 1108 - 50, time: 0 })).toBe(
+            false,
+        );
     });
 
     it("caps the renew window at 144 blocks on a 1008-block CSV", () => {
@@ -703,7 +712,8 @@ describe("needsOnchainSweep", () => {
             type: "boarding",
             params: { csvTimelock: "1008" },
         } as any;
-        const at = (tip: number) => needsOnchainSweep(coin, contract, { height: tip, time: 0 });
+        const at = (tip: number) =>
+            needsOnchainSweep(coin, contract, csv, { height: tip, time: 0 });
         expect(at(1108 - 151)).toBe(false);
         expect(at(1108 - 150)).toBe(true);
         expect(at(1108 - 7)).toBe(true);
@@ -721,7 +731,7 @@ describe("needsOnchainSweep", () => {
             params: { csvTimelock: String(sequence) },
         } as any;
         const maturity = T + 604_672;
-        const at = (time: number) => needsOnchainSweep(timed, contract, { height: 100, time });
+        const at = (time: number) => needsOnchainSweep(timed, contract, csv, { height: 100, time });
         expect(at(maturity - 3_600 - 86_400 - 1)).toBe(false);
         expect(at(maturity - 3_600 - 86_400)).toBe(true);
         expect(at(maturity - 3_601)).toBe(true);
