@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, describe, it, beforeEach } from "vitest";
 import { hex } from "@scure/base";
+import { sha256 } from "@scure/btc-signer/utils.js";
 import {
     arkade,
     networks,
@@ -103,6 +104,54 @@ describe("renewProgramContractOutputs", () => {
         const [renewed] = await spendableAt(contract.pkScript, 1, [`${coin.txid}:${coin.vout}`]);
         expect(renewed.value).toBe(2000);
         expect(renewed.assets).toEqual([{ assetId, amount: 1000n }]);
+    });
+
+    it("renews a coin whose renew leaf has a hashlock condition", { timeout: 120000 }, async () => {
+        const keeper = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            network: networks.regtest,
+        });
+        const renew = renewable.functions.renew;
+        const hashlocked = {
+            ...renewable,
+            params: [
+                ...(renewable.params ?? []),
+                { name: "hash", type: "bytes32" },
+                { name: "preimage", type: "bytes" },
+            ],
+            functions: {
+                ...renewable.functions,
+                renew: {
+                    ...renew,
+                    tapscript: {
+                        ...renew.tapscript,
+                        asm: ["SHA256", "$hash", "EQUAL"],
+                        witness: ["$preimage"],
+                    },
+                },
+            },
+        } as arkade.Program;
+        const preimage = new Uint8Array(32).fill(9);
+        const contract = keeper.contract(hashlocked, {
+            owner: await createTestIdentity().xOnlyPublicKey(),
+            hash: sha256(preimage),
+            preimage,
+        });
+        faucetOffchain(contract.address, 5000);
+        const [coin] = await spendableAt(contract.pkScript, 1);
+
+        const { commitmentTxid } = await arkade.renewProgramContractOutputs(keeper, [
+            { contract, coin },
+        ]);
+
+        const [renewed] = await spendableAt(contract.pkScript, 1, [`${coin.txid}:${coin.vout}`]);
+        expect(renewed.value).toBe(5000);
+        const { vtxos: old } = await indexer.getVtxos({
+            outpoints: [{ txid: coin.txid, vout: coin.vout }],
+        });
+        expect(old[0].settledBy).toBe(commitmentTxid);
     });
 
     it("refuses a function that is not a covenant", { timeout: 60000 }, async () => {

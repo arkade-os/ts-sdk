@@ -1,9 +1,12 @@
 import { getEventListeners } from "node:events";
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@scure/btc-signer/utils.js";
 import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
+import { Transaction } from "../src/utils/transaction";
+import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
@@ -15,6 +18,28 @@ const renewable = arkade.programFromArtifact(
         ),
     ),
 );
+
+/** `renewable` whose `renew` leaf also requires `tapscript` (a condition, a timelock, ...). */
+function renewableWith(
+    tapscript: Partial<arkade.TapscriptSegment>,
+    params: arkade.InputDef[] = [],
+) {
+    const renew = renewable.functions.renew;
+    return {
+        ...renewable,
+        params: [...(renewable.params ?? []), ...params],
+        functions: {
+            ...renewable.functions,
+            renew: { ...renew, tapscript: { ...renew.tapscript, ...tapscript } },
+        },
+    } as arkade.Program;
+}
+
+const PREIMAGE = new Uint8Array(32).fill(9);
+const hashlocked = renewableWith({ asm: ["SHA256", "$hash", "EQUAL"], witness: ["$preimage"] }, [
+    { name: "hash", type: "bytes32" },
+    { name: "preimage", type: "bytes" },
+]);
 
 /** A keeper's client whose server serves `stream` and advertises `info` on top of the basics. */
 async function keeper(
@@ -195,6 +220,71 @@ describe("renewProgramContractOutputs", () => {
             /stream closed/,
         );
         expect(registerIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it("carries the renew leaf's condition witness on the proof", async () => {
+        const { ark, registerIntent } = await keeper(() =>
+            (async function* () {
+                throw new Error("stream closed");
+            })(),
+        );
+        const contract = ark.contract(hashlocked, {
+            owner: xOnly(),
+            hash: sha256(PREIMAGE),
+            preimage: PREIMAGE,
+        });
+        const coin = {
+            ...mintCoin(5000),
+            script: hex.encode(contract.pkScript),
+            status: { confirmed: true },
+        } as unknown as VirtualCoin;
+
+        await expect(arkade.renewProgramContractOutputs(ark, [{ contract, coin }])).rejects.toThrow(
+            /stream closed/,
+        );
+        const { proof } = (registerIntent.mock.calls[0] as unknown[])[0] as { proof: string };
+        const tx = Transaction.fromPSBT(base64.decode(proof));
+        expect(getArkPsbtFields(tx, 1, ConditionWitness)).toEqual([[PREIMAGE]]);
+    });
+
+    it("refuses a renew leaf whose witness needs a call argument", async () => {
+        const { ark, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+        const program = renewableWith(
+            { asm: ["SHA256", "$hash", "EQUAL"], witness: ["preimage"] },
+            [{ name: "hash", type: "bytes32" }],
+        );
+        const contract = ark.contract(program, { owner: xOnly(), hash: sha256(PREIMAGE) });
+        const coin = {
+            ...mintCoin(5000),
+            script: hex.encode(contract.pkScript),
+            status: { confirmed: true },
+        } as unknown as VirtualCoin;
+
+        await expect(arkade.renewProgramContractOutputs(ark, [{ contract, coin }])).rejects.toThrow(
+            /needs call arguments/,
+        );
+        expect(ark.emulator!.submitIntent).not.toHaveBeenCalled();
+        expect(registerIntent).not.toHaveBeenCalled();
+    });
+
+    it("refuses a renew leaf with a CSV timelock, which arkd refuses as a forfeit", async () => {
+        const { ark, registerIntent } = await keeper(() => {
+            throw new Error("no stream expected");
+        });
+        const program = renewableWith({ csv: { type: "blocks", value: 10n } });
+        const contract = ark.contract(program, { owner: xOnly() });
+        const coin = {
+            ...mintCoin(5000),
+            script: hex.encode(contract.pkScript),
+            status: { confirmed: true },
+        } as unknown as VirtualCoin;
+
+        await expect(arkade.renewProgramContractOutputs(ark, [{ contract, coin }])).rejects.toThrow(
+            /CSV timelock/,
+        );
+        expect(registerIntent).not.toHaveBeenCalled();
     });
 
     it("leaves no listener on the caller's signal", async () => {

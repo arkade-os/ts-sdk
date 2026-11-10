@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
-import { Address, OutScript } from "@scure/btc-signer";
+import { Address, OutScript, Script } from "@scure/btc-signer";
 
 // The handler must delegate graph/recipient validation to the shared
 // validators; mock both so the test drives only the wiring.
@@ -19,6 +19,9 @@ import { createArkadeBatchHandler, type ArkadeBatchInput } from "../src/arkade/b
 import { validateBatchRecipients, ErrOffchainOutputNotFound } from "../src/wallet/validation";
 import { validateVtxoTxGraph } from "../src/tree/validation";
 import { Transaction } from "../src/utils/transaction";
+import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { VtxoScript } from "../src/script/base";
+import { ConditionMultisigTapscript } from "../src/script/tapscript";
 import { networks } from "../src/networks";
 import type { Recipient } from "../src/wallet";
 import type { SignerSession } from "../src/tree/signingSession";
@@ -383,5 +386,76 @@ describe("createArkadeBatchHandler without a signer", () => {
         expect(keyless(plain as unknown as ArkadeBatchInput)).toThrow(
             /inputs without an Arkade script need a signer/,
         );
+    });
+});
+
+describe("createArkadeBatchHandler forfeits", () => {
+    beforeEach(() => {
+        vi.mocked(validateBatchRecipients).mockReset();
+        vi.mocked(validateVtxoTxGraph).mockReset();
+    });
+
+    it("carries an input's condition witness onto its forfeit, which arkd evaluates", async () => {
+        const preimage = new Uint8Array(32).fill(9);
+        const leaf = ConditionMultisigTapscript.encode({
+            conditionScript: Script.encode(["SHA256", sha256(preimage), "EQUAL"]),
+            pubkeys: [hex.decode("33".repeat(32))],
+        }).script;
+        const vtxoScript = new VtxoScript([leaf]);
+        const coin = (vout: number, extraWitness?: Uint8Array[]) =>
+            ({
+                txid: "cc".repeat(32),
+                vout,
+                value: 5000,
+                script: hex.encode(vtxoScript.pkScript),
+                tapTree: vtxoScript.encode(),
+                forfeitTapLeafScript: vtxoScript.findLeaf(hex.encode(leaf)),
+                proofTapLeafScript: vtxoScript.findLeaf(hex.encode(leaf)),
+                arkadeScriptBytes: new Uint8Array([0x51]),
+                virtualStatus: { state: "settled" },
+                status: { confirmed: true },
+                createdAt: new Date(),
+                ...(extraWitness ? { extraWitness } : {}),
+            }) as unknown as ArkadeBatchInput;
+        const connector = () => {
+            const tx = new Transaction();
+            tx.addOutput({
+                script: new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(5)]),
+                amount: 330n,
+            });
+            return tx;
+        };
+        const connectorTree = {
+            leaves: () => [connector(), connector()],
+            iterator: function* () {},
+        } as unknown as TxTree;
+        const arkProvider = makeArkProvider();
+        const emulator = makeEmulator();
+        const handler = createArkadeBatchHandler(
+            INTENT_ID,
+            [coin(0, [preimage]), coin(1)],
+            undefined,
+            proofDeclaring(),
+            { onchain_output_indexes: [] } as unknown as Proof.RegisterMessage,
+            makeSession(),
+            arkProvider,
+            emulator,
+            networks.regtest,
+        );
+        const { batchStarted, treeSigningStarted, vtxoTree } = makeEvents();
+
+        await handler.onBatchStarted(batchStarted);
+        await handler.onTreeSigningStarted(treeSigningStarted, vtxoTree);
+        await handler.onBatchFinalization(
+            { commitmentTx: commitment(5000n) } as never,
+            undefined,
+            connectorTree,
+        );
+
+        const forfeits = vi.mocked(emulator.submitFinalization).mock.calls[0][1] as string[];
+        const fields = forfeits.map((f) =>
+            getArkPsbtFields(Transaction.fromPSBT(base64.decode(f)), 0, ConditionWitness),
+        );
+        expect(fields).toEqual([[[preimage]], []]);
     });
 });

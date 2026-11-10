@@ -31,6 +31,7 @@ import { CSVMultisigTapscript } from "../script/tapscript";
 import { assertValidBatchExpiry, resolveBatchExpiryPolicy } from "../wallet/batchExpiry";
 import type { BatchExpiryPolicy } from "../wallet/batchExpiry";
 import { Transaction } from "../utils/transaction";
+import { ConditionWitness, setArkPsbtField } from "../utils/unknownFields";
 import { validateConnectorsTxGraph, validateVtxoTxGraph } from "../tree/validation";
 import {
     assertFinalCommitmentMatchesValidated,
@@ -320,6 +321,10 @@ export function createArkadeBatchHandler(
                     forfeitOutputScript,
                 );
 
+                // arkd evaluates a condition leaf against this field when it verifies the forfeit.
+                if (input.extraWitness?.length) {
+                    setArkPsbtField(forfeitTx, 0, ConditionWitness, input.extraWitness);
+                }
                 if (signer) forfeitTx = await signer.sign(forfeitTx, [0]);
                 signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
             }

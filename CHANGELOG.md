@@ -339,7 +339,11 @@ style and have not been backfilled.
   intent is being registered is not missed; the new `Batch.prime` does the
   subscribing for both. A renewal the server would charge an intent fee for
   is refused before anything is signed: the covenant keeps each output equal
-  to its input, so no fee can be paid and arkd would reject the intent.
+  to its input, so no fee can be paid and arkd would reject the intent. A
+  renew leaf's condition witness goes on the proof and on the forfeits, where
+  arkd evaluates it. A leaf whose witness names a call input, which a renewal
+  cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
+  path, is refused before anything is signed.
 
 ### Changed
 
@@ -425,6 +429,13 @@ style and have not been backfilled.
   `--experimental-eventsource`.
 
 ### Bug Fixes
+
+- **`createArkadeBatchHandler` writes an input's condition witness on its
+  forfeit.** arkd evaluates a condition leaf against the forfeit's
+  ConditionWitness field when it verifies the forfeit's signatures. The proof
+  carried it but the forfeit never did, so a batch spending a coin through a
+  condition leaf failed with `INVALID_FORFEIT_TXS`. An input's `extraWitness`
+  now goes on its forfeit too.
 
 - **Expired boarding UTXOs held under a deprecated signer are now swept.**
   After the operator rotated its signer, deposits made to a boarding address on

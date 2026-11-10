@@ -21,7 +21,7 @@ import { normalizeVtxo, toOffchainInputFeeParams } from "../wallet/vtxo";
 import { Batch } from "../wallet/batch";
 import { createArkadeBatchHandler } from "./batch";
 import type { Arkade, ArkadeContract } from "./contract";
-import { witnessRefToBytes } from "./program";
+import { staticWitness } from "./program";
 
 const ABORTED = "renewProgramContractOutputs: aborted before the batch completed";
 
@@ -72,10 +72,19 @@ export async function renewProgramContractOutputs(
                 `renewProgramContractOutputs: ${fn} needs a signature besides the server's`,
             );
         }
-        const stack = (compiled.def.arkadeScript?.witness ?? []).map((ref) =>
-            witnessRefToBytes(ref, {}, contract.args),
-        );
-        return { contract, coin, compiled, witness: RawWitness.encode(stack) };
+        // arkd accepts no CSV leaf as a forfeit path.
+        if (compiled.def.tapscript.csv) {
+            throw new Error(`renewProgramContractOutputs: ${fn} has a CSV timelock`);
+        }
+        // A renewal has no call arguments, so neither stack may name a function input.
+        const condition = staticWitness(compiled.def.tapscript.witness, contract.args);
+        const stack = staticWitness(compiled.def.arkadeScript?.witness, contract.args);
+        if (!condition || !stack) {
+            throw new Error(
+                `renewProgramContractOutputs: ${fn} needs call arguments, which a renewal cannot supply`,
+            );
+        }
+        return { contract, coin, compiled, condition, witness: RawWitness.encode(stack) };
     });
 
     // Outputs must equal inputs for the covenant to pass, so a renewal cannot pay a fee. Evaluated
@@ -97,11 +106,13 @@ export async function renewProgramContractOutputs(
     }
 
     const coins = await withPrevTxs(
-        legs.map(({ contract, coin, compiled }) => ({
+        legs.map(({ contract, coin, compiled, condition }) => ({
             ...coin,
             tapTree: contract.tapTree,
             forfeitTapLeafScript: compiled.tapLeafScript,
             proofTapLeafScript: compiled.tapLeafScript,
+            // Written as ConditionWitness on the proof and the forfeits, where arkd evaluates it.
+            ...(condition.length > 0 ? { extraWitness: condition } : {}),
         })),
         indexer,
     );
