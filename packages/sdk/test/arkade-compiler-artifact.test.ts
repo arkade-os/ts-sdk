@@ -98,7 +98,7 @@ describe("reading an arkadec artifact", () => {
                 }),
             );
             expect(program.params![0]).toEqual({ name: "value", type });
-            expect(program.functions.spend.inputs).toEqual([{ name: "input", type }]);
+            expect(program.functions.spend.arkadeScript?.inputs).toEqual([{ name: "input", type }]);
             const keys = { serverKey: SERVER_KEY, emulatorKey: EMULATOR_KEY };
             const args = { value, server: SERVER_KEY };
             const script = new ArkadeProgramScript(program, args, keys);
@@ -388,9 +388,9 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         ).functions.claim;
-        expect(hash.inputs).toEqual([{ name: "preimage", type: "bytes" }]);
         expect(hash.tapscript).toMatchObject({
             asm: ["SHA256", "$hash", "EQUAL"],
+            inputs: [{ name: "preimage", type: "bytes" }],
             witness: ["preimage"],
         });
 
@@ -906,7 +906,7 @@ describe("reading an arkadec artifact", () => {
                 ],
             }),
         );
-        expect(program.functions.spend.inputs).toBeUndefined();
+        expect(program.functions.spend.tapscript.inputs).toBeUndefined();
         expect(program.functions.spend.tapscript.signatures).toEqual([
             { name: "userSig", type: "signature" },
         ]);

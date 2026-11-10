@@ -144,6 +144,8 @@ export interface TapscriptSegment {
      * Mutually exclusive with `csv`/`asm`.
      */
     cltv?: bigint | string;
+    /** Call inputs `witness` may name, passed as `{ tapscript: [...] }`. */
+    inputs?: readonly InputDef[];
     /** Items satisfying the condition (e.g. an HTLC preimage); set via the ConditionWitness PSBT field. */
     witness?: WitnessRef[];
 }
@@ -152,6 +154,8 @@ export interface TapscriptSegment {
 export interface ArkadeSegment {
     /** Raw Arkade opcodes with `$param` placeholders. */
     asm: AsmToken[];
+    /** Call inputs `witness` may name, passed as `{ arkadeScript: [...] }`. */
+    inputs?: readonly InputDef[];
     /** The arkade-script witness stack (e.g. an output index). */
     witness?: WitnessRef[];
 }
@@ -160,7 +164,10 @@ export interface ArkadeSegment {
 export interface ArkadeFunction {
     /** Compiler spend group, used to resolve named covenant commitments. */
     group?: string;
-    /** Ordered typed call arguments; absent for nullary paths. */
+    /**
+     * @deprecated Declare `inputs` on `tapscript` and `arkadeScript` instead. Flat call inputs:
+     * each reaches the segments whose `witness` names it.
+     */
     inputs?: readonly InputDef[];
     tapscript: TapscriptSegment;
     /** Present for covenant paths; absent for pure-tapscript paths (cancel/exit). */
@@ -535,6 +542,13 @@ function compileFunctions(
         );
     }
     const defs = names.map((n) => functions[n]);
+    for (const [i, def] of defs.entries()) {
+        if (def.inputs && (def.tapscript.inputs || def.arkadeScript?.inputs)) {
+            throw new Error(
+                `ArkadeContract: function '${names[i]}' declares inputs on both the function and its segments`,
+            );
+        }
+    }
 
     const covenants = new Map<string, Uint8Array>();
     for (const [name, def] of Object.entries(functions)) {
@@ -686,7 +700,7 @@ export function parseArtifact(artifact: {
         if (tap !== undefined && (!tap || typeof tap !== "object" || Array.isArray(tap))) {
             throw new Error(`parseArtifact: function '${name}' tapscript must be an object`);
         }
-        declarations.push(fn.inputs, tap?.signatures);
+        declarations.push(fn.inputs, tap?.signatures, tap?.inputs, fn.arkadeScript?.inputs);
         if (
             tap?.emulatorIndex !== undefined &&
             (!Number.isInteger(tap.emulatorIndex) || tap.emulatorIndex < 0)
@@ -722,6 +736,7 @@ export function parseArtifact(artifact: {
             signers: (tap.signers ?? []).map(signerRef),
             ...(tap.signatures ? { signatures: tap.signatures } : {}),
             ...(tap.asm ? { asm: tap.asm.map(hexToken) } : {}),
+            ...(tap.inputs ? { inputs: tap.inputs } : {}),
             ...(tap.witness ? { witness: tap.witness.map(hexToken) } : {}),
             ...(tap.csv
                 ? { csv: { type: tap.csv.type, value: timelockValue(tap.csv.value) } }
@@ -733,6 +748,7 @@ export function parseArtifact(artifact: {
         const arkadeScript = fn.arkadeScript
             ? {
                   asm: fn.arkadeScript.asm.map(hexToken),
+                  ...(fn.arkadeScript.inputs ? { inputs: fn.arkadeScript.inputs } : {}),
                   ...(fn.arkadeScript.witness
                       ? { witness: fn.arkadeScript.witness.map(hexToken) }
                       : {}),
@@ -785,6 +801,7 @@ export function stringifyArtifact(program: Program): string {
                 signers: tap.signers.map(token),
                 ...(tap.signatures ? { signatures: tap.signatures } : {}),
                 ...(tap.asm ? { asm: tap.asm.map(token) } : {}),
+                ...(tap.inputs ? { inputs: tap.inputs } : {}),
                 ...(tap.witness ? { witness: tap.witness.map(token) } : {}),
                 ...(tap.csv
                     ? { csv: { type: tap.csv.type, value: tap.csv.value.toString() } }
@@ -797,6 +814,7 @@ export function stringifyArtifact(program: Program): string {
                 ? {
                       arkadeScript: {
                           asm: fn.arkadeScript.asm.map(token),
+                          ...(fn.arkadeScript.inputs ? { inputs: fn.arkadeScript.inputs } : {}),
                           ...(fn.arkadeScript.witness
                               ? { witness: fn.arkadeScript.witness.map(token) }
                               : {}),

@@ -445,6 +445,28 @@ describe("Typed program params — authoritative when present", () => {
                 functions: { spend: { ...functions.spend, inputs: ["preimage"] } },
             }),
         ).toThrow(/typed.*declarations/);
+        expect(() =>
+            arkade.parseArtifact({
+                functions: { spend: { tapscript: { signers: [user], inputs: ["preimage"] } } },
+            }),
+        ).toThrow(/typed.*declarations/);
+    });
+
+    it("rejects inputs declared on both a function and its segments", () => {
+        const preimage = { name: "preimage", type: "bytes" } as const;
+        const program: arkade.Program = {
+            version: 1,
+            params: [{ name: "user", type: "pubkey" }],
+            functions: {
+                spend: {
+                    inputs: [preimage],
+                    tapscript: { signers: ["$user"], inputs: [preimage], witness: ["preimage"] },
+                },
+            },
+        };
+        expect(() => new arkade.ArkadeProgramScript(program, { user }, keys)).toThrow(
+            /spend.*both/,
+        );
     });
 });
 
@@ -694,6 +716,19 @@ describe("Program name & full-feature artifact round-trip", () => {
                 },
                 refund: {
                     tapscript: { signers: ["$user", "$server"], cltv: 900_000n },
+                },
+                reveal: {
+                    tapscript: {
+                        signers: ["$user"],
+                        asm: ["SHA256", "$hash", "EQUALVERIFY"],
+                        inputs: [{ name: "secret", type: "bytes" }],
+                        witness: ["secret"],
+                    },
+                    arkadeScript: {
+                        asm: ["INSPECTOUTPUTVALUE", "$amount", "EQUAL"],
+                        inputs: [{ name: "secret", type: "bytes" }],
+                        witness: ["secret"],
+                    },
                 },
             },
         };
