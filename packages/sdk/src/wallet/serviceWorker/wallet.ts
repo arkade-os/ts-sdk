@@ -158,11 +158,11 @@ import {
     DEFAULT_MESSAGE_TAG,
     RequestArkadeCash,
     ResponseArkadeCash,
+    isLongRunningCashAction,
     deserializeAggregateError,
     isSerializedAggregateError,
 } from "./wallet-message-handler";
 import { captureSendDeadline, SendDeadlineExceededError } from "../sendDeadline";
-import { LATE_DELIVERY_GRACE_MS } from "../../worker/messageBus";
 import { captureInputExpiryFloor } from "../sendInputExpiry";
 import type {
     Contract,
@@ -300,6 +300,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     RECOVER_VTXOS: 50_000,
     RENEW_VTXOS: 50_000,
     SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+    // Only `get`/`activities`/`reveal`: `create` and `claim` stream with no deadline.
     ARKADE_CASH: 50_000,
     // Streaming/long-running like RENEW_VTXOS (rotation + settle); the value is
     // kept for type completeness and is never enforced as an inactivity deadline.
@@ -605,24 +606,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             type: "ARKADE_CASH",
             payload: request,
         };
-        // Attach before posting so a late result cannot land between the
-        // timeout rejection and the follow-up listener.
-        const late = this.waitForLateCashResponse(message.id);
-        let response: WalletUpdaterResponse;
-        try {
-            response = await this.sendMessage(message);
-            late.cancel();
-        } catch (error) {
-            // Vouchers can take several sequential sweeps. The worker keeps the
-            // handler running after the inactivity deadline and delivers the
-            // final envelope under the same id; wait for that instead of losing
-            // completed txids. Keep this bounded by the worker's grace window.
-            if (error instanceof ServiceWorkerTimeoutError) {
-                response = await late.promise;
-            } else {
-                throw error;
-            }
-        }
+        // `create` and `claim` run sends and sweeps with no deadline on either
+        // side (see `WalletMessageHandler.isLongRunning`); the rest are reads.
+        const response = isLongRunningCashAction(request)
+            ? await this.sendMessageWithRetry(message, {
+                  onEvent: () => {},
+                  isComplete: (resp) => resp.type === "ARKADE_CASH",
+              })
+            : await this.sendMessage(message);
         const cashEnvelope = response as ResponseArkadeCash;
         if (cashEnvelope.error && cashEnvelope.cash) {
             const restored = restoreErrorName(cashEnvelope);
@@ -633,29 +624,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return cashEnvelope.payload;
     }
 
-    private waitForLateCashResponse(id: string): {
-        promise: Promise<WalletUpdaterResponse>;
-        cancel: () => void;
-    } {
-        let cleanup = () => {};
-        const promise = new Promise<WalletUpdaterResponse>((resolve, reject) => {
-            cleanup = () => {
-                navigator.serviceWorker.removeEventListener("message", onMessage);
-                clearTimeout(timeoutId);
-            };
-            const onMessage = (event: MessageEvent<WalletUpdaterResponse>) => {
-                if (event.data?.id !== id) return;
-                cleanup();
-                resolve(event.data);
-            };
-            const timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new ServiceWorkerTimeoutError("Waiting for the Cash claim timed out"));
-            }, LATE_DELIVERY_GRACE_MS);
-            navigator.serviceWorker.addEventListener("message", onMessage);
-        });
-        return { promise, cancel: () => cleanup() };
-    }
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;

@@ -1607,6 +1607,22 @@ describe("WalletMessageHandler handleMessage", () => {
         ).toBe(true);
     });
 
+    it.each([
+        ["create", true, { action: "create", amount: 5000 }],
+        ["claim", true, { action: "claim", token: "t" }],
+        ["get", false, { action: "get", token: "t" }],
+        ["activities", false, { action: "activities", records: [] }],
+        ["reveal", false, { action: "reveal", token: "t" }],
+    ])("isLongRunning for ARKADE_CASH %s is %s", (_name, expected, payload) => {
+        expect(
+            updater.isLongRunning({
+                ...baseMessage(),
+                type: "ARKADE_CASH",
+                payload,
+            } as any),
+        ).toBe(expected);
+    });
+
     it("does not start VtxoManager for readonly wallets", async () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),

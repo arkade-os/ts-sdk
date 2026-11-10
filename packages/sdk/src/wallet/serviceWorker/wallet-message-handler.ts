@@ -291,6 +291,11 @@ export type ResponseArkadeCash = ResponseEnvelope & {
     /** Clone-safe recovery token if creating the voucher funded it but then failed. */
     cash?: string;
 };
+
+/** Cash actions that run sends or sweeps: no bus deadline on either side. */
+export const isLongRunningCashAction = (
+    request: import("../../arkadeCash/messages").ArkadeCashRequest,
+) => request.action === "create" || request.action === "claim";
 export type ResponseGetBoardingUtxos = ResponseEnvelope & {
     type: "BOARDING_UTXOS";
     payload: { utxos: ExtendedCoin[] };
@@ -1275,7 +1280,11 @@ export class WalletMessageHandler
             // HD restore walks the index range with one indexer round-trip per
             // step until it hits gapLimit consecutive unused indices. The bus
             // deadline must not race the scan; liveness stays covered by PING.
-            message.type === "RESTORE_WALLET"
+            message.type === "RESTORE_WALLET" ||
+            // `create` and `claim` run sends and sweeps. A bus deadline would
+            // answer with a timeout error and drop the token or txids that the
+            // finished handler could still deliver.
+            (message.type === "ARKADE_CASH" && isLongRunningCashAction(message.payload))
         );
     }
 

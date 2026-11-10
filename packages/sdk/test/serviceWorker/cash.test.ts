@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { Transaction } from "../../src/utils/transaction";
 import { ArkadeCash } from "../../src/arkadeCash";
@@ -8,6 +8,7 @@ import { InMemoryWalletRepository } from "../../src/repositories/inMemory/wallet
 import { SingleKey } from "../../src/identity/singleKey";
 import type { VirtualCoin } from "../../src/wallet";
 import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
+import { ServiceWorkerReadonlyWallet } from "../../src/wallet/serviceWorker/wallet";
 
 const point = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const info = {
@@ -148,5 +149,69 @@ describe("Worker ArkadeCash", () => {
         expect((failed as { error?: unknown }).error).toBe(error);
         expect((failed as { error?: { cash?: string } }).error?.cash).toBe("recover-me");
         expect((failed as { cash?: string }).cash).toBe("recover-me");
+    });
+});
+
+const STUB_KEY = new Uint8Array(32).fill(7);
+
+/**
+ * A page-side readonly wallet wired to a fake worker. `respond` answers each
+ * request, optionally after a delay; every reply crosses `structuredClone`.
+ */
+function pageWallet(respond: (message: any) => Promise<unknown>) {
+    const listeners = new Set<(event: { data: unknown }) => void>();
+    vi.stubGlobal("navigator", {
+        serviceWorker: {
+            addEventListener: (type: string, handler: never) => {
+                if (type === "message") listeners.add(handler);
+            },
+            removeEventListener: (type: string, handler: never) => {
+                if (type === "message") listeners.delete(handler);
+            },
+        },
+    });
+    const worker = {
+        postMessage: (message: any) => {
+            void respond(message).then((response) => {
+                const data = structuredClone(response);
+                listeners.forEach((handler) => handler({ data }));
+            });
+        },
+    };
+    return new (ServiceWorkerReadonlyWallet as any)(
+        worker,
+        { xOnlyPublicKey: async () => STUB_KEY },
+        new InMemoryWalletRepository(),
+        new InMemoryContractRepository(),
+        "wallet-tag",
+    ) as ServiceWorkerReadonlyWallet;
+}
+
+describe("Page-side ArkadeCash requests", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it("waits for a claim that finishes long after the 50s message deadline", async () => {
+        vi.useFakeTimers();
+        const wallet = pageWallet(async (message) => {
+            await new Promise((resolve) => setTimeout(resolve, 120_000));
+            return {
+                id: message.id,
+                tag: message.tag,
+                type: "ARKADE_CASH",
+                payload: {
+                    action: "claim",
+                    swept: 5000,
+                    claimTxIds: ["c".repeat(64)],
+                    recovering: { amount: 0, vtxos: [] },
+                    unclaimed: { amount: 0, vtxos: [] },
+                },
+            };
+        });
+        const claim = wallet.arkadeCash({ action: "claim", token: "t" });
+        await vi.advanceTimersByTimeAsync(120_000);
+        await expect(claim).resolves.toMatchObject({ action: "claim", swept: 5000 });
     });
 });
