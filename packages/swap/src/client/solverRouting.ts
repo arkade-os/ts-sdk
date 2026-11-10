@@ -114,6 +114,7 @@ export class SolverRoutesUnavailable extends AggregateError {
     }
 }
 
+/** Count completed swaps for a `solverDirectionKey` or `SolverRoutingContext.direction`. */
 export const completedSolverUsage = (
     swaps: readonly Swap[],
     network: string,

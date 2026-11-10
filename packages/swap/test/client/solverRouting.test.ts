@@ -148,7 +148,12 @@ describe("solver quote failover", () => {
             const client = createSwapClient({
                 wallet: await hdWallet(),
                 discovery: {
-                    snapshot: [{ ...second, fee_bps: 100 }, third, { ...first, fee_bps: 500 }],
+                    snapshot: [
+                        { ...second, fee_bps: 100 },
+                        third,
+                        { ...first, fee_bps: 500 },
+                        { ...first, fee_bps: 600 },
+                    ],
                 },
                 emulatorPubkey: EMULATOR_PUBKEY_HEX,
                 policy: {
@@ -175,7 +180,14 @@ describe("solver quote failover", () => {
                           });
                 },
             });
-            expect((await client.candidates(input()))[0].card.solver).toBe("first");
+            const candidates = await client.candidates(input());
+            expect(candidates.map(({ card }) => [card.solver, card.fee_bps])).toEqual([
+                ["first", 500],
+                ["first", 600],
+                ["third", 0],
+                ["second", 100],
+            ]);
+            expect(candidates[0].solverId).toBe(candidates[1].solverId);
             expect(attempted).toEqual([]);
             const quote = await client.quote(input());
             expect(attempted).toEqual(["first", "third", "second"]);

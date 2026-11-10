@@ -62,7 +62,7 @@ export interface SwapPolicy {
      */
     readonly maxFee?: FeeCeiling;
 
-    /** Choose a market from the eligible candidates, best-ranked first; `undefined` vetoes all.
+    /** Choose from eligible candidates in discovery order, before routing preferences; `undefined` vetoes all.
      * The answer must be one of those candidates, which passed pair, corridor and addressability
      * checks. An explicit selection disables quote failover; routing pauses can still veto it. */
     readonly selectMarket?: (candidates: readonly MarketCandidate[]) => MarketCandidate | undefined;
