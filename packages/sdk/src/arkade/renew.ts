@@ -4,13 +4,6 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Estimator } from "../arkfee";
 import { Extension } from "../extension";
 import { EmulatorPacket } from "../extension/emulator";
-import {
-    Packet as AssetPacket,
-    AssetGroup,
-    AssetInput,
-    AssetOutput,
-    AssetId,
-} from "../extension/asset";
 import type { ExtensionPacket } from "../extension/packet";
 import { Proof } from "../proof";
 import type { OperatorProvider } from "../providers/ark";
@@ -18,6 +11,7 @@ import { TreeSignerSession, type SignerSession } from "../tree/signingSession";
 import { withPrevTxs } from "../utils/prevoutTx";
 import type { VirtualCoin } from "../wallet";
 import { normalizeVtxo, toOffchainInputFeeParams } from "../wallet/vtxo";
+import { createAssetPacket } from "../wallet/asset";
 import { Batch } from "../wallet/batch";
 import { isNoMatchingIntentsError } from "../wallet/intentReconciliation";
 import { createArkadeBatchHandler } from "./batch";
@@ -146,24 +140,15 @@ export async function renewProgramContractOutputs(
     );
 
     // Proof input 0 is the message; target k is input k+1 and keeps its assets at output k.
-    const groups = new Map<string, { ins: AssetInput[]; outs: AssetOutput[] }>();
-    legs.forEach(({ coin }, k) => {
-        for (const a of coin.assets ?? []) {
-            const g = groups.get(a.assetId) ?? { ins: [], outs: [] };
-            g.ins.push(AssetInput.create(k + 1, a.amount));
-            g.outs.push(AssetOutput.create(k, a.amount));
-            groups.set(a.assetId, g);
-        }
-    });
+    const recipients = legs.map(({ contract, coin }) => ({
+        address: contract.address,
+        amount: coin.value,
+        ...(coin.assets?.length ? { assets: coin.assets } : {}),
+    }));
     const packets: ExtensionPacket[] = [];
-    if (groups.size > 0) {
-        packets.push(
-            AssetPacket.create(
-                [...groups].map(([id, g]) =>
-                    AssetGroup.create(AssetId.fromString(id), null, g.ins, g.outs, []),
-                ),
-            ),
-        );
+    if (recipients.some((r) => r.assets)) {
+        const assetInputs = new Map(legs.map(({ coin }, k) => [k + 1, coin.assets ?? []]));
+        packets.push(createAssetPacket(assetInputs, recipients));
     }
     packets.push(
         EmulatorPacket.create(
@@ -231,11 +216,7 @@ export async function renewProgramContractOutputs(
             arkProvider,
             emulator,
             network,
-            legs.map(({ contract, coin }) => ({
-                address: contract.address,
-                amount: coin.value,
-                ...(coin.assets?.length ? { assets: coin.assets } : {}),
-            })),
+            recipients,
         );
         // Batch.join sees the abort only on its next event; a batch that never starts would hang.
         const aborted = new Promise<never>((_, reject) => {

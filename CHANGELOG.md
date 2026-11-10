@@ -351,7 +351,8 @@ style and have not been backfilled.
   renew leaf's condition witness goes on the proof and on the forfeits, where
   arkd evaluates it. A leaf whose witness names a call input, which a renewal
   cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
-  path, is refused before anything is signed.
+  path, is refused before anything is signed. The renewal's asset packet is
+  built by `createAssetPacket`, as a wallet send's is.
 
 ### Changed
 

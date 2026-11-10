@@ -7,6 +7,8 @@ import { sha256 } from "@scure/btc-signer/utils.js";
 import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
 import { Transaction } from "../src/utils/transaction";
 import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { Extension } from "../src/extension";
+import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
 import { SettlementEventType } from "../src/providers/ark";
 import { createArkadeBatchHandler } from "../src/arkade/batch";
 import { getVirtualTxs, mintCoin } from "./helpers/prevArkTx";
@@ -293,6 +295,51 @@ describe("renewProgramContractOutputs", () => {
             /stream closed/,
         );
         expect(registerIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps each coin's assets at its output, grouped by asset", async () => {
+        const { ark, target, registerIntent } = await keeper(() =>
+            (async function* () {
+                throw new Error("stream closed");
+            })(),
+        );
+        const [x, y] = ["11", "22"].map((b) => b.repeat(32) + "0000");
+        const withAssets = (assets: { assetId: string; amount: bigint }[]) => ({
+            ...target,
+            coin: { ...target.coin, ...mintCoin(5000), assets },
+        });
+
+        await expect(
+            arkade.renewProgramContractOutputs(ark, [
+                withAssets([
+                    { assetId: x, amount: 100n },
+                    { assetId: y, amount: 5n },
+                ]),
+                withAssets([{ assetId: x, amount: 50n }]),
+            ]),
+        ).rejects.toThrow(/stream closed/);
+        const { proof } = (registerIntent.mock.calls[0] as unknown[])[0] as { proof: string };
+        const packet = Extension.fromTx(
+            Transaction.fromPSBT(base64.decode(proof)),
+        ).getAssetPacket();
+        // Proof input 0 is the message: coin k is input k+1 and lands at output k.
+        const expected = Packet.create([
+            AssetGroup.create(
+                AssetId.fromString(x),
+                null,
+                [AssetInput.create(1, 100n), AssetInput.create(2, 50n)],
+                [AssetOutput.create(0, 100n), AssetOutput.create(1, 50n)],
+                [],
+            ),
+            AssetGroup.create(
+                AssetId.fromString(y),
+                null,
+                [AssetInput.create(1, 5n)],
+                [AssetOutput.create(0, 5n)],
+                [],
+            ),
+        ]);
+        expect(packet?.toString()).toBe(expected.toString());
     });
 
     it("carries the renew leaf's condition witness on the proof", async () => {
