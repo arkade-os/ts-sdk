@@ -9,7 +9,7 @@
     "scripts": {
         "build": "pnpm -r build",
         "test": "pnpm run test:unit && pnpm run test:integration",
-        "test:unit": "pnpm -r test:unit",
+        "test:unit": "node --test scripts/release-dependencies.test.mjs && pnpm -r test:unit",
         "test:integration": "pnpm run test:integration:sdk && pnpm run test:integration:swap && pnpm run test:integration:swap-rfq",
         "test:integration:sdk": "bash scripts/regtest.sh sdk groups",
         "test:integration:swap": "bash scripts/regtest.sh swap cycle",

@@ -37,6 +37,21 @@ export type { CorridorOverrides } from "./client/corridors/deps";
 export type { DriveMode, RfqAuctionPolicy, SwapPolicy } from "./client/policy";
 export { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "./client/policy";
 export type { RfqTransportFactory } from "./client/transport";
+export {
+    completedSolverUsage,
+    SolverRoutesUnavailable,
+    type SolverCandidate,
+    type SolverRoutingContext,
+    type SolverRoutingPolicy,
+} from "./client/solverRouting";
+export { SolverUnavailable, SolverResponseInvalid } from "./transportErrors";
+export {
+    createSolverHealth,
+    type SolverHealth,
+    type SolverHealthEntry,
+    type SolverHealthScope,
+    type SolverHealthStorage,
+} from "./client/solverHealth";
 
 // ── The verbs ───────────────────────────────────────────────────────────────
 // `enforceFeeCeiling` is the verbs' own plumbing and stays on `./advanced`.

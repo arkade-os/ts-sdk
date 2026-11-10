@@ -21,7 +21,7 @@ import {
     type ProvisionedKey,
     type VHTLC,
 } from "@arkade-os/sdk";
-import { quoteOffer, type DiscoveredMarket } from "@arkade-os/solver-discovery";
+import { type DiscoveredMarket } from "@arkade-os/solver-discovery";
 import { deepFreeze } from "../jointGraph";
 import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
@@ -65,13 +65,19 @@ import {
 import type { DiscoveryLeg } from "./aliases";
 import type { LightningCorridorDeps } from "./corridors/deps";
 import type { CorridorSet } from "./corridors/registry";
-import { UnsupportedRoute } from "./errors";
-import { feedSpread, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
+import { AmountEncodingUnsupported, UnsupportedRoute } from "./errors";
+import { SolverResponseInvalid } from "../transportErrors";
+import { feedSpread, quoteAdvertisedPlan, verifyPlanLegs, type FeedFetch } from "./quoteOffer";
 import type { CardMarketRef, PinnedAmount, Quote, QuoteId, ResolvedEndpoint } from "./quote";
 import type { MarketCandidate } from "./market";
 import type { Artifact } from "./route";
 import type { SwapPolicy } from "./policy";
-import { parseRfqQuote, rfqPairFor, withCanonicalAmount, type ParsedRfqQuote } from "./rfqWire";
+import {
+    parseRfqQuote as parseWireQuote,
+    rfqPairFor,
+    withCanonicalAmount,
+    type ParsedRfqQuote,
+} from "./rfqWire";
 import { toRfqAmountSide } from "./rfqAmount";
 import { assembleRoute } from "./resolve";
 import type { AttestingRfqTransport } from "./transport";
@@ -266,6 +272,20 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
  * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
  * and covclaimd would silently claim nothing.
  */
+const parseRfqQuote = (
+    wire: Parameters<typeof parseWireQuote>[0],
+    policy?: SwapPolicy,
+): ParsedRfqQuote => {
+    try {
+        return parseWireQuote(wire);
+    } catch (cause) {
+        if (policy?.solverRouting !== undefined && cause instanceof AmountEncodingUnsupported) {
+            throw new SolverResponseInvalid(cause.message, { cause });
+        }
+        throw cause;
+    }
+};
+
 const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
     const configured = deps.covclaimd?.pubkey;
     if (configured === undefined) return undefined;
@@ -394,7 +414,7 @@ const quoteArkadeAsset = async (
         },
     });
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     verifyCrossAssetAmount({ pair, pinned, give: parsed.give, take: parsed.take });
     verifyQuoteTtl({
         quoteId: input.quoteId,
@@ -444,14 +464,19 @@ const quoteArkadeAsset = async (
     // The solver's own carrier, parsed before anything is derived; a card that charges for it
     // prices the reference below with it.
     const carrierSats = sides.offerAsset === undefined ? undefined : verifiedCarrierSats(wire);
-    // Before deriving: a failed feed or a mismatched pair refuses with no covenant built.
-    const reference = await quoteOffer(input.candidate.card, {
-        give: input.candidate.give,
-        giveAmount: parsed.give,
-        ...(carrierSats === undefined ? {} : { carrierSats }),
-        ...QUOTE_OPTIONS,
-        fetchImpl: input.feed.fetch,
-    });
+    // The RFQ already disclosed amount, pair and maker script/key; feed failure may try another
+    // solver before any covenant is derived or accepted. This asset path sends no invoice.
+    const reference = await quoteAdvertisedPlan(
+        input.candidate.card,
+        {
+            give: input.candidate.give,
+            giveAmount: parsed.give,
+            ...(carrierSats === undefined ? {} : { carrierSats }),
+            ...QUOTE_OPTIONS,
+            fetchImpl: input.feed.fetch,
+        },
+        input.policy,
+    );
     verifyPlanLegs(reference, input.legs, input.candidate.give);
 
     // The covenant binds what the fill must DELIVER, so the wanted amount is the
@@ -585,7 +610,7 @@ const quoteLightningSend = async (
         }),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     // Exact-out: `to_amount` is the invoice verbatim and `from_amount` adds the fee.
     verifySendInvoice({ invoiced: invoice.amount, give: parsed.give, take: parsed.take });
 
@@ -694,7 +719,7 @@ const quoteLightningReceive = async (
         ),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
 
     const covenant = covenantInputs(input);
@@ -832,7 +857,7 @@ const quoteOnchainSend = async (
         ),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     // Against the pin the solver was SHOWN (grossed when a claim fee is active).
     verifyQuotedAmount({ pair, pinned: quoted, give: parsed.give, take: parsed.take });
 
@@ -977,7 +1002,7 @@ const quoteOnchainReceive = async (
         ),
     );
     verifyPair(wire.pair, pair);
-    const parsed = parseRfqQuote(wire);
+    const parsed = parseRfqQuote(wire, input.policy);
     verifyQuotedAmount({ pair, pinned, give: parsed.give, take: parsed.take });
 
     const covenant = covenantInputs(input);

@@ -31,3 +31,5 @@ export * from "./sats";
 export * from "./transport";
 export * from "./verbs";
 export * from "./verify";
+export * from "./solverRouting";
+export * from "./solverHealth";

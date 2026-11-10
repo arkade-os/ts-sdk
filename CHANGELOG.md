@@ -98,6 +98,14 @@ style and have not been backfilled.
 
 ### Features
 
+- **Unreliable solvers lose quote priority temporarily.** Routing tracks repeated candidate-local failures per network and direction, moving cooling solvers behind healthy alternatives before preferred-first, usage or cost ordering. A verified quote restores priority; an injectable health store retains the advisory history across client lifetimes. Cancellation, request limits, acceptance and recovery do not penalize solvers.
+
+- **Prefer one solver before automatically ranked fallbacks.** Direction-scoped routing preferences accept `preferFirst`, placing an enabled solver ahead of usage or advertised-cost ordering while retaining quote failover. Pauses, explicit selection and issued-quote ownership remain authoritative.
+
+- **Solver pauses preserve cards and priorities.** Routing preferences accept disabled solver IDs, excluded before candidate enumeration, advertised-cost feeds and new quotes. Applications can combine global card pauses with direction-specific choices; issued quotes and accepted swaps keep their selected solver.
+
+- **Swap clients can prioritize solvers and fail over before acceptance.** Optional per-direction routing supports saved priority, successful usage and amount-aware advertised cost. Quote preparation tries another eligible solver after a candidate-local failure, preserves cancellation and closes its transports on disposal; accepted quotes, uncertain funding and recovery retain their original solver. Existing explicit selection and single-solver defaults remain compatible.
+
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
@@ -411,6 +419,7 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+
 - **Expired boarding UTXOs held under a deprecated signer are now swept.**
   After the operator rotated its signer, deposits made to a boarding address on
   the old key showed in history but were never recovered: the sweep fetched
@@ -650,6 +659,14 @@ style and have not been backfilled.
   coin-selection reads no longer fetch a header for every distinct coin height.
   Transaction-history reads still fetch block timestamps where they are needed;
   boarding expiry uses consensus median-time-past.
+
+### Internal
+
+- **Solver routing defaults are documented at the API boundary.** `SolverRoutingPolicy` TSDoc specifies selection precedence, preference lookup, cost estimates and custom-transport failures; the README links to that contract. `selectMarket` receives discovery order before routing preferences, usage counting accepts the canonical direction key, and candidate feed requests and routed amount-error wrapping are explicit.
+- **Solver cost ranking accepts portable fetch adapters.** The vendored discovery snapshot uses the package's `FetchLike` interface, preserving minimal custom transports and global `fetch` callers without changing runtime code.
+- **Routing identity and disclosure boundaries are explicit.** Source comments identify canonical persisted asset IDs, independent responder checks and asset RFQ data already disclosed before reference-feed fallback.
+- **The routing policy describes repeated request disclosure.** Opt-in quote attempts can disclose an invoice or other request details to multiple solvers; each candidate still passes full verification before funding.
+- **Releases reject the temporary discovery archive before publishing any package.** Selecting swap, including through an SDK release, requires replacing its vendored discovery dependency with a published release before versions, tags or publication can change.
 
 ### Breaking Changes
 

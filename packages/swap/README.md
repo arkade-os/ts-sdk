@@ -15,6 +15,36 @@ const client = createSwapClient({ wallet, repository: new IndexedDbAssetSwapRepo
 Construction is synchronous and inert: no network, no wallet read, no repository open. The first
 call that needs one does it.
 
+## Solver priority and failover
+
+Opt in with `policy: { solverRouting: {} }`. The
+[`SolverRoutingPolicy` API contract](src/client/solverRouting.ts) documents the defaults,
+quote-only failover boundary and explicit-selection precedence.
+
+```ts
+import { completedSolverUsage, createSolverHealth, createSwapClient } from "@arkade-os/swap";
+
+const client = createSwapClient({
+    wallet,
+    repository,
+    policy: {
+        solverRouting: {
+            health: createSolverHealth({ storage: healthStorage }),
+            preferences: async ({ network, direction }) => ({
+                mode: "usage", // "manual" | "usage" | "cost"
+                priority: savedPriorities[direction] ?? [],
+                preferFirst: preferredSolverIds[direction],
+                disabled: disabledSolverIds[direction] ?? [],
+                usage: completedSolverUsage(await client.swaps(), network, direction),
+            }),
+        },
+    },
+});
+const candidates = await client.candidates({ to: invoice });
+const quote = await client.quote({ to: invoice });
+await client.accept(quote);
+```
+
 Market discovery needs no configuration either: the client defaults to the reference solver
 registry's index for the wallet's network (`REGISTRY_URL[network]`, exported). Follow your own
 registry instead with `discovery: { registryUrl }`, or opt out of registries entirely with
