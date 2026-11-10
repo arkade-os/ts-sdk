@@ -87,12 +87,12 @@ import {
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
 import { ArkadeCash } from "../../arkadeCash";
 import { readArkadeCash } from "../../arkadeCash/status";
-import type { ArkadeCashRecord } from "../../arkadeCash/tracker";
 import {
     addArkadeCashRecord,
     arkadeCashActivity,
     arkadeCashId,
     createArkadeCashTracker,
+    isArkadeCashRecord,
 } from "../../arkadeCash/tracker";
 
 export class WalletNotInitializedError extends Error {
@@ -1435,9 +1435,9 @@ export class WalletMessageHandler
                             const state = await this.walletRepository?.getWalletState();
                             const recovered = state?.settings?.arkadeCashRecovery;
                             if (Array.isArray(recovered)) {
-                                recovered.forEach((record) =>
-                                    addArkadeCashRecord(records, record as ArkadeCashRecord),
-                                );
+                                recovered
+                                    .filter(isArkadeCashRecord)
+                                    .forEach((record) => addArkadeCashRecord(records, record));
                             }
                             return this.tagged({
                                 id,

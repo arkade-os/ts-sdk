@@ -117,7 +117,12 @@ import {
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { ArkadeCash } from "../arkadeCash";
-import type { ArkadeCashTx } from "../arkadeCash/tracker";
+import {
+    isArkadeCashRecord,
+    mergeArkadeCashRecord,
+    type ArkadeCashRecord,
+    type ArkadeCashTx,
+} from "../arkadeCash/tracker";
 import { Intent, Proof } from "../proof";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
@@ -5199,33 +5204,31 @@ export class Wallet
         amount: number,
         outcome = "recovered",
     ): Promise<void> {
-        let records: Record<string, unknown>[] = [];
-        try {
-            const state = await this.walletRepository.getWalletState();
-            const raw = state?.settings?.arkadeCashRecovery;
-            if (Array.isArray(raw)) records = raw as Record<string, unknown>[];
-        } catch {
-            // Bookkeeping only; a completed settlement must not fail for it.
-        }
-        const index = records.findIndex((record) => record.id === cashId);
-        const previous = index >= 0 ? records[index] : undefined;
-        const claims = Array.isArray(previous?.claims) ? (previous.claims as ArkadeCashTx[]) : [];
-        if (claims.some((claim) => claim.txid === txid)) return;
-        const next = {
-            ...previous,
-            id: cashId,
-            action: "claimed",
-            outcome,
-            issues: Array.isArray(previous?.issues) ? previous.issues : [],
-            claims: [...claims, { txid, amount }],
-            createdAt: previous?.createdAt ?? Math.floor(Date.now() / 1000),
-        };
-        if (index >= 0) records[index] = next;
-        else records.push(next);
-        await updateWalletState(this.walletRepository, (state) => ({
-            ...state,
-            settings: { ...state.settings, arkadeCashRecovery: records },
-        }));
+        // The whole read-modify-write runs inside the state update, which
+        // serializes it across callers and contexts. A failure propagates to
+        // the recovery pass, which logs it; it must never write a snapshot.
+        await updateWalletState(this.walletRepository, (state) => {
+            const raw = state.settings?.arkadeCashRecovery;
+            const entries: unknown[] = Array.isArray(raw) ? raw : [];
+            const index = entries.findIndex(
+                (entry) => isArkadeCashRecord(entry) && entry.id === cashId,
+            );
+            const previous = index >= 0 ? (entries[index] as ArkadeCashRecord) : undefined;
+            if (previous?.claims.some((claim) => claim.txid === txid)) return state;
+            const next = mergeArkadeCashRecord(previous, {
+                id: cashId,
+                action: "claimed",
+                outcome,
+                createdAt: Math.floor(Date.now() / 1000),
+                issues: [],
+                claims: [{ txid, amount }],
+            });
+            // Entries that aren't records of this shape are left as they are.
+            const updated = [...entries];
+            if (index >= 0) updated[index] = next;
+            else updated.push(next);
+            return { ...state, settings: { ...state.settings, arkadeCashRecovery: updated } };
+        });
     }
 
     /**

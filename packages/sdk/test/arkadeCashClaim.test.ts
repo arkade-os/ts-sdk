@@ -1141,3 +1141,57 @@ describe("claimCash import-for-recovery", () => {
         }
     });
 });
+
+describe("correlateArkadeCashRecovery", () => {
+    const wallet = () => makeWallet(cashIndexer("00", []), {});
+    const stored = async (w: Wallet) =>
+        (await w.walletRepository.getWalletState())?.settings?.arkadeCashRecovery as
+            | { id: string; claims: { txid: string; amount: number }[] }[]
+            | undefined;
+
+    it("keeps both records when two vouchers correlate concurrently", async () => {
+        const w = await wallet();
+        await Promise.all([
+            w.correlateArkadeCashRecovery("a", "t-a", 1_000),
+            w.correlateArkadeCashRecovery("b", "t-b", 2_000),
+        ]);
+        const records = await stored(w);
+        expect(records?.map((record) => record.id).sort()).toEqual(["a", "b"]);
+    });
+
+    it("does not wipe stored records when a state read fails", async () => {
+        const w = await wallet();
+        await w.correlateArkadeCashRecovery("a", "t-a", 1_000);
+        vi.spyOn(w.walletRepository, "getWalletState").mockRejectedValue(new Error("read failed"));
+        await w.correlateArkadeCashRecovery("b", "t-b", 2_000);
+        vi.restoreAllMocks();
+        expect((await stored(w))?.map((record) => record.id)).toEqual(["a", "b"]);
+    });
+
+    it("records each batch of one voucher with its own amount, once", async () => {
+        const w = await wallet();
+        await w.correlateArkadeCashRecovery("v", "t1", 3_000);
+        await w.correlateArkadeCashRecovery("v", "t2", 2_000);
+        await w.correlateArkadeCashRecovery("v", "t1", 3_000);
+        expect(await stored(w)).toEqual([
+            expect.objectContaining({
+                id: "v",
+                claims: [
+                    { txid: "t1", amount: 3_000 },
+                    { txid: "t2", amount: 2_000 },
+                ],
+            }),
+        ]);
+    });
+
+    it("leaves entries of another shape alone", async () => {
+        const w = await wallet();
+        await w.walletRepository.saveWalletState({
+            settings: { arkadeCashRecovery: [{ legacy: true }, "junk"] },
+        });
+        await w.correlateArkadeCashRecovery("v", "t1", 3_000);
+        const records = (await stored(w)) as unknown[];
+        expect(records.slice(0, 2)).toEqual([{ legacy: true }, "junk"]);
+        expect(records).toHaveLength(3);
+    });
+});

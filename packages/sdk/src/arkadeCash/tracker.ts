@@ -62,6 +62,20 @@ export function mergeArkadeCashRecord(
     };
 }
 
+/** Whether a stored wallet-state entry has the current record shape. */
+export function isArkadeCashRecord(value: unknown): value is ArkadeCashRecord {
+    if (!value || typeof value !== "object") return false;
+    const v = value as Partial<ArkadeCashRecord>;
+    return (
+        typeof v.id === "string" &&
+        (v.action === "issued" || v.action === "claimed") &&
+        typeof v.createdAt === "number" &&
+        typeof v.outcome === "string" &&
+        Array.isArray(v.issues) &&
+        Array.isArray(v.claims)
+    );
+}
+
 /** Inject a public record, merging it into any record already held for the voucher. */
 export function addArkadeCashRecord(records: ArkadeCashTracker, record: ArkadeCashRecord): void {
     records.records.set(record.id, mergeArkadeCashRecord(records.get(record.id), record));
