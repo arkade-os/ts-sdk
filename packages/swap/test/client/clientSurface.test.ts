@@ -18,6 +18,8 @@ import type { QuoteInput } from "../../src/client/quote";
 import {
     EMULATOR_PUBKEY_HEX,
     acceptWallet,
+    assetCard,
+    canonicalSpotCard,
     clockAt,
     feedServing,
     lightningCard,
@@ -26,6 +28,7 @@ import {
     solverFor,
     solverTransport,
     spotCard,
+    USD_ASSET_ID,
     type AcceptWallet,
 } from "./fixtures";
 
@@ -54,6 +57,7 @@ const harness = async (
         repository?: AssetSwapRepository;
         allowedRegistries?: readonly string[];
         snapshot?: (typeof lightningCard)[];
+        discoveryNetwork?: "mutinynet";
     } = {},
 ): Promise<Harness> => {
     const wallet = await acceptWallet();
@@ -61,7 +65,10 @@ const harness = async (
     const client = createSwapClient({
         wallet: wallet.wallet,
         ...(over.omitRepository ? {} : { repository }),
-        discovery: { snapshot: over.snapshot ?? [lightningCard, onchainCard, spotCard] },
+        discovery: {
+            snapshot: over.snapshot ?? [lightningCard, onchainCard, spotCard],
+            ...(over.discoveryNetwork === undefined ? {} : { network: over.discoveryNetwork }),
+        },
         emulatorPubkey: EMULATOR_PUBKEY_HEX,
         transportFor: () => solverTransport(solverFor(CLOCK)),
         fetchImpl: feedServing().fetch,
@@ -191,23 +198,91 @@ describe("markets()", () => {
         const market = quote.market;
         if (market.kind !== "card") throw new Error("a live quote cites no card");
         const cited = markets.find((m) => m.key === market.key);
-        expect(cited).toEqual(market);
+        if (cited === undefined) throw new Error("the quote's market is not published");
+        const { legs: _legs, ...ref } = cited;
+        expect(ref).toEqual(market);
+        // `bigint` on a quote's market would break record serialization.
+        expect(market).not.toHaveProperty("legs");
         // The escape hatch's own vocabulary: discovery's asset ids and display
         // labels never cross the v2 root.
         expect(markets.every((m) => m.kind === "card")).toBe(true);
         await h.client[Symbol.asyncDispose]();
     });
 
-    it("offers no card the quote path would then refuse", async () => {
+    it("applies the registry allowlist", async () => {
         // The registry allowlist is the routing read's filter, and the hatch
-        // applies the same one — a caller cannot pick a market `quote()` would
-        // not price.
+        // applies the same one.
         const h = await harness({
             snapshot: [lightningCard, rivalLightningCard],
             allowedRegistries: [lightningCard.source],
         });
         const markets = await h.client.markets();
         expect(markets.map((m) => m.source)).toEqual([lightningCard.source]);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it.each([
+        ["legacy", spotCard],
+        ["CAIP-19", canonicalSpotCard],
+    ])("reads a %s card's legs: asset, decimals and limits", async (_form, card) => {
+        const h = await harness({ snapshot: [card] });
+        const [market] = await h.client.markets();
+        expect(market?.legs).toEqual([
+            {
+                asset: "arkade:regtest/slip44:1",
+                decimals: 8,
+                limits: { min: 1000n, max: 5_000_000n },
+            },
+            {
+                asset: `arkade:regtest/asset:${USD_ASSET_ID}`,
+                decimals: 2,
+                limits: { min: 50n, max: 500_000n },
+            },
+        ]);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("reads a disabled side as null, and still lists a card with both disabled", async () => {
+        const h = await harness({
+            snapshot: [
+                { ...spotCard, max_quote_amount: "0" },
+                { ...spotCard, max_base_amount: "0", max_quote_amount: "0" },
+            ],
+        });
+        const markets = await h.client.markets();
+        expect(markets.map((m) => m.legs.map((leg) => leg.limits))).toEqual([
+            [{ min: 1000n, max: 5_000_000n }, null],
+            [null, null],
+        ]);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("lists a leg with no public id without an asset", async () => {
+        const h = await harness({
+            snapshot: [
+                {
+                    ...assetCard,
+                    quote_asset: {
+                        id: "eip155:1/erc20:0xdac17f958d2ee523a2206206994597c13d831ec7",
+                        name: "Tether",
+                        ticker: "USDT",
+                        decimals: 6,
+                    },
+                },
+            ],
+        });
+        const [market] = await h.client.markets();
+        expect(market?.legs[0].asset).toBe("arkade:regtest/slip44:1");
+        expect(market?.legs[1]).not.toHaveProperty("asset");
+        expect(market?.legs[1].decimals).toBe(6);
+        await h.client[Symbol.asyncDispose]();
+    });
+
+    it("names a legacy leg as resolve() does under a discovery network override", async () => {
+        const h = await harness({ snapshot: [spotCard], discoveryNetwork: "mutinynet" });
+        const [market] = await h.client.markets();
+        const resolution = await h.client.resolve(SPOT);
+        expect(market?.legs[0].asset).toBe(resolution.give.asset);
         await h.client[Symbol.asyncDispose]();
     });
 });

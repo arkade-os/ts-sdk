@@ -15,7 +15,7 @@ import {
     VHTLC,
     setArkPsbtField,
     ConditionWitness,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     buildOffchainTx,
     networks,
@@ -61,12 +61,12 @@ async function main() {
     // 2. 10 blocks after funding, Alice can spend the VHTLC alone
     // 3. Bob and Alice can spend the VHTLC together
     //
-    // Because of the nature of Ark, we need six different scripts to implement this behavior.
+    // Because of the nature of Arkade, we need six different scripts to implement this behavior.
     //
     // offchain paths:
-    //   claim: (Bob + preimage + Ark Server)
-    //   refund: (Bob + Alice + Ark Server)
-    //   refundWithoutReceiver: (Alice + Ark Server at chainTip + 10 blocks)
+    //   claim: (Bob + preimage + operator)
+    //   refund: (Bob + Alice + operator)
+    //   refundWithoutReceiver: (Alice + operator at chainTip + 10 blocks)
     //
     //   refundWithoutReceiver must be locked by an absolute TimeLock
     //   to prevent Alice to double spend the VTXO in case Bob claimed the VHTLC
@@ -82,8 +82,8 @@ async function main() {
     //   - unilateralRefundWithoutReceiver's timelock should be greater than the other two.
     //   thus, we ensure that a claim is always possible before a refund. And a collaborative refund is always possible before an unilateral refund.
     //
-    // onchain paths are needed to avoid Bob and Alice to trust the Ark Server
-    // if the server is not responsive or malicious, the funds can still be spent.
+    // onchain paths are needed to avoid Bob and Alice to trust the operator
+    // if the operator is unavailable or malicious, the funds can still be spent.
     //
     const vhtlcScript = new VHTLC.Script({
         preimageHash,
@@ -114,7 +114,7 @@ async function main() {
     await fundAddress(address, fundAmount);
 
     // Get the virtual coins for the VHTLC address
-    const arkProvider = new RestArkProvider("http://localhost:7070");
+    const arkProvider = new RestOperatorProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
         scripts: [hex.encode(vhtlcScript.pkScript)],
@@ -138,7 +138,7 @@ async function main() {
                 // This witness must satisfy the preimageHash condition
                 sign: async (tx, inputIndexes) => {
                     const cpy = tx.clone();
-                    // reveal the secret in the PSBT, thus the server can verify the claim script
+                    // reveal the secret in the PSBT, thus the operator can verify the claim script
                     setArkPsbtField(cpy, 0, ConditionWitness, [secret]);
                     return bob.sign(cpy, inputIndexes);
                 },

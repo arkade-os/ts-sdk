@@ -630,6 +630,19 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     async getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]> {
+        return this.resolveOutspends(txid);
+    }
+
+    /** Reads `vout`'s script alone: another output of a tx someone else built (their change, a
+     *  service's fee address) can have a history Fulcrum answers empty and electrs refuses. */
+    async getTxOutspend(txid: string, vout: number): Promise<{ spent: boolean; txid: string }> {
+        return (await this.resolveOutspends(txid, vout))[vout] ?? { spent: false, txid: "" };
+    }
+
+    private async resolveOutspends(
+        txid: string,
+        only?: number,
+    ): Promise<{ spent: boolean; txid: string }[]> {
         // Step 1: fetch the creating tx to get its output scripts (1 round trip)
         const [txResult] = await this.chain.fetchTransactions([txid]);
         const tx = Transaction.fromRaw(hex.decode(txResult.hex), {
@@ -640,7 +653,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const outputScriptHashes: (string | undefined)[] = [];
         for (let i = 0; i < outputCount; i++) {
             const output = tx.getOutput(i);
-            outputScriptHashes.push(output.script ? toScriptHash(output.script) : undefined);
+            const wanted = only === undefined || i === only;
+            outputScriptHashes.push(
+                wanted && output.script ? toScriptHash(output.script) : undefined,
+            );
         }
 
         const validScriptHashes = outputScriptHashes.filter((h): h is string => h !== undefined);
@@ -709,7 +725,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                 ambiguousIndices.push(i);
                 ambiguousCandidates.push(candidates);
             }
-            // candidates.length === 0 → mempool eviction, treat as unspent
+            // candidates.length === 0 → mempool eviction, or Fulcrum answering [] past its
+            // max_history: treated as unspent either way
         }
 
         // Step 4 (rare): batch-fetch all ambiguous candidate txs at once
@@ -752,6 +769,38 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     /**
+     * Timestamps of the blocks at the given heights (unconfirmed, `<= 0`, are skipped), one header
+     * fetch per distinct height. A height whose header cannot be fetched, typically an indexer
+     * lagging a fresh block, is absent from the map: callers see no block time, not a failure.
+     */
+    private async fetchBlockTimes(heights: number[]): Promise<Map<number, number>> {
+        const confirmedHeights = [...new Set(heights.filter((h) => h > 0))];
+        const blockTimeByHeight = new Map<number, number>();
+        if (confirmedHeights.length === 0) return blockTimeByHeight;
+        try {
+            const headers = await this.chain.fetchBlockHeaders(confirmedHeights);
+            for (const header of headers) {
+                blockTimeByHeight.set(header.height, parseBlockHeader(header.hex).timestamp);
+            }
+        } catch {
+            // The batch throws on its first failure; retry per height so one missing header
+            // doesn't discard the rest.
+            const settled = await Promise.allSettled(
+                confirmedHeights.map((h) => this.chain.fetchBlockHeader(h)),
+            );
+            settled.forEach((res) => {
+                if (res.status === "fulfilled") {
+                    blockTimeByHeight.set(
+                        res.value.height,
+                        parseBlockHeader(res.value.hex).timestamp,
+                    );
+                }
+            });
+        }
+        return blockTimeByHeight;
+    }
+
+    /**
      * Resolve a list of `{tx_hash, height}` entries (as returned by the
      * scripthash history endpoint) into ExplorerTransaction shape **without
      * using the verbose-tx endpoint**, which only Fulcrum implements. We
@@ -767,36 +816,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const rawTxs = await this.chain.fetchTransactions(txids);
         const rawHexByTxid = new Map(rawTxs.map((t) => [t.txID, t.hex]));
 
-        // De-duplicated batch lookup of block headers (now safe — see
-        // safeBatchRequest above). Heights whose headers fail to resolve
-        // surface via the wrapper's first-error throw; we tolerate that
-        // here by falling back to per-height calls under Promise.allSettled
-        // so one missing header doesn't poison the whole history mapping.
-        // The old verbose-tx code had the same tolerance via
-        // `vtx.blocktime || vtx.time || 0`.
-        const confirmedHeights = [...new Set(history.map((h) => h.height).filter((h) => h > 0))];
-        const blockTimeByHeight = new Map<number, number>();
-        if (confirmedHeights.length > 0) {
-            try {
-                const headers = await this.chain.fetchBlockHeaders(confirmedHeights);
-                for (const header of headers) {
-                    blockTimeByHeight.set(header.height, parseBlockHeader(header.hex).timestamp);
-                }
-            } catch {
-                const settled = await Promise.allSettled(
-                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h)),
-                );
-                settled.forEach((res) => {
-                    if (res.status === "fulfilled") {
-                        blockTimeByHeight.set(
-                            res.value.height,
-                            parseBlockHeader(res.value.hex).timestamp,
-                        );
-                    }
-                    // Rejections leave the height absent → block_time = 0.
-                });
-            }
-        }
+        const blockTimeByHeight = await this.fetchBlockTimes(history.map((h) => h.height));
 
         return history.map((entry) =>
             this.buildExplorerTx(entry, rawHexByTxid.get(entry.tx_hash), blockTimeByHeight),
@@ -816,6 +836,8 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         blockTimeByHeight: Map<number, number>,
     ): ExplorerTransaction {
         const vout: ExplorerTransaction["vout"] = [];
+        // Unknown (`undefined`) without the raw tx; `[]` would claim it has no inputs.
+        let vin: ExplorerTransaction["vin"];
         if (rawHex) {
             let tx: Transaction;
             try {
@@ -835,13 +857,17 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                     scriptpubkey_address: scriptHex
                         ? (this.chain.addressForScript(scriptHex) ?? "")
                         : "",
-                    value: (output.amount ?? 0n).toString(),
+                    value: Number(output.amount ?? 0n),
                 });
             }
+            vin = Array.from({ length: tx.inputsLength }, (_, k) => tx.getInput(k))
+                .filter((input) => input.txid !== undefined && input.index !== undefined)
+                .map((input) => ({ txid: hex.encode(input.txid!), vout: input.index! }));
         }
 
         return {
             txid: entry.tx_hash,
+            vin,
             vout,
             status: {
                 confirmed: entry.height > 0,
@@ -908,6 +934,21 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             time: await this.medianTimePast(tip.height, timestamp, hash),
             hash,
         };
+    }
+
+    async getMedianTimePast(height: number): Promise<number> {
+        if (!Number.isInteger(height) || height < 0) {
+            throw new Error(`Invalid block height for median-time-past: ${height}`);
+        }
+        const heights: number[] = [];
+        for (let h = height; h >= 0 && heights.length < MTP_WINDOW; h--) heights.push(h);
+        const headers = await this.chain.fetchBlockHeaders(heights);
+        if (headers.length !== heights.length) {
+            throw new Error(`Incomplete block header window at height ${height}`);
+        }
+        const timestamps = headers.map((header) => parseBlockHeader(header.hex).timestamp);
+        timestamps.sort((a, b) => a - b);
+        return timestamps[Math.floor(timestamps.length / 2)];
     }
 
     /**

@@ -1,7 +1,7 @@
 import { expectTypeOf, it } from "vitest";
 
 import type { ArtifactWitnessElement, ContractArtifact } from "../src/arkade/artifact";
-import type { ArkadeArgType, ContractFunctions, Program } from "../src/arkade";
+import type { ArkadeArgType, ArkadeNestedValue, ContractFunctions, Program } from "../src/arkade";
 
 const nativeProgram = {
     version: 1,
@@ -78,4 +78,40 @@ const artifact = {
 it("reads an arkadec witness item that carries its encoding", () => {
     expectTypeOf<ArtifactWitnessElement["encoding"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf(artifact).toExtend<ContractArtifact>();
+});
+
+it("keeps a function with dotted input names loose, since its fields bind as one argument", () => {
+    const dotted = {
+        version: 1,
+        functions: {
+            spend: {
+                inputs: [
+                    { name: "point.x", type: "int" },
+                    { name: "point.y", type: "int" },
+                ] as const,
+                tapscript: { signers: [] },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<Parameters<ContractFunctions<typeof dotted>["spend"]>>().toEqualTypeOf<
+        ArkadeNestedValue[]
+    >();
+});
+
+it("accepts nested values when satisfies Program widens input names", () => {
+    const program = {
+        version: 1,
+        functions: {
+            spend: {
+                inputs: [
+                    { name: "point.x", type: "int" },
+                    { name: "point.y", type: "int" },
+                ],
+                tapscript: { signers: [] },
+            },
+        },
+    } satisfies Program;
+    expectTypeOf<Parameters<ContractFunctions<typeof program>["spend"]>>().toEqualTypeOf<
+        ArkadeNestedValue[]
+    >();
 });

@@ -178,7 +178,7 @@ describe("ElectrumOnchainProvider", () => {
     });
 
     describe("getCoins", () => {
-        it("maps listunspent results to Coin shape", async () => {
+        it("maps listunspent results to Coin shape without fetching block headers", async () => {
             wsMock.request.mockResolvedValueOnce([
                 {
                     tx_hash: "abcd1234",
@@ -203,7 +203,10 @@ describe("ElectrumOnchainProvider", () => {
                     txid: "abcd1234",
                     vout: 0,
                     value: 100_000,
-                    status: { confirmed: true, block_height: 500 },
+                    status: {
+                        confirmed: true,
+                        block_height: 500,
+                    },
                 },
                 {
                     txid: "ef567890",
@@ -214,10 +217,23 @@ describe("ElectrumOnchainProvider", () => {
             ]);
         });
 
+        it("does not fetch headers for coins at different confirmed heights", async () => {
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "aa", tx_pos: 1, value: 1, height: 500 },
+                { tx_hash: "bb", tx_pos: 0, value: 2, height: 501 },
+            ]);
+
+            const coins = await provider.getCoins(REGTEST_ADDRESS);
+
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
+            expect(coins.map((coin) => coin.status.block_height)).toEqual([500, 501]);
+        });
+
         it("returns empty array when no unspents", async () => {
             wsMock.request.mockResolvedValueOnce([]);
             const coins = await provider.getCoins(REGTEST_ADDRESS);
             expect(coins).toEqual([]);
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -422,6 +438,15 @@ describe("ElectrumOnchainProvider", () => {
             const tip = await provider.getChainTip();
             expect(tip.time).toBe(MEDIAN);
             expect(tip.time).not.toBe(TIP_TIME);
+        });
+
+        it("returns median-time-past for an arbitrary block height", async () => {
+            mockBatch(wsMock.request, [headerAt(TIP_TIME), ...WINDOW_TIMES.map(headerAt)]);
+
+            expect(await provider.getMedianTimePast(100)).toBe(MEDIAN);
+            expect(headerCalls().map((call) => call[1])).toEqual([
+                100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90,
+            ]);
         });
 
         it("asks for exactly the ten blocks below the tip", async () => {
@@ -657,8 +682,8 @@ describe("ElectrumOnchainProvider", () => {
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
             expect(txs).toHaveLength(1);
             expect(txs[0].txid).toBe("tx1");
-            // Sat amounts come from the parsed raw tx (exact bigints, no float rounding).
-            expect(txs[0].vout.map((v) => v.value)).toEqual(["10000", "20000"]);
+            // Sat amounts match Esplora's numeric output values.
+            expect(txs[0].vout.map((v) => v.value)).toEqual([10000, 20000]);
             // Addresses come from decoding each output's scriptPubKey.
             expect(txs[0].vout[0].scriptpubkey_address).toMatch(/^bcrt1q/);
             expect(txs[0].vout[1].scriptpubkey_address).toMatch(/^bcrt1q/);
@@ -676,6 +701,29 @@ describe("ElectrumOnchainProvider", () => {
                 (c) => c[0] === "blockchain.transaction.get" && c[c.length - 1] === true,
             );
             expect(verboseTxCalls).toHaveLength(0);
+        });
+
+        it("preserves numeric satoshi amounts up to Bitcoin's total supply", async () => {
+            const tx = Transaction.fromRaw(hex.decode(buildTestTx().txHex));
+            tx.updateOutput(0, { amount: 2_100_000_000_000_000n });
+            tx.updateOutput(1, { amount: 0n });
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "tx1", height: 0 }]);
+            mockBatch(wsMock.request, [tx.hex]);
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+
+            expect(txs[0].vout.map((v) => v.value)).toEqual([2_100_000_000_000_000, 0]);
+        });
+
+        it("returns each tx's spent outpoints as vin", async () => {
+            const { txHex } = buildTestTx();
+            wsMock.request.mockResolvedValueOnce([{ tx_hash: "tx1", height: 0 }]);
+            mockBatch(wsMock.request, [txHex]);
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+
+            // buildTestTx() spends output 0 of tx 00…01. Display-order hex, as Esplora reports it.
+            expect(txs[0].vin).toEqual([{ txid: "00".repeat(31) + "01", vout: 0 }]);
         });
 
         it("treats height=0 entries as unconfirmed (mempool)", async () => {
@@ -1019,6 +1067,45 @@ describe("ElectrumOnchainProvider", () => {
             const results = await provider.getTxOutspends(parentTxid);
             expect(results[0]).toEqual({ spent: true, txid: realSpenderTxid });
             expect(results[1]).toEqual({ spent: false, txid: "" });
+        });
+    });
+
+    describe("getTxOutspend", () => {
+        const { txHex, scripts } = buildTestTx();
+        const parentTxid = hex.encode(sha256(sha256(hex.decode(txHex))).reverse());
+
+        it("names the spender from the asked output's script alone", async () => {
+            const spenderHex = buildSpendingTx(parentTxid, 0);
+            const spenderTxid = hex.encode(sha256(sha256(hex.decode(spenderHex))).reverse());
+
+            mockBatch(wsMock.request, [txHex]);
+            mockBatch(wsMock.request, [[]]); // listunspent: vout 0 is gone
+            mockBatch(wsMock.request, [
+                [
+                    { tx_hash: parentTxid, height: 100 },
+                    { tx_hash: spenderTxid, height: 101 },
+                ],
+            ]);
+
+            expect(await provider.getTxOutspend(parentTxid, 0)).toEqual({
+                spent: true,
+                txid: spenderTxid,
+            });
+            const scriptHashesRead = wsMock.request.mock.calls
+                .filter((c) => String(c[0]).startsWith("blockchain.scripthash."))
+                .map((c) => c[1]);
+            const ownScriptHash = hex.encode(sha256(scripts[0]).reverse());
+            expect(scriptHashesRead).toEqual([ownScriptHash, ownScriptHash]);
+        });
+
+        it("reports a vout the tx does not have as unspent, reading no script", async () => {
+            mockBatch(wsMock.request, [txHex]);
+
+            expect(await provider.getTxOutspend(parentTxid, 5)).toEqual({
+                spent: false,
+                txid: "",
+            });
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
     });
 

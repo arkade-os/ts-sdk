@@ -47,10 +47,18 @@ export async function buildExitDag(params: {
 }): Promise<DagNode[]> {
     const byTxid = new Map<string, ChainTx & { forVtxos: Set<string> }>();
 
-    for (const vtxo of params.vtxos) {
-        const outpoint = `${vtxo.txid}:${vtxo.vout}`;
-        // The resolver returns the full chain (all pages merged, local-first).
-        const chain = await params.chain.getVtxoChain({ txid: vtxo.txid, vout: vtxo.vout });
+    // Chains are independent. Merge in input order so a shared ancestor keeps the
+    // first VTXO's chain record and only accumulates `forVtxos`.
+    const chains = await Promise.allSettled(
+        params.vtxos.map(async (vtxo) => ({
+            outpoint: `${vtxo.txid}:${vtxo.vout}`,
+            // The resolver returns the full chain (all pages merged, local-first).
+            chain: await params.chain.getVtxoChain({ txid: vtxo.txid, vout: vtxo.vout }),
+        })),
+    );
+    for (const result of chains) {
+        if (result.status === "rejected") throw result.reason;
+        const { outpoint, chain } = result.value;
         for (const chainTx of chain) {
             const existing = byTxid.get(chainTx.txid);
             if (existing) {
@@ -93,25 +101,26 @@ export async function buildExitDag(params: {
         throw new Error("inconsistent vtxo chain from indexer (cycle detected)");
     }
 
-    const nodes: DagNode[] = [];
-    for (const tx of order) {
-        let confirmed = false;
-        try {
-            const status = await params.onchain.getTxStatus(tx.txid);
-            confirmed = status.confirmed;
-        } catch {
-            confirmed = false; // not found => offchain
-        }
+    const confirmed = await Promise.all(
+        order.map(async (tx) => {
+            try {
+                const status = await params.onchain.getTxStatus(tx.txid);
+                return status.confirmed;
+            } catch {
+                return false; // not found => offchain
+            }
+        }),
+    );
+    return order.map((tx, i) => {
         const expires = Number(tx.expiresAt);
-        nodes.push({
+        return {
             txid: tx.txid,
             type: tx.type,
             expiresAt: Number.isFinite(expires) && expires > 0 ? expires : undefined,
             forVtxos: [...tx.forVtxos].sort(),
-            confirmed,
-        });
-    }
-    return nodes;
+            confirmed: confirmed[i],
+        };
+    });
 }
 
 /**

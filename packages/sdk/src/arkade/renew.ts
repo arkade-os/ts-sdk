@@ -11,8 +11,8 @@ import {
     AssetId,
 } from "../extension/asset";
 import type { ExtensionPacket } from "../extension/packet";
-import { Intent } from "../intent";
-import type { ArkProvider } from "../providers/ark";
+import { Proof } from "../proof";
+import type { OperatorProvider } from "../providers/ark";
 import { TreeSignerSession, type SignerSession } from "../tree/signingSession";
 import { withPrevTxs } from "../utils/prevoutTx";
 import type { VirtualCoin } from "../wallet";
@@ -48,10 +48,10 @@ export async function renewArkadeVtxos(
     opts: { session?: SignerSession; signal?: AbortSignal } = {},
 ): Promise<{ commitmentTxid: string; intentId: string }> {
     const { emulator, indexer, network } = client;
-    const arkProvider = client.arkProvider as ArkProvider;
+    const arkProvider = client.arkProvider as OperatorProvider;
     if (!emulator || !indexer || typeof arkProvider.registerIntent !== "function") {
         throw new Error(
-            "renewArkadeVtxos: the Arkade client needs an emulator, an indexer and a full ArkProvider",
+            "renewArkadeVtxos: the Arkade client needs an emulator, an indexer and a full OperatorProvider",
         );
     }
     if (targets.length === 0) throw new Error("renewArkadeVtxos: nothing to renew");
@@ -79,7 +79,7 @@ export async function renewArkadeVtxos(
             ...coin,
             tapTree: contract.tapTree,
             forfeitTapLeafScript: compiled.tapLeafScript,
-            intentTapLeafScript: compiled.tapLeafScript,
+            proofTapLeafScript: compiled.tapLeafScript,
         })),
         indexer,
     );
@@ -116,14 +116,14 @@ export async function renewArkadeVtxos(
 
     const session = opts.session ?? TreeSignerSession.random();
     const sessionKey = hex.encode(await session.getPublicKey());
-    const message: Intent.RegisterMessage = {
+    const message: Proof.RegisterMessage = {
         type: "register",
         onchain_output_indexes: [],
         valid_at: 0,
         expire_at: 0,
         cosigners_public_keys: [sessionKey],
     };
-    const proof = Intent.create(message, coins, [
+    const proof = Proof.create(message, coins, [
         ...legs.map(({ contract, coin }) => ({
             script: contract.pkScript,
             amount: BigInt(coin.value),

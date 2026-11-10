@@ -2,7 +2,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
     ArkadeInfo,
-    ArkProvider,
+    OperatorProvider,
     Asset,
     decodeTapscript,
     DelegateInfo,
@@ -10,12 +10,12 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     Identity,
-    Intent,
+    Proof,
     isSubdust,
     MultisigTapscript,
     Outpoint,
     Recipient,
-    SignedIntent,
+    SignedProof,
     TapLeafScript,
     Transaction,
     VirtualCoin,
@@ -70,7 +70,7 @@ export class DelegateManagerImpl implements IDelegateManager {
     /** Create a delegate manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
         readonly delegateProvider: DelegateProvider,
-        readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
+        readonly arkInfoProvider: Pick<OperatorProvider, "getInfo">,
         readonly identity: Identity,
     ) {}
 
@@ -92,9 +92,11 @@ export class DelegateManagerImpl implements IDelegateManager {
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
-        // fetch server and delegate info once, shared across all groups
-        const arkInfo = await this.arkInfoProvider.getInfo();
-        const delegateInfo = await this.delegateProvider.getDelegateInfo();
+        // Server info and delegate info come from different providers and share nothing.
+        const [arkInfo, delegateInfo] = await Promise.all([
+            this.arkInfoProvider.getInfo(),
+            this.delegateProvider.getDelegateInfo(),
+        ]);
 
         // keep only vtxos that can be signed by the delegate. The guard
         // narrows ContractVtxo (with optional taproot fields) to the
@@ -203,8 +205,9 @@ export class DelegateManagerImpl implements IDelegateManager {
  * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
  * on behalf of the wallet owner.
  * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
- * @param delegateAt - Optional delegation time. By default, scheduling leaves at least 10% of
- *                     the remaining lifetime and one operator session before the earliest expiry.
+ * @param delegateAt - Optional delegation time. By default, three operator sessions before the
+ *                     earliest expiry, or two seconds from now if that time has passed. With no
+ *                     future expiry, such as only recoverable outputs, one minute from now.
  */
 async function delegate(
     identity: Identity,
@@ -235,24 +238,18 @@ async function delegate(
             // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            delegateAt = defaultDelegateAt(expiryTimestamp, arkInfo.sessionDuration);
+            const nowMs = now.timestamp.getTime();
+            const target = expiryTimestamp - Number(arkInfo.sessionDuration * 3000n);
+            // Inside the window, leave as much of the remaining lifetime as possible.
+            delegateAt = new Date(
+                target > nowMs ? target : expiryTimestamp > nowMs ? nowMs + 2_000 : nowMs + 60_000,
+            );
         }
     }
     const { fees, dust, forfeitAddress, network } = arkInfo;
 
     const delegateAtSeconds = delegateAt.getTime() / 1000;
-    const estimator = new Estimator({
-        ...fees.intentFee,
-        // replace now() function with the delegateAt timestamp
-        offchainInput: fees.intentFee.offchainInput?.replace(
-            "now()",
-            `double(${delegateAtSeconds})`,
-        ),
-        offchainOutput: fees.intentFee.offchainOutput?.replace(
-            "now()",
-            `double(${delegateAtSeconds})`,
-        ),
-    });
+    const estimator = estimatorAt(fees.intentFee, delegateAt);
 
     let amount = 0n;
     for (const coin of vtxos) {
@@ -379,9 +376,9 @@ async function makeSignedDelegateIntent(
     cosignerPubKeys: string[],
     validAt: number,
     destinationScript: Bytes,
-): Promise<SignedIntent<Intent.RegisterMessage>> {
+): Promise<SignedProof<Proof.RegisterMessage>> {
     // if some of the inputs hold assets, build the asset packet and append as output
-    // in the intent proof tx, there is a "fake" input at index 0
+    // in the proof tx, there is a "fake" input at index 0
     // so the real coin indices are offset by +1
     const assetInputs = new Map<number, Asset[]>();
     for (let i = 0; i < coins.length; i++) {
@@ -427,7 +424,7 @@ async function makeSignedDelegateIntent(
         outputs.push(Extension.create([assetPacket]).txOut());
     }
 
-    const message: Intent.RegisterMessage = {
+    const message: Proof.RegisterMessage = {
         type: "register",
         onchain_output_indexes: onchainOutputsIndexes,
         valid_at: Math.floor(validAt),
@@ -435,27 +432,13 @@ async function makeSignedDelegateIntent(
         cosigners_public_keys: cosignerPubKeys,
     };
 
-    const proof = Intent.create(message, coins, outputs);
+    const proof = Proof.create(message, coins, outputs);
     const signedProof = await identity.sign(proof);
 
     return {
         proof: base64.encode(signedProof.toPSBT()),
         message,
     };
-}
-
-export function defaultDelegateAt(
-    expiryTimestamp: number,
-    sessionDurationSeconds: bigint,
-    now = Date.now(),
-): Date {
-    const remainingTimeMs = expiryTimestamp - now;
-    if (remainingTimeMs <= 0) return new Date(now + 60_000);
-
-    const sessionLeadMs = Number(sessionDurationSeconds * 1000n);
-    const leadTimeMs = Math.max(remainingTimeMs * 0.1, sessionLeadMs);
-    const delegateAt = expiryTimestamp - leadTimeMs;
-    return new Date(delegateAt > now ? delegateAt : now + 2_000);
 }
 
 /**
@@ -493,6 +476,16 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
     return (
         v.tapTree !== undefined &&
         v.forfeitTapLeafScript !== undefined &&
-        v.intentTapLeafScript !== undefined
+        (v.proofTapLeafScript ?? v.intentTapLeafScript) !== undefined
     );
+}
+
+function estimatorAt(intentFee: ArkadeInfo["fees"]["intentFee"], at: Date): Estimator {
+    // replace now() function with the delegation timestamp
+    const now = `double(${at.getTime() / 1000})`;
+    return new Estimator({
+        ...intentFee,
+        offchainInput: intentFee.offchainInput?.replace("now()", now),
+        offchainOutput: intentFee.offchainOutput?.replace("now()", now),
+    });
 }

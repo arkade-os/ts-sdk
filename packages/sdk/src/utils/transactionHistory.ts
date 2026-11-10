@@ -54,6 +54,21 @@ function gatedTouchpoints(gated: readonly NormalizedVirtualCoin[]): {
     return { paidIn, paidOut };
 }
 
+/**
+ * Groups in input order, keeping an `undefined` key: a leaf with no commitment
+ * id must still match every coin that was never settled.
+ */
+function groupBy<T, K>(items: readonly T[], key: (item: T) => K): Map<K, T[]> {
+    const groups = new Map<K, T[]>();
+    for (const item of items) {
+        const k = key(item);
+        const group = groups.get(k);
+        if (group) group.push(item);
+        else groups.set(k, [item]);
+    }
+    return groups;
+}
+
 const txKey: TxKey = {
     commitmentTxid: "",
     boardingTxid: "",
@@ -183,6 +198,23 @@ export async function buildTransactionHistory(
         .filter(isSettledBoardingReceive)
         .sort((a, b) => a.createdAt - b.createdAt);
 
+    // Lifetime coins, spent ones included, so a scan per coin is quadratic in a
+    // list that only grows: seconds of blocked JS thread on Hermes.
+    const bySettledBy = groupBy(ownVtxos, (v) => v.settledBy);
+    const byArkTxId = groupBy(ownVtxos, (v) => v.arkTxId);
+    const byTxid = groupBy(ownVtxos, (v) => v.txid);
+    const leavesBySoleCommitment = groupBy(ownVtxos, (v) =>
+        v.status.isLeaf &&
+        v.commitmentTxIds.length > 0 &&
+        v.commitmentTxIds.every((c) => c === v.commitmentTxIds[0])
+            ? v.commitmentTxIds[0]
+            : undefined,
+    );
+    // Marks a tx as handled even when it produced no row (a refresh, a
+    // self-transfer): every other coin it spent would reach the same verdict.
+    const handledArkTxids = new Set<string>();
+    const handledCommitments = new Set<string>();
+
     const sent: ExtendedArkTransaction[] = [];
     let received: ExtendedArkTransaction[] = [];
 
@@ -204,9 +236,7 @@ export async function buildTransactionHistory(
                         (tx.key.commitmentTxid === commitmentTxid ||
                             tx.key.commitmentTxid === vtxo.settledBy),
                 );
-            } else if (
-                ownVtxos.filter((v) => v.settledBy === vtxo.commitmentTxIds[0]).length === 0
-            ) {
+            } else if (!bySettledBy.has(vtxo.commitmentTxIds[0])) {
                 const duplicateBoardingReceive = consumeBoardingReceive(
                     unmatchedSettledBoardingTxs,
                     (tx) => tx.amount === vtxo.value && tx.createdAt <= vtxoCreatedAt,
@@ -228,7 +258,7 @@ export async function buildTransactionHistory(
                     });
                 }
             }
-        } else if (ownVtxos.filter((v) => v.arkTxId === vtxo.txid).length === 0) {
+        } else if (!byArkTxId.has(vtxo.txid)) {
             // If this virtual output is preconfirmed and does not spend any other virtual outputs,
             // it's translated into a received offchain transaction
             const assets = subtractAssets([], [vtxo]);
@@ -251,12 +281,13 @@ export async function buildTransactionHistory(
         // - a sent transaction has been already added to avoid duplicates (can happen if many virtual outputs have been spent in the same tx or forfeited in the same batch)
         if (vtxo.isSpent) {
             // If the virtual output is spent offchain, it's translated into an offchain sent tx
-            if (vtxo.arkTxId && !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)) {
-                const changes = ownVtxos.filter((_) => _.txid === vtxo.arkTxId);
+            if (vtxo.arkTxId && !handledArkTxids.has(vtxo.arkTxId)) {
+                handledArkTxids.add(vtxo.arkTxId);
+                const changes = byTxid.get(vtxo.arkTxId) ?? [];
 
                 // We want to find all the other virtual outputs spent by the same transaction to
                 // calculate the full amount of the change.
-                const allSpent = ownVtxos.filter((v) => v.arkTxId === vtxo.arkTxId);
+                const allSpent = byArkTxId.get(vtxo.arkTxId)!;
                 const spentAmount = allSpent.reduce((acc, v) => acc + v.value, 0);
 
                 let txAmount = 0;
@@ -306,16 +337,11 @@ export async function buildTransactionHistory(
             if (
                 vtxo.settledBy &&
                 !commitmentsToIgnore.has(vtxo.settledBy) &&
-                !sent.some((s) => s.key.commitmentTxid === vtxo.settledBy)
+                !handledCommitments.has(vtxo.settledBy)
             ) {
-                const changes = ownVtxos.filter(
-                    (v) =>
-                        v.status.isLeaf &&
-                        v.commitmentTxIds.length > 0 &&
-                        v.commitmentTxIds.every((_) => vtxo.settledBy === _),
-                );
-
-                const forfeitVtxos = ownVtxos.filter((v) => v.settledBy === vtxo.settledBy);
+                handledCommitments.add(vtxo.settledBy);
+                const changes = leavesBySoleCommitment.get(vtxo.settledBy) ?? [];
+                const forfeitVtxos = bySettledBy.get(vtxo.settledBy)!;
                 const forfeitAmount = forfeitVtxos.reduce((acc, v) => acc + v.value, 0);
 
                 if (changes.length > 0) {

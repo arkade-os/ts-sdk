@@ -1,7 +1,7 @@
 import { collectIntents } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
 import { ArkErrorName, isArkError } from "../providers/errors";
-import type { Intent } from "../intent";
+import type { Intent } from "../proof";
 import type { SignedIntent } from "../providers/ark";
 import {
     ALL_INTENT_STATES,
@@ -32,7 +32,7 @@ export interface IntentReconciliationDeps {
     intentRepository: IntentRepository;
     indexerProvider: IntentReconcilerIndexer;
     /**
-     * Replays an intent's stored delete proof against arkd. Absent ⇒ a submitted, unexpired
+     * Replays an intent's stored delete proof against arkd. Absent ⇒ an unresolved, unexpired
      * intent stays locked, since arkd never expires a queued intent on its own.
      */
     deleteIntent?: (intent: SignedIntent<Intent.DeleteMessage>) => Promise<void>;
@@ -64,10 +64,8 @@ function isConsumed(vtxo: VirtualCoin | undefined): boolean {
  *     the crash lost only the local record, not the funds);
  *   - any input unilaterally exited → `cancelled` (an onchain output cannot be
  *     an input to a batch, so the intent is dead however the server records it);
- *   - never submitted (`waiting_to_submit`), inputs still unspent → `cancelled`
- *     (arkd never saw it, so the inputs are safe to unlock);
  *   - past `validUntil`, inputs still unspent → `cancelled` (expired);
- *   - otherwise (submitted, unspent, unexpired) → left non-terminal: it may
+ *   - otherwise (unspent, unexpired) → left non-terminal: it may
  *     still be a live server-held intent, so its inputs stay locked until
  *     {@link reconcileIntents} releases it from the server.
  */
@@ -78,7 +76,7 @@ export async function classifyIntent(
 ): Promise<ArkIntent | undefined> {
     if (isTerminalIntentState(intent.state)) return undefined;
 
-    const inputs = intent.intentVtxos;
+    const inputs = intent.proofInputs;
     const consumed = inputs.map((o) => vtxosByOutpoint.get(outpointKey(o)));
 
     // All inputs consumed by a completed batch: the settlement succeeded even
@@ -104,28 +102,20 @@ export async function classifyIntent(
         });
     }
 
-    // From here the inputs are (at least partly) still unspent.
-    if (intent.state === "waiting_to_submit") {
-        return terminal(intent, "cancelled", now, {
-            cancellationReason: "reconciliation: intent was never submitted before restart",
-        });
-    }
-
     if (intent.validUntil !== undefined && intent.validUntil < now) {
         return terminal(intent, "cancelled", now, {
             cancellationReason: "reconciliation: intent expired",
         });
     }
 
-    // Submitted, inputs unspent, not expired: cannot prove the intent is dead.
-    // It may still be a live server-held intent, so leave it locked.
+    // Even waiting_to_submit may have lost a successful registration response.
     return undefined;
 }
 
 /**
  * Reconcile every persisted non-terminal intent against authoritative indexer
  * state, persisting a terminal result for those that are provably done or dead.
- * A submitted intent that is neither is deleted from arkd with its stored proof
+ * An unresolved intent is deleted from arkd with its stored proof
  * and cancelled once the server confirms it holds no such intent. Intents with
  * an input in flight in this wallet are skipped.
  *
@@ -149,7 +139,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     if (intents.length === 0) return;
 
     // One indexer round-trip covering every locked input across all intents.
-    const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.intentVtxos));
+    const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.proofInputs));
     let vtxosByOutpoint = new Map<string, VirtualCoin>();
     if (outpoints.length > 0) {
         try {
@@ -174,12 +164,12 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             // still in the state we classified, so a live settle() that has
             // since advanced it is never overwritten.
             const [fresh] = await collectIntents(deps.intentRepository, {
-                intentTxIds: [intent.intentTxId],
+                proofTxIds: [intent.proofTxId],
             });
             if (!fresh || fresh.state !== intent.state) continue;
             await deps.intentRepository.saveIntent(next);
         } catch (e) {
-            console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
+            console.error(`reconcileIntents: failed to reconcile intent ${intent.proofTxId}`, e);
         }
     }
 }
@@ -214,7 +204,7 @@ export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
 
 function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
     const inFlight = deps.isOutpointInFlight;
-    return inFlight !== undefined && intent.intentVtxos.some((o) => inFlight(o));
+    return inFlight !== undefined && intent.proofInputs.some((o) => inFlight(o));
 }
 
 /**
@@ -233,7 +223,7 @@ async function releaseFromServer(
         await deps.deleteIntent({ proof: intent.deleteProof, message });
     } catch (e) {
         if (!isNoMatchingIntentsError(e)) {
-            console.warn(`failed to delete intent ${intent.intentTxId} from the server`, e);
+            console.warn(`failed to delete intent ${intent.proofTxId} from the server`, e);
             return undefined;
         }
     }

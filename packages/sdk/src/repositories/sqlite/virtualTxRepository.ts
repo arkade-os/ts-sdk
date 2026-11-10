@@ -7,7 +7,7 @@ import {
     VtxoBranch,
 } from "../virtualTxRepository";
 import { SQLExecutor } from "./types";
-import { runInTransaction } from "./transaction";
+import { getSerializedExecutor, runInTransaction } from "./transaction";
 import { sanitizeTablePrefix } from "./prefix";
 
 interface VtxRow {
@@ -18,15 +18,14 @@ interface VtxRow {
 }
 export class SQLiteVirtualTxRepository implements VirtualTxRepository {
     readonly version = 1 as const;
+    private readonly db: SQLExecutor;
     private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly tTx: string;
     private readonly tBranch: string;
 
-    constructor(
-        private readonly db: SQLExecutor,
-        options?: { prefix?: string },
-    ) {
+    constructor(db: SQLExecutor, options?: { prefix?: string }) {
+        this.db = getSerializedExecutor(db);
         this.prefix = sanitizeTablePrefix(options?.prefix ?? "ark_");
         this.tTx = `${this.prefix}virtual_txs`;
         this.tBranch = `${this.prefix}vtxo_branches`;
@@ -58,20 +57,20 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async clear(): Promise<void> {
         await this.ensureInit();
-        await runInTransaction(this.db, async () => {
-            await this.db.run(`DELETE FROM ${this.tTx}`);
-            await this.db.run(`DELETE FROM ${this.tBranch}`);
+        await runInTransaction(this.db, async (tx) => {
+            await tx.run(`DELETE FROM ${this.tTx}`);
+            await tx.run(`DELETE FROM ${this.tBranch}`);
         });
     }
 
     async upsertVirtualTxs(txs: VirtualTx[]): Promise<void> {
         if (txs.length === 0) return;
         await this.ensureInit();
-        await runInTransaction(this.db, async () => {
+        await runInTransaction(this.db, async (tx) => {
             // Prefetch existing rows in one query instead of a SELECT per tx,
             // then merge (new value wins, else keep the stored one) in memory.
             const placeholders = txs.map(() => "?").join(", ");
-            const existing = await this.db.all<VtxRow>(
+            const existing = await tx.all<VtxRow>(
                 `SELECT * FROM ${this.tTx} WHERE txid IN (${placeholders})`,
                 txs.map((t) => t.txid),
             );
@@ -81,7 +80,7 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
                 const psbt = t.psbt ?? prev?.psbt ?? null;
                 const expires = t.expiresAt ?? prev?.expires_at ?? null;
                 const type = mergeChainedTxType(t.type, prev?.type);
-                await this.db.run(
+                await tx.run(
                     `INSERT OR REPLACE INTO ${this.tTx} (txid, psbt, expires_at, type) VALUES (?, ?, ?, ?)`,
                     [t.txid, psbt, expires, type],
                 );
@@ -100,13 +99,13 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async setBranch(vtxo: Outpoint, branch: VtxoBranch[]): Promise<void> {
         await this.ensureInit();
-        await runInTransaction(this.db, async () => {
-            await this.db.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
+        await runInTransaction(this.db, async (tx) => {
+            await tx.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
                 vtxo.txid,
                 vtxo.vout,
             ]);
             for (const b of branch) {
-                await this.db.run(
+                await tx.run(
                     `INSERT OR REPLACE INTO ${this.tBranch} (vtxo_txid, vtxo_vout, virtual_txid, position) VALUES (?, ?, ?, ?)`,
                     [b.vtxoTxid, b.vtxoVout, b.virtualTxid, b.position],
                 );
@@ -140,22 +139,22 @@ export class SQLiteVirtualTxRepository implements VirtualTxRepository {
 
     async pruneForSpentVtxo(vtxo: Outpoint): Promise<void> {
         await this.ensureInit();
-        await runInTransaction(this.db, async () => {
+        await runInTransaction(this.db, async (tx) => {
             // Capture the txs this vtxo's branch referenced, then delete its
             // branch rows and — in one set-based pass — drop only those txs
             // that no other branch still references. Scoping the delete to the
             // captured txids preserves txs inserted without a branch.
-            const removed = await this.db.all<{ virtual_txid: string }>(
+            const removed = await tx.all<{ virtual_txid: string }>(
                 `SELECT DISTINCT virtual_txid FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`,
                 [vtxo.txid, vtxo.vout],
             );
-            await this.db.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
+            await tx.run(`DELETE FROM ${this.tBranch} WHERE vtxo_txid = ? AND vtxo_vout = ?`, [
                 vtxo.txid,
                 vtxo.vout,
             ]);
             if (removed.length === 0) return;
             const placeholders = removed.map(() => "?").join(", ");
-            await this.db.run(
+            await tx.run(
                 `DELETE FROM ${this.tTx}
                  WHERE txid IN (${placeholders})
                  AND NOT EXISTS (
