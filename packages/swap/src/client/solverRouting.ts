@@ -14,6 +14,7 @@ import type { MarketCandidate } from "./market";
 import type { SwapPolicy } from "./policy";
 import type { Swap } from "./record";
 import type { ResolvedRoute } from "./resolve";
+import type { SolverHealth } from "./solverHealth";
 
 export interface SolverCandidate extends MarketCandidate {
     readonly solverId: string;
@@ -28,6 +29,8 @@ export interface SolverRoutingContext {
 
 /** Optional direction-specific policy for quote preparation; accepted swaps keep their solver. */
 export interface SolverRoutingPolicy {
+    /** Shared reliability tracker; defaults to per-client memory when routing is enabled. */
+    readonly health?: SolverHealth;
     /** Try another candidate on solver-local quote failure; defaults to true. Every candidate
      * passes full verification before funding. Custom transports throw {@link SolverUnavailable}
      * for retryable failures; exhausted attempts throw {@link SolverRoutesUnavailable}.
@@ -53,6 +56,7 @@ export const orderedSolverCandidates = async (
     policy: SwapPolicy | undefined,
     fetchImpl: typeof fetch,
     estimate = true,
+    health?: SolverHealth,
 ): Promise<SolverCandidate[]> => {
     const candidates = (
         policy?.selectMarket ? (route.market === undefined ? [] : [route.market]) : route.candidates
@@ -68,7 +72,18 @@ export const orderedSolverCandidates = async (
         direction: candidates[0].direction,
         candidates,
     });
-    const options = { network, preferences };
+    let cooling: string[] = [];
+    try {
+        cooling =
+            (await health?.deprioritized({ network, direction: candidates[0].direction })) ?? [];
+    } catch {}
+    const options = {
+        network,
+        preferences: {
+            ...preferences,
+            deprioritized: [...new Set([...(preferences?.deprioritized ?? []), ...cooling])],
+        },
+    };
     return estimate
         ? rankSolverMarkets(candidates, {
               ...options,
@@ -106,6 +121,14 @@ export const canFailoverQuote = (error: unknown): boolean => {
         "rate_limited",
     ].includes(error.reason);
 };
+
+export const isSolverReliabilityFailure = (error: unknown): boolean =>
+    error instanceof SolverUnavailable ||
+    error instanceof QuoteExpired ||
+    error instanceof QuoteVerificationFailed ||
+    (error instanceof SwapRefusal &&
+        error.errorCode === undefined &&
+        ["pricing_unavailable", "rate_limited"].includes(error.reason));
 
 /** Exhausted candidates, outside the closed SwapError taxonomy; narrow with instanceof. */
 export class SolverRoutesUnavailable extends AggregateError {

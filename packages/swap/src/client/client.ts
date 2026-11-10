@@ -1,6 +1,6 @@
 /**
- * The v2 client. `resolve()` and `quote()` touch nothing durable (no watcher, drive, record or
- * funding); `accept()` persists and registers with the drive ({@link createSwapDrive}).
+ * The v2 client. `resolve()` and `quote()` create no swap record, watcher, drive or funding;
+ * optional quote-reliability storage may update. `accept()` persists and registers with the drive.
  *
  * Construction is synchronous and INERT — no network, wallet or repository — so a client can be
  * built in a component body, and a missing dep for an unused corridor is not a construction error.
@@ -52,9 +52,11 @@ import {
 } from "./verbs";
 import { marketOf, marketRefOf, usableMarkets, type Market } from "./market";
 import { nostrTransportFactory, type RfqTransportFactory } from "./transport";
+import { createSolverHealth } from "./solverHealth";
 import {
     canFailoverQuote,
     orderedSolverCandidates,
+    isSolverReliabilityFailure,
     SolverRoutesUnavailable,
     type SolverCandidate,
 } from "./solverRouting";
@@ -184,7 +186,7 @@ export interface SwapClient {
      * veto before an RFQ round trip discloses an invoice or amount.
      */
     resolve(input: QuoteInput): Promise<RouteResolution>;
-    /** Verified, binding terms. Nothing is persisted, funded or watched. */
+    /** Verified, binding terms; no swap is persisted, funded or watched. Advisory health may update. */
     quote(input: QuoteInput): Promise<Quote>;
     /**
      * Make the quote durable, then move the value: record and secrets are at rest before anything
@@ -250,6 +252,21 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
     const feed: FeedFetch = feedFetch(config.fetchImpl ?? fetch);
     const preparations = new Map<QuoteId, QuotePreparation>();
     const activeQuotes = new Set<() => Promise<void>>();
+    const health =
+        config.policy?.solverRouting === undefined
+            ? undefined
+            : (config.policy.solverRouting.health ?? createSolverHealth());
+    const recordHealth = (
+        candidate: SolverCandidate,
+        outcome: "success" | "failure",
+        network: string,
+    ) => {
+        try {
+            void health
+                ?.record({ network, direction: candidate.direction }, candidate.solverId, outcome)
+                .catch(() => {});
+        } catch {}
+    };
     // shared by the drive and cancel's fill-race read, so both see the same chain
     const indexer = walletLockupIndexer(wallet);
 
@@ -335,6 +352,7 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 config.policy,
                 feed.fetch,
                 false,
+                health,
             );
             const { market: _market, ...resolution } = routed.resolution;
             return {
@@ -350,7 +368,14 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
             ensureLive("candidates");
             const routed = await route(input, "quote");
             const { base } = await resolved();
-            return orderedSolverCandidates(routed, base.networkName, config.policy, feed.fetch);
+            return orderedSolverCandidates(
+                routed,
+                base.networkName,
+                config.policy,
+                feed.fetch,
+                true,
+                health,
+            );
         },
 
         quote: async (input) => {
@@ -377,6 +402,8 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 base.networkName,
                 config.policy,
                 feed.fetch,
+                true,
+                health,
             );
             if (candidates.length === 0) {
                 throw new UnsupportedRoute(
@@ -487,9 +514,13 @@ export const createSwapClient = (config: SwapClientConfig): SwapClient => {
                 if (attempted.has(candidate.solverId)) continue;
                 attempted.add(candidate.solverId);
                 try {
-                    return await prepare(candidate);
+                    const quote = await prepare(candidate);
+                    recordHealth(candidate, "success", base.networkName);
+                    return quote;
                 } catch (error) {
                     ensureLive("quote");
+                    if (isSolverReliabilityFailure(error))
+                        recordHealth(candidate, "failure", base.networkName);
                     if (!failover || !canFailoverQuote(error)) throw error;
                     attempts.push({ solverId: candidate.solverId, error });
                 }

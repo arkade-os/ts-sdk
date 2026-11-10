@@ -22,13 +22,14 @@ Opt in with `policy: { solverRouting: {} }`. The
 quote-only failover boundary and explicit-selection precedence.
 
 ```ts
-import { completedSolverUsage, createSwapClient } from "@arkade-os/swap";
+import { completedSolverUsage, createSolverHealth, createSwapClient } from "@arkade-os/swap";
 
 const client = createSwapClient({
     wallet,
     repository,
     policy: {
         solverRouting: {
+            health: createSolverHealth({ storage: healthStorage }),
             preferences: async ({ network, direction }) => ({
                 mode: "usage", // "manual" | "usage" | "cost"
                 priority: savedPriorities[direction] ?? [],

@@ -98,6 +98,8 @@ style and have not been backfilled.
 
 ### Features
 
+- **Unreliable solvers lose quote priority temporarily.** Routing tracks repeated candidate-local failures per network and direction, moving cooling solvers behind healthy alternatives before preferred-first, usage or cost ordering. A verified quote restores priority; an injectable health store retains the advisory history across client lifetimes. Cancellation, request limits, acceptance and recovery do not penalize solvers.
+
 - **Prefer one solver before automatically ranked fallbacks.** Direction-scoped routing preferences accept `preferFirst`, placing an enabled solver ahead of usage or advertised-cost ordering while retaining quote failover. Pauses, explicit selection and issued-quote ownership remain authoritative.
 
 - **Solver pauses preserve cards and priorities.** Routing preferences accept disabled solver IDs, excluded before candidate enumeration, advertised-cost feeds and new quotes. Applications can combine global card pauses with direction-specific choices; issued quotes and accepted swaps keep their selected solver.

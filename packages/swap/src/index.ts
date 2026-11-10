@@ -45,6 +45,13 @@ export {
     type SolverRoutingPolicy,
 } from "./client/solverRouting";
 export { SolverUnavailable, SolverResponseInvalid } from "./transportErrors";
+export {
+    createSolverHealth,
+    type SolverHealth,
+    type SolverHealthEntry,
+    type SolverHealthScope,
+    type SolverHealthStorage,
+} from "./client/solverHealth";
 
 // ── The verbs ───────────────────────────────────────────────────────────────
 // `enforceFeeCeiling` is the verbs' own plumbing and stays on `./advanced`.

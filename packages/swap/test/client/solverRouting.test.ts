@@ -5,6 +5,7 @@ import { AmountMismatch, QuoteVerificationFailed } from "../../src/client/errors
 import type { SwapPolicy } from "../../src/client/policy";
 import { completedSolverUsage, SolverRoutesUnavailable } from "../../src/client/solverRouting";
 import { SolverUnavailable } from "../../src/transportErrors";
+import { createSolverHealth } from "../../src/client/solverHealth";
 import { solverDirectionKey, solverId } from "@arkade-os/solver-discovery";
 import { collectSwapRecords, InMemoryAssetSwapRepository } from "../../src/repository";
 import { swapOf, type SwapRecord } from "../../src/client/record";
@@ -71,6 +72,86 @@ const setup = async (
 };
 
 describe("solver quote failover", () => {
+    it.each(["usage", "cost"] as const)(
+        "demotes an unreliable preferred solver before %s sorting and restores a verified recovery",
+        async (mode) => {
+            let time = NOW * 1000;
+            let recovered = false;
+            const health = createSolverHealth({ now: () => time });
+            const attempted: string[] = [];
+            const client = createSwapClient({
+                wallet: await hdWallet(),
+                discovery: { snapshot: [first, second] },
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                policy: {
+                    drive: "manual",
+                    solverRouting: {
+                        health,
+                        preferences: () => ({
+                            mode,
+                            preferFirst: solverId(first, "regtest"),
+                            usage: { [solverId(first, "regtest")]: 100 },
+                        }),
+                    },
+                },
+                transportFor: ({ card }) => {
+                    attempted.push(card.solver);
+                    return card.solver === "first" && !recovered
+                        ? solverTransport(() => {
+                              throw new SolverUnavailable("offline");
+                          })
+                        : solverTransport(solverFor(CLOCK), {
+                              attestedResponder: card.discovery_pubkey,
+                          });
+                },
+            });
+            await client.quote(input());
+            const retained = await client.quote(input());
+            expect(attempted).toEqual(["first", "second", "first", "second"]);
+            expect((await client.candidates(input())).map(({ card }) => card.solver)).toEqual([
+                "second",
+                "first",
+            ]);
+            expect((await client.quote(input())).market).toMatchObject({ solver: "second" });
+            expect(attempted).toEqual(["first", "second", "first", "second", "second"]);
+            time += 60_000;
+            recovered = true;
+            expect((await client.quote(input())).market).toMatchObject({ solver: "first" });
+            expect(
+                await health.deprioritized({
+                    network: "regtest",
+                    direction: solverDirectionKey(first, "base", "regtest"),
+                }),
+            ).toEqual([]);
+            await expect(client.accept(retained)).rejects.toMatchObject({
+                name: "MissingCorridorDep",
+            });
+            expect(attempted).toEqual(["first", "second", "first", "second", "second", "first"]);
+            await client[Symbol.asyncDispose]();
+        },
+    );
+
+    it.each([
+        new SwapRefusal("amount_out_of_range"),
+        new SwapRefusal("exposure_cap"),
+        Object.assign(new Error("cancelled"), { name: "AbortError" }),
+    ])("does not penalize request limits or cancellation ($name)", async (failure) => {
+        const health = createSolverHealth();
+        for (let i = 0; i < 2; i++) {
+            const { client } = await setup({ routing: { health }, failure });
+            if (failure.name === "AbortError")
+                await expect(client.quote(input())).rejects.toBe(failure);
+            else await client.quote(input());
+            await client[Symbol.asyncDispose]();
+        }
+        expect(
+            await health.deprioritized({
+                network: "regtest",
+                direction: solverDirectionKey(first, "base", "regtest"),
+            }),
+        ).toEqual([]);
+    });
+
     it("tries the next solver before accepting and keeps its preparation pinned", async () => {
         const { client, attempted, firstTransport, secondTransport } = await setup();
         const quote = await client.quote(input());
