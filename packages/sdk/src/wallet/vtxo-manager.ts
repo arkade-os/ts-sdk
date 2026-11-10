@@ -850,11 +850,8 @@ function isMigrationCapable(wallet: IWallet): wallet is IWallet & MigrationCapab
  */
 interface RecoveryContractCapableWallet {
     removeRecoveryContract(script: string): Promise<void>;
-    correlateArkadeCashRecoveryByScript(
-        script: string,
-        txid: string,
-        amount: number,
-    ): Promise<void>;
+    /** Optional bookkeeping: its absence or failure never gates or aborts recovery. */
+    correlateArkadeCashRecovery?(script: string, txid: string, amount: number): Promise<void>;
 }
 
 /** Return whether a wallet can purge its imported recovery contracts. */
@@ -863,9 +860,7 @@ function isRecoveryContractCapable(
 ): wallet is IWallet & RecoveryContractCapableWallet {
     return (
         typeof (wallet as Partial<RecoveryContractCapableWallet>).removeRecoveryContract ===
-            "function" &&
-        typeof (wallet as Partial<RecoveryContractCapableWallet>)
-            .correlateArkadeCashRecoveryByScript === "function"
+        "function"
     );
 }
 
@@ -1508,11 +1503,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 inputs: batch,
                 outputs: [{ address: arkAddress, amount: totalAmount }],
             });
-            await wallet.correlateArkadeCashRecoveryByScript(
-                contract.script,
-                settledTxid,
-                Number(totalAmount),
-            );
+            // Bookkeeping only: the settle already succeeded, so a failed
+            // write must not skip the purge below.
+            try {
+                await wallet.correlateArkadeCashRecovery?.(
+                    contract.script,
+                    settledTxid,
+                    Number(totalAmount),
+                );
+            } catch (error) {
+                console.error(
+                    `Failed to record arkcash recovery ${settledTxid} for ${contract.script}:`,
+                    error,
+                );
+            }
         }
 
         // Purge only on AUTHORITATIVE evidence the funds are gone — never on an

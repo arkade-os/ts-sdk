@@ -858,6 +858,42 @@ describe("claimCash import-for-recovery", () => {
         expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
     });
 
+    it("still purges when the correlation write throws", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
+        kick.mockRestore();
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        vi.spyOn(wallet, "correlateArkadeCashRecovery").mockRejectedValue(
+            new Error("write failed"),
+        );
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+        await manager.recoverImportedContracts();
+
+        expect(settle).toHaveBeenCalledOnce();
+        const cm = await wallet.getContractManager();
+        expect(await cm.getContracts({ script: cashPkScript })).toEqual([]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+        expect(logged).toHaveBeenCalled();
+        logged.mockRestore();
+    });
+
+    it("settles and purges when the wallet has no correlation method", async () => {
+        const cash = makeCash();
+        const { wallet, manager, kick, cashPkScript } = await claimSwept(cash);
+        kick.mockRestore();
+
+        const settle = vi.spyOn(wallet, "settle").mockResolvedValue("recovery-txid");
+        (wallet as { correlateArkadeCashRecovery?: unknown }).correlateArkadeCashRecovery =
+            undefined;
+        await manager.recoverImportedContracts();
+
+        expect(settle).toHaveBeenCalledOnce();
+        const cm = await wallet.getContractManager();
+        expect(await cm.getContracts({ script: cashPkScript })).toEqual([]);
+        expect(keyringOf(wallet).hasKey(`tr(${hex.encode(cash.publicKey)})`)).toBe(false);
+    });
+
     it("settles net of intent fees", async () => {
         const cash = makeCash();
         const { wallet, manager, kick } = await claimSwept(cash);

@@ -5185,7 +5185,9 @@ export class Wallet
     /**
      * Correlate an imported voucher's settlement with the voucher record. This
      * is deliberately kept on wallet state rather than being inferred from the
-     * generic recovery row, which has no safe public correlation key.
+     * generic recovery row, which has no safe public correlation key. The
+     * imported contract carries no cash id, so its script is the join key:
+     * the script is the voucher id.
      */
     async correlateArkadeCashRecovery(
         cashId: string,
@@ -5221,20 +5223,6 @@ export class Wallet
             ...state,
             settings: { ...state.settings, arkadeCashRecovery: records },
         }));
-    }
-
-    /**
-     * Read the transaction id returned by `settle` and attach it to the voucher
-     * identified by its script. Imported recovery contracts currently carry no
-     * cash id, so the script is the stable join key and is already the
-     * activity-facing voucher id.
-     */
-    async correlateArkadeCashRecoveryByScript(
-        script: string,
-        txid: string,
-        amount: number,
-    ): Promise<void> {
-        await this.correlateArkadeCashRecovery(script, txid, amount);
     }
 
     /**
