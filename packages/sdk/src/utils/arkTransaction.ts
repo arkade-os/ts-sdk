@@ -44,7 +44,7 @@ export type OffchainTx = {
  *
  * Creates one checkpoint transaction per input and a virtual transaction that
  * combines all the checkpoints, sending to the specified outputs. This is the
- * core function for creating Arkade transactions.
+ * core function for creating virtual transactions.
  *
  * @param inputs - Array of virtual transaction inputs
  * @param outputs - Array of transaction outputs

@@ -25,7 +25,7 @@ import {
 import type { VirtualCoin } from "../wallet";
 import type { Contract, PathSelection } from "./types";
 import { exitSequence } from "./handlers/helpers";
-import { isOnchainScoped } from "./scope";
+import { isOnchainScoped, scopeOf } from "./scope";
 import { isExplorerCoin } from "./onchainCoins";
 import { sequenceToTimelock } from "../utils/timelock";
 import type { RelativeTimelock } from "../script/tapscript";
@@ -157,6 +157,19 @@ export function assertCosignable(
 }
 
 /**
+ * A boarding script: a `boarding` contract, or the `default` row an equal-delay boarding script
+ * coalesced onto (widened to `both`). Scope alone does not qualify: any contract type may be
+ * onchain-scoped, and its coins are not the wallet's to re-board.
+ */
+function isBoardingContract(contract: Contract): boolean {
+    if (!isOnchainScoped(contract)) return false;
+    return (
+        contract.type === "boarding" ||
+        (contract.type === "default" && scopeOf(contract) === "both")
+    );
+}
+
+/**
  * Automatic sweeps take boarding coins only, in the last stretch before cosign is refused.
  * Unrolled outputs are a user's exit: re-boarding them would undo it, so they stay manual. A
  * `both` contract holds both kinds on one script, so only explorer rows count as boarding.
@@ -167,7 +180,7 @@ export function needsOnchainSweep(
     tip: ChainTip,
     marginBlocks = DEFAULT_COSIGN_MARGIN_BLOCKS,
 ): boolean {
-    if (!isOnchainScoped(contract) || !isExplorerCoin(coin)) return false;
+    if (!isBoardingContract(contract) || !isExplorerCoin(coin)) return false;
     const csv = exitCsvOf(contract);
     const left = csv && untilExitMaturity(coin, csv, tip);
     if (!left) return false;

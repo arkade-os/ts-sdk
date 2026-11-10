@@ -269,6 +269,11 @@ style and have not been backfilled.
   settles into one output, and `split` is refused on the service-worker wallet.
 - **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices. A destroyed pool refuses to reconnect, so a transport that outlives `closeSharedNostrPool()` fails instead of opening a socket nothing can close, and concurrent card fetches are only merged when they ask the same relays.
 
+- **The cached operator info moves to a new key.** The snapshot in wallet settings
+  is now `operatorInfoSnapshot`. The SDK still reads `arkInfoSnapshot` until the next
+  live boot saves the new key, and the old key stays in place. Comments in this
+  file now say the operator instead of the server.
+
 - **`getStoredContractsWithVtxos()` is reachable through the service
   worker.** It answers from the repository without waiting on the indexer and
   keeps spent VTXOs, so a caller can tell whether, and by which transaction, a
@@ -367,6 +372,14 @@ style and have not been backfilled.
 ### Bug Fixes
 
 - **Releases reject the temporary discovery archive before publishing any package.** Selecting swap, including through an SDK release, requires replacing its vendored discovery dependency with a published release before versions, tags or publication can change.
+
+- **The automatic cosign sweep takes boarding coins only.** `needsOnchainSweep`
+  selected coins by scope, so any contract registered with `scope: "onchain"`
+  or `"both"` had its onchain coins swept into the wallet's boarding address
+  near CSV maturity, and settled into Arkade by a later poll. It now takes only
+  `boarding` contracts and the `default` row an equal-delay boarding script
+  coalesced onto. Onchain sync and balances still cover every onchain-scoped
+  contract.
 
 - **Explorer transaction output values are numeric satoshis across providers.**
   `ExplorerTransaction.vout.value` was typed as a string even though Esplora
