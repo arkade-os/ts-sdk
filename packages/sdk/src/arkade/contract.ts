@@ -185,13 +185,13 @@ type SegmentArgs<S> = S extends { inputs: infer I extends readonly InputDef[] }
 
 type WitnessSegment = "tapscript" | "arkadeScript";
 
-/** A function's arguments, keyed by the segments that declare inputs. */
-type SplitArgs<F extends ArkadeFunction> = {
-    [K in WitnessSegment as SegmentArgs<F[K]> extends readonly [] ? never : K]: SegmentArgs<F[K]>;
+/** A function's call argument: one key for each segment that declares `inputs`. */
+type CallArgs<F extends ArkadeFunction> = {
+    [K in WitnessSegment as F[K] extends { inputs: object } ? K : never]: SegmentArgs<F[K]>;
 };
 
 /** The call signature arguments for one function: nullary when no segment declares inputs. */
-type FnArgs<F extends ArkadeFunction> = {} extends SplitArgs<F> ? [] : [args: SplitArgs<F>];
+type FnArgs<F extends ArkadeFunction> = keyof CallArgs<F> extends never ? [] : [args: CallArgs<F>];
 
 /** A contract's functions returning `R`: typed per function for a literal program, else loose. */
 type FunctionMap<P extends Program, R> = string extends keyof P["functions"]
