@@ -195,7 +195,7 @@ describe.skipIf(!reachable).sequential("Executor migration of an old wallet", ()
 
         const updated = await createWallet(true, { identity, storage });
         const manager = (await updated.getExecutorManager())!;
-        const migration = await manager.delegateOutputs(params);
+        const migration = await manager.delegateWalletOutputs(params);
         expect(migration.txid).toBeDefined();
         const atRenewal = async () =>
             (await updated.getVtxos())
@@ -215,7 +215,7 @@ describe.skipIf(!reachable).sequential("Executor migration of an old wallet", ()
         // a payment to the retired address still counts, and the next run moves it
         await funder.send({ address: oldAddress, amount: 1_000 });
         await waitFor(async () => (await updated.getBalance()).available === 8_000);
-        expect((await manager.delegateOutputs(params)).txid).toBeDefined();
+        expect((await manager.delegateWalletOutputs(params)).txid).toBeDefined();
         await waitFor(async () => (await atRenewal()).join() === "1000,7000");
     });
 });

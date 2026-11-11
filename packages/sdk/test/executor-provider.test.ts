@@ -220,7 +220,7 @@ describe("ExecutorManagerImpl.defaultTemplates", () => {
     });
 });
 
-describe("ExecutorManagerImpl.delegateOutputs", () => {
+describe("ExecutorManagerImpl.delegateWalletOutputs", () => {
     const RENEWAL_ID = ids.renewal;
     const renewalProvider = () =>
         makeProvider({
@@ -243,7 +243,7 @@ describe("ExecutorManagerImpl.delegateOutputs", () => {
             getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
             send: vi.fn().mockResolvedValue("txid"),
         };
-        const got = await new ExecutorManagerImpl(provider, w).delegateOutputs(params);
+        const got = await new ExecutorManagerImpl(provider, w).delegateWalletOutputs(params);
         expect(w.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: false,
             genericallySpendableOnly: true,
@@ -276,7 +276,9 @@ describe("ExecutorManagerImpl.delegateOutputs", () => {
 
     it("only registers when there is nothing to send", async () => {
         const w = { ...wallet, getSpendableVtxos: vi.fn().mockResolvedValue([]), send: vi.fn() };
-        const got = await new ExecutorManagerImpl(renewalProvider(), w).delegateOutputs(params);
+        const got = await new ExecutorManagerImpl(renewalProvider(), w).delegateWalletOutputs(
+            params,
+        );
         expect(got.txid).toBeUndefined();
         expect(w.send).not.toHaveBeenCalled();
     });
@@ -284,7 +286,7 @@ describe("ExecutorManagerImpl.delegateOutputs", () => {
     it("retires the wallet's own receive contracts, which stay watched", async () => {
         contractManager.setContractState.mockClear();
         const w = { ...wallet, getSpendableVtxos: vi.fn().mockResolvedValue([]), send: vi.fn() };
-        await new ExecutorManagerImpl(renewalProvider(), w).delegateOutputs(params);
+        await new ExecutorManagerImpl(renewalProvider(), w).delegateWalletOutputs(params);
         expect(contractManager.getContracts).toHaveBeenCalledWith({
             type: ["default", "delegate"],
             state: "active",

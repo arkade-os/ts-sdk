@@ -115,7 +115,7 @@ export interface IExecutorManager {
      * contracts (inactive, still watched). txid is absent when there was nothing to send.
      * Idempotent: run it again to move coins that reach a retired address later.
      */
-    delegateOutputs(
+    delegateWalletOutputs(
         params: DelegationParams,
         options?: { expiresAt?: number },
     ): Promise<ExecutorWatchRegistration & { txid?: string }>;
@@ -159,7 +159,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         return this.register("boarding", params, options);
     }
 
-    async delegateOutputs(
+    async delegateWalletOutputs(
         params: DelegationParams,
         options: { expiresAt?: number } = {},
     ): Promise<ExecutorWatchRegistration & { txid?: string }> {

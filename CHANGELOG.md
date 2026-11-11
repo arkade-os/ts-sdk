@@ -686,7 +686,7 @@ style and have not been backfilled.
   (or an `ExecutorProvider`, `RestExecutorProvider` over REST) gives the
   wallet a `getExecutorManager()`. The manager registers the wallet's key
   under the service's bundled `renewal` and `boarding` templates
-  (`registerRenewal`, `registerBoarding`) and `delegateOutputs` moves the
+  (`registerRenewal`, `registerBoarding`) and `delegateWalletOutputs` moves the
   wallet's generically spendable coins, assets included, to the renewal
   address and retires its own receive contracts. Both contracts derive
   locally from the owner key, the `DelegationParams` and the service's keys
