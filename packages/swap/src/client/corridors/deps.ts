@@ -65,8 +65,13 @@ export interface CorridorBase {
  */
 export interface ExecutorReceive {
     encryptionPubkey: Pubkey;
-    /** Installed sealed-terms template; defaults to EXECUTOR_RECEIVE_TEMPLATE_ID. */
+    /** Installed compatible template; defaults to the fixed or predicate receive template. */
     templateId?: string;
+    /** Public TLV 0x05 bytecode, 1..520 bytes and <=201 nonpush operations in the engine's
+     * restricted profile. Must leave one canonical true; cannot mutate the transaction or relax
+     * receiver/minimum guards. Selects EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID by default;
+     * a custom template must authenticate the same program hash and sealed terms layout. */
+    predicate?: Uint8Array;
 }
 
 /** The override matrix. An override replaces a dependency inside an implemented corridor; it never

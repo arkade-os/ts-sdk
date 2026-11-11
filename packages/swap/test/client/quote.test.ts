@@ -8,10 +8,15 @@
  * is a tamper on that agreement.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { ArkAddress, contractSigner } from "@arkade-os/sdk";
 import { ScriptNum } from "@scure/btc-signer";
-import { claimPacketShape, EXECUTOR_RECEIVE_TEMPLATE_ID } from "../../src/claimPacket";
+import {
+    claimPacketShape,
+    EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID,
+    EXECUTOR_RECEIVE_TEMPLATE_ID,
+} from "../../src/claimPacket";
 import { openClaimPacket } from "../helpers/claimPacket";
 import { createSwapClient } from "../../src/client/client";
 import { InMemoryAssetSwapRepository, type AssetSwapRepository } from "../../src/repository";
@@ -105,6 +110,96 @@ it("refuses payouts below the default template admission minimum before sending 
 
 afterEach(() => {
     vi.useRealTimers();
+});
+
+describe.each(["lightning", "onchain"] as const)("%s receive predicates", (via) => {
+    const predicate = Uint8Array.of(0x51);
+    const configured = (program = predicate, templateId?: string) => ({
+        [via]: { executor: { encryptionPubkey: compressed(7), predicate: program, templateId } },
+    });
+
+    it("seals the public program hash and fixed payout before sending the RFQ", async () => {
+        const { client, transport, wallet } = await setup({ corridors: configured() });
+        const quote = await client.quote({ via, amount: 4_950n, amountOn: "take" });
+        const packet = (transport.sent[0] as { profile: { claim_packet: string } }).profile
+            .claim_packet;
+        const plaintext = await openClaimPacket(
+            packet,
+            new Uint8Array(32).fill(7),
+            EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID,
+        );
+        expect(plaintext.subarray(32, 64)).toEqual(
+            ArkAddress.decode(await wallet.getAddress()).pkScript.subarray(2),
+        );
+        expect(plaintext.subarray(64, 96)).toEqual(sha256(predicate));
+        expect(ScriptNum(8, true).decode(plaintext.subarray(96))).toBe(4_950n);
+        expect(base64.decode(packet).slice(-4)).toEqual(Uint8Array.of(5, 0, 1, 0x51));
+        expect(client.preparationOf(quote.id)).toMatchObject({ executorClaims: true });
+        expect(transport.sent).toHaveLength(1);
+    });
+
+    it("requires a fixed take amount before sending an RFQ", async () => {
+        const { client, transport } = await setup({ corridors: configured() });
+        await expect(client.quote({ via, amount: 5_000n, amountOn: "give" })).rejects.toThrow(
+            /amountOn.*take/,
+        );
+        expect(transport.sent).toHaveLength(0);
+    });
+
+    it("retains the admission floor for either default template", async () => {
+        for (const templateId of [
+            undefined,
+            EXECUTOR_RECEIVE_TEMPLATE_ID,
+            EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID,
+        ]) {
+            const snapshot = [lightningCard, onchainCard].map((card) => ({
+                ...card,
+                min_base_amount: "1",
+                min_quote_amount: "1",
+            }));
+            const { client, transport } = await setup({
+                corridors: configured(predicate, templateId),
+                snapshot,
+            });
+            await expect(client.quote({ via, amount: 999n, amountOn: "take" })).rejects.toThrow(
+                /1,000/,
+            );
+            expect(transport.sent).toHaveLength(0);
+        }
+    });
+
+    it("refuses invalid program lengths before sending an RFQ", async () => {
+        for (const length of [0, 521]) {
+            const { client, transport } = await setup({
+                corridors: configured(new Uint8Array(length)),
+            });
+            await expect(client.quote({ via, amount: 5_000n, amountOn: "take" })).rejects.toThrow(
+                /predicate.*1.*520/,
+            );
+            expect(transport.sent).toHaveLength(0);
+        }
+    });
+});
+
+it("keeps the custom predicate template's admission policy", async () => {
+    const templateId = "compatible-custom-predicate-template";
+    const { client, transport } = await setup({
+        corridors: {
+            onchain: {
+                executor: {
+                    encryptionPubkey: compressed(7),
+                    predicate: Uint8Array.of(0x51),
+                    templateId,
+                },
+            },
+        },
+        snapshot: [{ ...onchainCard, min_base_amount: "1", min_quote_amount: "1" }],
+    });
+    await client.quote({ via: "onchain", amount: 999n, amountOn: "take" });
+    const packet = (transport.sent[0] as { profile: { claim_packet: string } }).profile
+        .claim_packet;
+    const plaintext = await openClaimPacket(packet, new Uint8Array(32).fill(7), templateId);
+    expect(ScriptNum(8, true).decode(plaintext.subarray(96))).toBe(999n);
 });
 
 describe("quote() on arkade -> lightning", () => {

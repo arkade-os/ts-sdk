@@ -224,6 +224,7 @@ export {
     type ClaimPacketShape,
     EXECUTOR_CLAIM_TEMPLATE_ID,
     EXECUTOR_RECEIVE_TEMPLATE_ID,
+    EXECUTOR_PREDICATE_RECEIVE_TEMPLATE_ID,
 } from "./claimPacket";
 
 // `SwapClientConfig.operator`, for a second operator or a test.
