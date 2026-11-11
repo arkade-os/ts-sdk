@@ -441,12 +441,6 @@ describe("WalletMessageHandler handleMessage", () => {
         // Default (balance / VTXOS / coin selection): recovery-only excluded.
         const excluded = await (updater as any).getVtxosFromRepo();
         expect(excluded.map((v: any) => v.script)).toEqual([SCRIPT_NORMAL]);
-
-        // History opt-in: recovery-only included (parity with non-worker).
-        const included = await (updater as any).getVtxosFromRepo({ includeRecoveryOnly: true });
-        expect(included.map((v: any) => v.script).sort()).toEqual(
-            [SCRIPT_NORMAL, SCRIPT_RECOVERY].sort(),
-        );
     });
 
     it("handles GET_BOARDING_UTXOS messages by asking the provider", async () => {

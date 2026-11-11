@@ -43,6 +43,8 @@ const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207
 const ESCROW_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000001";
 const MARKED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000002";
 const UNKNOWN_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000003";
+const RECOVERY_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
+const RECOVERY_COMMITMENT = "d4".repeat(32);
 const ASSET_ID = "aa".repeat(32);
 
 const arkInfo = (): ArkadeInfo => ({
@@ -120,6 +122,7 @@ async function seededWallet(opts?: {
     signing?: boolean;
     indexerProvider?: IndexerProvider;
     minimal?: boolean;
+    recoveryHeld?: boolean;
 }) {
     const walletRepository = new InMemoryWalletRepository();
     const contractRepository = new InMemoryContractRepository();
@@ -135,6 +138,38 @@ async function seededWallet(opts?: {
         await contractRepository.saveContract(row);
         await walletRepository.saveVtxos(row.address, [
             vtxo(row.script, 10_000, [{ assetId: ASSET_ID, amount: 5n }]),
+        ]);
+    }
+
+    if (opts?.recoveryHeld) {
+        // A claimed, server-swept voucher: its contract is held for recovery, one coin is
+        // already settled into the wallet's own address (below), and one is still swept.
+        const held = {
+            ...contract(RECOVERY_SCRIPT, "default"),
+            metadata: { recoveryOnly: true },
+        };
+        await contractRepository.saveContract(held);
+        await walletRepository.saveVtxos(held.address, [
+            createMockExtendedVtxo({
+                txid: "c1".repeat(32),
+                vout: 0,
+                value: 4_000,
+                script: RECOVERY_SCRIPT,
+                isSwept: true,
+                isPreconfirmed: true,
+                createdAt: new Date(1_000),
+            }),
+            createMockExtendedVtxo({
+                txid: "c2".repeat(32),
+                vout: 0,
+                value: 4_000,
+                script: RECOVERY_SCRIPT,
+                isSpent: true,
+                isSwept: true,
+                isPreconfirmed: true,
+                settledBy: RECOVERY_COMMITMENT,
+                createdAt: new Date(1_000),
+            }),
         ]);
     }
 
@@ -166,6 +201,21 @@ async function seededWallet(opts?: {
     await walletRepository.saveVtxos(await wallet.getAddress(), [
         vtxo(defaultScript, 40_000, [{ assetId: ASSET_ID, amount: 7n }]),
     ]);
+
+    if (opts?.recoveryHeld) {
+        // The recovery settlement's output: one batch coin at the wallet's own address.
+        await walletRepository.saveVtxos(await wallet.getAddress(), [
+            createMockExtendedVtxo({
+                txid: RECOVERY_COMMITMENT,
+                vout: 0,
+                value: 4_000,
+                script: defaultScript,
+                commitmentTxIds: [RECOVERY_COMMITMENT],
+                status: { confirmed: true, isLeaf: true },
+                createdAt: new Date(2_000),
+            }),
+        ]);
+    }
 
     return { wallet, defaultScript, walletRepository, contractRepository };
 }
@@ -1220,5 +1270,30 @@ describe("main-thread / worker balance parity", () => {
         // two the gate removes.
         expect(amountsOf(main)).toEqual([10_000, 40_000]);
         expect(amountsOf(worker)).toEqual(amountsOf(main));
+    });
+
+    /**
+     * Recovery-only coins are escrowed for their own isolated settlement, so the balance leaves
+     * them out. History has to as well: counted as the wallet's own, the swept coins read as
+     * received before any sats arrive, and the settlement that recovers them nets to a refresh
+     * and leaves no row at all.
+     */
+    it("keeps recovery-only coins out of the history, so the settlement is the received row", async () => {
+        const seeded = await seededWallet({ recoveryHeld: true });
+
+        const main = await seeded.wallet.getTransactionHistory();
+        const worker = (await workerRequest(seeded, "GET_TRANSACTION_HISTORY"))
+            .transactions as typeof main;
+
+        for (const history of [main, worker]) {
+            // The settlement output is the one 4_000 row. The two voucher coins (one swept, one
+            // settled away) would otherwise add two more, under their funding txids.
+            expect(history.map((tx) => [tx.amount, tx.key.commitmentTxid])).toEqual(
+                expect.arrayContaining([[4_000, RECOVERY_COMMITMENT]]),
+            );
+            expect(history.filter((tx) => tx.key.arkTxid === "c1".repeat(32))).toEqual([]);
+            expect(history.filter((tx) => tx.key.arkTxid === "c2".repeat(32))).toEqual([]);
+            expect(history.filter((tx) => tx.amount === 4_000)).toHaveLength(1);
+        }
     });
 });

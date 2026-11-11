@@ -2590,13 +2590,11 @@ export class WalletMessageHandler
      * arkcash) are excluded by default, mirroring {@link ReadonlyWallet.getVtxos}:
      * they are settled in their own isolated intent and must stay out of the
      * wallet's balance / VTXO / coin-selection / pending-tx views that read this.
-     * The transaction-history caller opts back in via `includeRecoveryOnly` to
-     * match the non-worker `getTransactionHistory`, which reads contracts
-     * directly and does include them.
+     * Transaction history excludes them too, as does the non-worker
+     * `getTransactionHistory`.
      */
     private async getVtxosFromRepo(options?: {
         unspentOnly?: boolean;
-        includeRecoveryOnly?: boolean;
     }): Promise<NormalizedExtendedVirtualCoin[]> {
         return (await this.repoSnapshot(options)).vtxos;
     }
@@ -2614,12 +2612,9 @@ export class WalletMessageHandler
      * what it knows is closed — so the coins of a just-registered escrowed
      * contract would count as available until the next poll.
      *
-     * Recovery-only contracts are skipped unless `includeRecoveryOnly` (see
-     * {@link getVtxosFromRepo}).
+     * Recovery-only contracts are skipped (see {@link getVtxosFromRepo}).
      */
-    private async repoSnapshot(
-        options: { unspentOnly?: boolean; includeRecoveryOnly?: boolean } = {},
-    ): Promise<{
+    private async repoSnapshot(options: { unspentOnly?: boolean } = {}): Promise<{
         // Not `ContractWithVtxos`: repository rows carry no `contractScript`,
         // and the gate and signer classification only read `contract`/`vtxos`.
         snapshot: { contract: Contract; vtxos: NormalizedExtendedVirtualCoin[] }[];
@@ -2652,9 +2647,7 @@ export class WalletMessageHandler
         void addressPromise.catch(() => undefined);
         const manager = await wallet.getContractManager();
         const contracts = await manager.getContracts();
-        const eligible = contracts.filter(
-            (contract) => options.includeRecoveryOnly || !isRecoveryOnlyContract(contract),
-        );
+        const eligible = contracts.filter((contract) => !isRecoveryOnlyContract(contract));
         // One read per contract. Merge in repository order so the first row still wins a
         // duplicate outpoint; folding the lists as they resolve would let a later contract claim it.
         const listsPromise = Promise.all(
@@ -2714,7 +2707,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) return null;
 
         const [{ snapshot, vtxos }, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
-            this.repoSnapshot({ includeRecoveryOnly: true }),
+            this.repoSnapshot(),
             this.readonlyWallet.getBoardingTxs(),
         ]);
 

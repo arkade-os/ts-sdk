@@ -1557,10 +1557,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const [snapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
+        const [fullSnapshot, { boardingTxs, commitmentsToIgnore }] = await Promise.all([
             this.contractSnapshot(),
             this.getBoardingTxs(),
         ]);
+        // Recovery-only coins are escrowed for their own isolated settlement, as in the balance.
+        // Counting them here would show swept voucher coins as received before any sats arrive,
+        // and hide the settlement that recovers them behind a refresh-shaped net of zero.
+        const snapshot = fullSnapshot.filter(({ contract }) => !isRecoveryOnlyContract(contract));
         const allVtxos = snapshot.flatMap((_) => _.vtxos);
 
         // Best-effort: a retryable indexer failure yields a partial map, not a

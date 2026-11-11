@@ -289,6 +289,8 @@ style and have not been backfilled.
 
 ### Bug Fixes
 
+- **Transaction history leaves out recovery-only coins, as the balance does.** `ReadonlyWallet.getTransactionHistory` and the service worker's history both counted the coins of a claimed, server-swept Arkade Cash voucher as the wallet's own while their recovery contract was held. Each swept coin showed as a received row under the voucher's funding txid before any sats arrived, and the recovery settlement, which spends one of those coins and pays the wallet in the same commitment, netted to a refresh: no row when fee-free, a sent "exit" row of the fee otherwise. When the contract was purged the rows rewrote themselves. Both paths now skip recovery-only contracts, so nothing shows while recovery is pending and the recovered output then appears as one received batch row. The worker's `includeRecoveryOnly` option, which only the history read used, is removed.
+
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
