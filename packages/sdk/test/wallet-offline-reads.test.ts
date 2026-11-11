@@ -8,7 +8,7 @@ import {
     type IndexerProvider,
     type OnchainProvider,
 } from "../src";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { OperatorInfo } from "../src/providers/ark";
 import { ReadonlySingleKey, SingleKey } from "../src/identity/singleKey";
 
 /** Spin until `predicate` holds, so a test never races the microtask queue. */
@@ -21,7 +21,7 @@ const until = async (predicate: () => boolean): Promise<void> => {
 const serverKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const privKeyHex = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
-const arkInfo = (): ArkadeInfo => ({
+const arkInfo = (): OperatorInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",

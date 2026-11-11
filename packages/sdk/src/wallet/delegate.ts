@@ -1,7 +1,7 @@
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
-    ArkadeInfo,
+    OperatorInfo,
     OperatorProvider,
     Asset,
     decodeTapscript,
@@ -212,7 +212,7 @@ export class DelegateManagerImpl implements IDelegateManager {
 async function delegate(
     identity: Identity,
     delegateProvider: DelegateProvider,
-    arkInfo: ArkadeInfo,
+    arkInfo: OperatorInfo,
     delegateInfo: DelegateInfo,
     vtxos: NormalizedExtendedVirtualCoin[],
     destinationScript: Bytes,
@@ -480,7 +480,7 @@ function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
     );
 }
 
-function estimatorAt(intentFee: ArkadeInfo["fees"]["intentFee"], at: Date): Estimator {
+function estimatorAt(intentFee: OperatorInfo["fees"]["intentFee"], at: Date): Estimator {
     // replace now() function with the delegation timestamp
     const now = `double(${at.getTime() / 1000})`;
     return new Estimator({

@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { ArkadeInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
+import { OperatorInfo, OperatorProvider, SettlementEvent } from "../../providers/ark";
 import {
     GetVtxosOptions,
     IndexerProvider,
@@ -193,14 +193,14 @@ export type RequestGetOperatorInfo = RequestEnvelope & {
     type: "GET_OPERATOR_INFO" | "GET_ARKADE_INFO";
     payload?: GetOperatorInfoOptions;
 };
-// `ArkadeInfo` is bigint-heavy and crosses the boundary raw: the channel is
+// `OperatorInfo` is bigint-heavy and crosses the boundary raw: the channel is
 // `postMessage`/structuredClone, which is bigint-safe, and `GET_BALANCE` below
 // already relies on that for `Asset.amount`. Do NOT route it through the
 // `arkInfoSnapshot` serializer — that shape is the persistence cache and drops
 // `serviceStatus`.
 export type ResponseGetOperatorInfo = ResponseEnvelope & {
     type: "OPERATOR_INFO";
-    payload: { info: ArkadeInfo };
+    payload: { info: OperatorInfo };
 };
 
 // `getArkadeReader()`/`getArkadeBroadcaster()` proxied to the worker, which
