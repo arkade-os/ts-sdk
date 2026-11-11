@@ -409,6 +409,12 @@ style and have not been backfilled.
   `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
   object passed to it must have that method.
 
+- **The SDK uses the batch registration names in its own code.** Internal code
+  no longer refers to `ArkIntent`, `IntentRepository`, `collectIntents` or the
+  other deprecated batch registration names. `collectBatchRegistrations` now
+  holds the implementation, and `collectIntents` is its alias. Every deprecated
+  name stays exported and behaves as before.
+
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
   fractional, non-finite, and unsafe-integer durations while retaining zero behavior.
