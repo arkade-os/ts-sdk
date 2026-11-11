@@ -3,11 +3,13 @@ import type { ArkadeCashRequest, ArkadeCashResponse } from "../../src";
 import {
     addArkadeCashRecord,
     arkadeCashActivity,
+    arkadeCashResolver,
     createArkadeCashTracker,
     mergeArkadeCashRecord,
     type ArkadeCashRecord,
 } from "../../src/arkadeCash/tracker";
 import { TxType } from "../../src/wallet";
+import { buildActivities } from "../../src/wallet/activity";
 
 const record = (fields: Partial<ArkadeCashRecord> & { id: string }): ArkadeCashRecord => ({
     action: "issued",
@@ -276,5 +278,27 @@ describe("ArkadeCash activity records", () => {
             ["Cash claimed", "claimed", 5_000],
             ["Cash issued", "issued", -5_000],
         ]);
+    });
+
+    it("sees a record added between two builds with one reused resolver", async () => {
+        const records = createArkadeCashTracker();
+        const resolver = arkadeCashResolver(records);
+        const tx = {
+            key: { arkTxid: "funding", commitmentTxid: "", boardingTxid: "" },
+            type: TxType.TxSent,
+            amount: 5_000,
+            createdAt: 1_000,
+            settled: false,
+        };
+        const kinds = async () =>
+            (await buildActivities([tx], [resolver])).map((activity) => activity.intent?.kind);
+
+        expect(await kinds()).toEqual([undefined]);
+
+        addArkadeCashRecord(
+            records,
+            record({ id: "late", issues: [{ txid: "funding", amount: 5_000 }] }),
+        );
+        expect(await kinds()).toEqual(["arkade-cash"]);
     });
 });

@@ -86,27 +86,51 @@ export function arkadeCashId(cash: ArkadeCash): string {
 }
 
 export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver {
+    // txid -> records touching it, each with its rank in `list()` order. Rebuilt by every
+    // `prepare()` so a resolver kept across builds sees records added in between.
+    let index: Map<string, { record: ArkadeCashRecord; rank: number }[]> | undefined;
+    const build = () => {
+        const next = new Map<string, { record: ArkadeCashRecord; rank: number }[]>();
+        records.list().forEach((record, rank) => {
+            for (const { txid } of [...record.issues, ...record.claims]) {
+                const entries = next.get(txid) ?? [];
+                if (entries[entries.length - 1]?.record !== record) entries.push({ record, rank });
+                next.set(txid, entries);
+            }
+        });
+        return next;
+    };
     return {
         id: "arkade-cash",
+        async prepare() {
+            index = build();
+        },
         resolve(tx) {
+            index ??= build();
             const txids = new Set(Object.values(tx.key));
-            return records.list().flatMap((record) => {
-                const issue = record.issues.find((entry) => txids.has(entry.txid));
-                const claim = record.claims.find((entry) => txids.has(entry.txid));
-                const match = claim ?? issue;
-                if (!match) return [];
-                const direction = claim ? "claimed" : "issued";
-                return [
-                    {
-                        groupId: `arkade-cash:${record.id}:${direction}`,
-                        label: direction === "issued" ? "Cash issued" : "Cash claimed",
-                        kind: "arkade-cash",
-                        outcome: record.outcome,
-                        metadata: { cashId: record.id, direction },
-                        amount: match.amount,
-                    },
-                ];
-            });
+            const candidates = new Map<ArkadeCashRecord, number>();
+            for (const txid of txids) {
+                for (const { record, rank } of index.get(txid) ?? []) candidates.set(record, rank);
+            }
+            return [...candidates]
+                .sort((a, b) => a[1] - b[1])
+                .flatMap(([record]) => {
+                    const issue = record.issues.find((entry) => txids.has(entry.txid));
+                    const claim = record.claims.find((entry) => txids.has(entry.txid));
+                    const match = claim ?? issue;
+                    if (!match) return [];
+                    const direction = claim ? "claimed" : "issued";
+                    return [
+                        {
+                            groupId: `arkade-cash:${record.id}:${direction}`,
+                            label: direction === "issued" ? "Cash issued" : "Cash claimed",
+                            kind: "arkade-cash",
+                            outcome: record.outcome,
+                            metadata: { cashId: record.id, direction },
+                            amount: match.amount,
+                        },
+                    ];
+                });
         },
     };
 }
