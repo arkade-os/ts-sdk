@@ -57,6 +57,13 @@ export interface CorridorBase {
     readonly repository?: AssetSwapRepository;
 }
 
+/** The daemon key and installed template that may receive a sealed claim. */
+export interface ExecutorReceive {
+    encryptionPubkey: Pubkey;
+    /** Installed sealed-terms template; defaults to EXECUTOR_RECEIVE_TEMPLATE_ID. */
+    templateId?: string;
+}
+
 /** The override matrix. An override replaces a dependency inside an implemented corridor; it never
  * enables a route, selects a solver or transport, or alters settlement. */
 export interface CorridorOverrides {
@@ -71,9 +78,10 @@ export interface CorridorOverrides {
         /** Default: none. Nothing is sealed and no packet is sent, so the
          * trader must claim its own lockup before `refund_locktime`. Set, `P` is
          * sealed to the Executor's encryption key so it can claim while the trader is offline. */
-        executor?: { encryptionPubkey: Pubkey } | null;
+        executor?: ExecutorReceive | null;
     };
     onchain?: {
+        executor?: ExecutorReceive | null;
         /** Default: Esplora at `ESPLORA_URL[network]`. `{ provider }` reads L1 through the caller's
          * own `OnchainProvider` instead, e.g. Electrum: `IWallet` carries none to borrow. */
         chain?: { esploraUrl: string } | { provider: OnchainProvider } | null;
@@ -137,12 +145,13 @@ export interface LightningCorridorDeps {
     readonly decode: (bolt11: string) => InvoiceFacts;
     /** `undefined` means no Executor is configured: nothing is sealed and no
      * packet is sent. Not a missing dep. */
-    readonly executor: { encryptionPubkey: Pubkey } | undefined;
+    readonly executor: ExecutorReceive | undefined;
 }
 
 /** The onchain corridor's deps. */
 export interface OnchainCorridorDeps {
     readonly networkName: NetworkName;
+    readonly executor?: ExecutorReceive;
     readonly chain: ChainSource;
     /** The caller's L1 claim callback, verbatim. The default claim is built in the drive from
      * {@link claimFeeRateSatVb}; with neither, the L1 half reports blocked while the Arkade lockup is
@@ -296,6 +305,11 @@ export function resolveCorridorDeps(
                 ...(refund === undefined ? {} : { refund }),
                 ...(claimFeeRateSatVb === undefined ? {} : { claimFeeRateSatVb }),
                 claimVsize,
+                executor: refusedIfNull(
+                    overrides?.onchain?.executor,
+                    "onchain",
+                    "executor encryption key",
+                ),
             };
         }
     }

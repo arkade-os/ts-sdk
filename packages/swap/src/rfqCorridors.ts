@@ -267,6 +267,7 @@ export interface OnchainReceiveProfile extends Record<string, unknown> {
     /** The quote's `to_amount`, captured at REQUEST time. */
     expectedAmount: number;
     payoutAddress: string;
+    executorClaims?: true;
     claimTxid?: string;
     /** The SOLVER's L1 key; `refundKey` is the TRADER's own. */
     claimKey: string;
@@ -319,6 +320,7 @@ export const OnchainReceiveCorridor: RfqCorridorHandler<OnchainReceiveProfile> =
         const receive = swap as OnchainReceiveSwap;
         return {
             expectedAmount: receive.expectedAmount,
+            ...(receive.executorClaims ? { executorClaims: true } : {}),
             ...(receive.claimTxid ? { claimTxid: receive.claimTxid } : {}),
             ...(receive.funding ? { funding: receive.funding } : {}),
         };
@@ -373,6 +375,7 @@ export const OnchainReceiveCorridor: RfqCorridorHandler<OnchainReceiveProfile> =
             expectedAmount: profile.expectedAmount,
             minConfirmations: profile.minConfirmations,
             refundPkScript: hex.decode(profile.refundPkScript),
+            ...(profile.executorClaims ? { executorClaims: true } : {}),
             ...(profile.claimTxid ? { claimTxid: profile.claimTxid } : {}),
             ...(profile.funding ? { funding: profile.funding } : {}),
         };

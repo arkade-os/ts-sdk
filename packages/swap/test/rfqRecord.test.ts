@@ -764,6 +764,11 @@ describe("an onchain-receive record carries BOTH halves", () => {
             funding?: { txid: string; vout: number };
         };
 
+    it("retains delegated onchain claim ownership after restore", () => {
+        expect(rebuiltFrom({ executorClaims: true })).toMatchObject({ executorClaims: true });
+        expect(rebuiltFrom()).not.toHaveProperty("executorClaims");
+    });
+
     it("rebuilds the L1 htlc and the script its refund pays to", () => {
         const rebuilt = rebuiltFrom();
         expect(rebuilt.htlc.address).toBe(L1_HTLC.address);

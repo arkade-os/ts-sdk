@@ -234,6 +234,7 @@ export type RfqSwap =
 export interface OnchainReceiveSwap extends RfqSwapCommon {
     kind: "onchain_receive";
     expectedAmount: number;
+    executorClaims?: true;
     /** Its `refundLocktime` is the trader's own, NOT {@link RfqSwapCommon}'s. */
     htlc: OnchainHtlc;
     minConfirmations: number;
@@ -1086,14 +1087,17 @@ export class RfqSwapManager {
     }
 
     /**
-     * Claim a `claimable` lightning receive now, even when the Executor is the one meant to.
+     * Claim a `claimable` receive now, even when the Executor is the one meant to.
      *
-     * @throws if the swap is not monitored, or is not a claimable lightning receive.
+     * @throws if the swap is not monitored, or is not a claimable receive.
      */
     async claim(rfqId: string): Promise<void> {
         const swap = this.monitored.get(rfqId);
         if (!swap) throw new Error(`swap ${rfqId} is not monitored`);
-        if (swap.kind !== "lightning_receive" || swap.state !== "claimable") {
+        if (
+            (swap.kind !== "lightning_receive" && swap.kind !== "onchain_receive") ||
+            swap.state !== "claimable"
+        ) {
             throw new Error(`swap ${rfqId} is not claimable`);
         }
         this.forcedClaims.add(rfqId);
@@ -1516,7 +1520,7 @@ export class RfqSwapManager {
 
         this.setState(swap, "claimable");
         if (!this.config.enableAutoActions) return;
-        if (swap.kind === "lightning_receive" && swap.executorClaims && !force) return;
+        if (swap.executorClaims && !force) return;
 
         try {
             const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {

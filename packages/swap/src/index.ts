@@ -33,7 +33,7 @@ export {
 } from "./client/client";
 export type { DiscoveryConfig, DiscoverySnapshot } from "./client/discovery";
 export { REGISTRY_URL } from "./client/discovery";
-export type { CorridorOverrides } from "./client/corridors/deps";
+export type { CorridorOverrides, ExecutorReceive } from "./client/corridors/deps";
 export type { DriveMode, RfqAuctionPolicy, SwapPolicy } from "./client/policy";
 export { DEFAULT_MAX_REFUND_WINDOW_SECONDS } from "./client/policy";
 export type { RfqTransportFactory } from "./client/transport";
@@ -223,6 +223,7 @@ export {
     claimPacketShape,
     type ClaimPacketShape,
     EXECUTOR_CLAIM_TEMPLATE_ID,
+    EXECUTOR_RECEIVE_TEMPLATE_ID,
 } from "./claimPacket";
 
 // `SwapClientConfig.operator`, for a second operator or a test.

@@ -1078,6 +1078,18 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(s.lockupClaims[0]!.partiallyClaimed).toBe(true);
     });
 
+    it("leaves a delegated onchain receive for the daemon until an explicit claim", async () => {
+        const { swap, s, m } = await drive({
+            swap: onchainReceiveSwap({ executorClaims: true }),
+            contracts: receiveFunded(LOCKUP_VALUE),
+            chain: fakeChain({ utxos: [FILL], mtp: 0 }),
+        });
+        expect(swap.state).toBe("claimable");
+        expect(s.lockupClaims).toHaveLength(0);
+        await m.claim(RFQ_ID);
+        expect(s.lockupClaims).toHaveLength(1);
+    });
+
     it("still claims the Arkade lockup while the L1 half is being driven", async () => {
         const s = spies();
         await drive({
