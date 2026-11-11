@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    InMemoryIntentRepository,
+    InMemoryBatchRegistrationRepository,
     ReadonlyWallet,
     Wallet,
-    type IntentRepository,
+    type BatchRegistrationRepository,
 } from "../../src";
 import {
     MessageBus,
@@ -1399,7 +1399,7 @@ describe("MessageBus default buildServices", () => {
         arkServer: { url: "https://ark.example.test" },
     } as never;
 
-    const buildServices = async (intentRepository?: IntentRepository) => {
+    const buildServices = async (intentRepository?: BatchRegistrationRepository) => {
         const bus = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
@@ -1418,7 +1418,7 @@ describe("MessageBus default buildServices", () => {
         // Without this the worker builds an intent-repo-less wallet: no
         // persisted intents, no reconciliation on restart, and intent-locked
         // VTXOs counted as available — silently unlike a main-thread wallet.
-        const intentRepository = new InMemoryIntentRepository();
+        const intentRepository = new InMemoryBatchRegistrationRepository();
         expect(await buildServices(intentRepository)).toMatchObject({ intentRepository });
     });
 

@@ -23,7 +23,7 @@ import {
     type OnchainProvider,
 } from "../src";
 import type { ArkadeInfo } from "../src/providers/ark";
-import { InMemoryIntentRepository } from "../src/repositories/inMemory/intentRepository";
+import { InMemoryBatchRegistrationRepository } from "../src/repositories/inMemory/intentRepository";
 import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
@@ -116,7 +116,7 @@ const vtxo = (script: string, value: number, assets?: { assetId: string; amount:
  * no handler at all.
  */
 async function seededWallet(opts?: {
-    intents?: InMemoryIntentRepository;
+    intents?: InMemoryBatchRegistrationRepository;
     signing?: boolean;
     indexerProvider?: IndexerProvider;
     minimal?: boolean;
@@ -407,9 +407,9 @@ describe("getSpendableVtxos", () => {
     });
 
     it("excludes intent-locked outpoints", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
-        await intents.saveIntent({
+        await intents.saveBatchRegistration({
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
@@ -497,8 +497,8 @@ describe("getBalance", () => {
         );
     };
 
-    const lockOutpoint = async (intents: InMemoryIntentRepository, txid: string) =>
-        intents.saveIntent({
+    const lockOutpoint = async (intents: InMemoryBatchRegistrationRepository, txid: string) =>
+        intents.saveBatchRegistration({
             proofTxId: `i-${txid.slice(0, 4)}`,
             createdAt: 1,
             updatedAt: 1,
@@ -623,7 +623,7 @@ describe("getBalance", () => {
     });
 
     it("counts a gated-and-locked VTXO once, as contractLocked", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet } = await seededWallet({ intents });
         const escrowTxid = ESCROW_SCRIPT.slice(-2).repeat(32);
         await lockOutpoint(intents, escrowTxid);
@@ -643,7 +643,7 @@ describe("getBalance", () => {
     });
 
     it("reports an ungated intent-locked VTXO as pendingSettlement", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
@@ -655,7 +655,7 @@ describe("getBalance", () => {
     });
 
     it("mirrors each bucket into its deprecated alias", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, defaultScript } = await seededWallet({ intents });
         await lockOutpoint(intents, defaultScript.slice(-2).repeat(32));
 
@@ -905,7 +905,7 @@ describe("logUngatedInputs", () => {
     const EXPIRED_SCRIPT = "51200000000000000000000000000000000000000000000000000000000000000004";
 
     it("reports all three exclusions, not just the contract gate", async () => {
-        const intents = new InMemoryIntentRepository();
+        const intents = new InMemoryBatchRegistrationRepository();
         const { wallet, contractRepository, defaultScript } = await seededWallet({ intents });
 
         // A contract on a deprecated signer whose cutoff has passed: the
@@ -919,7 +919,7 @@ describe("logUngatedInputs", () => {
         });
 
         const lockedTxid = "e3".repeat(32);
-        await intents.saveIntent({
+        await intents.saveBatchRegistration({
             proofTxId: "i",
             createdAt: 1,
             updatedAt: 1,
