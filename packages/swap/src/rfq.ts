@@ -1520,7 +1520,8 @@ export async function requestArkadeSwap(
         ...(terms.wantAsset !== undefined ? { wantAsset: terms.wantAsset } : {}),
         ...(terms.offerAsset !== undefined ? { offerAsset: terms.offerAsset } : {}),
         ...(params.emulatorPubkey !== undefined ? { emulatorPubkey: params.emulatorPubkey } : {}),
-        // Only a quote that names a covenant steers the generation; else keep the default.
+        // Steers even a request that advertised nothing, so old solvers keep working;
+        // verifyOfferAddress below is what makes an unasked-for choice safe.
         ...(quote.covenant_version !== undefined
             ? { generation: offerGenerationFor(quote.covenant_version) }
             : {}),

@@ -31,7 +31,8 @@ export const legacySwapPrograms: typeof swapPrograms = {
 export const ASSET_SWAP_V3 = "asset-swap-v3";
 export const ASSET_SWAP_V2 = "asset-swap-v2";
 
-/** The covenants this build can derive, most preferred first. */
+/** The covenants this build can derive, most preferred first: what `requestArkadeSwap`'s
+ * `covenantVersions` should carry. Keep in step with `offerGenerationFor`. */
 export const ASSET_SWAP_COVENANT_VERSIONS = [ASSET_SWAP_V3, ASSET_SWAP_V2] as const;
 
 // Unknown or absent maps to `previous`: the covenant every pre-negotiation solver serves.
