@@ -26,7 +26,11 @@ export interface ArkadeCashStatusReport {
     amount: number;
     /** Funding transactions, each with the voucher's own share of it. */
     issues: ArkadeCashTx[];
-    /** Spending transactions, each with the voucher's own share of it. */
+    /**
+     * Spending transactions, each with the voucher's own share of it (the coin's value, before
+     * any intent fee). A claim is the offchain tx that spent the coin or, for a coin settled in a
+     * batch, the commitment of that settlement.
+     */
     claims: ArkadeCashTx[];
 }
 
@@ -89,9 +93,11 @@ export function classifyArkadeCash(
         amount: eligible.reduce((sum, coin) => sum + (isVtxoSpent(coin) ? 0 : coin.value), 0),
         issues: groupByTxid(eligible),
         claims: groupByTxid(
-            eligible.flatMap((coin) =>
-                coin.arkTxId ? [{ txid: coin.arkTxId, value: coin.value }] : [],
-            ),
+            // `||`: the indexer reports an unset id as an empty string, not as absent.
+            eligible.flatMap((coin) => {
+                const txid = coin.arkTxId || coin.settledBy;
+                return txid ? [{ txid, value: coin.value }] : [];
+            }),
         ),
     };
 }

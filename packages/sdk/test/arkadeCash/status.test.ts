@@ -90,4 +90,11 @@ describe("classifyArkadeCash", () => {
             { txid: "t".repeat(64), amount: 4_000 },
         ]);
     });
+
+    it("reports the commitment of a settlement as the claim of a coin it spent", () => {
+        const settled = { ...live(), isSpent: true, settledBy: "c".repeat(64), arkTxId: "" };
+        const result = classifyArkadeCash([settled], 1_000n, { timestamp: new Date() });
+        expect(result.status).toBe("claimed");
+        expect(result.claims).toEqual([{ txid: "c".repeat(64), amount: 5_000 }]);
+    });
 });

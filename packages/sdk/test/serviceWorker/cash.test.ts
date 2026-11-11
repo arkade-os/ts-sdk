@@ -225,6 +225,62 @@ describe("Worker ArkadeCash", () => {
         expect(issued.intent).toMatchObject({ outcome: "recovered" });
     });
 
+    it("keeps the recovering wallet's net settlement share over the report's gross one", async () => {
+        const wallet = await fakeWallet(cash());
+        await wallet.walletRepository.saveWalletState({
+            settings: {
+                arkadeCashRecovery: [
+                    {
+                        id: "v1",
+                        action: "claimed",
+                        createdAt: 5,
+                        outcome: "recovered",
+                        issues: [],
+                        claims: [{ txid: "settle", amount: 3_900 }],
+                    },
+                ],
+            },
+        });
+        const handler = new WalletMessageHandler();
+        await handler.start({ arkProvider: wallet.arkProvider, wallet, readonlyWallet: wallet }, {
+            walletRepository: wallet.walletRepository,
+        } as never);
+        vi.spyOn(handler as never, "buildTransactionHistoryFromCache").mockResolvedValue([
+            {
+                key: { arkTxid: "", commitmentTxid: "settle", boardingTxid: "" },
+                type: TxType.TxReceived,
+                amount: 3_900,
+                createdAt: 10,
+                settled: true,
+            },
+        ] as never);
+
+        const response = (await handler.handleMessage({
+            id: "1",
+            tag: handler.messageTag,
+            type: "ARKADE_CASH",
+            payload: {
+                action: "activities",
+                // `get` reports the settlement's commitment with the coin's gross value.
+                records: [
+                    {
+                        id: "v1",
+                        action: "claimed",
+                        createdAt: 1,
+                        outcome: "claimed",
+                        issues: [],
+                        claims: [{ txid: "settle", amount: 4_000 }],
+                    },
+                ],
+            },
+        } as never)) as import("../../src/wallet/serviceWorker/wallet-message-handler").ResponseArkadeCash;
+
+        if (response.payload?.action !== "activities") throw new Error("expected activities");
+        expect(response.payload.activities).toHaveLength(1);
+        expect(response.payload.activities[0]).toMatchObject({ amount: 3_900 });
+        expect(response.payload.activities[0].intent).toMatchObject({ label: "Cash claimed" });
+    });
+
     it("exposes the created token", async () => {
         const wallet = await fakeWallet(cash());
         vi.spyOn(wallet, "createCash").mockResolvedValue("tarkadecash1example");
