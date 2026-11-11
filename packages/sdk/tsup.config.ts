@@ -9,6 +9,7 @@ export default defineConfig({
         "src/worker/expo/index.ts",
         "src/wallet/expo/index.ts",
         "src/wallet/expo/background.ts",
+        "src/compiler.ts",
         // Side-effects entry: keep this file at a predictable dist path
         // so the `sideEffects` array in package.json keeps pointing at it.
         "src/contracts/handlers/index.ts",
@@ -21,6 +22,7 @@ export default defineConfig({
     splitting: true,
     treeshake: true,
     external: [
+        "@arkade-os/compiler",
         "expo",
         "expo-sqlite",
         "expo-task-manager",
