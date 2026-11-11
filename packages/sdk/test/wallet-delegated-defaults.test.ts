@@ -2,17 +2,17 @@ import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
-    DelegateeContractHandler,
+    DelegatedContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     RestArkProvider,
     SingleKey,
     Wallet,
     networks,
-    type DelegateeProvider,
+    type ExecutorProvider,
 } from "../src";
 import { ArkAddress } from "../src/script/address";
-import vectors from "./fixtures/delegatee/vectors.json";
+import vectors from "./fixtures/executor/vectors.json";
 import { jsonResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
@@ -35,11 +35,11 @@ const arkInfo = {
 const identity = SingleKey.fromHex(
     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
 );
-// a delegatee is configured; the wallet never calls it for its addresses
-const delegateeProvider = {} as DelegateeProvider;
+// an executor is configured; the wallet never calls it for its addresses
+const executorProvider = {} as ExecutorProvider;
 
-async function delegateeRow(template: "renewal" | "boarding") {
-    const params = DelegateeContractHandler.serializeParams({
+async function delegatedRow(template: "renewal" | "boarding") {
+    const params = DelegatedContractHandler.serializeParams({
         template,
         owner: await identity.compressedPublicKey(),
         exitDelay: 144,
@@ -50,11 +50,11 @@ async function delegateeRow(template: "renewal" | "boarding") {
         serverPubKey: hex.decode(SERVER_KEY_HEX),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
-    const script = DelegateeContractHandler.createScript(params);
+    const script = DelegatedContractHandler.createScript(params);
     return {
         script,
         contract: {
-            type: "delegatee",
+            type: "delegated",
             params,
             script: hex.encode(script.pkScript),
             address: script.address("tark", hex.decode(SERVER_KEY_HEX).subarray(1)).encode(),
@@ -65,10 +65,10 @@ async function delegateeRow(template: "renewal" | "boarding") {
     };
 }
 
-async function walletWith(options: { delegatee: boolean; rows: boolean }) {
+async function walletWith(options: { executor: boolean; rows: boolean }) {
     const contractRepository = new InMemoryContractRepository();
-    const renewal = await delegateeRow("renewal");
-    const boarding = await delegateeRow("boarding");
+    const renewal = await delegatedRow("renewal");
+    const boarding = await delegatedRow("boarding");
     if (options.rows) {
         await contractRepository.saveContract(renewal.contract);
         await contractRepository.saveContract(boarding.contract);
@@ -78,7 +78,7 @@ async function walletWith(options: { delegatee: boolean; rows: boolean }) {
         arkProvider: new RestArkProvider("http://localhost:7070"),
         storage: { walletRepository: new InMemoryWalletRepository(), contractRepository },
         settlementConfig: false,
-        ...(options.delegatee ? { delegateeProvider } : {}),
+        ...(options.executor ? { executorProvider } : {}),
     });
     return { wallet, renewal, boarding };
 }
@@ -111,8 +111,8 @@ describe("delegated default addresses", () => {
         mockFetch.mockImplementation(async () => jsonResponse(arkInfo));
     });
 
-    it("receives, takes change and boards at the delegatee contracts when delegating", async () => {
-        const { wallet, renewal, boarding } = await walletWith({ delegatee: true, rows: true });
+    it("receives, takes change and boards at the delegated contracts when delegating", async () => {
+        const { wallet, renewal, boarding } = await walletWith({ executor: true, rows: true });
 
         expect(await wallet.getAddress()).toBe(renewal.contract.address);
         expect(await wallet.getBoardingAddress()).toBe(
@@ -121,12 +121,12 @@ describe("delegated default addresses", () => {
         const { change, tapscript } = await changeOf(wallet);
         expect(change.amount).toBe(8000n);
         expect(hex.encode(change.script)).toBe(renewal.contract.script);
-        // the change VTXO is recorded under the same script it is paid to
+        // the change output is recorded under the same script it is paid to
         expect(hex.encode(tapscript.pkScript)).toBe(renewal.contract.script);
     });
 
-    it("keeps the wallet's own addresses without a delegatee, the rows staying watched", async () => {
-        const { wallet, renewal } = await walletWith({ delegatee: false, rows: true });
+    it("keeps the wallet's own addresses without an executor, the rows staying watched", async () => {
+        const { wallet, renewal } = await walletWith({ executor: false, rows: true });
         const own = wallet.arkAddress.encode();
 
         expect(await wallet.getAddress()).toBe(own);
@@ -139,11 +139,11 @@ describe("delegated default addresses", () => {
         const [row] = await collectContracts(wallet.contractRepository, {
             script: renewal.contract.script,
         });
-        expect(row?.type).toBe("delegatee");
+        expect(row?.type).toBe("delegated");
     });
 
     it("keeps the wallet's own addresses until delegation registers its contracts", async () => {
-        const { wallet, renewal } = await walletWith({ delegatee: true, rows: false });
+        const { wallet, renewal } = await walletWith({ executor: true, rows: false });
         const own = await wallet.getAddress();
         expect(own).not.toBe(renewal.contract.address);
 
@@ -152,7 +152,7 @@ describe("delegated default addresses", () => {
     });
 
     it("falls back to the wallet's own addresses once the delegation lapses", async () => {
-        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const { wallet, renewal } = await walletWith({ executor: true, rows: true });
         const own = wallet.arkAddress.encode();
         await wallet.contractRepository.saveContract({
             ...renewal.contract,
@@ -166,7 +166,7 @@ describe("delegated default addresses", () => {
     });
 
     it("skips a newer row whose params no longer derive its script", async () => {
-        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+        const { wallet, renewal } = await walletWith({ executor: true, rows: true });
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         await wallet.contractRepository.saveContract({
             ...renewal.contract,
@@ -180,8 +180,8 @@ describe("delegated default addresses", () => {
         warn.mockRestore();
     });
 
-    it("skips a newer malformed delegatee row for the older valid one", async () => {
-        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+    it("skips a newer malformed delegated row for the older valid one", async () => {
+        const { wallet, renewal } = await walletWith({ executor: true, rows: true });
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         await wallet.contractRepository.saveContract({
             ...renewal.contract,
@@ -195,8 +195,8 @@ describe("delegated default addresses", () => {
         warn.mockRestore();
     });
 
-    it("reports the funds of its delegatee contracts to incoming-funds subscribers", async () => {
-        const { wallet, renewal } = await walletWith({ delegatee: true, rows: true });
+    it("reports the funds of its delegated contracts to incoming-funds subscribers", async () => {
+        const { wallet, renewal } = await walletWith({ executor: true, rows: true });
         let emit: (event: unknown) => void = () => {};
         vi.spyOn(wallet, "getContractManager").mockResolvedValue({
             onContractEvent: (handler: (event: unknown) => void) => {

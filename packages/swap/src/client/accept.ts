@@ -312,7 +312,7 @@ const profileOf = (
                 ...secrets,
                 expectedAmount: toSafeNumber(preparation.expectedAmount, "expectedAmount"),
                 payoutAddress: preparation.payoutAddress,
-                ...(preparation.delegateeClaims ? { delegateeClaims: true } : {}),
+                ...(preparation.executorClaims ? { executorClaims: true } : {}),
             };
         case "arkade->onchain":
             return {

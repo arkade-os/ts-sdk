@@ -182,7 +182,7 @@ describe("quote() on lightning -> arkade", () => {
     });
 
     describe("the claim packet", () => {
-        it("is omitted when no delegatee key is configured", async () => {
+        it("is omitted when no executor key is configured", async () => {
             const { client, transport } = await setup();
             await client.quote(receive());
 
@@ -190,7 +190,7 @@ describe("quote() on lightning -> arkade", () => {
             expect(Object.keys(profile)).not.toContain("claim_packet");
         });
 
-        const withDelegatee = { lightning: { delegatee: { encryptionPubkey: compressed(7) } } };
+        const withExecutor = { lightning: { executor: { encryptionPubkey: compressed(7) } } };
         const packetOf = (transport: SolverTransport): string =>
             (transport.sent[0] as { profile: Record<string, unknown> }).profile
                 .claim_packet as string;
@@ -200,7 +200,7 @@ describe("quote() on lightning -> arkade", () => {
                 ["give", 5_000n],
                 ["take", 4_950n],
             ] as const) {
-                const { client, transport } = await setup({ corridors: withDelegatee });
+                const { client, transport } = await setup({ corridors: withExecutor });
                 await client.quote({ via: "lightning", amount, amountOn });
 
                 const shape = claimPacketShape(packetOf(transport));
@@ -214,7 +214,7 @@ describe("quote() on lightning -> arkade", () => {
         it("refuses a key that is not 33-byte compressed hex", async () => {
             for (const key of ["11".repeat(32), "not hex"]) {
                 const { client } = await setup({
-                    corridors: { lightning: { delegatee: { encryptionPubkey: key as never } } },
+                    corridors: { lightning: { executor: { encryptionPubkey: key as never } } },
                 });
                 await expect(client.quote(receive())).rejects.toThrow();
             }

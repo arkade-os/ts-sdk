@@ -4,7 +4,7 @@ import { concatBytes } from "@scure/btc-signer/utils.js";
 import { getOpcodeValue } from "../../arkade/opcodes";
 import { ArkadeScript } from "../../arkade/script";
 import { computeArkadeScriptPublicKey } from "../../arkade/tweak";
-import type { DelegateeContractKeys } from "../../providers/delegatee";
+import type { DelegatedContractKeys } from "../../providers/executor";
 import { VtxoScript } from "../base";
 import artifactDocument from "./artifact.json";
 import boardingDocument from "./boarding.json";
@@ -12,9 +12,9 @@ import renewalDocument from "./renewal.json";
 
 /** The parameters of a delegation under the default templates. */
 export interface DelegationParams {
-    /** BIP 68 sequence of the owner's exit from a delegated VTXO, at least the operator's. */
+    /** BIP 68 sequence of the owner's exit from a delegated virtual output, at least the operator's. */
     exitDelay: number;
-    /** Seconds before expiry the service renews a VTXO. */
+    /** Seconds before expiry the executor renews a virtual output. */
     renewalWindow: number;
     /** Satoshis a renewal may cost. */
     maxFee: number;
@@ -22,18 +22,18 @@ export interface DelegationParams {
     boardingExitDelay?: number;
 }
 
-/** A default template: renewal holds delegated VTXOs, boarding holds on-chain deposits. */
-export type DelegateeDefault = "renewal" | "boarding";
+/** A default template: renewal holds delegated virtual outputs, boarding holds onchain deposits. */
+export type ExecutorDefault = "renewal" | "boarding";
 
 /** The default templates and the artifact they lock to, as the service's templates/ ships them. */
-const DELEGATEE_DEFAULTS = {
+const EXECUTOR_DEFAULTS = {
     "renewal.json": renewalDocument,
     "boarding.json": boardingDocument,
     "artifact.json": artifactDocument,
-} as Record<`${DelegateeDefault}.json` | "artifact.json", object>;
+} as Record<`${ExecutorDefault}.json` | "artifact.json", object>;
 
 /** The ids the service computes for the bundled documents; they change with the bundle. */
-export const DEFAULT_TEMPLATE_IDS: Readonly<Record<DelegateeDefault, string>> = {
+export const DEFAULT_TEMPLATE_IDS: Readonly<Record<ExecutorDefault, string>> = {
     renewal: "b19c1a79f8d27559420e10804ea566d55422277aac0ade21d939a6b9e217f51c",
     boarding: "d9fa62772dc1c349aa1fa526e6ae9ce0f38cd778e8a3d885513435eea6401b34",
 };
@@ -55,7 +55,7 @@ export type Value = number | Uint8Array;
 
 /** The variables of a default template for owner. */
 function variablesOf(
-    kind: DelegateeDefault,
+    kind: ExecutorDefault,
     owner: Uint8Array,
     params: DelegationParams,
 ): Record<string, Value> {
@@ -75,7 +75,7 @@ function variablesOf(
 
 /** The variables of a default template for owner, in canonical hex. */
 export function defaultVariables(
-    kind: DelegateeDefault,
+    kind: ExecutorDefault,
     owner: Uint8Array,
     params: DelegationParams,
 ): Record<string, string> {
@@ -90,32 +90,32 @@ export function defaultVariables(
 
 /**
  * The contract of a default template for owner, from the keys and params alone. Leaves are in
- * function order: forfeit (owner + operator), exit (owner after CSV), then the covenant leaf.
+ * function order: forfeit (owner + operator), exit (owner after CSV), then the emulator-enforced leaf.
  */
 export function defaultContract(
-    kind: DelegateeDefault,
-    keys: DelegateeContractKeys,
+    kind: ExecutorDefault,
+    keys: DelegatedContractKeys,
     owner: Uint8Array,
     params: DelegationParams,
 ): VtxoScript {
-    const doc = DELEGATEE_DEFAULTS[`${kind}.json`] as Template;
+    const doc = EXECUTOR_DEFAULTS[`${kind}.json`] as Template;
     return instantiate(doc, doc.inputs[0].contract, variablesOf(kind, owner, params), keys);
 }
 
 /**
  * Build a bundled contract: arguments bind `<variable>`s or `{"program": output}`, the witness
- * program of an output locked to another contract. A pubkey is x-only in a leaf and in a covenant
- * alike; `COSIGNER_KEY` in a covenant is the hex the intent message spells it in.
+ * program of an output locked to another contract. A pubkey is x-only in a leaf and in an Arkade
+ * script alike; `COSIGNER_KEY` in an Arkade script is the hex the proof message spells it in.
  */
 export function instantiate(
     doc: Template,
     construction: Construction,
     variables: Record<string, Value>,
-    keys: DelegateeContractKeys,
+    keys: DelegatedContractKeys,
 ): VtxoScript {
     const def = (
         "artifact" in construction.definition
-            ? DELEGATEE_DEFAULTS["artifact.json"]
+            ? EXECUTOR_DEFAULTS["artifact.json"]
             : construction.definition
     ) as Definition;
     const args = new Map<string, Value>();

@@ -69,32 +69,32 @@ describe("resolveCorridorDeps", () => {
         });
     });
 
-    describe("the delegatee encryption key", () => {
+    describe("the executor encryption key", () => {
         it("defaults to absent, which is the internal ephemeral seal", () => {
             expect(
-                resolveCorridorDeps("lightning", undefined, corridorBaseFor("regtest")).delegatee,
+                resolveCorridorDeps("lightning", undefined, corridorBaseFor("regtest")).executor,
             ).toBe(undefined);
         });
 
         it("takes a deployment key", () => {
-            const delegatee = { encryptionPubkey: `02${"11".repeat(32)}` };
+            const executor = { encryptionPubkey: `02${"11".repeat(32)}` };
             expect(
                 resolveCorridorDeps(
                     "lightning",
-                    { lightning: { delegatee } },
+                    { lightning: { executor } },
                     corridorBaseFor("regtest"),
-                ).delegatee,
-            ).toEqual(delegatee);
+                ).executor,
+            ).toEqual(executor);
         });
 
         it("refuses `null`", () => {
             expect(() =>
                 resolveCorridorDeps(
                     "lightning",
-                    { lightning: { delegatee: null } },
+                    { lightning: { executor: null } },
                     corridorBaseFor("regtest"),
                 ),
-            ).toThrow(/the lightning corridor has no delegatee encryption key/);
+            ).toThrow(/the lightning corridor has no executor encryption key/);
         });
     });
 

@@ -207,8 +207,8 @@ style and have not been backfilled.
 - **The pre-signed delegator API is deprecated.** `DelegateProvider`,
   `RestDelegateProvider`, `DelegateInfo`, `DelegateOptions`,
   `IDelegateManager` and the worker's `delegateUrl` keep working for
-  existing integrations; new ones should delegate through the covenant-based
-  `DelegateeProvider` and `delegateeUrl`.
+  existing integrations; new ones should delegate to the executor through
+  `ExecutorProvider` and `executorUrl`.
 
 - **`ArkadeTransactionBuilder.from` adds coins instead of replacing them.**
   `.from(a).from(b)` spends both; it used to spend only `b`.
@@ -681,30 +681,30 @@ style and have not been backfilled.
 
 ### Features
 
-- **Covenant-based delegation to a delegatee service.** `delegateeUrl` on
+- **Delegation to the executor.** `executorUrl` on
   `Wallet.create`, `ReadonlyWallet.create` and the worker's `INIT_WALLET`
-  (or a `DelegateeProvider`, `RestDelegateeProvider` over REST) gives the
-  wallet a `getDelegateeManager()`. The manager registers the wallet's key
+  (or an `ExecutorProvider`, `RestExecutorProvider` over REST) gives the
+  wallet a `getExecutorManager()`. The manager registers the wallet's key
   under the service's bundled `renewal` and `boarding` templates
-  (`registerRenewal`, `registerBoarding`) and `delegateVtxos` moves the
+  (`registerRenewal`, `registerBoarding`) and `delegateOutputs` moves the
   wallet's generically spendable coins, assets included, to the renewal
   address and retires its own receive contracts. Both contracts derive
   locally from the owner key, the `DelegationParams` and the service's keys
-  (`watchDelegateeContracts`), so a restored wallet finds its delegated coins
+  (`watchDelegatedContracts`), so a restored wallet finds its delegated coins
   without asking the service; the manager refuses a registration whose
   address the service derives differently, or whose operator key is not the
   wallet's. While an active, unexpired delegation is registered,
   `getAddress()` answers the renewal address and `getBoardingAddress()` the
-  delegatee's boarding address; `receiveTapscript` still names the wallet's
-  own script. The new `DelegateeContractHandler` (`type: "delegatee"`)
-  offers only the owner's forfeit and CSV exit leaves, never the covenant
-  leaf, and the VTXO manager's expiry renewal skips delegated coins the
-  service is responsible for. An operator signer rotation logs that delegatee
-  registrations stay under the old signer. Covered by a new regtest profile,
-  `sdk-delegatee`, running the delegatee daemon with seconds-typed arkd
-  timelocks. A `pubkey` constructor value reaches a covenant as its x-only
-  key, as the service derives it since delegatee 7f3adff; the bundled
-  templates' addresses are unchanged.
+  delegated boarding address; `receiveTapscript` still names the wallet's
+  own script. The new `DelegatedContractHandler` (`type: "delegated"`)
+  offers only the owner's forfeit and CSV exit leaves, never the
+  emulator-enforced leaf, and `VtxoManager`'s expiry renewal skips delegated
+  coins the service is responsible for. An operator signer rotation logs
+  that delegations stay under the old signer. Covered by a new regtest
+  profile, `sdk-delegatee`, running the executor daemon with seconds-typed
+  arkd timelocks. A `pubkey` constructor value reaches an Arkade script as
+  its x-only key, as the service derives it since executor 7f3adff; the
+  bundled templates' addresses are unchanged.
 
 - **`@arkade-os/swap`: `client.markets()` reports each market's limits per leg.**
   A UI had no way to show a market's min and max, or explain an out-of-range

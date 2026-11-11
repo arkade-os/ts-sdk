@@ -834,7 +834,7 @@ const lightningReceiveFlow = async (
 };
 
 describe("requestLightningReceive on an HD wallet", () => {
-    it("commits to the derived preimage, seals the packet to delegatee, and returns the hold invoice to pay", async () => {
+    it("commits to the derived preimage, seals the packet to the executor, and returns the hold invoice to pay", async () => {
         const flow = await lightningReceiveFlow();
         const result = await flow.run();
 
@@ -1268,7 +1268,7 @@ const decodeStub = (raw: string): InvoiceFacts => ({
     expiresAt: INVOICE_EXPIRES_AT,
 });
 
-describe("a receive with no delegatee key to seal to", () => {
+describe("a receive with no executor key to seal to", () => {
     it("sends no claim_packet on the lightning leg", async () => {
         const wallet = await hdWallet();
         const profile = await capturedProfile((transport) =>

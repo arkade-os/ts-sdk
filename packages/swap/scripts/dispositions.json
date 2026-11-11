@@ -64,7 +64,7 @@
         "railAvailable",
         "receiverExact",
         "RfqSwapState",
-        "DELEGATEE_CLAIM_TEMPLATE_ID",
+        "EXECUTOR_CLAIM_TEMPLATE_ID",
         "SWAP_ROUTER_PRIORITY",
         "SwapContractRegistry",
         "swapHandle",

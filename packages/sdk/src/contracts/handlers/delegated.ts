@@ -1,17 +1,17 @@
 import { hex } from "@scure/base";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { DefaultVtxo } from "../../script/default";
-import { defaultContract, type DelegateeDefault } from "../../script/delegatee/delegateeTemplate";
+import { defaultContract, type ExecutorDefault } from "../../script/executor/executorTemplate";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
 import { isCsvSpendable } from "./helpers";
 
 /**
- * Typed parameters for delegatee contracts: a default template's variables and the service's
+ * Typed parameters for delegated contracts: a default template's variables and the executor's
  * keys. Keys are compressed, delays are BIP 68 sequences.
  */
-export interface DelegateeContractParams {
-    template: DelegateeDefault;
+export interface DelegatedContractParams {
+    template: ExecutorDefault;
     owner: Uint8Array;
     exitDelay: number;
     renewalWindow: number;
@@ -39,7 +39,7 @@ function integer(value: string | undefined, name: string): number {
     return n;
 }
 
-/** The covenant leaf is the service's and the operator's to sign; it is never offered. */
+/** The emulator-enforced leaf is the executor's to use; it is never offered. */
 function paths(
     script: DefaultVtxo.Script,
     context: PathContext,
@@ -54,23 +54,23 @@ function paths(
 }
 
 /**
- * Handler for the coins a wallet delegated to a delegatee service under its default templates:
- * VTXOs at the renewal contract, which the service renews in place, and on-chain deposits at the
- * boarding contract, which it boards to the renewal contract. The scripts derive from the bundled
- * templates, the owner key, the params and the service's keys, so a restored wallet needs no
- * round-trip to the service.
+ * Handler for the coins a wallet delegated to the executor under its default templates:
+ * virtual outputs at the renewal contract, which the executor renews in place, and onchain
+ * deposits at the boarding contract, which it boards to the renewal contract. The scripts derive
+ * from the bundled templates, the owner key, the params and the executor's keys, so a restored
+ * wallet needs no round-trip to the executor.
  *
  * - forfeit: (Owner + Operator) multisig, the wallet's collaborative path
  * - exit: (Owner) + CSV, the wallet's unilateral path
- * - renew/board: (Operator + Emulator) covenant, the service's; never offered
+ * - renew/board: (Operator + Emulator), emulator-enforced, the executor's; never offered
  */
-export const DelegateeContractHandler: ContractHandler<
-    DelegateeContractParams,
+export const DelegatedContractHandler: ContractHandler<
+    DelegatedContractParams,
     DefaultVtxo.Script
 > = {
-    type: "delegatee",
+    type: "delegated",
 
-    /** The default script of the owner with the covenant leaf after forfeit and exit. */
+    /** The default script of the owner with the emulator-enforced leaf after forfeit and exit. */
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const p = this.deserializeParams(params);
         const derived = defaultContract(
@@ -92,12 +92,14 @@ export const DelegateeContractHandler: ContractHandler<
             derived.scripts.slice(2),
         );
         if (!equalBytes(script.pkScript, derived.pkScript)) {
-            throw new Error(`delegatee ${p.template} contract is not forfeit, exit and covenant`);
+            throw new Error(
+                `delegated ${p.template} contract is not forfeit, exit and an emulator-enforced leaf`,
+            );
         }
         return script;
     },
 
-    serializeParams(params: DelegateeContractParams): Record<string, string> {
+    serializeParams(params: DelegatedContractParams): Record<string, string> {
         return {
             template: params.template,
             owner: hex.encode(params.owner),
@@ -113,12 +115,12 @@ export const DelegateeContractHandler: ContractHandler<
         };
     },
 
-    deserializeParams(params: Record<string, string>): DelegateeContractParams {
+    deserializeParams(params: Record<string, string>): DelegatedContractParams {
         if (!TEMPLATES.includes(params.template)) {
-            throw new Error(`unknown delegatee template ${params.template}`);
+            throw new Error(`unknown executor template ${params.template}`);
         }
         return {
-            template: params.template as DelegateeDefault,
+            template: params.template as ExecutorDefault,
             owner: compressed(params.owner, "owner"),
             exitDelay: integer(params.exitDelay, "exitDelay"),
             renewalWindow: integer(params.renewalWindow, "renewalWindow"),

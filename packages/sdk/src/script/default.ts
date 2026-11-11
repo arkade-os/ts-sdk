@@ -47,8 +47,8 @@ export namespace DefaultVtxo {
 
         /**
          * Create the default virtual output script with one forfeit path and one exit path.
-         * @param extraLeaves leaves after forfeit and exit, e.g. a delegatee's renewal covenant
-         * leaf, which keeps the wallet's paths and adds one it never signs.
+         * @param extraLeaves leaves after forfeit and exit, e.g. the executor's emulator-enforced
+         * renewal leaf, which keeps the wallet's paths and adds one it never signs.
          */
         constructor(
             readonly options: Options,

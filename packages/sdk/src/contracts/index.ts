@@ -13,8 +13,8 @@ export { VHTLCV2ContractHandler } from "./handlers";
 export type { VHTLCV2ContractParams } from "./handlers";
 export { BoardingContractHandler } from "./handlers";
 export type { BoardingContractParams } from "./handlers";
-export { DelegateeContractHandler } from "./handlers";
-export type { DelegateeContractParams } from "./handlers";
+export { DelegatedContractHandler } from "./handlers";
+export type { DelegatedContractParams } from "./handlers";
 
 // Generic-spending gate
 export {

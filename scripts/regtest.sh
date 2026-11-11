@@ -5,7 +5,7 @@
 # .env.regtest override (packages/<pkg>/.env.regtest). This script wires the
 # right override file into the regtest Node CLI via --env.
 #
-# `sdk-delegatee` is a second profile of the sdk package: the delegatee daemon
+# `sdk-delegatee` is a second profile of the sdk package: the executor daemon
 # renews coins by wall-clock time, so its stack runs seconds-typed timelocks.
 #
 # `swap-rfq` is a second PROFILE of the swap package, not a fourth package: same

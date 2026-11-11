@@ -151,8 +151,8 @@ export type CorridorRfqPreparation =
           readonly contractParams: LightningReceiveContractParams;
           readonly secrets: ProvisionedClaimSecret;
           readonly payoutAddress: string;
-          /** `P` was sealed to delegatee. */
-          readonly delegateeClaims?: true;
+          /** `P` was sealed to the executor. */
+          readonly executorClaims?: true;
           /** What the solver's lockup must carry — the claim refuses less. */
           readonly expectedAmount: bigint;
           /** Last moment the hold invoice can be paid, unix seconds. */
@@ -261,19 +261,19 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
 };
 
 /**
- * Who the claim packet is sealed to, or `undefined` where no delegatee is configured (then no
+ * Who the claim packet is sealed to, or `undefined` where no executor is configured (then no
  * packet is sent and claiming before `refund_locktime` is the trader's job).
  *
  * Never seal to a throwaway key: an undecryptable packet looks like a working one on the wire,
- * and delegatee would silently claim nothing.
+ * and the executor would silently claim nothing.
  */
 const sealingKey = (deps: LightningCorridorDeps): Uint8Array | undefined => {
-    const configured = deps.delegatee?.encryptionPubkey;
+    const configured = deps.executor?.encryptionPubkey;
     if (configured === undefined) return undefined;
     const key = hex.decode(configured);
     if (key.length !== 33) {
         throw new Error(
-            `the delegatee encryption key must be 33-byte compressed hex, got ${key.length} bytes`,
+            `the executor encryption key must be 33-byte compressed hex, got ${key.length} bytes`,
         );
     }
     return key;
@@ -760,7 +760,7 @@ const quoteLightningReceive = async (
             contractParams: derived.contractParams,
             secrets,
             payoutAddress,
-            ...(claimPacket ? { delegateeClaims: true as const } : {}),
+            ...(claimPacket ? { executorClaims: true as const } : {}),
             expectedAmount: parsed.take,
             payDeadline,
         },
@@ -930,7 +930,7 @@ const quoteOnchainSend = async (
  * boarding address, so refunded coins can board again (NArk's
  * `GetOrDeriveBtcRefundDestinationAsync` makes the same choice). No claim packet is sealed: an
  * unclaimed lockup only means the solver reclaims it and the trader refunds L1, so nothing is lost
- * without delegatee.
+ * without the executor.
  */
 const quoteOnchainReceive = async (
     input: RfqQuoteInput,

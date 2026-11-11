@@ -12,7 +12,7 @@ import {
     type ContractSyncState,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
-import { DelegateeManagerImpl } from "../../src/wallet/delegatee";
+import { ExecutorManagerImpl } from "../../src/wallet/executor";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { hex } from "@scure/base";
 import {
@@ -836,7 +836,7 @@ const createSWWallet = (
     serviceWorker: ServiceWorker,
     messageTag: string = DEFAULT_MESSAGE_TAG,
     hasDelegate: boolean = false,
-    delegateeUrl?: string,
+    executorUrl?: string,
 ) =>
     new (ServiceWorkerWallet as any)(
         serviceWorker,
@@ -845,7 +845,7 @@ const createSWWallet = (
         new InMemoryContractRepository(),
         messageTag,
         hasDelegate,
-        delegateeUrl,
+        executorUrl,
     ) as ServiceWorkerWallet;
 
 describe("ServiceWorkerWallet", () => {
@@ -976,20 +976,20 @@ describe("ServiceWorkerWallet", () => {
         );
     });
 
-    it("getDelegateeManager runs on the page, only with a delegatee URL", async () => {
+    it("getExecutorManager runs on the page, only with an executor URL", async () => {
         const { serviceWorker } = createServiceWorkerHarness(() => null);
         await expect(
-            createSWWallet(serviceWorker as any, messageTag).getDelegateeManager(),
+            createSWWallet(serviceWorker as any, messageTag).getExecutorManager(),
         ).resolves.toBeUndefined();
         const manager = await createSWWallet(
             serviceWorker as any,
             messageTag,
             false,
-            "https://delegatee.test",
-        ).getDelegateeManager();
-        expect(manager).toBeInstanceOf(DelegateeManagerImpl);
-        expect((manager as DelegateeManagerImpl).delegateeProvider).toMatchObject({
-            url: "https://delegatee.test",
+            "https://executor.test",
+        ).getExecutorManager();
+        expect(manager).toBeInstanceOf(ExecutorManagerImpl);
+        expect((manager as ExecutorManagerImpl).executorProvider).toMatchObject({
+            url: "https://executor.test",
         });
     });
 

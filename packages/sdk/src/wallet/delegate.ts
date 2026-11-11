@@ -42,7 +42,7 @@ import { Extension } from "../extension";
 
 /**
  * @deprecated Legacy pre-signed delegator manager. Existing integrations remain supported;
- * new integrations should use {@link import("./delegatee").IDelegateeManager}.
+ * new integrations should use {@link import("./executor").IExecutorManager}.
  */
 export interface IDelegateManager {
     /**

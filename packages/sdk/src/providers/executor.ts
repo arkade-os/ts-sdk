@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { baseFetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
-export interface DelegateeInfo {
+export interface ExecutorInfo {
     version: string;
     network: string;
     cosignerPubkey: string;
@@ -10,19 +10,19 @@ export interface DelegateeInfo {
     emulatorPubkey: string;
 }
 
-/** The service's keys a wallet's delegatee contracts are derived from. */
-export type DelegateeContractKeys = Pick<
-    DelegateeInfo,
+/** The executor's keys a wallet's delegated contracts are derived from. */
+export type DelegatedContractKeys = Pick<
+    ExecutorInfo,
     "cosignerPubkey" | "serverPubkey" | "emulatorPubkey"
 >;
 
-export interface DelegateeTemplate {
+export interface ExecutorTemplate {
     id: string;
     status: string;
 }
 
 /** An instance of a template. */
-export interface DelegateeDelegation {
+export interface ExecutorDelegation {
     id: number;
     /** Slot 0's address for a watch, empty otherwise. */
     address: string;
@@ -32,7 +32,7 @@ export interface DelegateeDelegation {
     expiresAt?: number;
 }
 
-export interface DelegateeCoin {
+export interface DelegatedOutput {
     outpoint: string;
     amount: number;
     status: "present" | "spent";
@@ -41,51 +41,51 @@ export interface DelegateeCoin {
     spentBy?: string;
 }
 
-export interface DelegateeDelegationDetails {
-    delegation: DelegateeDelegation;
-    coins: DelegateeCoin[];
+export interface ExecutorDelegationDetails {
+    delegation: ExecutorDelegation;
+    coins: DelegatedOutput[];
 }
 
-export interface DelegateeProvider {
-    getInfo(): Promise<DelegateeInfo>;
-    listTemplates(): Promise<DelegateeTemplate[]>;
+export interface ExecutorProvider {
+    getInfo(): Promise<ExecutorInfo>;
+    listTemplates(): Promise<ExecutorTemplate[]>;
     registerDelegation(
         templateId: string,
         variables: Record<string, string>,
         options?: { expiresAt?: number },
-    ): Promise<DelegateeDelegation>;
-    getDelegation(address: string): Promise<DelegateeDelegationDetails>;
+    ): Promise<ExecutorDelegation>;
+    getDelegation(address: string): Promise<ExecutorDelegationDetails>;
 }
 
-/** REST provider for delegatee's registration/renewal service. */
-export class RestDelegateeProvider implements DelegateeProvider {
+/** REST provider for the executor, the service that renews and boards a wallet's coins. */
+export class RestExecutorProvider implements ExecutorProvider {
     constructor(public url: string) {}
 
     private endpoint(path: string): string {
         return `${this.url.replace(/\/+$/, "")}${path}`;
     }
 
-    async getInfo(): Promise<DelegateeInfo> {
+    async getInfo(): Promise<ExecutorInfo> {
         const url = this.endpoint("/v1/info");
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "get delegatee info");
+            throw await failure(response, "get executor info");
         }
 
-        return parseDelegateeInfo(await response.json());
+        return parseExecutorInfo(await response.json());
     }
 
-    async listTemplates(): Promise<DelegateeTemplate[]> {
+    async listTemplates(): Promise<ExecutorTemplate[]> {
         const url = this.endpoint("/v1/templates");
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "list delegatee templates");
+            throw await failure(response, "list executor templates");
         }
         const data: unknown = await response.json();
         // The protobuf JSON gateway omits empty repeated fields.
         const templates = isObject(data) ? (data.templates ?? []) : undefined;
         if (!Array.isArray(templates)) {
-            throw new Error("Invalid delegatee templates response");
+            throw new Error("Invalid executor templates response");
         }
         return templates.map(parseTemplate);
     }
@@ -94,7 +94,7 @@ export class RestDelegateeProvider implements DelegateeProvider {
         templateId: string,
         variables: Record<string, string>,
         options: { expiresAt?: number } = {},
-    ): Promise<DelegateeDelegation> {
+    ): Promise<ExecutorDelegation> {
         const body: Record<string, unknown> = { templateId, variables };
         if (options.expiresAt !== undefined) {
             body.expiresAt = options.expiresAt;
@@ -105,21 +105,21 @@ export class RestDelegateeProvider implements DelegateeProvider {
             body: JSON.stringify(body),
         });
         if (!response.ok) {
-            throw await failure(response, "register delegatee");
+            throw await failure(response, "register delegation");
         }
         const data: unknown = await response.json();
         return parseDelegation(isObject(data) ? data.delegation : undefined);
     }
 
-    async getDelegation(address: string): Promise<DelegateeDelegationDetails> {
+    async getDelegation(address: string): Promise<ExecutorDelegationDetails> {
         const url = this.endpoint(`/v1/delegation?address=${encodeURIComponent(address)}`);
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "get delegatee delegation");
+            throw await failure(response, "get delegation");
         }
         const data: unknown = await response.json();
         if (!isObject(data)) {
-            throw new Error("Invalid delegatee delegation response");
+            throw new Error("Invalid executor delegation response");
         }
         return {
             delegation: parseDelegation(data.delegation),
@@ -139,7 +139,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function requiredString(object: Record<string, unknown>, key: string): string {
     const value = object[key];
     if (typeof value !== "string" || value.length === 0) {
-        throw new Error(`Invalid delegatee info: missing ${key}`);
+        throw new Error(`Invalid executor info: missing ${key}`);
     }
     return value;
 }
@@ -152,23 +152,23 @@ function parseInt64(value: unknown, label: string): number {
     if (typeof value === "number" || (typeof value === "string" && value.length > 0)) {
         const parsed = Number(value);
         if (!Number.isSafeInteger(parsed)) {
-            throw new Error(`Invalid delegatee response: ${label} is not an integer`);
+            throw new Error(`Invalid executor response: ${label} is not an integer`);
         }
         return parsed;
     }
-    throw new Error(`Invalid delegatee response: missing ${label}`);
+    throw new Error(`Invalid executor response: missing ${label}`);
 }
 
 function parseAmount(value: unknown, label: string): number {
     const amount = parseInt64(value, label);
-    if (amount < 0) throw new Error(`Invalid delegatee response: ${label} is negative`);
+    if (amount < 0) throw new Error(`Invalid executor response: ${label} is negative`);
     return amount;
 }
 
 function parseVariables(value: unknown): Record<string, string> {
     if (value === undefined) return {};
     if (!isObject(value) || Object.values(value).some((v) => typeof v !== "string")) {
-        throw new Error("Invalid delegatee delegation: variables are not strings");
+        throw new Error("Invalid executor delegation: variables are not strings");
     }
     return value as Record<string, string>;
 }
@@ -181,25 +181,25 @@ function parseOptionalInt64(value: unknown, label: string): number | undefined {
 function optionalArray(value: unknown, label: string): unknown[] {
     if (value === undefined) return [];
     if (!Array.isArray(value)) {
-        throw new Error(`Invalid delegatee response: ${label} is not an array`);
+        throw new Error(`Invalid executor response: ${label} is not an array`);
     }
     return value;
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
     if (!allowed.includes(value as T)) {
-        throw new Error(`Invalid delegatee delegation: unknown ${label} ${String(value)}`);
+        throw new Error(`Invalid executor delegation: unknown ${label} ${String(value)}`);
     }
     return value as T;
 }
 
-function parseDelegation(value: unknown): DelegateeDelegation {
+function parseDelegation(value: unknown): ExecutorDelegation {
     if (!isObject(value)) {
-        throw new Error("Invalid delegatee delegation");
+        throw new Error("Invalid executor delegation");
     }
     const templateId = value.templateId;
     if (typeof templateId !== "string" || templateId.length === 0) {
-        throw new Error("Invalid delegatee delegation: missing templateId");
+        throw new Error("Invalid executor delegation: missing templateId");
     }
     return {
         id: parseInt64(value.id, "id"),
@@ -211,9 +211,9 @@ function parseDelegation(value: unknown): DelegateeDelegation {
     };
 }
 
-function parseCoin(value: unknown): DelegateeCoin {
+function parseCoin(value: unknown): DelegatedOutput {
     if (!isObject(value) || typeof value.outpoint !== "string") {
-        throw new Error("Invalid delegatee coin");
+        throw new Error("Invalid delegated output");
     }
     return {
         outpoint: value.outpoint,
@@ -225,16 +225,16 @@ function parseCoin(value: unknown): DelegateeCoin {
     };
 }
 
-function parseTemplate(value: unknown): DelegateeTemplate {
+function parseTemplate(value: unknown): ExecutorTemplate {
     if (!isObject(value) || typeof value.id !== "string" || value.id.length === 0) {
-        throw new Error("Invalid delegatee template: missing id");
+        throw new Error("Invalid executor template: missing id");
     }
     return { id: value.id, status: typeof value.status === "string" ? value.status : "" };
 }
 
-function parseDelegateeInfo(value: unknown): DelegateeInfo {
-    if (!isObject(value)) throw new Error("Invalid delegatee info");
-    const info: DelegateeInfo = {
+function parseExecutorInfo(value: unknown): ExecutorInfo {
+    if (!isObject(value)) throw new Error("Invalid executor info");
+    const info: ExecutorInfo = {
         version: requiredString(value, "version"),
         network: requiredString(value, "network"),
         cosignerPubkey: requiredString(value, "cosignerPubkey"),
@@ -252,9 +252,9 @@ function decodeCompressed(value: string, label: string): void {
     try {
         bytes = hex.decode(value);
     } catch {
-        throw new Error(`Invalid delegatee info: ${label} is not hex`);
+        throw new Error(`Invalid executor info: ${label} is not hex`);
     }
     if (bytes.length !== 33 || (bytes[0] !== 0x02 && bytes[0] !== 0x03)) {
-        throw new Error(`Invalid delegatee info: ${label} is not compressed`);
+        throw new Error(`Invalid executor info: ${label} is not compressed`);
     }
 }

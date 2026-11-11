@@ -4,7 +4,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestDelegateeProvider,
+    RestExecutorProvider,
     SingleKey,
     Wallet,
     timelockToSequence,
@@ -16,18 +16,18 @@ import { ArkAddress } from "../../src/script/address";
 import { hex } from "@scure/base";
 import { ESPLORA_API_URL, faucetOnchain, waitFor } from "./utils";
 
-// The delegatee of the sdk-delegatee stack (arkade-regtest `delegatee` profile), which seeds and
+// The executor of the sdk-delegatee stack (arkade-regtest `delegatee` profile), which seeds and
 // trusts its default templates at startup.
 const DELEGATEE_URL = process.env.DELEGATEE_URL ?? "http://localhost:7280";
 const ESPLORA_URL = process.env.ESPLORA_URL ?? ESPLORA_API_URL;
-// less than the stack's VTXO lifetime, so coins come due during the test
+// less than the stack's batch expiry, so coins come due during the test
 const RENEWAL_WINDOW = Number(process.env.DELEGATEE_RENEWAL_WINDOW ?? 256);
 
 const reachable = await fetch(`${DELEGATEE_URL}/v1/info`)
     .then((r) => r.ok)
     .catch(() => false);
-if (!reachable && process.env.CI) throw new Error(`no delegatee at ${DELEGATEE_URL}`);
-if (!reachable) console.warn(`delegatee e2e skipped: no delegatee at ${DELEGATEE_URL}`);
+if (!reachable && process.env.CI) throw new Error(`no executor at ${DELEGATEE_URL}`);
+if (!reachable) console.warn(`executor e2e skipped: no executor at ${DELEGATEE_URL}`);
 
 async function delegationParams(): Promise<DelegationParams> {
     const info = await (await fetch("http://localhost:7070/v1/info")).json();
@@ -46,7 +46,7 @@ async function delegationParams(): Promise<DelegationParams> {
     };
 }
 
-const createWallet = (delegatee: boolean, overrides: Partial<WalletConfig> = {}) =>
+const createWallet = (executor: boolean, overrides: Partial<WalletConfig> = {}) =>
     Wallet.create({
         identity: SingleKey.fromRandomBytes(),
         arkProvider: new RestArkProvider("http://localhost:7070"),
@@ -59,16 +59,16 @@ const createWallet = (delegatee: boolean, overrides: Partial<WalletConfig> = {})
             contractRepository: new InMemoryContractRepository(),
         },
         settlementConfig: false,
-        // the delegatee stack's arkd runs short regtest delays
+        // the executor stack's arkd runs short regtest delays
         minBatchExpirySeconds: 1n,
-        ...(delegatee ? { delegateeProvider: new RestDelegateeProvider(DELEGATEE_URL) } : {}),
+        ...(executor ? { executorProvider: new RestExecutorProvider(DELEGATEE_URL) } : {}),
         ...overrides,
     });
 
 const scriptOf = (address: string) => hex.encode(ArkAddress.decode(address).pkScript);
 
 // The steps share one delegating wallet and run in order: each starts from the previous one's coins.
-describe.skipIf(!reachable).sequential("Delegatee default templates", () => {
+describe.skipIf(!reachable).sequential("Executor default templates", () => {
     let params: DelegationParams;
     let alice: Wallet;
     let bob: Wallet;
@@ -84,11 +84,11 @@ describe.skipIf(!reachable).sequential("Delegatee default templates", () => {
         (await alice.getVtxos()).filter((v) => v.script === scriptOf(renewal));
 
     it("delegates to watch addresses that equal the daemon's", { timeout: 60_000 }, async () => {
-        const manager = (await alice.getDelegateeManager())!;
+        const manager = (await alice.getExecutorManager())!;
         await manager.defaultTemplates();
         const renewalWatch = await manager.registerRenewal(params);
         const boardingWatch = await manager.registerBoarding(params);
-        const daemon = new RestDelegateeProvider(DELEGATEE_URL);
+        const daemon = new RestExecutorProvider(DELEGATEE_URL);
         expect((await daemon.getDelegation(renewalWatch.address)).delegation.address).toBe(
             renewalWatch.address,
         );
@@ -148,8 +148,8 @@ describe.skipIf(!reachable).sequential("Delegatee default templates", () => {
 });
 
 // An old wallet holds coins at its own default contract and at the retired delegator's
-// contract; the updated wallet, on the same key and storage, moves them to the delegatee.
-describe.skipIf(!reachable).sequential("Delegatee migration of an old wallet", () => {
+// contract; the updated wallet, on the same key and storage, moves them to the executor.
+describe.skipIf(!reachable).sequential("Executor migration of an old wallet", () => {
     // the retired delegator only lends its key to the DelegateVtxo leaf
     const legacyDelegator: DelegateProvider = {
         getDelegateInfo: async () => ({
@@ -194,8 +194,8 @@ describe.skipIf(!reachable).sequential("Delegatee migration of an old wallet", (
         await plain.dispose();
 
         const updated = await createWallet(true, { identity, storage });
-        const manager = (await updated.getDelegateeManager())!;
-        const migration = await manager.delegateVtxos(params);
+        const manager = (await updated.getExecutorManager())!;
+        const migration = await manager.delegateOutputs(params);
         expect(migration.txid).toBeDefined();
         const atRenewal = async () =>
             (await updated.getVtxos())
@@ -215,7 +215,7 @@ describe.skipIf(!reachable).sequential("Delegatee migration of an old wallet", (
         // a payment to the retired address still counts, and the next run moves it
         await funder.send({ address: oldAddress, amount: 1_000 });
         await waitFor(async () => (await updated.getBalance()).available === 8_000);
-        expect((await manager.delegateVtxos(params)).txid).toBeDefined();
+        expect((await manager.delegateOutputs(params)).txid).toBeDefined();
         await waitFor(async () => (await atRenewal()).join() === "1000,7000");
     });
 });

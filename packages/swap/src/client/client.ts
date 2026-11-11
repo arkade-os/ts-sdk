@@ -135,7 +135,7 @@ export interface SwapClient {
     recover(swapId: AssetSwapId): Promise<RecoveryResult>;
 
     /**
-     * Claim a funded lightning receive now, instead of waiting for delegatee.
+     * Claim a funded lightning receive now, instead of waiting for the executor.
      *
      * @throws {SwapDriveRefusedError} under `drive: "readonly"`, for an unknown swap, and for a
      *   swap that is not a claimable lightning receive.

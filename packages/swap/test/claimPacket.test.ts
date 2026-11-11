@@ -1,5 +1,5 @@
 /**
- * ClaimPacket sealing to delegatee. The scheme matches delegatee's
+ * ClaimPacket sealing to the executor. The scheme matches the executor's
  * `pkg/template/ecies`; TLV framing is covered in `claimPacketCodec.test.ts`.
  */
 import { describe, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ import { gcm } from "@noble/ciphers/aes.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
-import { DELEGATEE_CLAIM_TEMPLATE_ID, sealClaimPacket } from "../src/claimPacket";
+import { EXECUTOR_CLAIM_TEMPLATE_ID, sealClaimPacket } from "../src/claimPacket";
 import {
     ciphertextOf,
     claimPacketHex,
@@ -60,7 +60,7 @@ describe("sealClaimPacket", () => {
         );
         const aad = new Uint8Array([
             ...ephPub,
-            ...new TextEncoder().encode(DELEGATEE_CLAIM_TEMPLATE_ID),
+            ...new TextEncoder().encode(EXECUTOR_CLAIM_TEMPLATE_ID),
         ]);
         expect(hex.encode(gcm(key, nonce, aad).decrypt(value.subarray(45)))).toBe(
             hex.encode(PREIMAGE),

@@ -273,14 +273,14 @@ import {
     RestDelegateProvider,
 } from "./providers/delegate";
 import {
-    DelegateeDelegation,
-    DelegateeInfo,
-    DelegateeDelegationDetails,
-    DelegateeProvider,
-    DelegateeTemplate,
-    DelegateeCoin,
-    RestDelegateeProvider,
-} from "./providers/delegatee";
+    ExecutorDelegation,
+    ExecutorInfo,
+    ExecutorDelegationDetails,
+    ExecutorProvider,
+    ExecutorTemplate,
+    DelegatedOutput,
+    RestExecutorProvider,
+} from "./providers/executor";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -488,13 +488,13 @@ import type {
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 import {
-    DelegateeContractKeys,
-    DelegateeManagerImpl,
-    DelegateeWallet,
-    DelegateeWatchRegistration,
-    IDelegateeManager,
-    watchDelegateeContracts,
-} from "./wallet/delegatee";
+    DelegatedContractKeys,
+    ExecutorManagerImpl,
+    DelegatedWallet,
+    ExecutorWatchRegistration,
+    IExecutorManager,
+    watchDelegatedContracts,
+} from "./wallet/executor";
 
 export * from "./arkfee";
 export {
@@ -555,8 +555,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
-import { DelegateeContractHandler } from "./contracts/handlers/delegatee";
-import type { DelegateeContractParams } from "./contracts/handlers/delegatee";
+import { DelegatedContractHandler } from "./contracts/handlers/delegated";
+import type { DelegatedContractParams } from "./contracts/handlers/delegated";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
@@ -688,10 +688,10 @@ export {
     StaticDescriptorProvider,
     KeyringDescriptorProvider,
     DelegateManagerImpl,
-    DelegateeManagerImpl,
-    watchDelegateeContracts,
+    ExecutorManagerImpl,
+    watchDelegatedContracts,
     RestDelegateProvider,
-    RestDelegateeProvider,
+    RestExecutorProvider,
     // Providers
     ESPLORA_URL,
     EsploraProvider,
@@ -903,7 +903,7 @@ export {
     VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
-    DelegateeContractHandler,
+    DelegatedContractHandler,
     isContractGenericallySpendable,
     gatedContracts,
     gateExclusion,
@@ -1146,7 +1146,7 @@ export type {
     VHTLCContractParams,
     VHTLCV2ContractParams,
     BoardingContractParams,
-    DelegateeContractParams,
+    DelegatedContractParams,
     ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
@@ -1170,16 +1170,16 @@ export type {
     DelegateProvider,
     DelegateInfo,
     DelegateOptions,
-    IDelegateeManager,
-    DelegateeProvider,
-    DelegateeInfo,
-    DelegateeDelegation,
-    DelegateeDelegationDetails,
-    DelegateeTemplate,
-    DelegateeCoin,
-    DelegateeContractKeys,
-    DelegateeWallet,
-    DelegateeWatchRegistration,
+    IExecutorManager,
+    ExecutorProvider,
+    ExecutorInfo,
+    ExecutorDelegation,
+    ExecutorDelegationDetails,
+    ExecutorTemplate,
+    DelegatedOutput,
+    DelegatedContractKeys,
+    DelegatedWallet,
+    ExecutorWatchRegistration,
     // Repositories
     ManagedConnection,
     WalletRepository,
@@ -1201,4 +1201,4 @@ export type {
     VtxoBranch,
 };
 
-export type { DelegateeDefault, DelegationParams } from "./script/delegatee/delegateeTemplate";
+export type { ExecutorDefault, DelegationParams } from "./script/executor/executorTemplate";
