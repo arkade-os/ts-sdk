@@ -1,5 +1,17 @@
 import { Transaction } from "./utils/transaction";
 export { assertNonNegativeMs, assertTimerMs } from "./utils/time";
+export {
+    createPrfPasskey,
+    evaluatePrf,
+    mnemonicFromPrf,
+    prfSupport,
+    DEFAULT_PASSKEY_LABEL,
+    PrfUnavailable,
+    PasskeyCancelled,
+    PasskeyUnconfirmed,
+} from "./identity/passkey";
+export type { WebAuthnClient } from "./identity/passkey";
+export type { PasskeySource, PasskeyMnemonic } from "./identity/seedIdentity";
 export { TreeSignerSession } from "./tree/signingSession";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
 import {
@@ -85,6 +97,7 @@ import {
     IReadonlyWallet,
     ArkadeReader,
     ArkadeBroadcaster,
+    GetOperatorInfoOptions,
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
@@ -125,6 +138,7 @@ import {
     Recipient,
     SendParams,
     InputExpiryFloor,
+    SendOnchainParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -172,6 +186,7 @@ import {
     type VtxoReservation,
     type WaitForIncomingFundsOptions,
     IncomingFunds,
+    NotifiesIncomingFunds,
     selectVirtualCoins,
     BoardingUtxoGroup,
     type ArkadeCashClaimResult,
@@ -243,10 +258,14 @@ import {
     RestOperatorProvider,
     RestArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     OperatorProvider,
     ArkProvider,
     SettlementEvent,
     SettlementEventType,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
@@ -330,6 +349,7 @@ import { ArkNote } from "./arknote";
 import { ArkadeCash } from "./arkadeCash";
 import {
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     Network,
@@ -347,6 +367,9 @@ import {
     IndexerTxType,
     ChainTxType,
     GetVtxosOptions,
+    GetUtxosOptions,
+    IndexerUtxo,
+    IndexerUtxosUnsupportedError,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -449,16 +472,32 @@ import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletReposi
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
-import { InMemoryIntentRepository } from "./repositories/inMemory/intentRepository";
+import {
+    InMemoryBatchRegistrationRepository,
+    InMemoryIntentRepository,
+} from "./repositories/inMemory/intentRepository";
 import { InMemoryVirtualTxRepository } from "./repositories/inMemory/virtualTxRepository";
-import { IndexedDBIntentRepository } from "./repositories/indexedDB/intentRepository";
+import {
+    IndexedDBBatchRegistrationRepository,
+    IndexedDBIntentRepository,
+} from "./repositories/indexedDB/intentRepository";
 import { IndexedDBVirtualTxRepository } from "./repositories/indexedDB/virtualTxRepository";
-import { isTerminalIntentState, INTENT_TERMINAL_STATES } from "./repositories/intentRepository";
+import {
+    isTerminalBatchRegistrationState,
+    isTerminalIntentState,
+    BATCH_REGISTRATION_TERMINAL_STATES,
+    INTENT_TERMINAL_STATES,
+} from "./repositories/intentRepository";
 import type {
+    BatchRegistrationRepository,
+    BatchRegistrationState,
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
 } from "./repositories/intentRepository";
 import type {
@@ -495,7 +534,7 @@ export {
     collectTransactionHistory,
 } from "./repositories/walletRepository";
 export { collectContracts } from "./repositories/contractRepository";
-export { collectIntents } from "./repositories/intentRepository";
+export { collectBatchRegistrations, collectIntents } from "./repositories/intentRepository";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
@@ -549,6 +588,7 @@ import {
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
 import { hasCandidates, isContractVtxoEvent, isDiscoverable } from "./contracts/types";
+import { OnchainCosignPreflightError, isCosignFallback } from "./contracts/onchainSpend";
 import {
     isContractGenericallySpendable,
     gatedContracts,
@@ -563,6 +603,7 @@ import type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,
@@ -682,10 +723,14 @@ export {
     CachingOperatorProvider,
     CachingArkProvider,
     DigestMismatchError,
+    OnchainCosignUnsupportedError,
+    OnchainCosignRejectedError,
+    OnchainCosignAmbiguousError,
     FetchError,
     READ_TIMEOUT_MS,
     RestIndexerProvider,
     RestEmulatorProvider,
+    IndexerUtxosUnsupportedError,
     DEFAULT_VTXO_PAGE_SIZE,
     // Script-related
     ArkAddress,
@@ -781,6 +826,7 @@ export {
     ArkadeCashOperatorMismatchError,
     // Network
     getNetwork,
+    networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
     defaultEmulatorPubkey,
@@ -805,11 +851,15 @@ export {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    InMemoryBatchRegistrationRepository,
     InMemoryIntentRepository,
     InMemoryVirtualTxRepository,
+    IndexedDBBatchRegistrationRepository,
     IndexedDBIntentRepository,
     IndexedDBVirtualTxRepository,
+    isTerminalBatchRegistrationState,
     isTerminalIntentState,
+    BATCH_REGISTRATION_TERMINAL_STATES,
     INTENT_TERMINAL_STATES,
     ChainedTxType,
     // Proof
@@ -840,6 +890,8 @@ export {
     ArkErrorName,
     isArkError,
     maybeArkError,
+    OnchainCosignPreflightError,
+    isCosignFallback,
     ProviderUnavailableError,
     ServerResponseMismatchError,
     SendDeadlineExceededError,
@@ -916,6 +968,7 @@ export type {
     IReadonlyWallet,
     ArkadeReader,
     ArkadeBroadcaster,
+    GetOperatorInfoOptions,
     GetArkadeInfoOptions,
     NormalizedVtxoPage,
     BaseWalletConfig,
@@ -955,6 +1008,7 @@ export type {
     VerifyServerSignatures,
     TapLeaves,
     IncomingFunds,
+    NotifiesIncomingFunds,
     // Identity options
     SeedIdentityOptions,
     MnemonicOptions,
@@ -972,6 +1026,8 @@ export type {
     // Indexer types
     IndexerProvider,
     GetVtxosOptions,
+    GetUtxosOptions,
+    IndexerUtxo,
     PageResponse,
     BatchInfo,
     ChainTx,
@@ -990,6 +1046,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     FeeInfo,
+    OperatorInfo,
     ArkadeInfo,
     SignedIntent,
     Output,
@@ -1062,6 +1119,7 @@ export type {
     Recipient,
     SendParams,
     InputExpiryFloor,
+    SendOnchainParams,
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
@@ -1100,6 +1158,7 @@ export type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractScope,
     ContractEvent,
     ContractEventCallback,
     ContractVtxoEvent,
@@ -1157,10 +1216,15 @@ export type {
     StoredVtxo,
     ContractRepository,
     ContractFilter,
+    BatchRegistrationRepository,
+    BatchRegistrationState,
     IntentRepository,
+    BatchRegistration,
     ArkIntent,
     ArkIntentState,
+    BatchRegistrationFilter,
     IntentFilter,
+    BatchRegistrationPageFilter,
     IntentPageFilter,
     VirtualTxRepository,
     VirtualTx,

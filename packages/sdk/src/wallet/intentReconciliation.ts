@@ -76,7 +76,7 @@ export async function classifyIntent(
 ): Promise<ArkIntent | undefined> {
     if (isTerminalIntentState(intent.state)) return undefined;
 
-    const inputs = intent.intentVtxos;
+    const inputs = intent.proofInputs;
     const consumed = inputs.map((o) => vtxosByOutpoint.get(outpointKey(o)));
 
     // All inputs consumed by a completed batch: the settlement succeeded even
@@ -139,7 +139,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     if (intents.length === 0) return;
 
     // One indexer round-trip covering every locked input across all intents.
-    const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.intentVtxos));
+    const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.proofInputs));
     let vtxosByOutpoint = new Map<string, VirtualCoin>();
     if (outpoints.length > 0) {
         try {
@@ -164,12 +164,12 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             // still in the state we classified, so a live settle() that has
             // since advanced it is never overwritten.
             const [fresh] = await collectIntents(deps.intentRepository, {
-                intentTxIds: [intent.intentTxId],
+                proofTxIds: [intent.proofTxId],
             });
             if (!fresh || fresh.state !== intent.state) continue;
-            await deps.intentRepository.saveIntent(next);
+            await deps.intentRepository.saveBatchRegistration(next);
         } catch (e) {
-            console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
+            console.error(`reconcileIntents: failed to reconcile intent ${intent.proofTxId}`, e);
         }
     }
 }
@@ -204,7 +204,7 @@ export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
 
 function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
     const inFlight = deps.isOutpointInFlight;
-    return inFlight !== undefined && intent.intentVtxos.some((o) => inFlight(o));
+    return inFlight !== undefined && intent.proofInputs.some((o) => inFlight(o));
 }
 
 /**
@@ -223,7 +223,7 @@ async function releaseFromServer(
         await deps.deleteIntent({ proof: intent.deleteProof, message });
     } catch (e) {
         if (!isNoMatchingIntentsError(e)) {
-            console.warn(`failed to delete intent ${intent.intentTxId} from the server`, e);
+            console.warn(`failed to delete intent ${intent.proofTxId} from the server`, e);
             return undefined;
         }
     }

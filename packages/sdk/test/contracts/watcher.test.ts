@@ -458,7 +458,7 @@ describe("ContractWatcher", () => {
                 const vtxo = event.vtxos[0] as ContractVtxo;
                 expect(vtxo.contractScript).toBe(fakeScript);
                 expect(vtxo.forfeitTapLeafScript).toBeUndefined();
-                expect(vtxo.intentTapLeafScript).toBeUndefined();
+                expect(vtxo.proofTapLeafScript).toBeUndefined();
                 expect(vtxo.tapTree).toBeUndefined();
 
                 const fallbackWarn = warnSpy.mock.calls.find(

@@ -1003,7 +1003,7 @@ describe("Wallet HD rotation", () => {
                 commitmentTxIds: [],
                 script: hex.encode(tapscript.pkScript),
                 forfeitTapLeafScript: tapscript.forfeit(),
-                intentTapLeafScript: tapscript.forfeit(),
+                proofTapLeafScript: tapscript.forfeit(),
                 tapTree: tapscript.encode(),
             };
         }
@@ -1224,7 +1224,7 @@ describe("Wallet HD rotation", () => {
                 isSpent: false,
                 script: hex.encode(cosignerScript.pkScript),
                 forfeitTapLeafScript: cosignerScript.forfeit(),
-                intentTapLeafScript: cosignerScript.forfeit(),
+                proofTapLeafScript: cosignerScript.forfeit(),
                 tapTree: cosignerScript.encode(),
             };
 
@@ -1492,7 +1492,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             commitmentTxIds: [],
             script: hex.encode(tapscript.pkScript),
             forfeitTapLeafScript: tapscript.forfeit(),
-            intentTapLeafScript: tapscript.forfeit(),
+            proofTapLeafScript: tapscript.forfeit(),
             tapTree: tapscript.encode(),
         };
     }

@@ -3,13 +3,13 @@ import {
     ArkIntent,
     assertIntentIdUnique,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
     isTerminalIntentState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
-export class InMemoryIntentRepository implements IntentRepository {
+export class InMemoryBatchRegistrationRepository implements BatchRegistrationRepository {
     readonly version = 1 as const;
     private byId = new Map<string, ArkIntent>();
 
@@ -17,17 +17,17 @@ export class InMemoryIntentRepository implements IntentRepository {
         this.byId.clear();
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
         assertIntentIdUnique(intent, this.byId.values());
-        this.byId.set(intent.intentTxId, {
+        this.byId.set(intent.proofTxId, {
             ...intent,
-            intentVtxos: [...intent.intentVtxos],
+            proofInputs: [...intent.proofInputs],
             partialForfeits: [...intent.partialForfeits],
             updatedAt: Date.now(),
         });
     }
 
-    async getIntentsPage(
+    async getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>> {
@@ -35,22 +35,30 @@ export class InMemoryIntentRepository implements IntentRepository {
         const rows = [...this.byId.values()]
             .filter(
                 (intent) =>
-                    (page.after === undefined || intent.intentTxId > page.after) &&
+                    (page.after === undefined || intent.proofTxId > page.after) &&
                     (!filter || intentMatchesFilter(intent, filter)),
             )
-            .sort((a, b) =>
-                a.intentTxId < b.intentTxId ? -1 : a.intentTxId > b.intentTxId ? 1 : 0,
-            )
+            .sort((a, b) => (a.proofTxId < b.proofTxId ? -1 : a.proofTxId > b.proofTxId ? 1 : 0))
             .slice(0, page.limit + 1)
             .map(clone);
-        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
+        return pageResult(rows, page.limit, (intent) => intent.proofTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const i of this.byId.values())
-            if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push({ ...o });
+            if (!isTerminalIntentState(i.state)) for (const o of i.proofInputs) out.push({ ...o });
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: ArkIntent) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}
@@ -58,6 +66,11 @@ export class InMemoryIntentRepository implements IntentRepository {
 
 const clone = (i: ArkIntent): ArkIntent => ({
     ...i,
-    intentVtxos: i.intentVtxos.map((o) => ({ ...o })),
+    proofInputs: i.proofInputs.map((o) => ({ ...o })),
     partialForfeits: [...i.partialForfeits],
 });
+
+/** @deprecated Use {@link InMemoryBatchRegistrationRepository}. */
+export const InMemoryIntentRepository = InMemoryBatchRegistrationRepository;
+/** @deprecated Use {@link InMemoryBatchRegistrationRepository}. */
+export type InMemoryIntentRepository = InMemoryBatchRegistrationRepository;

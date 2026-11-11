@@ -398,6 +398,68 @@ import { Ramps } from '@arkade-os/sdk'
 const boardingTxId = await new Ramps(wallet).onboard();
 ```
 
+### Onchain cosigning
+
+Boarding UTXOs and server-supported unrolled virtual outputs can be spent immediately with a server cosignature, without waiting for the exit timelock or joining a batch. This needs an Arkade server that exposes onchain cosigning (`POST /v1/tx/onchain/cosign`) and accepts the selected coin type; automatic flows fall back to the previous paths on an unsupported endpoint or a definite server rejection.
+
+```typescript
+// Pay onchain from boarding / unrolled coins
+const txid = await wallet.sendOnchain({
+  outputs: [{ address: 'bc1q...', amount: 50_000 }]
+})
+
+// Sweep every cosignable onchain coin (inputs minus fee) to one address
+await wallet.sendOnchain({ outputs: [], sweepTo: 'bc1q...' })
+
+// Cosign a PSBT built elsewhere; returns the broadcast txid
+await wallet.cosignOnchainTx(psbt) // base64 string or Transaction
+```
+
+For `cosignOnchainTx`, foreign inputs must already be signed but not finalized: the wallet signs only its own inputs, and arkd refuses a finalized input and finalizes the transaction itself.
+
+Preflight: a confirmed wallet input must be more than `onchainCosignMarginBlocks` (wallet config, default 6) blocks from exit maturity; an unconfirmed one is accepted, since its exit cannot have matured. arkd cosigns at most 64 inputs, so a sweep takes the 64 largest coins and leaves the rest for the next one. Failures surface as `OnchainCosignPreflightError` (nothing was submitted), `OnchainCosignRejectedError` (server refused; `arkErrorName` holds its error code) or `OnchainCosignUnsupportedError` (server lacks the endpoint). Use `isCosignFallback(e)` to decide whether paying another way is safe; the automatic paths below do exactly that:
+
+```typescript
+import { isCosignFallback, OnchainCosignAmbiguousError } from '@arkade-os/sdk'
+
+try {
+  await wallet.sendOnchain({ outputs: [{ address, amount }] })
+} catch (e) {
+  if (!isCosignFallback(e)) throw e // includes OnchainCosignAmbiguousError
+  await payThroughABatch()
+}
+```
+
+`OnchainCosignAmbiguousError` means the transaction may have been broadcast (a transport failure, or a server error after submission): do not retry with other coins. The inputs stay pending until the chain resolves.
+
+Contracts carry a `scope`: `"offchain"`, `"onchain"` or `"both"`. It controls whether the contract's onchain coins are watched and spent through cosigning; boarding contracts default to `"onchain"`.
+
+Automatic behaviour:
+
+- `VtxoManager` renews boarding coins that are near expiry via cosign, falling back to the CSV path. It never sweeps unrolled outputs (that would undo the exit); spend those with `sendOnchain` or `cosignOnchainTx`.
+- `Ramps.offboardExact` and the payment router's onchain rail spend onchain coins directly when they alone cover the amount; otherwise they use the batch path. `Ramps.offboard` always uses the batch path.
+
+#### Arkade contracts
+
+Arkade contracts can spend their own onchain UTXOs. Pass an `emulator` (cosigner for covenant leaves) and an `onchain` provider to `connect`:
+
+```typescript
+import { arkade } from '@arkade-os/sdk'
+
+const ark = await arkade.Arkade.connect({ arkade: arkProvider, emulator, onchain })
+const contract = ark.contract(program)
+
+const txid = await contract.functions
+  .claim(/* args */)
+  .from(utxo)
+  .to(destinationScript, 40_000n)
+  .onchainFee(500n)       // must not exceed the surplus; without change() it must equal it
+  .change(changeScript)
+  .sendOnchain()          // or .buildOnchain() for the unsigned Transaction
+```
+
+Covenant leaves spent onchain must not include the Arkade server key; the emulator's onchain endpoint refuses them.
+
 ### Checking Balance
 
 ```typescript
@@ -414,7 +476,7 @@ const balance = await wallet.getBalance()
 | `preconfirmed` | Owned offchain funds not yet finalized in a batch. |
 | `available` | What `send` and every other automatic coin selection can spend now. |
 | `contractLocked` | Held by a contract that generic spending refuses (chiefly swap escrow); only that contract can spend it ([Contract Management](#contract-management)). |
-| `pendingSettlement` | Committed to an in-flight settlement intent; back in `available` when the intent ends. Always `0` without `storage.intentRepository`. |
+| `pendingSettlement` | Committed to an in-flight batch registration; back in `available` when the registration ends. Always `0` without `storage.intentRepository`. |
 | `reserved` | Held by [`reserveVtxos`](#holding-vtxos-for-your-own-use) until released. |
 | `recoverable` | Swept or subdust virtual outputs that [`recoverVtxos`](#recovery-reclaim-swept-vtxos) can reclaim; `getRecoverableBalance()` gives what a batch would return today. |
 | `deprecatedSignerLocked` | Under an operator signer past its cutoff, which the operator no longer cosigns; recovers once swept and re-settled. |
@@ -804,8 +866,8 @@ const wallet = await Wallet.create({
   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
-// Get fee information from the server
-const { fees: feeInfo } = await wallet.getArkadeInfo();
+// Get fee information from the operator
+const { fees: feeInfo } = await wallet.getOperatorInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
   'bc1p...',
@@ -813,9 +875,9 @@ const exitTxid = await new Ramps(wallet).offboard(
 );
 ```
 
-`getArkadeInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
-service-worker and Expo wallets too. It answers with the server's live `ArkadeInfo`, falling back
-to the snapshot persisted at wallet construction when the server is unreachable.
+`getOperatorInfo()` is part of the `IReadonlyWallet` interface, so the same call works on the
+service-worker and Expo wallets too. It answers with the operator's live `OperatorInfo`, falling back
+to the snapshot persisted at wallet construction when the operator is unreachable.
 
 ### Concurrent Spending & Coin Reservations
 
@@ -884,12 +946,12 @@ If your app keeps its own reserved-outpoint set, call `reserveVtxos` where you a
 
 ### Talking to the operator through the wallet
 
-`getArkadeInfo()` is one of three seams that let a plugin work from a wallet alone, never a
-server URL of its own:
+`getOperatorInfo()` is one of three seams that let a plugin work from a wallet alone, never an
+operator URL of its own:
 
 | Seam | Interface | For |
 | --- | --- | --- |
-| `getArkadeInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
+| `getOperatorInfo()` | `IReadonlyWallet` | Network, signer key, delays, dust, fees, limits |
 | `getArkadeReader()` | `IReadonlyWallet` | Chain reads for scripts the wallet does not own |
 | `getArkadeBroadcaster()` | `IWallet` | `submitTx` / `finalizeTx` |
 
@@ -1137,7 +1199,7 @@ import {
   WalletMessageHandler,
   IndexedDBWalletRepository,
   IndexedDBContractRepository,
-  IndexedDBIntentRepository,
+  IndexedDBBatchRegistrationRepository,
 } from '@arkade-os/sdk'
 
 const walletRepo = new IndexedDBWalletRepository()
@@ -1147,10 +1209,10 @@ const bus = new MessageBus(walletRepo, contractRepo, {
   messageHandlers: [new WalletMessageHandler()],
   tickIntervalMs: 10_000, // default 10s
   // Optional, same opt-in as `storage.intentRepository` on a main-thread
-  // wallet. Omit it and the worker persists no settlement intent, reconciles
-  // none on restart, and counts intent-locked VTXOs as available
+  // wallet. Omit it and the worker persists no batch registration, reconciles
+  // none on restart, and counts registration-locked virtual outputs as available
   // (`pendingSettlement` stays 0).
-  intentRepository: new IndexedDBIntentRepository(),
+  intentRepository: new IndexedDBBatchRegistrationRepository(),
 })
 
 bus.start()
@@ -1230,7 +1292,7 @@ SDK uses IndexedDB repositories with the default database name.
 #### Paged repository reads
 
 Collection repositories expose `getVtxosPage`, `getVtxosForScriptPage`, `getUtxosPage`,
-`getTransactionHistoryPage`, `getContractsPage`, and `getIntentsPage`.
+`getTransactionHistoryPage`, `getContractsPage`, and `getBatchRegistrationsPage`.
 Each accepts `{ limit, after? }` and returns
 `{ items, nextCursor? }`; pass `nextCursor` as `after` until it is absent.
 Limits must be 1–500. History pages are ordered by `(createdAt, transaction key)`;
@@ -1238,7 +1300,7 @@ Limits must be 1–500. History pages are ordered by `(createdAt, transaction ke
 by their script and intent transaction ID. Filters must stay the same across
 pages. Repository collection reads use pages directly; `collectVtxos`,
 `collectScriptVtxos`, `collectUtxos`, `collectTransactionHistory`, `collectContracts`, and
-`collectIntents` traverse all pages when a complete snapshot is required.
+`collectBatchRegistrations` traverse all pages when a complete snapshot is required.
 Wallet spending paths consume every VTXO or UTXO page before coin selection.
 In `@arkade-os/swap`, RFQ page `since` values use Unix seconds instead.
 
@@ -1256,7 +1318,7 @@ do {
 
 #### Repository Versioning
 
-`WalletRepository`, `ContractRepository`, `IntentRepository`,
+`WalletRepository`, `ContractRepository`, `BatchRegistrationRepository`,
 `VirtualTxRepository`, and `AssetSwapRepository` (in `@arkade-os/swap`) each
 declare a `readonly version` field with a literal type. All built-in
 implementations set this to the current version. If you maintain a custom
@@ -1508,7 +1570,7 @@ import { arkade, Arkade, ArkAddress } from '@arkade-os/sdk'
 
 const program = arkade.programFromArtifact(artifactJson)
 const client = await Arkade.connect({
-  service: { network: 'bitcoin' }, // operator, indexer, esplora, and covenant cosigner
+  service: { network: 'bitcoin' }, // operator, indexer and esplora
   identity: wallet.identity,
   contractManager: await wallet.getContractManager(),
 })

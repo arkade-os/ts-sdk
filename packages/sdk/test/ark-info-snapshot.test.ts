@@ -18,7 +18,7 @@ import { FetchError } from "../src/utils/fetch";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import { SingleKey } from "../src/identity/singleKey";
 import {
-    ARK_INFO_SNAPSHOT_KEY,
+    OPERATOR_INFO_SNAPSHOT_KEY,
     MalformedArkInfoSnapshotError,
     hydrateArkInfo,
     loadArkInfoSnapshot,
@@ -122,7 +122,7 @@ describe("serializeArkInfoSnapshot / hydrateArkInfo", () => {
     });
 
     it("keeps the transaction limits undefined when not advertised — never 0n", () => {
-        // 0n would read as a server that accepts no transaction and forbids
+        // 0n would say the operator accepts no transaction and forbids
         // OP_RETURN outright, which is the opposite of "did not say".
         const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 1);
         expect(hydrateArkInfo(snapshot).maxTxWeight).toBeUndefined();
@@ -207,12 +207,46 @@ describe("loadArkInfoSnapshot / saveArkInfoSnapshot", () => {
         const state = await repo.getWalletState();
         expect(state?.settings?.hasPendingTx).toBe(true);
         expect(state?.lastSyncTime).toBe(42);
-        expect(state?.settings?.[ARK_INFO_SNAPSHOT_KEY]).toBeDefined();
+        expect(state?.settings?.[OPERATOR_INFO_SNAPSHOT_KEY]).toBeDefined();
+    });
+
+    it("persists under a fixed key", () => {
+        expect(OPERATOR_INFO_SNAPSHOT_KEY).toBe("operatorInfoSnapshot");
+    });
+
+    it("reads a snapshot from the old key", async () => {
+        const repo = new InMemoryWalletRepository();
+        const snapshot = serializeArkInfoSnapshot(makeArkInfo(), 7);
+        await repo.saveWalletState({ settings: { arkInfoSnapshot: snapshot } });
+        expect(await loadArkInfoSnapshot(repo)).toEqual(snapshot);
+    });
+
+    it("prefers the new key once a save writes it, and leaves the old key", async () => {
+        const repo = new InMemoryWalletRepository();
+        const old = serializeArkInfoSnapshot(makeArkInfo(), 7);
+        await repo.saveWalletState({ settings: { arkInfoSnapshot: old } });
+        await saveArkInfoSnapshot(repo, makeArkInfo(), 8);
+        expect((await loadArkInfoSnapshot(repo))?.savedAt).toBe(8);
+        expect((await repo.getWalletState())?.settings?.arkInfoSnapshot).toEqual(old);
+    });
+
+    it("falls back on a null new key and rejects any other falsy value", async () => {
+        const repo = new InMemoryWalletRepository();
+        const arkInfoSnapshot = serializeArkInfoSnapshot(makeArkInfo(), 7);
+        await repo.saveWalletState({
+            settings: { arkInfoSnapshot, [OPERATOR_INFO_SNAPSHOT_KEY]: null },
+        });
+        expect(await loadArkInfoSnapshot(repo)).toEqual(arkInfoSnapshot);
+
+        await repo.saveWalletState({
+            settings: { arkInfoSnapshot, [OPERATOR_INFO_SNAPSHOT_KEY]: 0 },
+        });
+        await expect(loadArkInfoSnapshot(repo)).rejects.toThrow(MalformedArkInfoSnapshotError);
     });
 
     it("throws terminally when the stored snapshot is malformed", async () => {
         const repo = new InMemoryWalletRepository();
-        await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 2 } } });
+        await repo.saveWalletState({ settings: { [OPERATOR_INFO_SNAPSHOT_KEY]: { version: 2 } } });
         await expect(loadArkInfoSnapshot(repo)).rejects.toThrow(MalformedArkInfoSnapshotError);
     });
 });
@@ -270,7 +304,7 @@ describe("resolveArkInfo", () => {
 
     it("surfaces a malformed cache as terminal on retryable failure", async () => {
         const repo = new InMemoryWalletRepository();
-        await repo.saveWalletState({ settings: { [ARK_INFO_SNAPSHOT_KEY]: { version: 9 } } });
+        await repo.saveWalletState({ settings: { [OPERATOR_INFO_SNAPSHOT_KEY]: { version: 9 } } });
         await expect(
             resolveArkInfo(failing(new ProviderUnavailableError("503")), repo),
         ).rejects.toThrow(MalformedArkInfoSnapshotError);
@@ -427,7 +461,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         // `check-provider-boundary.mjs` enforces for SDK logic and that a raw
         // provider would let a plugin skip.
         const getVtxos = vi.fn(async () => ({
-            // a server row with the optional facts absent
+            // a row from the operator with the optional facts absent
             vtxos: [{ txid: "ab".repeat(32), vout: 0, value: 1000 }],
         }));
         const getVirtualTxs = vi.fn(async () => ({ txs: ["deadbeef"] }));
@@ -458,7 +492,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         expect(getVirtualTxs).toHaveBeenCalledWith(["cd".repeat(32)], undefined);
     });
 
-    it("getArkadeInfo reports the server's CURRENT info, not the boot snapshot", async () => {
+    it("getOperatorInfo reports the server's CURRENT info, not the boot snapshot", async () => {
         // The fields callers come here for — signerPubkey, checkpointTapscript,
         // fees — are the ones a mid-session rotation moves. Pinning to boot
         // would hand a plugin a superseded signer to build a covenant against.
@@ -468,15 +502,15 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         };
         let served = makeArkInfo();
         const wallet = await createWallet(async () => served, repos);
-        expect((await wallet.getArkadeInfo()).digest).toBe("digest-abc");
+        expect((await wallet.getOperatorInfo()).digest).toBe("digest-abc");
 
         served = makeArkInfo({ digest: "digest-rotated" });
-        expect((await wallet.getArkadeInfo()).digest).toBe("digest-rotated");
+        expect((await wallet.getOperatorInfo()).digest).toBe("digest-rotated");
         // The wallet's own pinned epoch is untouched by the read.
         expect(wallet.dustAmount).toBe(makeArkInfo().dust);
     });
 
-    it("getArkadeInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
+    it("getOperatorInfo({ requireLive: true }) fails closed instead of serving the cache", async () => {
         // The covenant-derivation contract (PR #803 review): a caller about to
         // bind signerPubkey into a script must never get a snapshot answer.
         const repos = {
@@ -492,18 +526,20 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
 
         reachable = false;
         // the ordinary read still answers from the boot snapshot…
-        expect((await wallet.getArkadeInfo()).digest).toBe(info.digest);
+        expect((await wallet.getOperatorInfo()).digest).toBe(info.digest);
         // …the live-only read refuses to
-        await expect(wallet.getArkadeInfo({ requireLive: true })).rejects.toThrow(/operator down/);
+        await expect(wallet.getOperatorInfo({ requireLive: true })).rejects.toThrow(
+            /operator down/,
+        );
         // and the connection state reflects the failed-over ordinary read, not boot
         expect(wallet.getProviderConnectionState().mode).toBe("degraded");
 
         reachable = true;
-        await wallet.getArkadeInfo({ requireLive: true });
+        await wallet.getOperatorInfo({ requireLive: true });
         expect(wallet.getProviderConnectionState().mode).not.toBe("degraded");
     });
 
-    it("getArkadeInfo falls back to the cached snapshot when the operator goes away", async () => {
+    it("getOperatorInfo falls back to the cached snapshot when the operator goes away", async () => {
         const repos = {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -518,10 +554,10 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         reachable = false;
         // Boot persisted the snapshot, so an offline read still answers —
         // minus serviceStatus, which is live health and deliberately uncached.
-        expect(await wallet.getArkadeInfo()).toEqual({ ...info, serviceStatus: {} });
+        expect(await wallet.getOperatorInfo()).toEqual({ ...info, serviceStatus: {} });
     });
 
-    it("getArkadeInfo propagates a terminal failure rather than serving the cache", async () => {
+    it("getOperatorInfo propagates a terminal failure rather than serving the cache", async () => {
         const repos = {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
@@ -534,7 +570,7 @@ describe("wallet boot: cache fallback derives identical construction metadata", 
         }, repos);
 
         live = false;
-        await expect(wallet.getArkadeInfo()).rejects.toBe(terminal);
+        await expect(wallet.getOperatorInfo()).rejects.toBe(terminal);
     });
 
     it("full Wallet.create does not cache a live response with invalid checkpoint metadata", async () => {

@@ -16,9 +16,8 @@ import {
     resolveTimelockValue,
     resolveCsvTimelock,
     serializeArkadeContractParams,
-    witnessRefToBytes,
+    staticWitness,
     type ArkadeContractParams,
-    type CompiledProgramFunction,
 } from "../../arkade/program";
 
 /**
@@ -31,24 +30,6 @@ function walletKeyFrom(context: PathContext): string | undefined {
         return extractPubKey(context.walletDescriptor).toLowerCase();
     } catch {
         return undefined;
-    }
-}
-
-/**
- * Resolve a pure-tapscript function's condition witness without call
- * arguments: literals and `$param` references resolve, function-input
- * references cannot (they only exist at call time) — those paths are not
- * generically spendable.
- */
-function staticWitness(
-    fn: CompiledProgramFunction,
-    script: ArkadeProgramScript,
-): Uint8Array[] | null {
-    const refs = fn.def.tapscript.witness ?? [];
-    try {
-        return refs.map((w) => witnessRefToBytes(w, {}, script.args));
-    } catch {
-        return null;
     }
 }
 
@@ -80,7 +61,7 @@ function pathsFor(
     for (const fn of script.compiled) {
         if (fn.arkadeScript) continue;
 
-        const witness = staticWitness(fn, script);
+        const witness = staticWitness(fn.def.tapscript.witness, script.args);
         if (witness === null) continue;
 
         const signerHexes = fn.signerKeys.map((s) => hex.encode(s));
@@ -220,7 +201,7 @@ export const ArkadeContractHandler: ContractHandler<ArkadeContractParams, Arkade
             script.compiled[0].tapLeafScript;
         return {
             forfeitTapLeafScript: leaf,
-            intentTapLeafScript: leaf,
+            proofTapLeafScript: leaf,
             tapTree: script.encode(),
         };
     },

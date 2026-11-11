@@ -24,6 +24,16 @@ export type TapLeafScript = [
     Bytes,
 ];
 
+/**
+ * The leaf a proof signs for `coin`. SDK coins carry only `proofTapLeafScript`,
+ * so `intentTapLeafScript` is set only where a caller chose a leaf with the old
+ * key, and that choice wins.
+ */
+export const proofTapLeafScriptOf = (coin: {
+    proofTapLeafScript: TapLeafScript;
+    intentTapLeafScript?: TapLeafScript;
+}): TapLeafScript => coin.intentTapLeafScript ?? coin.proofTapLeafScript;
+
 export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] = P.array(
     null,
     P.struct({ depth: P.U8, version: P.U8, script: VarBytes }),

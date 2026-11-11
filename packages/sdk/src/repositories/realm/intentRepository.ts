@@ -4,7 +4,7 @@ import {
     ArkIntentState,
     assertIntentIdUnique,
     IntentPageFilter,
-    IntentRepository,
+    BatchRegistrationRepository,
     intentMatchesFilter,
     isTerminalIntentState,
 } from "../intentRepository";
@@ -14,8 +14,8 @@ import { RealmLike } from "./types";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toIntent(o: any): ArkIntent {
     return {
-        intentTxId: o.intentTxId,
-        intentId: o.intentId ?? undefined,
+        proofTxId: o.intentTxId,
+        registrationId: o.intentId ?? undefined,
         state: o.state as ArkIntentState,
         validFrom: o.validFrom ?? undefined,
         validUntil: o.validUntil ?? undefined,
@@ -30,11 +30,11 @@ function toIntent(o: any): ArkIntent {
         cancellationReason: o.cancellationReason ?? undefined,
         partialForfeits: JSON.parse(o.partialForfeitsJson),
         signerDescriptor: o.signerDescriptor ?? undefined,
-        intentVtxos: JSON.parse(o.intentVtxosJson),
+        proofInputs: JSON.parse(o.intentVtxosJson),
     };
 }
 
-export class RealmIntentRepository implements IntentRepository {
+export class RealmBatchRegistrationRepository implements BatchRegistrationRepository {
     readonly version = 1 as const;
     constructor(private readonly realm: RealmLike) {}
 
@@ -44,19 +44,21 @@ export class RealmIntentRepository implements IntentRepository {
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
         this.realm.write(() => {
-            if (intent.intentId != null) {
+            if (intent.registrationId != null) {
                 const clashes = [
-                    ...this.realm.objects("ArkIntent").filtered("intentId == $0", intent.intentId),
+                    ...this.realm
+                        .objects("ArkIntent")
+                        .filtered("intentId == $0", intent.registrationId),
                 ].map(toIntent);
                 assertIntentIdUnique(intent, clashes);
             }
             this.realm.create(
                 "ArkIntent",
                 {
-                    intentTxId: intent.intentTxId,
-                    intentId: intent.intentId ?? null,
+                    intentTxId: intent.proofTxId,
+                    intentId: intent.registrationId ?? null,
                     state: intent.state,
                     validFrom: intent.validFrom ?? null,
                     validUntil: intent.validUntil ?? null,
@@ -71,14 +73,14 @@ export class RealmIntentRepository implements IntentRepository {
                     cancellationReason: intent.cancellationReason ?? null,
                     partialForfeitsJson: JSON.stringify(intent.partialForfeits),
                     signerDescriptor: intent.signerDescriptor ?? null,
-                    intentVtxosJson: JSON.stringify(intent.intentVtxos),
+                    intentVtxosJson: JSON.stringify(intent.proofInputs),
                 },
                 "modified",
             );
         });
     }
 
-    async getIntentsPage(
+    async getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>> {
@@ -92,15 +94,30 @@ export class RealmIntentRepository implements IntentRepository {
             rows.push(intent);
             if (rows.length > page.limit) break;
         }
-        return pageResult(rows, page.limit, (intent) => intent.intentTxId);
+        return pageResult(rows, page.limit, (intent) => intent.proofTxId);
     }
 
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const o of [...this.realm.objects("ArkIntent")].map(toIntent))
-            if (!isTerminalIntentState(o.state)) out.push(...o.intentVtxos);
+            if (!isTerminalIntentState(o.state)) out.push(...o.proofInputs);
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: ArkIntent) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}
 }
+
+/** @deprecated Use {@link RealmBatchRegistrationRepository}. */
+export const RealmIntentRepository = RealmBatchRegistrationRepository;
+/** @deprecated Use {@link RealmBatchRegistrationRepository}. */
+export type RealmIntentRepository = RealmBatchRegistrationRepository;

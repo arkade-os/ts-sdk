@@ -44,7 +44,7 @@ export type OffchainTx = {
  *
  * Creates one checkpoint transaction per input and a virtual transaction that
  * combines all the checkpoints, sending to the specified outputs. This is the
- * core function for creating Arkade transactions.
+ * core function for creating virtual transactions.
  *
  * @param inputs - Array of virtual transaction inputs
  * @param outputs - Array of transaction outputs
@@ -204,19 +204,109 @@ export function hasBoardingTxExpired(
     coin: ExtendedCoin,
     boardingTimelock: RelativeTimelock,
     chainTipHeight?: number,
+    chainTipMedianTime?: number,
+    confirmationParentMedianTime?: number,
 ) {
-    if (!coin.status.block_time) return false;
+    if (!coin.status.confirmed || coin.status.block_height === undefined) return false;
     if (boardingTimelock.value === 0n) return true;
 
     if (boardingTimelock.type === "blocks") {
-        if (chainTipHeight === undefined || !coin.status.block_height) return false;
+        if (chainTipHeight === undefined) return false;
         return BigInt(chainTipHeight - coin.status.block_height) >= boardingTimelock.value;
     }
 
-    // validate expiry in terms of seconds
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    const blockTime = BigInt(Math.floor(coin.status.block_time));
-    return blockTime + boardingTimelock.value <= now;
+    if (chainTipMedianTime === undefined || confirmationParentMedianTime === undefined) {
+        return false;
+    }
+    return (
+        BigInt(confirmationParentMedianTime) + boardingTimelock.value <= BigInt(chainTipMedianTime)
+    );
+}
+
+/**
+ * The CSV exit path of the boarding address a coin sits on, decoded from the coin's own
+ * `tapTree`. Its timelock can differ from the wallet's current boarding delay (a signer rotation
+ * may change it), so expiry and the sweep must read it from the coin, not from the wallet.
+ *
+ * @returns `undefined` when the tree is undecodable or has no CSV leaf.
+ */
+export function decodeBoardingExit(
+    coin: ExtendedCoin,
+): { script: VtxoScript; leaf: TapLeafScript; timelock: RelativeTimelock } | undefined {
+    try {
+        const script = VtxoScript.decode(coin.tapTree);
+        for (const leaf of script.leaves) {
+            const tapscript = scriptFromTapLeafScript(leaf);
+            if (CSVMultisigTapscript.isScriptValid(tapscript) === true) {
+                const { timelock } = CSVMultisigTapscript.decode(tapscript).params;
+                return { script, leaf, timelock };
+            }
+        }
+    } catch {}
+    return undefined;
+}
+
+export type BoardingExpiry = { expired: ExtendedCoin[]; unknown: ExtendedCoin[] };
+
+/**
+ * Splits out the confirmed coins whose own boarding timelock has elapsed, so they can no longer be
+ * settled and leave through the unilateral exit. Seconds-based CSV uses the MTP of the block before
+ * confirmation and the current tip MTP, as required by BIP 68. A coin whose expiry cannot be
+ * established (no block height, no provider MTP lookup, a failed lookup) is `unknown`: callers
+ * must neither settle nor sweep it, but the other coins are still judged.
+ */
+export async function classifyBoardingExpiry(
+    coins: ExtendedCoin[],
+    getChainTip: () => Promise<{ height: number; time: number }>,
+    getMedianTimePast?: (height: number) => Promise<number>,
+): Promise<BoardingExpiry> {
+    const judged = coins.flatMap((coin) => {
+        const timelock = decodeBoardingExit(coin)?.timelock;
+        return coin.status.confirmed && timelock ? [{ coin, timelock }] : [];
+    });
+    if (judged.length === 0) return { expired: [], unknown: [] };
+
+    let tipHeight: number;
+    try {
+        tipHeight = (await getChainTip()).height;
+    } catch {
+        return { expired: [], unknown: judged.map(({ coin }) => coin) };
+    }
+
+    const medianTimes = new Map<number, Promise<number | undefined>>();
+    const medianTimePast = (height: number) => {
+        if (!getMedianTimePast) return undefined;
+        let time = medianTimes.get(height);
+        if (!time) {
+            time = getMedianTimePast(height).catch(() => undefined);
+            medianTimes.set(height, time);
+        }
+        return time;
+    };
+
+    const verdicts = await Promise.all(
+        judged.map(async ({ coin, timelock }) => {
+            const height = coin.status.block_height;
+            if (height === undefined || height <= 0) return "unknown";
+            if (timelock.type === "blocks" || timelock.value === 0n) {
+                return hasBoardingTxExpired(coin, timelock, tipHeight) ? "expired" : "live";
+            }
+            const [parentTime, tipTime] = await Promise.all([
+                medianTimePast(height - 1),
+                medianTimePast(tipHeight),
+            ]);
+            if (parentTime === undefined || tipTime === undefined) return "unknown";
+            return hasBoardingTxExpired(coin, timelock, tipHeight, tipTime, parentTime)
+                ? "expired"
+                : "live";
+        }),
+    );
+
+    const expiry: BoardingExpiry = { expired: [], unknown: [] };
+    for (const [i, verdict] of verdicts.entries()) {
+        if (verdict !== "live") expiry[verdict].push(judged[i].coin);
+    }
+    return expiry;
 }
 
 /**

@@ -317,6 +317,21 @@ export function witnessRefToBytes(
 }
 
 /**
+ * Resolve a witness stack without call arguments: literals and `$param` references resolve,
+ * function-input references exist only at call time, so a stack naming one yields `null`.
+ */
+export function staticWitness(
+    refs: readonly WitnessRef[] | undefined,
+    programArgs: Record<string, ArkadeParamValue>,
+): Uint8Array[] | null {
+    try {
+        return (refs ?? []).map((ref) => witnessRefToBytes(ref, {}, programArgs));
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Validate a tapscript segment with its resolved signers; `asm` may combine with
  * `csv` (the condition + CSV closure) but `cltv` conflicts with both (arkd
  * recognizes no condition+CLTV or dual-timelock closure); the `asm` may not

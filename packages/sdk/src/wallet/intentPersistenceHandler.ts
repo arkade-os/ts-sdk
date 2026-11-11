@@ -5,7 +5,10 @@ import { Batch } from "./batch";
 import { applySettlementEventToIntent } from "./intentStateReducer";
 
 export interface IntentPersistenceDeps {
-    intentRepository?: Pick<IntentRepository, "getIntentsPage" | "saveIntent">;
+    intentRepository?: Pick<
+        IntentRepository,
+        "getBatchRegistrationsPage" | "saveBatchRegistration"
+    >;
     intentTxId: string;
 }
 
@@ -20,10 +23,10 @@ async function persistTransition(
     const repo = deps.intentRepository;
     if (!repo) return;
     try {
-        const cur = (await collectIntents(repo, { intentTxIds: [deps.intentTxId] }))[0];
+        const cur = (await collectIntents(repo, { proofTxIds: [deps.intentTxId] }))[0];
         if (!cur) return;
         const next = applySettlementEventToIntent(cur, event);
-        if (next) await repo.saveIntent(next);
+        if (next) await repo.saveBatchRegistration(next);
     } catch (e) {
         console.error(`Failed to apply settlement event to intent ${deps.intentTxId}`, e);
     }

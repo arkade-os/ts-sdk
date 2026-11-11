@@ -12,6 +12,7 @@ import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/ark";
 import type { Contract, ContractWithVtxos, ExtendedContractVtxo } from "../src/contracts/types";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { VtxoScript } from "../src/script/base";
 
 // Mock chain tip height returned by the wallet's onchainProvider.
 const TIP_HEIGHT = 1_000_000;
@@ -34,7 +35,7 @@ function makeBoardingCoin(
             ? { confirmed: true, block_height: blockHeight, block_time: 1 }
             : { confirmed: false },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as unknown as ExtendedCoin;
 }
@@ -44,6 +45,12 @@ function makeBoardingGroup(
     coins: ExtendedCoin[],
     csvTimelock: RelativeTimelock = BOARDING_CSV_BLOCKS,
 ): BoardingUtxoGroup {
+    // Expiry is read from each coin's own exit leaf.
+    const tapTree = new VtxoScript([
+        CSVMultisigTapscript.encode({ timelock: csvTimelock, pubkeys: [hex.decode(serverPubKey)] })
+            .script,
+    ]).encode();
+    for (const coin of coins) coin.tapTree = tapTree;
     return {
         // The tapscript object is not read by the classifier (it works off
         // serverPubKey + csvTimelock), so a minimal stub suffices.
@@ -115,7 +122,7 @@ function makeVtxo(
         isUnrolled: false,
         virtualStatus: { state, batchExpiry: DEFAULT_BATCH_EXPIRY },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as unknown as ExtendedContractVtxo;
 }
@@ -656,6 +663,20 @@ describe("VtxoManager - deprecated-signer boarding migration (Section 7)", () =>
         expect(expiredRow?.boardingValue).toBe(9000);
     });
 
+    it("lets a deprecated signer's boarding lookup fail without failing the pass", async () => {
+        const { wallet, getBoardingUtxosForSigners } = createMigrationMockWallet({
+            info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }]),
+            contractsWithVtxos: [],
+        });
+
+        await newManager(wallet).migrateDeprecatedSignerVtxos();
+
+        expect(getBoardingUtxosForSigners).toHaveBeenCalledWith(
+            new Set([ACTIVE, DEP_A]),
+            new Set([DEP_A]),
+        );
+    });
+
     it("judges boarding-output CSV expiry against each row's own delay, not a global one", async () => {
         const { wallet } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_A, cutoffDate: BigInt(NOW_S + 10_000) }]),
@@ -926,6 +947,7 @@ function createPollableWallet() {
             exitScript: boardingExitScript,
             pkScript: new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]),
             exit: vi.fn(),
+            options: { serverPubKey: hex.decode(ACTIVE) },
         },
         onchainProvider: {
             getFeeRate: vi.fn().mockResolvedValue(1),
@@ -988,7 +1010,7 @@ function makeVtxoWithExpiry(
         isUnrolled: false,
         virtualStatus: { state, batchExpiry },
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as unknown as ExtendedContractVtxo;
 }
@@ -1050,6 +1072,7 @@ function createRecoveryMockWallet(opts: RecoveryMockOptions) {
             exitScript: boardingExitScript,
             pkScript: new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]),
             exit: vi.fn(),
+            options: { serverPubKey: hex.decode(ACTIVE) },
         },
         onchainProvider: {
             getFeeRate: vi.fn().mockResolvedValue(1),

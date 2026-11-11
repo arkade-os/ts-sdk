@@ -62,7 +62,7 @@ export const chainSourceOver = (
             return undefined;
         }
         for (const tx of await backend.provider.getTransactions(address)) {
-            // The electrum provider omits `vin` entirely; the fallback then finds nothing.
+            // Reached only when the outspend answer is `spent` without a txid.
             if ((tx.vin ?? []).some((input) => input.txid === txid && input.vout === vout)) {
                 return tx.txid;
             }

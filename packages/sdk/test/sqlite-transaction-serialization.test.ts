@@ -15,7 +15,7 @@ import type { ArkIntent } from "../src/repositories/intentRepository";
 // used to fail with "cannot start a transaction within a transaction".
 
 const intent = (id: string): ArkIntent => ({
-    intentTxId: id,
+    proofTxId: id,
     state: "waiting_for_batch",
     createdAt: 1,
     updatedAt: 1,
@@ -24,7 +24,7 @@ const intent = (id: string): ArkIntent => ({
     deleteProof: "dp",
     deleteProofMessage: "dpm",
     partialForfeits: [],
-    intentVtxos: [{ txid: id, vout: 0 }],
+    proofInputs: [{ txid: id, vout: 0 }],
 });
 
 const vtx = (txid: string): VirtualTx => ({
@@ -103,7 +103,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
                 contracts.deleteContract(existing.script),
                 wallet.saveWalletState({ settings: { outside: true } }),
                 wallet.getWalletState(),
-                intents.saveIntent(intent("outside")),
+                intents.saveBatchRegistration(intent("outside")),
                 virtual.upsertVirtualTxs([vtx("outside")]),
             ].map((operation, index) =>
                 operation.then((value) => {
@@ -128,7 +128,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
                 lastSyncTime: undefined,
             });
             expect(settledBeforeRelease).toEqual([]);
-            expect((await collectIntents(intents)).map((row) => row.intentTxId)).toEqual([
+            expect((await collectIntents(intents)).map((row) => row.proofTxId)).toEqual([
                 "outside",
             ]);
             expect(await virtual.getVirtualTx("outside")).not.toBeNull();
@@ -145,26 +145,26 @@ describe("SQLite transaction serialization (shared connection)", () => {
         await vtxs.getVirtualTx("x"); // init
 
         await Promise.all([
-            intents.saveIntent(intent("a")),
+            intents.saveBatchRegistration(intent("a")),
             vtxs.upsertVirtualTxs([vtx("t1")]),
-            intents.saveIntent(intent("b")),
+            intents.saveBatchRegistration(intent("b")),
             vtxs.upsertVirtualTxs([vtx("t2")]),
         ]);
 
-        expect((await collectIntents(intents)).map((i) => i.intentTxId).sort()).toEqual(["a", "b"]);
+        expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(["a", "b"]);
         expect(await vtxs.getVirtualTx("t1")).not.toBeNull();
         expect(await vtxs.getVirtualTx("t2")).not.toBeNull();
     });
 
-    it("serializes concurrent saveIntent on one repository", async () => {
+    it("serializes concurrent saveBatchRegistration on one repository", async () => {
         const db = createNodeSQLExecutor();
         const intents = new SQLiteIntentRepository(db);
         await collectIntents(intents);
 
         const ids = Array.from({ length: 8 }, (_, i) => `i${i}`);
-        await Promise.all(ids.map((id) => intents.saveIntent(intent(id))));
+        await Promise.all(ids.map((id) => intents.saveBatchRegistration(intent(id))));
 
-        expect((await collectIntents(intents)).map((i) => i.intentTxId).sort()).toEqual(
+        expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(
             [...ids].sort(),
         );
     });
@@ -197,13 +197,13 @@ describe("SQLite transaction serialization (shared connection)", () => {
 
         // getWalletState triggers the migration transaction; race it against an
         // intent transaction on the same connection.
-        await Promise.all([wallet.getWalletState(), intents.saveIntent(intent("z"))]);
+        await Promise.all([wallet.getWalletState(), intents.saveBatchRegistration(intent("z"))]);
 
         const cols = await db.all<{ name: string; notnull: number }>(
             "PRAGMA table_info(ark_vtxos)",
         );
         expect(cols.find((c) => c.name === "script")?.notnull).toBe(1); // migrated
-        expect((await collectIntents(intents)).map((i) => i.intentTxId)).toContain("z");
+        expect((await collectIntents(intents)).map((i) => i.proofTxId)).toContain("z");
     });
 
     it("serializes two wallet-repo migrations on a legacy table without a script column", async () => {
