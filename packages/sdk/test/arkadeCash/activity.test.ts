@@ -308,6 +308,35 @@ describe("ArkadeCash activity records", () => {
         expect(activities).toEqual([]);
     });
 
+    it("correlates a settlement claim with its own batch output, not the rest of the round", async () => {
+        const records = createArkadeCashTracker();
+        addArkadeCashRecord(
+            records,
+            record({
+                id: "v",
+                action: "claimed",
+                outcome: "recovered",
+                claims: [{ txid: "round", amount: 4_000 }],
+            }),
+        );
+        const batch = (amount: number, boardingTxid = "") => ({
+            key: { arkTxid: "", commitmentTxid: "round", boardingTxid },
+            type: TxType.TxReceived,
+            amount,
+            createdAt: 2,
+            settled: true,
+        });
+        // Three rows of one round: the recovered output, somebody's payment, and a boarding.
+        const activities = await arkadeCashActivity(records, [
+            batch(4_000),
+            batch(2_000),
+            batch(4_000, "boarding"),
+        ]);
+        expect(activities.map((activity) => [activity.amount, activity.txs.length])).toEqual([
+            [4_000, 1],
+        ]);
+    });
+
     it("sees a record added between two builds with one reused resolver", async () => {
         const records = createArkadeCashTracker();
         const resolver = arkadeCashResolver(records);

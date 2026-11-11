@@ -181,7 +181,14 @@ describe("Worker ArkadeCash", () => {
         vi.spyOn(handler as never, "buildTransactionHistoryFromCache").mockResolvedValue([
             tx("funding", TxType.TxSent, 5_000),
             tx("sweep", TxType.TxReceived, 3_000),
-            tx("settle", TxType.TxReceived, 2_000),
+            // A real settlement is a batch row, keyed by the commitment alone.
+            {
+                key: { arkTxid: "", commitmentTxid: "settle", boardingTxid: "" },
+                type: TxType.TxReceived,
+                amount: 2_000,
+                createdAt: 10,
+                settled: true,
+            },
         ] as never);
 
         const response = (await handler.handleMessage({
@@ -210,7 +217,10 @@ describe("Worker ArkadeCash", () => {
         );
         expect(response.payload.activities).toHaveLength(2);
         expect(issued.txs.map((t) => t.key.arkTxid)).toEqual(["funding"]);
-        expect(claimed.txs.map((t) => t.key.arkTxid).sort()).toEqual(["settle", "sweep"]);
+        expect(claimed.txs.map((t) => t.key.arkTxid || t.key.commitmentTxid).sort()).toEqual([
+            "settle",
+            "sweep",
+        ]);
         expect(claimed.intent).toMatchObject({ outcome: "recovered" });
         expect(issued.intent).toMatchObject({ outcome: "recovered" });
     });

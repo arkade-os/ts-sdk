@@ -86,18 +86,18 @@ export function arkadeCashId(cash: ArkadeCash): string {
 }
 
 export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver {
-    // txid -> records touching it, each with its rank in `list()` order. Rebuilt by every
-    // `prepare()` so a resolver kept across builds sees records added in between.
-    let index: Map<string, { record: ArkadeCashRecord; rank: number }[]> | undefined;
+    // txid -> records touching it, in `list()` order. Rebuilt by every `prepare()` so a resolver
+    // kept across builds sees records added in between.
+    let index: Map<string, ArkadeCashRecord[]> | undefined;
     const build = () => {
-        const next = new Map<string, { record: ArkadeCashRecord; rank: number }[]>();
-        records.list().forEach((record, rank) => {
+        const next = new Map<string, ArkadeCashRecord[]>();
+        for (const record of records.list()) {
             for (const { txid } of [...record.issues, ...record.claims]) {
-                const entries = next.get(txid) ?? [];
-                if (entries[entries.length - 1]?.record !== record) entries.push({ record, rank });
-                next.set(txid, entries);
+                const touching = next.get(txid) ?? [];
+                if (touching[touching.length - 1] !== record) touching.push(record);
+                next.set(txid, touching);
             }
-        });
+        }
         return next;
     };
     return {
@@ -106,32 +106,35 @@ export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver
             index = build();
         },
         resolve(tx) {
+            // No voucher transaction is a boarding: such a row only shares a commitment.
+            if (tx.key.boardingTxid) return [];
             index ??= build();
-            const txids = new Set(Object.values(tx.key));
-            const candidates = new Map<ArkadeCashRecord, number>();
-            for (const txid of txids) {
-                for (const { record, rank } of index.get(txid) ?? []) candidates.set(record, rank);
-            }
-            return [...candidates]
-                .sort((a, b) => a[1] - b[1])
-                .flatMap(([record]) => {
-                    // An issue is money leaving the wallet into a voucher and a claim is money
-                    // arriving from one, so a row of the other direction is somebody else's.
-                    const direction = tx.type === TxType.TxSent ? "issued" : "claimed";
-                    const entries = direction === "issued" ? record.issues : record.claims;
-                    const match = entries.find((entry) => txids.has(entry.txid));
-                    if (!match) return [];
-                    return [
-                        {
-                            groupId: `arkade-cash:${record.id}:${direction}`,
-                            label: direction === "issued" ? "Cash issued" : "Cash claimed",
-                            kind: "arkade-cash",
-                            outcome: record.outcome,
-                            metadata: { cashId: record.id, direction },
-                            amount: match.amount,
-                        },
-                    ];
-                });
+            // A row is one transaction: an offchain one by its ark txid, a batch output by the
+            // commitment its round shares with every other row of that round.
+            const txid = tx.key.arkTxid || tx.key.commitmentTxid;
+            const isBatchRow = !tx.key.arkTxid;
+            // An issue is money leaving the wallet into a voucher and a claim is money arriving
+            // from one, so a row of the other direction is somebody else's.
+            const direction = tx.type === TxType.TxSent ? "issued" : "claimed";
+            return (index.get(txid) ?? []).flatMap((record) => {
+                const entries = direction === "issued" ? record.issues : record.claims;
+                // A batch row is exactly one output, and the voucher's share of its round is
+                // exactly one output too, so only the row of that value is the voucher's.
+                const match = entries.find(
+                    (entry) => entry.txid === txid && (!isBatchRow || entry.amount === tx.amount),
+                );
+                if (!match) return [];
+                return [
+                    {
+                        groupId: `arkade-cash:${record.id}:${direction}`,
+                        label: direction === "issued" ? "Cash issued" : "Cash claimed",
+                        kind: "arkade-cash",
+                        outcome: record.outcome,
+                        metadata: { cashId: record.id, direction },
+                        amount: match.amount,
+                    },
+                ];
+            });
         },
     };
 }
