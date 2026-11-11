@@ -452,6 +452,10 @@ style and have not been backfilled.
   the callers already do.
   In Node, streams no longer need the `eventsource` package or
   `--experimental-eventsource`.
+- **`getVirtualTxs` calls `GET /v1/indexer/virtualTxs?txids=…`.** It used the
+  comma-joined `/v1/indexer/virtualTx/{txids}` path, which arkd is phasing out.
+  The query-param route exists from arkd v0.9.27, so this release needs that
+  server or newer. (#1211)
 
 ### Bug Fixes
 
