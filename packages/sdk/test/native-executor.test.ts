@@ -570,14 +570,11 @@ describe("SDK native template execution", () => {
         expect(s.contract.register).not.toHaveBeenCalled();
     });
 
-    it.each([
-        ["hash condition", ["OP_SHA256", "<lock>", "OP_EQUAL", "OP_VERIFY"]],
-        ["CLTV", ["500", "OP_CHECKLOCKTIMEVERIFY", "OP_DROP"]],
-    ])("rejects a %s leaf without witness metadata before funding", async (_, prefix) => {
+    it("rejects a hash condition leaf without witness metadata before funding", async () => {
         const s = await setup();
         const guarded = structuredClone(artifact);
         guarded.constructorInputs.push({ name: "lock", type: "bytes32" });
-        guarded.functions[0].leaves[0].asm.unshift(...prefix);
+        guarded.functions[0].leaves[0].asm.unshift("OP_SHA256", "<lock>", "OP_EQUAL", "OP_VERIFY");
         const doc = template();
         Object.assign(doc.inputs[0].contract.arguments, { lock: "22".repeat(32) });
         await expect(s.executor.importTemplate(doc, { "artifact-id": guarded })).rejects.toThrow(

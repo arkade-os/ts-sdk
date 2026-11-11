@@ -65,12 +65,11 @@ function nativeFunction(program: Program, name: string): void {
         fn.tapscript.signatures?.length ||
         fn.tapscript.asm?.length ||
         fn.tapscript.csv ||
-        fn.tapscript.cltv !== undefined ||
         fn.tapscript.emulator !== name ||
         fn.tapscript.signers.some((s) => s !== "$server")
     ) {
         throw new Error(
-            "NativeExecutor: the selected leaf requires unsupported conditions, witnesses, signers, CSV or CLTV",
+            "NativeExecutor: the selected leaf requires unsupported conditions, witnesses, signers or CSV",
         );
     }
 }

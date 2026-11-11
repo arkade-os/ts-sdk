@@ -180,7 +180,7 @@ style and have not been backfilled.
   NativeExecutor imports, funds and restores one-input, full-principal offchain
   covenant plans through the existing wallet, builder and ContractManager. Locked
   contracts stay outside generic payment selection and unsupported template
-  features, including hash-conditioned and CLTV leaves, reject before funding. A
+  features, including hash-conditioned leaves, reject before funding. A
   position funded from asset-bearing coins stays spendable when the funding
   transaction's asset packet assigns nothing to it. RestDelegateeProvider adds generic template and
   watch endpoints beside the unchanged legacy DelegateProvider.
