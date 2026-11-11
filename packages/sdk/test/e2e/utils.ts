@@ -13,9 +13,9 @@ import {
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkadeInfo,
-    ArkProvider,
-    RestArkProvider,
+    OperatorInfo,
+    OperatorProvider,
+    RestOperatorProvider,
     WalletRepository,
     ContractRepository,
     arkade,
@@ -160,7 +160,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -185,7 +185,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -212,7 +212,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -259,7 +259,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -410,15 +410,15 @@ export async function waitForUnrolledVtxos(wallet: {
 }
 
 /**
- * Wrap a real ArkProvider, overriding selected fields of `getInfo()` while
+ * Wrap a real OperatorProvider, overriding selected fields of `getInfo()` while
  * forwarding every other method to the underlying provider. Used to simulate
  * server-config changes (e.g. `unilateralExitDelay`) between wallet loads
  * without actually restarting arkd.
  */
 export function createOverrideInfoArkProvider(
-    real: ArkProvider,
-    overrides: Partial<ArkadeInfo>,
-): ArkProvider {
+    real: OperatorProvider,
+    overrides: Partial<OperatorInfo>,
+): OperatorProvider {
     return new Proxy(real, {
         get(target, prop, receiver) {
             if (prop === "getInfo") {
@@ -581,7 +581,7 @@ export function createSharedRepos(): SharedRepos {
 
 /**
  * Create a delegate-enabled wallet using a provided identity and repositories,
- * with an `ArkProvider` whose `getInfo()` overrides `unilateralExitDelay` to
+ * with an `OperatorProvider` whose `getInfo()` overrides `unilateralExitDelay` to
  * simulate a server-side config change without restarting arkd.
  */
 export async function createTestArkWalletWithDelegateAndOverride(opts: {
@@ -589,7 +589,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     repos: SharedRepos;
     unilateralExitDelay: bigint;
 }): Promise<TestArkWallet> {
-    const realProvider = new RestArkProvider(OPERATOR_URL);
+    const realProvider = new RestOperatorProvider(OPERATOR_URL);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a

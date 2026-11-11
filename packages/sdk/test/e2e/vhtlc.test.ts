@@ -17,7 +17,7 @@ import {
     networks,
     OnchainWallet,
     provisionClaimSecret,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     setArkPsbtField,
     SingleKey,
@@ -99,7 +99,7 @@ describe("vhtlc", () => {
             signMessage: bob.signMessage,
         };
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestOperatorProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
@@ -230,7 +230,7 @@ describe("vhtlc", () => {
             signMessage: (message, signatureType) => restored.signMessage(message, signatureType),
         };
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestOperatorProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendable = await indexerProvider.getVtxos({
@@ -441,7 +441,7 @@ describe("vhtlc", () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestOperatorProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
         const onchainProvider = new EsploraProvider("http://localhost:3000/api");
 

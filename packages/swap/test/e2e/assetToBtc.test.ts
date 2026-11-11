@@ -24,7 +24,7 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     SingleKey,
     Wallet,
@@ -73,7 +73,7 @@ let assetId: string;
 beforeAll(async () => {
     wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
