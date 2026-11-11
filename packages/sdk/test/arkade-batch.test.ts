@@ -25,7 +25,11 @@ import { ConditionMultisigTapscript } from "../src/script/tapscript";
 import { networks } from "../src/networks";
 import type { Recipient } from "../src/wallet";
 import type { SignerSession } from "../src/tree/signingSession";
-import type { ArkProvider, BatchStartedEvent, TreeSigningStartedEvent } from "../src/providers/ark";
+import type {
+    OperatorProvider,
+    BatchStartedEvent,
+    TreeSigningStartedEvent,
+} from "../src/providers/ark";
 import type { EmulatorProvider } from "../src/providers/emulator";
 import type { Identity } from "../src/identity";
 import type { Proof } from "../src/proof";
@@ -60,7 +64,7 @@ function makeArkProvider() {
         submitTreeNonces: vi.fn(async () => {}),
         submitTreeSignatures: vi.fn(async () => {}),
         submitSignedForfeitTxs: vi.fn(async () => {}),
-    } as unknown as ArkProvider;
+    } as unknown as OperatorProvider;
 }
 
 function makeEmulator() {
@@ -113,7 +117,7 @@ function proofDeclaring(outputs: { script: Uint8Array; amount: bigint }[] = []):
 
 function makeHandler(
     session: SignerSession,
-    arkProvider: ArkProvider,
+    arkProvider: OperatorProvider,
     recipients?: Recipient[],
     emulator: EmulatorProvider = {} as unknown as EmulatorProvider,
     signedProof: string = proofDeclaring(),

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { RestArkProvider } from "../src/providers/ark";
+import { RestOperatorProvider } from "../src/providers/ark";
 import { configureEventSource } from "../src/providers/eventSource";
 import { MockEventSource } from "./mocks/eventSource";
 import { jsonResponse } from "./helpers/response";
 
 afterEach(() => configureEventSource(undefined));
 
-describe("RestArkProvider.getEventStream", () => {
+describe("RestOperatorProvider.getEventStream", () => {
     beforeEach(() => {
         MockEventSource.reset();
         configureEventSource((url) => new MockEventSource(url));
@@ -20,14 +20,14 @@ describe("RestArkProvider.getEventStream", () => {
     });
 
     it("does not open an EventSource until the first iteration", () => {
-        const provider = new RestArkProvider("http://localhost:7070");
+        const provider = new RestOperatorProvider("http://localhost:7070");
         const ac = new AbortController();
         provider.getEventStream(ac.signal, []);
         expect(MockEventSource.instances).toHaveLength(0);
     });
 
     it("does not leak an EventSource when the iterator is abandoned before iteration", async () => {
-        const provider = new RestArkProvider("http://localhost:7070");
+        const provider = new RestOperatorProvider("http://localhost:7070");
         const ac = new AbortController();
         const stream = provider.getEventStream(ac.signal, []);
 
@@ -39,7 +39,7 @@ describe("RestArkProvider.getEventStream", () => {
     });
 
     it("closes the EventSource when return() is called during iteration", async () => {
-        const provider = new RestArkProvider("http://localhost:7070");
+        const provider = new RestOperatorProvider("http://localhost:7070");
         const ac = new AbortController();
         const stream = provider.getEventStream(ac.signal, []);
 
@@ -59,7 +59,7 @@ describe("RestArkProvider.getEventStream", () => {
     });
 
     it("closes the EventSource when the signal is aborted during iteration", async () => {
-        const provider = new RestArkProvider("http://localhost:7070");
+        const provider = new RestOperatorProvider("http://localhost:7070");
         const ac = new AbortController();
         const stream = provider.getEventStream(ac.signal, []);
 
@@ -79,7 +79,7 @@ describe("RestArkProvider.getEventStream", () => {
     });
 });
 
-describe("RestArkProvider.getTransactionsStream", () => {
+describe("RestOperatorProvider.getTransactionsStream", () => {
     beforeEach(() => {
         MockEventSource.reset();
         configureEventSource((url) => new MockEventSource(url));
@@ -107,7 +107,7 @@ describe("RestArkProvider.getTransactionsStream", () => {
 
     /** Drive one frame through the stream and return whatever it yielded. */
     const yieldFrame = async (frame: unknown) => {
-        const provider = new RestArkProvider("http://localhost:7070");
+        const provider = new RestOperatorProvider("http://localhost:7070");
         const ac = new AbortController();
         const stream = provider.getTransactionsStream(ac.signal);
         const next = stream.next();
@@ -188,7 +188,7 @@ describe("RestArkProvider.getTransactionsStream", () => {
     );
 });
 
-describe("RestArkProvider.getInfo transaction limits", () => {
+describe("RestOperatorProvider.getInfo transaction limits", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
     });
@@ -198,7 +198,7 @@ describe("RestArkProvider.getInfo transaction limits", () => {
             "fetch",
             vi.fn(async () => jsonResponse(body)),
         );
-        return new RestArkProvider("http://ark.test").getInfo();
+        return new RestOperatorProvider("http://ark.test").getInfo();
     };
 
     it("reads maxTxWeight and maxOpReturnOutputs off the wire", async () => {

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -78,7 +78,7 @@ async function makePair() {
     const inner = await Wallet.create({
         identity,
         walletMode: "static",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: { walletRepository, contractRepository: new InMemoryContractRepository() },
     });
     openWallets.push(inner);

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RestIndexerProvider, RestArkProvider, ProviderUnavailableError, ArkError } from "../src";
+import {
+    RestIndexerProvider,
+    RestOperatorProvider,
+    ProviderUnavailableError,
+    ArkError,
+} from "../src";
 import { throwIfHttpUnavailable, toProviderUnavailable } from "../src/providers/errors";
 import { FetchError } from "../src/utils/fetch";
 import { rateGate } from "../src/providers/rateGate";
@@ -153,9 +158,9 @@ describe("RestIndexerProvider availability classification", () => {
     });
 });
 
-describe("RestArkProvider availability classification", () => {
+describe("RestOperatorProvider availability classification", () => {
     beforeEach(() => mockFetch.mockReset());
-    const provider = () => new RestArkProvider("http://localhost:7070");
+    const provider = () => new RestOperatorProvider("http://localhost:7070");
 
     it("getInfo maps a 503 to ProviderUnavailableError(arkade)", async () => {
         mockFetch.mockResolvedValueOnce({
