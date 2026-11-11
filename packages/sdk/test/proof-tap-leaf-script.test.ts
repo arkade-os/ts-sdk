@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { ArkNote, Intent, MultisigTapscript, VtxoScript, type IntentCoin } from "../src";
+import { ArkNote, Proof, MultisigTapscript, VtxoScript, type ProofInput } from "../src";
 import { contractHandlers } from "../src/contracts/handlers";
 import type { Contract } from "../src/contracts/types";
 import {
@@ -27,10 +27,10 @@ const coin = {
     tapTree: script.encode(),
     forfeitTapLeafScript: leafA,
     proofTapLeafScript: leafA,
-} as unknown as IntentCoin;
+} as unknown as ProofInput;
 
-const signedLeaf = (input: IntentCoin) =>
-    Intent.create("msg", [input]).getInput(1).tapLeafScript?.[0];
+const signedLeaf = (input: ProofInput) =>
+    Proof.create("msg", [input]).getInput(1).tapLeafScript?.[0];
 
 describe("proofTapLeafScript", () => {
     afterEach(() => {
