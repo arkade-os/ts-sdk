@@ -127,6 +127,19 @@ describe("Worker ArkadeCash", () => {
         expect(claimed.payload.claims?.[0].amount).toBe(5000);
     });
 
+    it("reports a live time-locked voucher older than the exit delay as available", async () => {
+        const note = ArkadeCash.generate(
+            hex.decode(point).slice(1),
+            { type: "seconds", value: 1024n },
+            "tarkadecash",
+        );
+        const dayOld = { ...live(note), createdAt: new Date(Date.now() - 86_400_000) };
+        const wallet = await fakeWallet(note, [dayOld]);
+        const status = await message(wallet, "get", note.toString());
+        if (status.payload?.action !== "get") throw new Error("expected cash inspection");
+        expect(status.payload.status).toBe("available");
+    });
+
     it("rejects an operator mismatch before sweeping", async () => {
         const note = ArkadeCash.generate(
             new Uint8Array(32).fill(2),

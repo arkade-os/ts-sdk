@@ -31,30 +31,20 @@ describe("classifyArkadeCash", () => {
         ).toBe("recovering");
     });
 
-    it("uses a height threshold for a block timelock", () => {
+    it("reports a live voucher past its batch expiry height as expired", () => {
         const coin = { ...live(), expiresAtHeight: 510 };
         expect(
-            classifyArkadeCash(
-                [coin],
-                1_000n,
-                { timestamp: new Date(), height: 500 },
-                { blocks: 144 },
-            ).status,
+            classifyArkadeCash([coin], 1_000n, { timestamp: new Date(), height: 500 }).status,
         ).toBe("available");
         expect(
-            classifyArkadeCash(
-                [coin],
-                1_000n,
-                { timestamp: new Date(), height: 510 },
-                { blocks: 144 },
-            ).status,
-        ).toBe("exitable");
+            classifyArkadeCash([coin], 1_000n, { timestamp: new Date(), height: 510 }).status,
+        ).toBe("expired");
     });
 
     it("keeps a signer-expired voucher unavailable until it is swept", () => {
-        expect(
-            classifyArkadeCash([live()], 1_000n, { timestamp: new Date() }, undefined, true).status,
-        ).toBe("expired");
+        expect(classifyArkadeCash([live()], 1_000n, { timestamp: new Date() }, true).status).toBe(
+            "expired",
+        );
     });
 
     it("prefers unspent exited funds over spent claim evidence", () => {

@@ -1389,17 +1389,11 @@ export class WalletMessageHandler
                     switch (request.action) {
                         case "get": {
                             const cash = ArkadeCash.fromString(request.token);
-                            const info = await this.readonlyWallet.getArkadeInfo();
-                            const currentThreshold =
-                                cash.csvTimelock.type === "blocks"
-                                    ? { blocks: Number(cash.csvTimelock.value) }
-                                    : { seconds: Number(info.unilateralExitDelay) };
                             const report = await readArkadeCash(
                                 request.token,
                                 this.readonlyWallet.indexerProvider,
-                                info,
+                                await this.readonlyWallet.getArkadeInfo(),
                                 this.readonlyWallet.onchainProvider,
-                                currentThreshold,
                             );
                             return this.tagged({
                                 id,
