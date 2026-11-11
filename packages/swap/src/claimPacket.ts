@@ -9,7 +9,7 @@
  * - value layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, TLV `0x01`.
  */
 import { base64 } from "@scure/base";
-import { ScriptNum } from "@scure/btc-signer";
+import { arkade } from "@arkade-os/sdk";
 import { concatBytes } from "@scure/btc-signer/utils.js";
 import { gcm } from "@noble/ciphers/aes.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -93,7 +93,11 @@ export async function sealWithEntropy(
         if (minimumAmount <= 0n || minimumAmount > 2_100_000_000_000_000n) {
             throw new Error("minimum amount must be positive and within the Bitcoin supply");
         }
-        plaintext = concatBytes(input.preimage, receiverProgram, ScriptNum().encode(minimumAmount));
+        plaintext = concatBytes(
+            input.preimage,
+            receiverProgram,
+            arkade.BigNum.encode(minimumAmount),
+        );
     }
     const ephemeralPub = secp256k1.getPublicKey(ephemeralKey, true);
     // shared secret = x coordinate of the ECDH point

@@ -57,7 +57,12 @@ export interface CorridorBase {
     readonly repository?: AssetSwapRepository;
 }
 
-/** The daemon key and installed template that may receive a sealed claim. */
+/**
+ * Requires `amountOn: "take"`; the default template requires at least 1,000 sats.
+ * Custom templates must support sealed receive terms and the quoted amount.
+ * Deploy a solver supporting extended ciphertext before enabling this option.
+ * The daemon operator can decrypt the preimage and must be trusted.
+ */
 export interface ExecutorReceive {
     encryptionPubkey: Pubkey;
     /** Installed sealed-terms template; defaults to EXECUTOR_RECEIVE_TEMPLATE_ID. */

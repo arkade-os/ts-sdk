@@ -583,6 +583,7 @@ style and have not been backfilled.
   on the row, and once it passed `syncDelegatedDefaults` silently dropped a
   live delegation. The expiry is now cleared before each status write.
 
+- **Explicit delegated receive claims survive an active poll.** A manual claim could return without acting while the background pass still held the swap lock during persistence. Explicit claims now wait for that pass and retain their request through a serialized claim attempt.
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
