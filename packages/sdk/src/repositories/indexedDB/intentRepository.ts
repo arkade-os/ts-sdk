@@ -70,14 +70,14 @@ export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRe
         await awaitTransaction(transaction);
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
         const db = await this.getDB();
         const transaction = db.transaction([STORE_INTENTS], "readwrite");
         transaction.objectStore(STORE_INTENTS).put(toStored({ ...intent, updatedAt: Date.now() }));
         await awaitTransaction(transaction);
     }
 
-    async getIntentsPage(
+    async getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>> {
@@ -130,6 +130,16 @@ export class IndexedDBBatchRegistrationRepository implements BatchRegistrationRe
         for (const i of all)
             if (!isTerminalIntentState(i.state)) for (const o of i.intentVtxos) out.push(o);
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: ArkIntent) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

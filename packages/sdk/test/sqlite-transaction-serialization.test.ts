@@ -103,7 +103,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
                 contracts.deleteContract(existing.script),
                 wallet.saveWalletState({ settings: { outside: true } }),
                 wallet.getWalletState(),
-                intents.saveIntent(intent("outside")),
+                intents.saveBatchRegistration(intent("outside")),
                 virtual.upsertVirtualTxs([vtx("outside")]),
             ].map((operation, index) =>
                 operation.then((value) => {
@@ -145,9 +145,9 @@ describe("SQLite transaction serialization (shared connection)", () => {
         await vtxs.getVirtualTx("x"); // init
 
         await Promise.all([
-            intents.saveIntent(intent("a")),
+            intents.saveBatchRegistration(intent("a")),
             vtxs.upsertVirtualTxs([vtx("t1")]),
-            intents.saveIntent(intent("b")),
+            intents.saveBatchRegistration(intent("b")),
             vtxs.upsertVirtualTxs([vtx("t2")]),
         ]);
 
@@ -156,13 +156,13 @@ describe("SQLite transaction serialization (shared connection)", () => {
         expect(await vtxs.getVirtualTx("t2")).not.toBeNull();
     });
 
-    it("serializes concurrent saveIntent on one repository", async () => {
+    it("serializes concurrent saveBatchRegistration on one repository", async () => {
         const db = createNodeSQLExecutor();
         const intents = new SQLiteIntentRepository(db);
         await collectIntents(intents);
 
         const ids = Array.from({ length: 8 }, (_, i) => `i${i}`);
-        await Promise.all(ids.map((id) => intents.saveIntent(intent(id))));
+        await Promise.all(ids.map((id) => intents.saveBatchRegistration(intent(id))));
 
         expect((await collectIntents(intents)).map((i) => i.proofTxId).sort()).toEqual(
             [...ids].sort(),
@@ -197,7 +197,7 @@ describe("SQLite transaction serialization (shared connection)", () => {
 
         // getWalletState triggers the migration transaction; race it against an
         // intent transaction on the same connection.
-        await Promise.all([wallet.getWalletState(), intents.saveIntent(intent("z"))]);
+        await Promise.all([wallet.getWalletState(), intents.saveBatchRegistration(intent("z"))]);
 
         const cols = await db.all<{ name: string; notnull: number }>(
             "PRAGMA table_info(ark_vtxos)",

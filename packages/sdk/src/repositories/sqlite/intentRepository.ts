@@ -80,14 +80,14 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
 
     async clear(): Promise<void> {
         await this.ensureInit();
-        // Route through the same serialized write chain as saveIntent so a
+        // Route through the same serialized write chain as saveBatchRegistration so a
         // clear can't interleave with an in-flight transaction on this executor.
         await runInTransaction(this.db, async (tx) => {
             await tx.run(`DELETE FROM ${this.t}`);
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
         await this.ensureInit();
         const now = Date.now();
         await runInTransaction(this.db, async (tx) => {
@@ -143,7 +143,7 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
         });
     }
 
-    async getIntentsPage(
+    async getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>> {
@@ -184,6 +184,16 @@ export class SQLiteBatchRegistrationRepository implements BatchRegistrationRepos
             for (const o of JSON.parse(r.intent_vtxos_json) as Outpoint[]) out.push(o);
         }
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: ArkIntent) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}

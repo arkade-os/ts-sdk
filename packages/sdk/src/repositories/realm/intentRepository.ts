@@ -44,7 +44,7 @@ export class RealmBatchRegistrationRepository implements BatchRegistrationReposi
         });
     }
 
-    async saveIntent(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
         this.realm.write(() => {
             if (intent.registrationId != null) {
                 const clashes = [
@@ -80,7 +80,7 @@ export class RealmBatchRegistrationRepository implements BatchRegistrationReposi
         });
     }
 
-    async getIntentsPage(
+    async getBatchRegistrationsPage(
         filter: IntentPageFilter | undefined,
         page: PageRequest,
     ): Promise<PageResult<ArkIntent>> {
@@ -102,6 +102,16 @@ export class RealmBatchRegistrationRepository implements BatchRegistrationReposi
         for (const o of [...this.realm.objects("ArkIntent")].map(toIntent))
             if (!isTerminalIntentState(o.state)) out.push(...o.proofInputs);
         return out;
+    }
+
+    /** @deprecated Use {@link saveBatchRegistration}. */
+    saveIntent(intent: ArkIntent) {
+        return this.saveBatchRegistration(intent);
+    }
+
+    /** @deprecated Use {@link getBatchRegistrationsPage}. */
+    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+        return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}
