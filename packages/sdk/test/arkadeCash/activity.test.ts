@@ -280,6 +280,34 @@ describe("ArkadeCash activity records", () => {
         ]);
     });
 
+    it("leaves a row of the wrong direction out of the cash activities", async () => {
+        const records = createArkadeCashTracker();
+        addArkadeCashRecord(
+            records,
+            record({
+                id: "v",
+                action: "claimed",
+                outcome: "claimed",
+                issues: [{ txid: "funding", amount: 5_000 }],
+                claims: [{ txid: "claim", amount: 5_000 }],
+            }),
+        );
+        const tx = (arkTxid: string, type: TxType) => ({
+            key: { arkTxid, commitmentTxid: "", boardingTxid: "" },
+            type,
+            amount: 5_000,
+            createdAt: 1,
+            settled: true,
+        });
+        // The funding txid as a received row (a claimer's history) is not "Cash issued", and the
+        // claim txid as a sent row (an issuer's own fee row) is not "Cash claimed".
+        const activities = await arkadeCashActivity(records, [
+            tx("funding", TxType.TxReceived),
+            tx("claim", TxType.TxSent),
+        ]);
+        expect(activities).toEqual([]);
+    });
+
     it("sees a record added between two builds with one reused resolver", async () => {
         const records = createArkadeCashTracker();
         const resolver = arkadeCashResolver(records);

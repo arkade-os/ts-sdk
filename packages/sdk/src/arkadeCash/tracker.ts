@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import type { Activity, ActivityResolver } from "../wallet/activity";
 import { buildActivities } from "../wallet/activity";
-import type { ArkTransaction } from "../wallet";
+import { TxType, type ArkTransaction } from "../wallet";
 import { ArkadeCash } from ".";
 
 export type ArkadeCashAction = "issued" | "claimed";
@@ -115,11 +115,12 @@ export function arkadeCashResolver(records: ArkadeCashTracker): ActivityResolver
             return [...candidates]
                 .sort((a, b) => a[1] - b[1])
                 .flatMap(([record]) => {
-                    const issue = record.issues.find((entry) => txids.has(entry.txid));
-                    const claim = record.claims.find((entry) => txids.has(entry.txid));
-                    const match = claim ?? issue;
+                    // An issue is money leaving the wallet into a voucher and a claim is money
+                    // arriving from one, so a row of the other direction is somebody else's.
+                    const direction = tx.type === TxType.TxSent ? "issued" : "claimed";
+                    const entries = direction === "issued" ? record.issues : record.claims;
+                    const match = entries.find((entry) => txids.has(entry.txid));
                     if (!match) return [];
-                    const direction = claim ? "claimed" : "issued";
                     return [
                         {
                             groupId: `arkade-cash:${record.id}:${direction}`,
