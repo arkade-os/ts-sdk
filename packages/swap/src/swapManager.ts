@@ -1351,16 +1351,14 @@ export class RfqSwapManager {
         // and then threw leaves no record, so finalizing there could take both legs.
         if (
             swap.kind === "lightning_receive" &&
-            (fate.fate === "claimed" || fate.fate === "open")
+            fate.fate !== "exited" &&
+            fate.fate !== "returned"
         ) {
-            const finalized = await this.finalizeOwnClaim(swap);
-            // A failure stops the pass, except to claim what is left while the window is open.
-            if (
-                !finalized &&
-                (fate.fate === "claimed" || this.config.now() >= swap.refundLocktime)
-            ) {
-                return;
-            }
+            const pending = await this.finalizeOwnClaim(swap);
+            // While a claim of ours is or was pending, only an open window goes on (to claim what
+            // is left); otherwise the next pass reads the fate again before anything can end.
+            const windowOpen = fate.fate === "open" && this.config.now() < swap.refundLocktime;
+            if (pending !== "none" && !windowOpen) return;
         }
         // Before the terminal shortcut, and that order is the whole safety
         // argument: `returned` means the SOLVER took the lockup back, which is
@@ -1407,32 +1405,32 @@ export class RfqSwapManager {
         await this.driveArkadeRefund(swap);
     }
 
-    /** False when our pending claim could not be finalized: the pass stops, so no deadline ends it. */
-    private async finalizeOwnClaim(swap: LightningReceiveSwap): Promise<boolean> {
+    /** `none` when no claim of ours is pending; `failed` covers a pending read that failed too. */
+    private async finalizeOwnClaim(
+        swap: LightningReceiveSwap,
+    ): Promise<"none" | "finalized" | "failed"> {
         const finalize = this.callbacks?.finalizeClaim;
-        if (!finalize || !this.config.enableAutoActions) return true;
+        if (!finalize || !this.config.enableAutoActions) return "none";
         try {
             // The callback resolves keys and `P`, possibly prompting a signer: only when owed.
             const { vtxos } = await this.deps.indexer.getVtxos({
                 scripts: [hex.encode(swap.lockupPkScript)],
                 pendingOnly: true,
             });
-            if (!vtxos?.length) {
-                this.revealed.delete(swap.rfqId);
-                return true;
-            }
-            // Before its CLTV only a claim can spend a receive lockup, so `P` is public and the
-            // value gate on what is left protects nothing, whether or not this finalize lands.
+            if (!vtxos?.length) return "none";
+            // Before its CLTV only a claim can spend a receive lockup, so `P` is public for good
+            // and the value gate on what is left protects nothing, whether or not this lands.
             this.revealed.add(swap.rfqId);
-            const [finalized] = await finalize(swap);
-            if (finalized && swap.claimTxid === undefined) {
-                swap.claimTxid = finalized;
+            const finalized = await finalize(swap);
+            if (finalized.length === 0) return "none";
+            if (swap.claimTxid === undefined) {
+                swap.claimTxid = finalized[0];
                 this.touch(swap);
             }
-            return true;
+            return "finalized";
         } catch (error) {
             this.emitFailed(swap, error);
-            return false;
+            return "failed";
         }
     }
 

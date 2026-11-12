@@ -2506,23 +2506,91 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             finalizeClaim,
         });
 
-        it("is finalized before the swap settles", async () => {
+        it("is finalized, and the swap settles on the next read", async () => {
             const s = spies();
-            const finalized: string[] = [];
+            let finalized = false;
             const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const indexer = revealed();
+            const read = indexer.getVtxos.bind(indexer);
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly && finalized ? { vtxos: [] } : read();
             const m = manager({
-                indexer: revealed(),
+                indexer,
                 now: BEFORE_DEADLINE,
                 spies: s,
                 install: withFinalize(s, async () => {
-                    finalized.push(swap.state);
+                    finalized = true;
                     return [CLAIM_TXID];
                 }),
             });
             await pass(m, swap);
+            expect(finalized).toBe(true);
+            expect(swap.state).toBe("claimed");
 
-            expect(finalized).toEqual(["claimed"]);
+            await m.poll();
             expect(swap.state).toBe("settled");
+        });
+
+        it("keeps a pending claim monitored while the fate read fails past the deadline", async () => {
+            const s = spies();
+            let attempts = 0;
+            const swap = receiveSwap();
+            const pending = fakeIndexer({ vtxos: spentBy(CLAIM_TXID) });
+            const indexer = fakeIndexer();
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) => {
+                if (opts?.pendingOnly) return pending.getVtxos();
+                throw new Error("indexer unreachable");
+            };
+            const m = manager({
+                indexer,
+                now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    attempts += 1;
+                    throw new Error("finalize refused");
+                }),
+            });
+            await pass(m, swap);
+            await m.poll();
+
+            expect(attempts).toBe(2);
+            expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        });
+
+        it("still treats P as public once the pending claim it saw is gone", async () => {
+            const s = spies();
+            let finalizedRemotely = false;
+            let contractReads = 0;
+            const swap = receiveSwap();
+            const indexer = fundedIndexer();
+            const read = indexer.getVtxos.bind(indexer);
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) => {
+                if (!opts?.pendingOnly) return read();
+                if (finalizedRemotely) return { vtxos: [] };
+                return fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos();
+            };
+            const m = manager({
+                indexer,
+                contracts: fakeContracts({
+                    preexisting: [lockupRowParams(hex.encode(RECEIVE_LOCKUP.pkScript))],
+                    vtxos: () => {
+                        if (contractReads++ === 0) throw new Error("contract read failed");
+                        return [{ ...LOCKUP_OUTPOINT, value: 1_000 }];
+                    },
+                }),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                // It landed, but the answer was lost.
+                install: withFinalize(s, async () => {
+                    finalizedRemotely = true;
+                    throw new Error("response lost");
+                }),
+            });
+            await pass(m, swap);
+            expect(s.lockupClaims).toEqual([]);
+
+            await m.poll();
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
         });
 
         it("keeps the swap unsettled while the finalize fails", async () => {

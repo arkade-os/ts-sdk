@@ -660,7 +660,7 @@ describe("finalizePendingClaim", () => {
             spentBy: Transaction.fromPSBT(base64.decode(stored[i]!)).id,
             arkTxId: arkTxid,
         }));
-        return { contract, arkTxid, stored, pending };
+        return { contract, arkTxid, stored, pending, withheld: checkpoints };
     };
 
     const indexerOf = (pending: object[], stored: string[]): LockupSpendIndexer =>
@@ -693,6 +693,19 @@ describe("finalizePendingClaim", () => {
             expect(signers.sort()).toEqual([hex.encode(key(3)), hex.encode(key(13))].sort());
             expect(getArkPsbtFields(tx, 0, ConditionWitness)).toEqual([[PREIMAGE]]);
         }
+    });
+
+    it("refuses to finalize when the indexer withheld the operator's signature", async () => {
+        const { contract, pending, withheld } = await lostFinalize();
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, withheld), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).rejects.toThrow(/without the operator's signature/);
+        expect(operator.finalized).toEqual([]);
     });
 
     it("finalizes a claim checkpointed under a signer the operator has since deprecated", async () => {

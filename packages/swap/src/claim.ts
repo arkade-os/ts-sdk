@@ -247,10 +247,18 @@ export async function finalizePendingClaim(
                         `pending claim ${arkTxid}: no stored checkpoint ${checkpoint.id}`,
                     );
                 }
-                const tx = await signer.sign(checkpoint, [0]);
                 const server = (theirs.getInput(0).tapScriptSig ?? []).filter(
                     ([{ pubKey }]) => hex.encode(pubKey) !== ours,
                 );
+                // An indexer in `withheld` exposure strips them from unauthenticated reads, and
+                // a finalize without them is refused: say so instead of sending it every pass.
+                if (server.length === 0) {
+                    throw new Error(
+                        `pending claim ${arkTxid}: the indexer served checkpoint ${checkpoint.id} ` +
+                            "without the operator's signature, so it cannot be finalized from here",
+                    );
+                }
+                const tx = await signer.sign(checkpoint, [0]);
                 tx.updateInput(0, {
                     tapScriptSig: [...(tx.getInput(0).tapScriptSig ?? []), ...server],
                 });
