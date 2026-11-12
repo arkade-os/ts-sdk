@@ -13,11 +13,16 @@
  * - The leaf is NOT covenant-pinned, so one aggregate output pays wherever the trader says; the
  *   destination is required, defaulting honestly to the swap's payout address.
  */
+import { base64, hex } from "@scure/base";
 import {
     type Identity,
     type Network,
     type VHTLC,
+    type VirtualCoin,
+    Transaction,
+    buildOffchainTx,
     claimWithPreimageIdentity,
+    isVtxoSpent,
     signAndSubmitOffchainTx,
 } from "@arkade-os/sdk";
 
@@ -27,6 +32,7 @@ import {
     boundedLockupSpend,
     lockupAssetOutputs,
     lockupInputs,
+    type LockupSpendIndexer,
     type LockupVtxo,
     operatorUnrollScript,
     type SwapOperator,
@@ -145,4 +151,87 @@ export async function pushClaim(
         oneShot: input.oneShot,
     });
     return { txid, amount: locked, left: live.length - vtxos.length, spent: vtxos };
+}
+
+/**
+ * Finalize every claim of ours the operator accepted but never finalized (a two-step submit whose
+ * finalize was lost): it has published `P`, yet the claimed sats do not exist until finalized.
+ * Ours = the claim leaf rebuilds its checkpoints. arkd replaces its stored checkpoint signatures
+ * with the ones sent, so the server's are carried over from the indexer's copy.
+ *
+ * @returns The ark txids finalized; empty when nothing of ours was pending.
+ */
+export async function finalizePendingClaim(
+    operator: SwapOperator,
+    indexer: LockupSpendIndexer,
+    input: {
+        contract: InstanceType<typeof VHTLC.ScriptV2>;
+        /** The trader's `receiver` signer, as for {@link pushClaim}. */
+        receiver: Identity;
+        preimage: Uint8Array;
+        /** @see operatorUnrollScript */
+        network?: Network;
+    },
+): Promise<string[]> {
+    const { vtxos } = await indexer.getVtxos({
+        scripts: [hex.encode(input.contract.pkScript)],
+        pendingOnly: true,
+    });
+    const byArkTx = new Map<string, VirtualCoin[]>();
+    for (const vtxo of vtxos ?? []) {
+        if (!isVtxoSpent(vtxo) || !vtxo.spentBy || !vtxo.arkTxId) continue;
+        byArkTx.set(vtxo.arkTxId, [...(byArkTx.get(vtxo.arkTxId) ?? []), vtxo]);
+    }
+    if (byArkTx.size === 0) return [];
+
+    assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
+    const serverUnrollScript = await operatorUnrollScript(operator, input.network);
+    const signer = claimWithPreimageIdentity(input.receiver, input.preimage);
+    const ours = hex.encode(await input.receiver.xOnlyPublicKey());
+    const finalized: string[] = [];
+    for (const [arkTxid, spent] of byArkTx) {
+        const live = spent.map(({ txid, vout, value }) => ({
+            txid,
+            vout,
+            value: Number(value),
+            recoverable: false,
+        }));
+        const total = live.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        // Only the checkpoints matter: their txids depend on the inputs alone.
+        const { checkpoints } = buildOffchainTx(
+            lockupInputs(live, input.contract, input.contract.claim()),
+            [{ script: input.contract.pkScript, amount: BigInt(total) }],
+            serverUnrollScript,
+        );
+        if (checkpoints.some((checkpoint, i) => checkpoint.id !== spent[i]!.spentBy)) continue;
+
+        const { txs } = await indexer.getVirtualTxs(checkpoints.map((checkpoint) => checkpoint.id));
+        const stored = new Map(
+            txs.map((raw) => {
+                const tx = Transaction.fromPSBT(base64.decode(raw));
+                return [tx.id, tx] as const;
+            }),
+        );
+        const signed = await Promise.all(
+            checkpoints.map(async (checkpoint) => {
+                const theirs = stored.get(checkpoint.id);
+                if (!theirs) {
+                    throw new Error(
+                        `pending claim ${arkTxid}: no stored checkpoint ${checkpoint.id}`,
+                    );
+                }
+                const tx = await signer.sign(checkpoint, [0]);
+                const server = (theirs.getInput(0).tapScriptSig ?? []).filter(
+                    ([{ pubKey }]) => hex.encode(pubKey) !== ours,
+                );
+                tx.updateInput(0, {
+                    tapScriptSig: [...(tx.getInput(0).tapScriptSig ?? []), ...server],
+                });
+                return base64.encode(tx.toPSBT());
+            }),
+        );
+        await operator.finalizeTx(arkTxid, signed);
+        finalized.push(arkTxid);
+    }
+    return finalized;
 }

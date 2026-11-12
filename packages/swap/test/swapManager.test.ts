@@ -2477,6 +2477,56 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(await m.hasSwap(RFQ_ID)).toBe(false);
     });
 
+    describe("a claim of ours that revealed P but was never finalized", () => {
+        const revealed = () => {
+            const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
+            return fakeIndexer({ vtxos: spentBy(spend.txid), txs: [spend] });
+        };
+        const withFinalize = (s: Spies, finalizeClaim: () => Promise<readonly string[]>) => ({
+            ...s.callbacks,
+            finalizeClaim,
+        });
+
+        it("is finalized before the swap settles", async () => {
+            const s = spies();
+            const finalized: string[] = [];
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const m = manager({
+                indexer: revealed(),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    finalized.push(swap.state);
+                    return [CLAIM_TXID];
+                }),
+            });
+            await pass(m, swap);
+
+            expect(finalized).toEqual(["claimed"]);
+            expect(swap.state).toBe("settled");
+        });
+
+        it("keeps the swap unsettled while the finalize fails", async () => {
+            const s = spies();
+            const failures: string[] = [];
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const m = manager({
+                indexer: revealed(),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    throw new Error("finalize refused");
+                }),
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+            await pass(m, swap);
+
+            expect(failures).toEqual(["finalize refused"]);
+            expect(swap.state).toBe("claimed");
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+    });
+
     it("a claim that never lands ends refunded when the solver takes the lockup back", async () => {
         // The transition the state doc has to make legal: `claimed` is not
         // terminal, so it must not retire the swap.

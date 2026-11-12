@@ -23,8 +23,13 @@ import {
 } from "@arkade-os/sdk";
 
 import { lightningReceiveContract } from "../src/rfq";
-import { LockupAmountMismatchError, pushClaim } from "../src/claim";
-import { LockupNeedsRecoveryError, MAX_LOCKUP_SPEND_INPUTS, type LockupVtxo } from "../src/refund";
+import { LockupAmountMismatchError, finalizePendingClaim, pushClaim } from "../src/claim";
+import {
+    LockupNeedsRecoveryError,
+    MAX_LOCKUP_SPEND_INPUTS,
+    type LockupSpendIndexer,
+    type LockupVtxo,
+} from "../src/refund";
 import { CHF_ID, USD_ID } from "./fixtures";
 import { assetFlows } from "./helpers/assetPacket";
 
@@ -617,5 +622,83 @@ describe("pushClaim", () => {
             ).rejects.toThrow(/checkpoint exit delay rejected/);
             expect(operator.submitted).toEqual([]);
         });
+    });
+});
+
+describe("finalizePendingClaim", () => {
+    /** A two-step claim whose finalize was lost: arkd holds it accepted and cosigned. */
+    const lostFinalize = async () => {
+        const contract = swapScript();
+        const operator = fakeOperator();
+        operator.finalizeTx = async () => {
+            throw new Error("connection reset");
+        };
+        await expect(
+            pushClaim(operator, {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+                vtxos: VTXOS,
+                destinationPkScript: DESTINATION_PK_SCRIPT,
+                expectedAmount: EXPECTED_AMOUNT,
+                oneShot: false,
+            }),
+        ).rejects.toThrow(/connection reset/);
+        const [{ tx, checkpoints }] = operator.submitted;
+        const stored = await Promise.all(checkpoints.map(operatorCosign));
+        const arkTxid = Transaction.fromPSBT(base64.decode(tx)).id;
+        const pending = VTXOS.map((vtxo, i) => ({
+            ...vtxo,
+            isSpent: true,
+            spentBy: Transaction.fromPSBT(base64.decode(stored[i]!)).id,
+            arkTxId: arkTxid,
+        }));
+        return { contract, arkTxid, stored, pending };
+    };
+
+    const indexerOf = (pending: object[], stored: string[]): LockupSpendIndexer =>
+        ({
+            getVtxos: async (opts?: { pendingOnly?: boolean }) => ({
+                vtxos: opts?.pendingOnly ? pending : [],
+            }),
+            getVirtualTxs: async (txids: string[]) => ({
+                txs: stored.filter((c) =>
+                    txids.includes(Transaction.fromPSBT(base64.decode(c)).id),
+                ),
+            }),
+        }) as unknown as LockupSpendIndexer;
+
+    it("finalizes it with the server's signature, ours and exactly one preimage", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([arkTxid]);
+
+        expect(operator.finalized.map((f) => f.txid)).toEqual([arkTxid]);
+        for (const checkpoint of operator.finalized[0]!.checkpoints) {
+            const tx = Transaction.fromPSBT(base64.decode(checkpoint));
+            const signers = tx.getInput(0).tapScriptSig!.map(([{ pubKey }]) => hex.encode(pubKey));
+            expect(signers.sort()).toEqual([hex.encode(key(3)), hex.encode(key(13))].sort());
+            expect(getArkPsbtFields(tx, 0, ConditionWitness)).toEqual([[PREIMAGE]]);
+        }
+    });
+
+    it("leaves alone a pending spend whose checkpoints are not our claim's", async () => {
+        const { contract, stored, pending } = await lostFinalize();
+        const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
+        const operator = fakeOperator();
+        await expect(
+            finalizePendingClaim(operator, indexerOf(foreign, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([]);
+        expect(operator.finalized).toEqual([]);
     });
 });

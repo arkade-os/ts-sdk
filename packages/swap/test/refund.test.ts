@@ -698,6 +698,21 @@ describe("readLockupFate", () => {
         ).toMatchObject({ fate: "claimed", preimage: PREIMAGE });
     });
 
+    it("reads the preimage off the ark tx of a claim whose checkpoint is still bare", async () => {
+        const checkpoint = spendOf(OUT_A, undefined, LOCKUP.claim());
+        const tx = new Transaction({ allowUnknownOutputs: true, allowUnknownInputs: true });
+        tx.addInput({ txid: checkpoint.txid, index: 0 });
+        tx.addOutput({ script: REFUND_PK_SCRIPT, amount: 1_000n });
+        setArkPsbtField(tx, 0, ConditionWitness, [PREIMAGE]);
+        const ark = { txid: tx.id, psbt: base64.encode(tx.toPSBT()) };
+        const vtxos = [{ ...OUT_A, spentBy: checkpoint.txid, arkTxId: ark.txid }];
+        expect(await read(fateIndexer(vtxos, [checkpoint, ark]))).toEqual({
+            fate: "claimed",
+            preimage: PREIMAGE,
+            spends: [{ checkpointTxid: checkpoint.txid, txid: ark.txid }],
+        });
+    });
+
     it.each(["missing", "unrecognized"])("keeps a %s spend leaf unresolved", async (name) => {
         const leaf: ReturnType<typeof LOCKUP.claim> | null =
             name === "missing" ? null : [LOCKUP.claim()[0], new Uint8Array([0x51, 0xc0])];

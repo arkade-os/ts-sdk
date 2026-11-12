@@ -384,6 +384,13 @@ export interface RfqSwapManagerCallbacks {
         },
     ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
     /**
+     * Finalize a claim of ours the operator accepted but never finalized (see
+     * `finalizePendingClaim`). Called on a receive leg before its claim counts as `settled`: that
+     * claim has published `P`, yet its sats do not exist until finalized. A throw keeps the swap
+     * unsettled and is retried next pass. Omitted, a revealed `P` settles the swap as before.
+     */
+    finalizeClaim?: (swap: ReceiveLockupSwap) => Promise<readonly string[]>;
+    /**
      * Push `refundWithoutReceiver` for every output at the lockup (see
      * `pushRefundWithoutReceiver`); return `null` for an empty lockup. Never called for a
      * {@link LightningReceiveSwap}.
@@ -1336,6 +1343,13 @@ export class RfqSwapManager {
         ) {
             fate = { fate: "unknown" };
         }
+        if (
+            fate.fate === "claimed" &&
+            (swap.kind === "lightning_receive" || swap.kind === "onchain_receive") &&
+            !(await this.finalizeOwnClaim(swap))
+        ) {
+            return;
+        }
         // Before the terminal shortcut, and that order is the whole safety
         // argument: `returned` means the SOLVER took the lockup back, which is
         // when the trader's L1 funding must come home. Ending there would
@@ -1379,6 +1393,19 @@ export class RfqSwapManager {
             return this.blockExitedLockup(swap, fate);
         }
         await this.driveArkadeRefund(swap);
+    }
+
+    /** False when finalizing our own accepted claim failed, so the swap must not settle yet. */
+    private async finalizeOwnClaim(swap: ReceiveLockupSwap): Promise<boolean> {
+        const finalize = this.callbacks?.finalizeClaim;
+        if (!finalize || !this.config.enableAutoActions) return true;
+        try {
+            await finalize(swap);
+            return true;
+        } catch (error) {
+            this.emitFailed(swap, error);
+            return false;
+        }
     }
 
     /**
