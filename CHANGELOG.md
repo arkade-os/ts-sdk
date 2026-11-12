@@ -87,6 +87,20 @@ style and have not been backfilled.
   at the confirmation height minus one and at the tip, or seconds-locked
   coins never read as expired.
 
+- **`@arkade-os/swap` drops the `onchain -> arkade` corridor.** The solver no
+  longer quotes `onchain:BTC->arkade:BTC`; non-interactive boarding replaces
+  it. `client.receive({ via: "onchain" })` and `client.quote()` on that route
+  now throw `UnsupportedRoute`, and a stored `onchain_receive` record no longer
+  restores. `@arkade-os/swap/protocol` no longer exports `requestOnchainReceive`,
+  `deriveOnchainReceive`, `onchainReceiveRequest`, `ONCHAIN_RECEIVE_PAIR`,
+  `onchainReceiveProfile`, `OnchainReceiveProfile`, `OnchainReceiveSwap`,
+  `ReceiveLockupSwap` (use `LightningReceiveSwap`), `nextOnchainReceiveAction`,
+  `OnchainReceiveAction` or `OnchainReceiveNeedsChainSource`. The manager's
+  `refundOnchain` callback and action, the three L1-refund
+  `RFQ_CONFIGURATION_REFUSAL` reasons, and the `corridors.onchain.refund`
+  override are gone. `assertFundable`'s `onchain.direction` is removed: the
+  timelock-order gate always applies.
+
 - **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
   `scope`.** A custom `ContractRepository` must persist and round-trip
   `Contract.scope`, filter on it in `getContractsPage`, and read a row without

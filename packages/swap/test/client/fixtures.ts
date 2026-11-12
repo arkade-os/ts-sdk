@@ -32,7 +32,6 @@ import { offerContract } from "../../src/offer";
 import {
     LIGHTNING_RECEIVE_PAIR,
     LIGHTNING_SEND_PAIR,
-    ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
     lightningReceiveContract,
     lightningSendContract,
@@ -57,9 +56,6 @@ export const SOLVER_DISCOVERY_KEY = hex.encode(key(4));
 export const RECEIVER_PK_SCRIPT = p2tr(key(6));
 export const SOLVER_REFUND_PK_SCRIPT = p2tr(key(8));
 export const HTLC_REFUND_PUBKEY = key(7);
-/** The solver's L1 claim key on `onchain -> arkade`. */
-export const HTLC_CLAIM_PUBKEY = key(10);
-/** The wallet's boarding address: where an `onchain -> arkade` refund pays. */
 export const BOARDING_ADDRESS = "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080";
 
 export const NETWORK = getNetwork("regtest");
@@ -484,54 +480,6 @@ export const onchainSendAnswer = (
     } as RfqQuote;
 };
 
-/** The solver's answer to `onchain:BTC->arkade:BTC`: its lockup and the L1 HTLC the trader funds. */
-export const onchainReceiveAnswer = (
-    payload: Payload,
-    clock: SolverClock,
-    over: { quote?: Partial<RfqQuote>; profile?: Profile } = {},
-): RfqQuote => {
-    const profile = profileOf(payload);
-    const paymentHash = profile.payment_hash as string;
-    const script = lightningReceiveContract({
-        solverPubkey: SOLVER_PUBKEY,
-        refundLocktime: clock.refundLocktime,
-        operatorPubkey: OPERATOR_PUBKEY,
-        paymentHash,
-        claimDelay: CLAIM_DELAY,
-        emulatorPubkey: EMULATOR_PUBKEY,
-        solverRefundPkScript: SOLVER_REFUND_PK_SCRIPT,
-        payoutPubkey: hex.decode(profile.payout_pubkey as string),
-        payoutPkScript: ArkAddress.decode(profile.payout_address as string).pkScript,
-    });
-    const htlc = onchainHtlcScript(
-        {
-            paymentHash,
-            claimKey: HTLC_CLAIM_PUBKEY,
-            refundKey: hex.decode(profile.refund_pubkey as string),
-            refundLocktime: clock.htlcLocktime,
-        },
-        "regtest",
-    );
-    // The pinned side echoes the request, the other carries a 1% spread.
-    const requested = Number(payload.amount);
-    const toPinned = payload.amount_side === "to";
-    return {
-        ...baseQuote(payload, clock),
-        from_amount: toPinned ? Math.ceil(requested * 1.01) : requested,
-        to_amount: toPinned ? requested : Math.floor(requested * 0.99),
-        profile: {
-            lockup_address: script.address(NETWORK.hrp, OPERATOR_PUBKEY).encode(),
-            solver_refund_pk_script: hex.encode(SOLVER_REFUND_PK_SCRIPT),
-            claim_pubkey: hex.encode(HTLC_CLAIM_PUBKEY),
-            htlc_locktime: clock.htlcLocktime,
-            htlc_address: htlc.address,
-            min_confirmations: 2,
-            ...over.profile,
-        },
-        ...over.quote,
-    } as RfqQuote;
-};
-
 /**
  * The solver's answer on a negotiated asset market.
  *
@@ -644,8 +592,6 @@ export const solverFor = (clock: SolverClock): SolverAnswer => {
                 return lightningReceiveAnswer(payload, clock);
             case ONCHAIN_SEND_PAIR:
                 return onchainSendAnswer(payload, clock);
-            case ONCHAIN_RECEIVE_PAIR:
-                return onchainReceiveAnswer(payload, clock);
             case ASSET_BUY_PAIR:
             case ASSET_SELL_PAIR:
                 return arkadeAssetAnswer(payload, clock);

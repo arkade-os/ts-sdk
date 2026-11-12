@@ -2,12 +2,8 @@
  * The Bitcoin-L1 side of the onchain corridor: a taproot HTLC as pure local
  * derivation, spend builders, and the injected chain-access seam.
  *
- * One HTLC shape serves both directions — only the key roles swap:
- *
- * | direction                             | claimKey            | refundKey          |
- * |---------------------------------------|---------------------|--------------------|
- * | arkade->onchain (solver funds L1)     | user's payout key   | solver's htlc key  |
- * | onchain->arkade (user funds L1)       | solver's htlc key   | user's refund key  |
+ * The solver funds the HTLC (`arkade->onchain`): `claimKey` is the user's payout key, `refundKey`
+ * the solver's htlc key.
  *
  * The hash-lock is `ripemd160(sha256(P))`, as in the lightning-send program, so ONE preimage
  * unlocks both the Arkade leaf and the L1 leaf. Solver-supplied addresses are compare-only; the
@@ -61,7 +57,7 @@ export const ONCHAIN_CLAIM_VSIZE = 152;
 
 // ── Preimage utilities ───────────────────────────────────────────────────────
 
-/** 32 random bytes. The user generates P for BOTH onchain directions. */
+/** 32 random bytes. The user generates P. */
 export const newPreimage = (): Uint8Array => crypto.getRandomValues(new Uint8Array(32));
 
 /** `sha256(P)`, hex — the wire `payment_hash`, same convention as BOLT11. */
@@ -504,17 +500,15 @@ export async function claimOnchainFill(
 
 /** Where an onchain HTLC stands, for crash recovery. Persisting the record BEFORE funding is what
  * makes this classification (and the claim) possible after a restart. Each phase names which leaf
- * moved, never whose turn it is: the key roles swap between the legs (module header). */
+ * moved, never whose turn it is. */
 export type OnchainHtlcPhase =
     | { phase: "unfunded" }
     | { phase: "awaiting_confirmations"; utxo: ChainUtxo }
     | { phase: "claimable"; utxo: ChainUtxo }
     /**
-     * The refund leaf has matured. On `arkade->onchain` it is the SOLVER's leaf: the CLAIM WINDOW
-     * IS CLOSED and `claimOnchainFill` throws, so do not claim; take the Arkade-side covenant
-     * refund instead (on a swap you expected to claim, the claim was missed). On
-     * `onchain->arkade` it is the TRADER's own leaf: the act-now signal to refund, and it stays
-     * spendable.
+     * The SOLVER's refund leaf has matured: the CLAIM WINDOW IS CLOSED and `claimOnchainFill`
+     * throws, so do not claim; take the Arkade-side covenant refund instead (on a swap you expected
+     * to claim, the claim was missed).
      */
     | { phase: "refundable"; utxo: ChainUtxo }
     | { phase: "claimed"; txid: string; preimage: Uint8Array }

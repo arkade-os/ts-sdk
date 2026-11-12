@@ -745,7 +745,7 @@ describe("assertFundable refuses EVM quotes until local funding is implemented",
                     quote: quote(),
                     now: NOW + 60,
                     maxFee,
-                    onchain: { htlcLocktime: 1, minConfirmations: 1, direction: "send" },
+                    onchain: { htlcLocktime: 1, minConfirmations: 1 },
                 });
             } catch (error) {
                 thrown = error;
@@ -768,7 +768,7 @@ describe("assertFundable refuses EVM quotes until local funding is implemented",
                     quote,
                     now: NOW,
                     maxFee: { bps: 1 },
-                    onchain: { htlcLocktime: 1, minConfirmations: 1, direction: "send" },
+                    onchain: { htlcLocktime: 1, minConfirmations: 1 },
                 }),
             ).toThrow(expect.objectContaining({ reason: "evm_funding_unavailable" }));
         }

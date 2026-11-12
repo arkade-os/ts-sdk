@@ -33,12 +33,7 @@ const RFQ_STATES: RfqSwapState[] = [
     "failed",
 ];
 
-const KINDS: CorridorKind[] = [
-    "lightning_send",
-    "lightning_receive",
-    "onchain_send",
-    "onchain_receive",
-];
+const KINDS: CorridorKind[] = ["lightning_send", "lightning_receive", "onchain_send"];
 
 const ASSET_STATUSES: AssetSwapStatus[] = [
     "pending",
@@ -61,13 +56,11 @@ describe("the corridor translation", () => {
             lightning_send: "trader",
             lightning_receive: "solver",
             onchain_send: "trader",
-            onchain_receive: "solver",
         });
         // And the same declaration is what decides whether the L1 seam has to be
         // resolved at all — the reason a deliberate `onchain: { chain: null }`
         // is not a construction failure for a client that never touches it.
         expect(readsChain("onchain_send")).toBe(true);
-        expect(readsChain("onchain_receive")).toBe(true);
         expect(readsChain("lightning_send")).toBe(false);
         expect(readsChain("lightning_receive")).toBe(false);
         expect(CORRIDOR_PASS.onchain_send.lockups).toHaveLength(2);
@@ -113,9 +106,6 @@ describe("the corridor translation", () => {
         expect(corridorOutcome("lightning_send", "refunded")).toBe("refunded");
         expect(corridorOutcome("onchain_send", "refunded")).toBe("refunded");
         expect(corridorOutcome("lightning_receive", "refunded")).toBe("lapsed");
-        // Unless the receive leg has an L1 half of the trader's own: the manager
-        // writes `refunded` there only once that funding is back.
-        expect(corridorOutcome("onchain_receive", "refunded")).toBe("refunded");
     });
 
     it("covers all three sites that write the raw `refunded`", () => {

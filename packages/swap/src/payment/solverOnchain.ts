@@ -199,7 +199,6 @@ export function solverOnchainRail(deps: SolverOnchainRailDeps): PaymentRail {
                             onchain: {
                                 htlcLocktime: swap.htlcParams.refundLocktime,
                                 minConfirmations: swap.minConfirmations,
-                                direction: "send",
                             },
                         });
                         return fundSolverSend(

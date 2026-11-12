@@ -15,12 +15,10 @@ import {
     ONCHAIN_BTC,
     ONCHAIN_CLAIM_MARGIN_SECONDS,
     ONCHAIN_ORDER_MARGIN_SECONDS,
-    ONCHAIN_RECEIVE_PAIR,
     ONCHAIN_SEND_PAIR,
     assertFundable,
     deriveOnchainSend,
     lightningSendContract,
-    onchainReceiveRequest,
     onchainSendRequest,
     type RfqQuote,
 } from "../src/rfq";
@@ -49,7 +47,6 @@ describe("pairs", () => {
     it("names the onchain legs", () => {
         expect(ONCHAIN_BTC).toBe("onchain:BTC");
         expect(ONCHAIN_SEND_PAIR).toBe(`${ARKADE_BTC}->${ONCHAIN_BTC}`);
-        expect(ONCHAIN_RECEIVE_PAIR).toBe(`${ONCHAIN_BTC}->${ARKADE_BTC}`);
     });
 });
 
@@ -80,34 +77,6 @@ describe("request builders", () => {
             },
         });
     });
-
-    it("builds the on-board request with the sealed packet riding the profile", () => {
-        const request = onchainReceiveRequest({
-            rfqId: RFQ_ID,
-            paymentHash: PAYMENT_HASH,
-            payoutAddress: "ark1q...",
-            payoutPubkey: key(9),
-            refundPubkey: key(7),
-            claimPacket: "abc=",
-            amount: 100_000,
-            amountSide: "from",
-        });
-        expect(request).toEqual({
-            v: 1,
-            type: "rfq_request",
-            rfq_id: RFQ_ID,
-            pair: "onchain:BTC->arkade:BTC",
-            amount_side: "from",
-            amount: 100_000,
-            profile: {
-                payment_hash: PAYMENT_HASH,
-                claim_packet: "abc=",
-                refund_pubkey: hex.encode(key(7)),
-                payout_address: "ark1q...",
-                payout_pubkey: hex.encode(key(9)),
-            },
-        });
-    });
 });
 
 describe("assertFundable — onchain gates", () => {
@@ -127,7 +96,6 @@ describe("assertFundable — onchain gates", () => {
     const onchain = {
         htlcLocktime: HTLC_LOCKTIME,
         minConfirmations: 2,
-        direction: "send" as const,
     };
 
     it("passes a well-ordered quote, without requiring an invoice expiry", () => {
@@ -165,7 +133,7 @@ describe("assertFundable — onchain gates", () => {
         ).toThrow(expect.objectContaining({ reason: "claim_window_too_short" }));
     });
 
-    it("enforces timelock order for the send direction: L1 + margin before the Arkade refund", () => {
+    it("enforces timelock order: L1 + margin before the Arkade refund", () => {
         const late = REFUND_LOCKTIME - ONCHAIN_ORDER_MARGIN_SECONDS + 1;
         expect(() =>
             assertFundable({
@@ -174,12 +142,6 @@ describe("assertFundable — onchain gates", () => {
                 onchain: { ...onchain, htlcLocktime: late },
             }),
         ).toThrow(expect.objectContaining({ reason: "timelock_order" }));
-        // The receive direction leaves ordering to the solver's own safety check.
-        assertFundable({
-            quote: quote({ refund_locktime: undefined }),
-            now: NOW,
-            onchain: { ...onchain, htlcLocktime: late, direction: "receive" },
-        });
     });
 });
 
