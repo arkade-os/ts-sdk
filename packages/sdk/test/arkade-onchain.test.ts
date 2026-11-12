@@ -62,7 +62,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
     const receiver = xOnly();
     const out = new Uint8Array([0x51, 0x20, ...receiver]);
 
-    async function setup() {
+    async function setup(operatorHoldsEmulatorKey = false) {
         const checkpointTapscript = hex.encode(
             CSVMultisigTapscript.encode({
                 timelock: { type: "blocks", value: 10n },
@@ -100,7 +100,13 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         const ark = await arkade.Arkade.connect({
             arkade: {
                 getInfo: async () =>
-                    ({ signerPubkey: "02" + hex.encode(server), checkpointTapscript }) as any,
+                    ({
+                        signerPubkey: "02" + hex.encode(server),
+                        checkpointTapscript,
+                        deprecatedSigners: operatorHoldsEmulatorKey
+                            ? [{ pubkey: "02" + hex.encode(emulatorKey), cutoffDate: 0n }]
+                            : [],
+                    }) as any,
                 submitTx: async () => {
                     throw new Error("not used");
                 },
@@ -158,6 +164,19 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         expect(cosignOnchainTx).not.toHaveBeenCalled();
         const raw = Transaction.fromRaw(hex.decode(broadcastTransaction.mock.calls[0][0]));
         expect(raw.inputsLength).toBe(1);
+    });
+
+    it("covenant leaf goes to arkd's cosign once arkd holds the co-signer key", async () => {
+        const { contract, submitOnchainTx, cosignOnchainTx } = await setup(true);
+        const txid = await contract.functions
+            .covenant()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .sendOnchain();
+        expect(txid).toBe("arkd-txid");
+        expect(submitOnchainTx).not.toHaveBeenCalled();
+        expect(cosignOnchainTx).toHaveBeenCalledTimes(1);
     });
 
     it("rejects a covenant leaf containing the server key", async () => {

@@ -16,6 +16,7 @@ import {
     PrevArkTxField,
     ConditionWitness,
     PrevTxUnavailableError,
+    REGTEST_EMULATOR_PUBKEY,
     ServerResponseMismatchError,
     type EmulatorInfo,
     type EmulatorProvider,
@@ -889,6 +890,37 @@ describe("ArkadeContract — extended features", () => {
         const cp0 = Transaction.fromPSBT(base64.decode(captured.cps![0]));
         expect(hasUserSig(arkTx)).toBe(true); // ark-tx input 0
         expect(hasUserSig(cp0)).toBe(true); // checkpoint 0 input 0
+    });
+
+    it("sends covenants to arkd directly once arkd holds the pinned co-signer", async () => {
+        const identity = SingleKey.fromHex(hex.encode(new Uint8Array(32).fill(0x11)));
+        const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [COIN]);
+        const info = await arkProvider.getInfo();
+        arkProvider.getInfo = async () => ({
+            ...info,
+            deprecatedSigners: [{ pubkey: REGTEST_EMULATOR_PUBKEY, cutoffDate: 0n }],
+        });
+        const ark = await arkade.Arkade.connect({
+            arkade: arkProvider,
+            emulator,
+            indexer,
+            identity,
+            network: networks.regtest,
+        });
+        expect(hex.encode(ark.emulatorKey!)).toBe("02" + hex.encode(server));
+
+        const c = ark.contract(claimProgram(), {
+            receiver,
+            amount: AMOUNT,
+            h: new Uint8Array(20),
+        });
+        await c.functions
+            .claim(new Uint8Array(32).fill(0x42))
+            .from(COIN)
+            .to(p2tr(receiver), AMOUNT)
+            .send();
+        expect(captured.via).toBe("ark");
+        expect(emulator.submitTx).not.toHaveBeenCalled();
     });
 
     it("arkd path signs once per tx, no checkpoint double-signing (fix #2/#3)", async () => {
