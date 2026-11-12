@@ -19,7 +19,7 @@ import {
     getNetwork,
     setArkPsbtField,
     scriptFromTapLeafScript,
-    type ArkProvider,
+    type OperatorProvider,
 } from "@arkade-os/sdk";
 
 import { lightningSendContract, type RfqStatus, type RfqTransport } from "../src/rfq";
@@ -87,9 +87,9 @@ const dustOutputs = (count: number): LockupVtxo[] =>
 
 /** A scripted arkd: echoes back the checkpoints it was handed (as a real one
  * does, plus its own signature) and reports the ark txid it was submitted.
- * Typed against the production contract so a change to ArkProvider
+ * Typed against the production contract so a change to OperatorProvider
  * breaks the fake at compile time. */
-type FakeOperator = ArkProvider & {
+type FakeOperator = OperatorProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };

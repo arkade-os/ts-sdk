@@ -19,7 +19,7 @@ import {
     Transaction,
     getArkPsbtFields,
     getNetwork,
-    type ArkProvider,
+    type OperatorProvider,
 } from "@arkade-os/sdk";
 
 import { lightningReceiveContract } from "../src/rfq";
@@ -69,7 +69,7 @@ const VTXOS: LockupVtxo[] = [
 const EXPECTED_AMOUNT = 100_000;
 
 /** A scripted arkd, same contract as refund.test.ts's. */
-type FakeOperator = ArkProvider & {
+type FakeOperator = OperatorProvider & {
     submitted: { tx: string; checkpoints: string[] }[];
     finalized: { txid: string; checkpoints: string[] }[];
 };

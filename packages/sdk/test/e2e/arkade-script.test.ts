@@ -12,7 +12,7 @@ import {
     ArkAddress,
     EsploraProvider,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     SingleKey,
     Transaction,
@@ -321,7 +321,7 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 

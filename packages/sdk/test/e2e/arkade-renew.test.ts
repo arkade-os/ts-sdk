@@ -5,7 +5,7 @@ import { sha256 } from "@scure/btc-signer/utils.js";
 import {
     arkade,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestEmulatorProvider,
     RestIndexerProvider,
     type VirtualCoin,
@@ -22,7 +22,7 @@ const ARK_SERVER_URL = "http://localhost:7070";
 const EMULATOR_URL = "http://localhost:7073";
 
 describe("renewProgramContractOutputs", () => {
-    const arkProvider = new RestArkProvider(ARK_SERVER_URL);
+    const arkProvider = new RestOperatorProvider(ARK_SERVER_URL);
     const indexer = new RestIndexerProvider(ARK_SERVER_URL);
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
     const renewable = arkade.programFromArtifact(
@@ -160,12 +160,12 @@ describe("renewProgramContractOutputs", () => {
         const caller = new AbortController();
         // Aborts once the intent is registered, before any batch can start.
         const abortsOnRegister = Object.assign(Object.create(arkProvider), {
-            async registerIntent(intent: Parameters<RestArkProvider["registerIntent"]>[0]) {
+            async registerIntent(intent: Parameters<RestOperatorProvider["registerIntent"]>[0]) {
                 const intentId = await arkProvider.registerIntent(intent);
                 caller.abort();
                 return intentId;
             },
-        }) as RestArkProvider;
+        }) as RestOperatorProvider;
         const keeper = await arkade.Arkade.connect({
             arkade: abortsOnRegister,
             emulator,
