@@ -14,7 +14,9 @@ import {
     deserializeArkadeContractParams,
     serializeArkadeContractParams,
     stringifyArtifact,
+    tweakServerSigners,
     type ArkadeParamValue,
+    type Program,
 } from "../src/arkade/program";
 import { ArkadeScript } from "../src/arkade/script";
 import { computeArkadeScriptPublicKey } from "../src/arkade/tweak";
@@ -1091,4 +1093,122 @@ describe("reading a debug file", () => {
             expect(() => programFromArtifact(art, debug)).toThrow(pattern);
         },
     );
+});
+
+describe("tweakServerSigners", () => {
+    const pub = (byte: number) => schnorr.getPublicKey(new Uint8Array(32).fill(byte));
+    const server = pub(0x11);
+    const asServer = { serverKey: server, emulatorKey: hex.decode(`03${hex.encode(server)}`) };
+    const leafKeys = (script: ArkadeProgramScript, name: string) =>
+        MultisigTapscript.decode(script.functionByName(name)!.leafScript).params.pubkeys.map(
+            hex.encode,
+        );
+    const sig = (key: string, last = false) => [
+        `<${key}>`,
+        last ? "OP_CHECKSIG" : "OP_CHECKSIGVERIFY",
+    ];
+
+    it("names the server only as its covenant tweak, in the server's place", () => {
+        const escrow = programFromArtifact(artifact);
+        const rewritten = tweakServerSigners(escrow, asServer);
+        const { emulatorIndex: _, ...complete } = escrow.functions.complete.tapscript;
+        expect(rewritten.functions.complete.tapscript).toEqual({
+            ...complete,
+            signers: [{ tweak: "$server", fn: "complete" }],
+            emulator: null,
+        });
+        expect(rewritten.functions.unilateral).toBe(escrow.functions.unilateral);
+        expect(tweakServerSigners(rewritten, asServer)).toEqual(rewritten);
+
+        const args = { ...ARGS, server };
+        const before = new ArkadeProgramScript(escrow, args, asServer);
+        const after = new ArkadeProgramScript(rewritten, args, asServer);
+        for (const name of ["complete", "cancel"]) {
+            const script = after.functionByName(name)!.arkadeScript!;
+            const tweaked = hex.encode(computeArkadeScriptPublicKey(server, script));
+            expect(leafKeys(before, name)).toEqual([hex.encode(server), tweaked]);
+            expect(leafKeys(after, name)).toEqual([tweaked]);
+        }
+        expect(after.functionByName("unilateral")!.leafScript).toEqual(
+            before.functionByName("unilateral")!.leafScript,
+        );
+    });
+
+    it("keeps every other key in order, across the leaves of one group", () => {
+        const [user, owner] = [pub(0x12), pub(0x13)];
+        const program = programFromArtifact(
+            demo({
+                constructorInputs: [
+                    { name: "user", type: "pubkey" },
+                    { name: "owner", type: "pubkey" },
+                ],
+                functions: [
+                    {
+                        name: "g",
+                        arkade: { inputs: [], asm: ["OP_1"] },
+                        leaves: [
+                            {
+                                name: "a",
+                                asm: [
+                                    ...sig("user"),
+                                    ...sig("SERVER_KEY"),
+                                    ...sig("EMULATOR_KEY:g"),
+                                    ...sig("owner", true),
+                                ],
+                            },
+                            {
+                                name: "b",
+                                asm: [...sig("EMULATOR_KEY:g"), ...sig("SERVER_KEY", true)],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
+        const rewritten = tweakServerSigners(program, asServer);
+        expect(rewritten.functions.a.tapscript.signers).toEqual([
+            "$user",
+            { tweak: "$server", fn: "g" },
+            "$owner",
+        ]);
+
+        const args = { user, owner, server };
+        const before = new ArkadeProgramScript(program, args, asServer);
+        const after = new ArkadeProgramScript(rewritten, args, asServer);
+        const [u, x, o] = [user, server, owner].map(hex.encode);
+        const t = leafKeys(before, "a")[2];
+        expect(leafKeys(before, "a")).toEqual([u, x, t, o]);
+        expect(leafKeys(after, "a")).toEqual([u, t, o]);
+        expect(leafKeys(before, "b")).toEqual([t, x]);
+        expect(leafKeys(after, "b")).toEqual([t]);
+    });
+
+    it("leaves the program alone when the co-signer is not the server", () => {
+        const escrow = programFromArtifact(artifact);
+        expect(tweakServerSigners(escrow, { serverKey: server, emulatorKey: EMULATOR_KEY })).toBe(
+            escrow,
+        );
+        expect(tweakServerSigners(escrow, { serverKey: server })).toBe(escrow);
+    });
+
+    it("keeps a splice that names another covenant, which compiling still refuses", () => {
+        const program = {
+            version: 1,
+            params: [{ name: "server", type: "pubkey" }],
+            functions: {
+                a: {
+                    group: "g",
+                    tapscript: { signers: ["$server"], emulator: "b" },
+                    arkadeScript: { asm: [1] },
+                },
+                b: { tapscript: { signers: ["$server"] }, arkadeScript: { asm: [2] } },
+            },
+        } satisfies Program;
+        const rewritten = tweakServerSigners(program, asServer);
+        expect(rewritten.functions.a).toBe(program.functions.a);
+        expect(rewritten.functions.b.tapscript.signers).toEqual([{ tweak: "$server", fn: "b" }]);
+        expect(() => new ArkadeProgramScript(rewritten, { server }, asServer)).toThrow(
+            /invalid emulator covenant 'b'/,
+        );
+    });
 });

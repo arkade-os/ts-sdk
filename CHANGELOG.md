@@ -128,6 +128,23 @@ style and have not been backfilled.
 
 ### Features
 
+- **New covenants name the operator key only tweaked once it is the
+  co-signer.** When the client's co-signer key is the operator's own
+  `signerPubkey` (compared x-only), a covenant leaf that names `$server` and
+  also splices in the co-signer carried both `X` and `tweak(X, script)`.
+  `Arkade.contract()` now rewrites `$server` in place to
+  `{ tweak: "$server", fn }`, with the covenant the splice used, and drops the
+  splice, so the leaf names `tweak(X, script)` alone; its other keys keep their
+  order. The contract holds the rewritten program and `register()` stores it.
+  `ArkadeContract.fromContract` and the `"arkade"` handler compile a stored
+  program as is, so stored contracts keep their address. `send()` and
+  `renewProgramContractOutputs` accept the operator key tweaked by the spent
+  covenant as the server's. `@arkade-os/swap` offers, `new ArkadeContract(...)`
+  and `ArkadeProgramScript` are not rewritten, and with any other co-signer key
+  nothing changes. An app that re-derives a contract from its artifact through
+  `contract()`, instead of restoring its row, gets the new address once the
+  co-signer is the operator.
+
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.

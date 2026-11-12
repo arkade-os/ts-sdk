@@ -39,6 +39,7 @@ import {
     type TapscriptType,
 } from "../script/tapscript";
 import { VtxoScript, type TapLeafScript } from "../script/base";
+import { toXOnly } from "../utils/keys";
 import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ArkadeScript } from "./script";
 import { ARKADE_OP } from "./opcodes";
@@ -679,6 +680,54 @@ export class ArkadeProgramScript extends VtxoScript {
         if (spent.arkadeScript) needed.delete(hex.encode(spent.arkadeScript));
         return [...needed.values()].map((s) => arkadeScriptHash(s));
     }
+}
+
+/**
+ * For a co-signer that is the server itself: a covenant leaf naming `$server` beside the spliced
+ * co-signer names only `tweak($server, covenant)`, in `$server`'s place. All else is unchanged.
+ */
+export function tweakServerSigners<P extends Program>(program: P, keys: ProgramKeys): P {
+    const { serverKey, emulatorKey } = keys;
+    if (!emulatorKey || !equalBytes(toXOnly(emulatorKey, "emulator key"), serverKey)) {
+        return program;
+    }
+    const functions: Record<string, ArkadeFunction> = Object.create(null);
+    for (const [name, fn] of Object.entries(program.functions)) {
+        const { emulatorIndex: _, ...tapscript } = fn.tapscript;
+        const target = fn.group ? (tapscript.emulator ?? fn.group) : name;
+        // A splice naming another covenant stays, so compiling still checks it against this one.
+        const ownCovenant = target === name || target === fn.group;
+        functions[name] =
+            fn.arkadeScript &&
+            tapscript.emulator !== null &&
+            ownCovenant &&
+            tapscript.signers.includes("$server")
+                ? {
+                      ...fn,
+                      tapscript: {
+                          ...tapscript,
+                          emulator: null,
+                          signers: tapscript.signers.map((signer) =>
+                              signer === "$server" ? { tweak: "$server", fn: target } : signer,
+                          ),
+                      },
+                  }
+                : fn;
+    }
+    return { ...program, functions } as P;
+}
+
+/** Whether `key` in `fn`'s leaf is the server's own key or that key tweaked by `fn`'s covenant. */
+export function serverSignsKey(
+    fn: Pick<CompiledProgramFunction, "arkadeScript">,
+    serverKey: Uint8Array,
+    key: Uint8Array,
+): boolean {
+    return (
+        equalBytes(key, serverKey) ||
+        (fn.arkadeScript !== undefined &&
+            equalBytes(key, computeArkadeScriptPublicKey(serverKey, fn.arkadeScript)))
+    );
 }
 
 // --- Artifact JSON ----------------------------------------------------------
