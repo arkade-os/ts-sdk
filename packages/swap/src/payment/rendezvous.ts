@@ -21,21 +21,16 @@ export interface SolverRendezvous {
     maxSats: number;
 }
 
-/** The card's own `emulator_pubkey` wins; an absent one falls back to the pin,
- *  a malformed one fails closed, and a disagreement is skipped not resolved. */
+/** A malformed card key fails closed. A requested key must match the card's, an absent one
+ *  standing for it; with none requested any card fits, since requests name their own key. */
 const rendezvousOf = (market: DiscoveredMarket, pinned?: string): SolverRendezvous | undefined => {
     const transports = { nostr: { relays: market.transports?.nostr?.relays ?? [] } };
     if (!market.discovery_pubkey || !transports.nostr.relays.length) return undefined;
 
     const advertised = (market as { emulator_pubkey?: unknown }).emulator_pubkey;
-    const emulatorPubkey =
-        advertised === undefined || advertised === null || advertised === ""
-            ? pinned
-            : typeof advertised === "string" && XONLY_HEX.test(advertised)
-              ? advertised
-              : undefined;
-    if (!emulatorPubkey) return undefined;
-    if (pinned && emulatorPubkey !== pinned) return undefined;
+    const bare = advertised === undefined || advertised === null || advertised === "";
+    if (!bare && (typeof advertised !== "string" || !XONLY_HEX.test(advertised))) return undefined;
+    if (pinned && !bare && advertised !== pinned) return undefined;
 
     // Bounds are what the solver PAYS OUT, so a send leg is bounded by the
     // quote side. `sideLimits` reads a disabled side (max "0") as null, which
