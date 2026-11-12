@@ -10,7 +10,7 @@ import {
     Wallet,
     SingleKey,
     OnchainWallet,
-    RestArkProvider,
+    RestOperatorProvider,
     ReadonlyWallet,
     ContractManager,
     ContractWatcher,
@@ -21,7 +21,7 @@ import {
     InMemoryContractRepository,
     ArkError,
     type IndexerProvider,
-    type ArkProvider,
+    type OperatorProvider,
     type OnchainProvider,
     DelegateProvider,
 } from "../src";
@@ -88,7 +88,7 @@ describe("Wallet", () => {
                     identity: mockIdentity,
                     arkProvider: {
                         getInfo: vi.fn(),
-                    } as Partial<ArkProvider> as ArkProvider,
+                    } as Partial<OperatorProvider> as OperatorProvider,
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -107,7 +107,7 @@ describe("Wallet", () => {
 
             const creating = ReadonlyWallet.create({
                 identity: ReadonlySingleKey.fromPublicKey(await mockIdentity.compressedPublicKey()),
-                arkProvider: { getInfo } as Partial<ArkProvider> as ArkProvider,
+                arkProvider: { getInfo } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: {} as IndexerProvider,
                 onchainProvider: {} as OnchainProvider,
                 storage: {
@@ -251,7 +251,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
             });
             await (await wallet.getContractManager()).whenBooted?.();
 
@@ -735,7 +735,7 @@ describe("Wallet", () => {
         it("should return intentFee config as strings", async () => {
             mockFetch.mockResolvedValueOnce(jsonResponse(mockArkInfo));
 
-            const provider = new RestArkProvider("http://localhost:7070");
+            const provider = new RestOperatorProvider("http://localhost:7070");
             const info = await provider.getInfo();
             expect(info.fees.intentFee.onchainInput).toBe("200.0");
             expect(info.fees.intentFee.onchainOutput).toBe("1000");
@@ -769,7 +769,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -796,7 +796,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -847,7 +847,7 @@ describe("Wallet", () => {
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -884,7 +884,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: {
                     getVtxos,
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1134,7 +1134,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: {
                     getVtxos,
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1272,7 +1272,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: {
                     getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-shared"),
@@ -1370,7 +1370,7 @@ describe("Wallet", () => {
                 identity: readonlyIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: {
                     getVtxos,
                     subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1554,7 +1554,7 @@ describe("Wallet", () => {
                                     (network === "bitcoin" ? ARKD_DELAY : MUTINYNET_DELAY),
                             ),
                         ),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: createIndexerProvider(),
                 onchainProvider: createOnchainProvider(),
                 storage: {
@@ -1581,7 +1581,7 @@ describe("Wallet", () => {
                 identity: mockIdentity,
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
-                } as Partial<ArkProvider> as ArkProvider,
+                } as Partial<OperatorProvider> as OperatorProvider,
                 indexerProvider: createIndexerProvider(),
                 onchainProvider: createOnchainProvider(),
                 storage: {
@@ -1849,7 +1849,7 @@ describe("ReadonlyWallet", () => {
             identity,
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue(mockArkInfo),
-            } as Partial<ArkProvider> as ArkProvider,
+            } as Partial<OperatorProvider> as OperatorProvider,
             indexerProvider: {
                 getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
                 subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
@@ -1971,7 +1971,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
         const balance = await readonlyWallet.getBalance();
@@ -1990,7 +1990,7 @@ describe("ReadonlyWallet", () => {
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
         // Should not have transaction methods

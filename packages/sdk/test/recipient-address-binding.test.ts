@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
-import { Wallet, SingleKey, RestArkProvider, type Recipient } from "../src";
+import { Wallet, SingleKey, RestOperatorProvider, type Recipient } from "../src";
 import { VtxoScript } from "../src/script/base";
 import { ArkAddress } from "../src/script/address";
 import {
@@ -243,7 +243,7 @@ describe("Wallet recipient address binding", () => {
     it("send rejects an address from another network before spending", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
         const fetchCallsAfterCreate = mockFetch.mock.calls.length;
 
@@ -256,7 +256,7 @@ describe("Wallet recipient address binding", () => {
     it("send with selected vtxos rejects a foreign-operator address", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
         await expect(
@@ -281,7 +281,7 @@ describe("Wallet recipient address binding", () => {
 
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
         const context = (
@@ -298,7 +298,7 @@ describe("Wallet recipient address binding", () => {
     it("settle rejects a foreign offchain output with the binding error", async () => {
         const wallet = await Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
         await expect(
@@ -346,7 +346,7 @@ describe("send with caller-selected vtxos", () => {
     const makeWallet = () =>
         Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
     beforeEach(() => {
@@ -481,7 +481,7 @@ describe("send automatic asset selection", () => {
         );
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
         vi.spyOn(wallet.arkProvider, "getInfo").mockResolvedValue({ vtxoMinAmount: 330n } as never);
         const assetA = "aa".repeat(34);
@@ -540,7 +540,7 @@ describe("send argument dispatch", () => {
     const makeWallet = () =>
         Wallet.create({
             identity: mockIdentity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
         });
 
     beforeEach(() => {
