@@ -1569,6 +1569,63 @@ describe("RfqSwapManager — an onchain-send payout that has not confirmed", () 
         expect(s.claims).toHaveLength(0);
     });
 
+    it.each([
+        ["an unconfirmed decoy", { amount: BigInt(200_000), confirmations: 0 }],
+        ["a confirmed dust decoy", { amount: BigInt(400), confirmations: 3 }],
+    ])("bumps its claim on the fill it spent, past %s paid to the HTLC", async (_case, decoy) => {
+        const claim = await ourClaim();
+        const s = spies();
+        const swap = claimedSwap({
+            claimTxid: claim.txid,
+            claimBroadcastAt: SAFE_NOW - ONCHAIN_CLAIM_BUMP_SECONDS,
+        });
+        const m = manager({
+            chain: fakeChain({
+                utxos: [{ txid: "22".repeat(32), vout: 0, ...decoy }],
+                spend: { txHex: claim.txHex },
+                status: { [claim.txid]: false },
+            }),
+            now: SAFE_NOW,
+            spies: s,
+        });
+        await m.addSwap(swap);
+        await m.poll();
+
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].options).toEqual({ bump: true });
+        expect(s.claims[0].utxo).toMatchObject({ txid: FILL.txid, vout: FILL.vout });
+    });
+
+    it("bumps the fill it claimed, after the solver replaced the one it first saw", async () => {
+        const claim = await ourClaim();
+        let now = SAFE_NOW;
+        const s = spies();
+        const swap = onchainSwap();
+        const chain = fakeChain({
+            utxos: [{ ...FILL, txid: "33".repeat(32), confirmations: 0 }],
+            mtp: SAFE_NOW,
+            status: { [claim.txid]: false, ["dd".repeat(32)]: false },
+        });
+        const m = manager({ chain, now: () => now, spies: s });
+        await m.addSwap(swap);
+        await m.poll();
+
+        chain.getScriptUtxos = async () => [FILL];
+        await m.poll();
+        expect(s.claims).toHaveLength(1);
+        expect(s.claims[0].utxo.txid).toBe(FILL.txid);
+
+        chain.getScriptUtxos = async () => [];
+        chain.getSpendingTx = async (txid: string) =>
+            txid === FILL.txid ? { txHex: claim.txHex } : null;
+        now = SAFE_NOW + ONCHAIN_CLAIM_BUMP_SECONDS;
+        await m.poll();
+
+        expect(s.claims).toHaveLength(2);
+        expect(s.claims[1].options).toEqual({ bump: true });
+        expect(s.claims[1].utxo).toMatchObject({ txid: FILL.txid, vout: FILL.vout });
+    });
+
     it("never bumps a confirmed claim", async () => {
         const claim = await ourClaim();
         const s = spies();
