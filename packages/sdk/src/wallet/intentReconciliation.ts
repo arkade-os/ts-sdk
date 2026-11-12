@@ -1,8 +1,8 @@
 import { collectBatchRegistrations } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
 import { ArkErrorName, isArkError } from "../providers/errors";
-import type { Intent } from "../proof";
-import type { SignedIntent } from "../providers/ark";
+import type { Proof } from "../proof";
+import type { SignedProof } from "../providers/ark";
 import {
     ALL_BATCH_REGISTRATION_STATES,
     BatchRegistration,
@@ -34,7 +34,7 @@ export interface IntentReconciliationDeps {
      * Replays an intent's stored delete proof against arkd. Absent ⇒ an unresolved, unexpired
      * intent stays locked, since arkd never expires a queued intent on its own.
      */
-    deleteIntent?: (intent: SignedIntent<Intent.DeleteMessage>) => Promise<void>;
+    deleteIntent?: (intent: SignedProof<Proof.DeleteMessage>) => Promise<void>;
     /**
      * Whether a live settlement in this wallet is spending the outpoint. An intent with an
      * in-flight input belongs to that settlement and is skipped.
@@ -218,7 +218,7 @@ async function releaseFromServer(
     // Re-checked: a settle may have claimed these inputs since the loop's check.
     if (!deps.deleteIntent || isInFlight(intent, deps)) return undefined;
     try {
-        const message = JSON.parse(intent.deleteProofMessage) as Intent.DeleteMessage;
+        const message = JSON.parse(intent.deleteProofMessage) as Proof.DeleteMessage;
         await deps.deleteIntent({ proof: intent.deleteProof, message });
     } catch (e) {
         if (!isNoMatchingIntentsError(e)) {

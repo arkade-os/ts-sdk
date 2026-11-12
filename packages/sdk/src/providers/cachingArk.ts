@@ -1,12 +1,11 @@
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
-import { Intent, Proof } from "../proof";
+import { Proof } from "../proof";
 import { assertNonNegativeMs } from "../utils/time";
 import {
     ArkadeInfo,
     OperatorProvider,
     PendingTx,
     SettlementEvent,
-    SignedIntent,
     SignedProof,
     TxNotificationEvent,
 } from "./ark";
@@ -88,11 +87,11 @@ export class CachingOperatorProvider implements OperatorProvider {
         return this.inner.finalizeTx(arkTxid, finalCheckpointTxs);
     }
 
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>) {
+    registerIntent(intent: SignedProof<Proof.RegisterMessage>) {
         return this.inner.registerIntent(intent);
     }
 
-    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>) {
+    deleteIntent(intent: SignedProof<Proof.DeleteMessage>) {
         return this.inner.deleteIntent(intent);
     }
 

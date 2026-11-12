@@ -18,7 +18,7 @@ import {
     toProviderUnavailable,
 } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
-import { Intent, Proof } from "../proof";
+import { Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { ARKADE_VERSION_HEADERS, fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
@@ -353,10 +353,10 @@ export interface OperatorProvider {
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 
     /** Register a signed intent with the operator. */
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string>;
+    registerIntent(intent: SignedProof<Proof.RegisterMessage>): Promise<string>;
 
     /** Delete a previously registered intent. */
-    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
+    deleteIntent(intent: SignedProof<Proof.DeleteMessage>): Promise<void>;
 
     /** Confirm an already registered intent id. */
     confirmRegistration(intentId: string): Promise<void>;
@@ -732,7 +732,7 @@ export class RestOperatorProvider implements OperatorProvider {
         );
     }
 
-    async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
+    async registerIntent(intent: SignedProof<Proof.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await this.postJson(
             url,
@@ -749,7 +749,7 @@ export class RestOperatorProvider implements OperatorProvider {
         return data.intentId;
     }
 
-    async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
+    async deleteIntent(intent: SignedProof<Proof.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         await this.postJson(
             url,

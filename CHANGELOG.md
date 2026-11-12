@@ -382,6 +382,11 @@ style and have not been backfilled.
   `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
   `ark-intent-proof-message` tag does not change, because the operator verifies it.
 
+- **The provider source uses `Proof` and `SignedProof`.** `OperatorProvider`,
+  `CachingOperatorProvider` and the batch registration reconciliation no
+  longer name the deprecated `Intent` and `SignedIntent`. The types are the
+  same, so nothing changes for callers.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
