@@ -1,5 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { ArkadeInfo, OperatorProvider, Output, SettlementEvent } from "../providers/ark";
+import type { Transaction } from "@scure/btc-signer";
+import type { EmulatorProvider } from "../providers/emulator";
+import { OperatorInfo, OperatorProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
@@ -12,7 +14,7 @@ import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
     ContractRepository,
     WalletRepository,
-    IntentRepository,
+    BatchRegistrationRepository,
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
@@ -101,7 +103,7 @@ export interface NewAddress {
  * @see StorageConfig
  */
 export interface BaseWalletConfig {
-    /** Optional Arkade server public key used to construct and validate Arkade addresses. */
+    /** Optional operator public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Relative timelock applied to boarding scripts. */
     boardingTimelock?: RelativeTimelock;
@@ -254,6 +256,17 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @defaultValue `false`
      */
     concurrentSpending?: boolean;
+
+    /** Cosigns onchain inputs whose spend carries an emulator packet; no default. */
+    emulator?: EmulatorProvider;
+
+    /**
+     * Minimum blocks that must remain before a coin's exit CSV matures for the
+     * client to request an onchain cosign. Non-negative integer.
+     *
+     * @defaultValue 6
+     */
+    onchainCosignMarginBlocks?: number;
 }
 
 /**
@@ -272,10 +285,10 @@ export type StorageConfig = {
      * Optional intent-lifecycle repository. Opt-in: when present, the wallet
      * persists settlement intents and excludes intent-locked VTXOs from
      * spendable balance. Absent ⇒ those code paths are no-ops. Only one wallet
-     * instance may settle against it: reconciliation deletes from the server any
+     * instance may settle against it: reconciliation deletes from the operator any
      * pending intent that instance is not settling itself.
      */
-    intentRepository?: IntentRepository;
+    intentRepository?: BatchRegistrationRepository;
     /**
      * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
      * VTXO's exit branch into it and prunes it on spend (both best-effort, see
@@ -299,8 +312,8 @@ export type StorageConfig = {
 
 /** Provider class constructor shape for dependency injection. */
 export interface ProviderClass<T> {
-    /** @param serverUrl - Base server URL used by the provider */
-    new (serverUrl: string): T;
+    /** @param operatorUrl - Base operator URL used by the provider */
+    new (operatorUrl: string): T;
 }
 
 /**
@@ -501,6 +514,15 @@ export interface SendParams {
     maxChangeFee?: number;
 }
 
+/** Arguments of {@link IWallet.sendOnchain}. */
+export type SendOnchainParams = {
+    outputs: { address: string; amount: number }[];
+    /** Spend only these onchain coins; defaults to every cosignable generically spendable coin. */
+    inputs?: Outpoint[];
+    /** Spend every selected cosignable coin to this address (Σin − fee); `outputs` must be empty. */
+    sweepTo?: string;
+};
+
 /**
  * Known asset metadata fields.
  *
@@ -645,6 +667,8 @@ export interface Status {
     block_hash?: string;
     /** Block time where the output was confirmed, when known. */
     block_time?: number;
+    /** Set on an onchain coin the contract manager stored from the onchain provider. */
+    fromExplorer?: boolean;
 }
 
 /** Onchain output location data. */
@@ -688,7 +712,7 @@ export interface VirtualCoin extends Coin {
     isUnrolled: boolean;
     /** Whether this output was spent offchain (`spentBy` helper); not set for unrolled or swept. */
     isSpent?: boolean;
-    /** Whether the server has swept the batch this virtual output belongs to. */
+    /** Whether the operator has swept the batch this virtual output belongs to. */
     isSwept?: boolean;
     /** Whether this virtual output is not yet finalized in a batch. */
     isPreconfirmed?: boolean;
@@ -706,14 +730,14 @@ export interface VirtualCoin extends Coin {
     /** Batch commitment transaction(s) this virtual output depends on. */
     commitmentTxIds?: string[];
     /**
-     * Wall-clock batch expiry, when the server expressed expiry as a timestamp.
+     * Wall-clock batch expiry, when the operator expressed expiry as a timestamp.
      *
      * @remarks
      * Mutually exclusive with `expiresAtHeight`; both are absent when there is no expiry.
      */
     expiresAt?: Date;
     /**
-     * Block-height batch expiry, when the server expressed expiry as a height (regtest-like
+     * Block-height batch expiry, when the operator expressed expiry as a height (regtest-like
      * deployments). Evaluating it needs a chain tip — see {@link isPastExpiry}.
      */
     expiresAtHeight?: number;
@@ -799,8 +823,14 @@ export type TapLeaves = {
     /** Tapleaf script used for the forfeit path. */
     forfeitTapLeafScript: TapLeafScript;
 
-    /** Tapleaf script used for the intent path. */
-    intentTapLeafScript: TapLeafScript;
+    /** Tapleaf script a proof signs for this coin. */
+    proofTapLeafScript: TapLeafScript;
+
+    /**
+     * @deprecated Use {@link proofTapLeafScript}. SDK coins never set this key.
+     * A coin that sets it signs proofs with this leaf.
+     */
+    intentTapLeafScript?: TapLeafScript;
 };
 
 /**
@@ -935,12 +965,14 @@ export interface IAssetManager extends IReadonlyAssetManager {
     burn(params: BurnParams): Promise<string>;
 }
 
-/** Options for {@link IReadonlyWallet.getArkadeInfo}. */
-export type GetArkadeInfoOptions = {
+/** Options for {@link IReadonlyWallet.getOperatorInfo}. */
+export type GetOperatorInfoOptions = {
     /** Throw when the operator is unreachable instead of answering from the
      * persisted snapshot — for callers binding the answer into a covenant. */
     requireLive?: boolean;
 };
+/** @deprecated Use {@link GetOperatorInfoOptions}. */
+export type GetArkadeInfoOptions = GetOperatorInfoOptions;
 
 /**
  * Chain reads beyond the wallet's own VTXOs: an arbitrary script's virtual outputs and the
@@ -979,9 +1011,9 @@ export type ArkadeBroadcaster = Pick<OperatorProvider, "submitTx" | "finalizeTx"
  */
 export interface IWallet extends IReadonlyWallet {
     /**
-     * Broadcast access to this wallet's Arkade server, so a plugin needs no server URL of its own.
+     * Broadcast access to this wallet's operator, so a plugin needs no operator URL of its own.
      *
-     * @returns A submit/finalize pair bound to this wallet's server
+     * @returns A submit/finalize pair bound to this wallet's operator
      * @see ArkadeBroadcaster
      */
     getArkadeBroadcaster(): Promise<ArkadeBroadcaster>;
@@ -1007,6 +1039,7 @@ export interface IWallet extends IReadonlyWallet {
     settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void,
+        hooks?: { onPhase?: (phase: "preparing" | "registration_attempt") => void },
     ): Promise<string>;
 
     /**
@@ -1027,6 +1060,26 @@ export interface IWallet extends IReadonlyWallet {
      * ```
      */
     send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string>;
+
+    /**
+     * Fill, sign and cosign the wallet-owned onchain inputs of a PSBT through
+     * the collaborative leaf, then broadcast it. Foreign inputs are left as given:
+     * sign them but do not finalize them, since arkd refuses a finalized input and
+     * finalizes the transaction itself.
+     *
+     * @param psbt - Base64 PSBT or transaction
+     * @returns Onchain transaction id
+     */
+    cosignOnchainTx(psbt: string | Transaction): Promise<string>;
+
+    /**
+     * Spend onchain contract coins (boarding, unrolled) immediately via
+     * {@link cosignOnchainTx}, selecting inputs and adding change.
+     *
+     * @returns Onchain transaction id
+     * @see SendOnchainParams
+     */
+    sendOnchain(params: SendOnchainParams): Promise<string>;
 
     // TODO: this needs to be async or find a workaround
     /** Asset manager bound to this wallet instance. */
@@ -1052,19 +1105,22 @@ export interface IReadonlyWallet {
     getBoardingAddress(): Promise<string>;
 
     /**
-     * Info (network, signer key, delays, dust, fees, limits) for this wallet's Arkade server.
+     * Info (network, signer key, delays, dust, fees, limits) for this wallet's operator.
      * Live when reachable, else the snapshot persisted at construction.
      *
      * With `requireLive` it throws instead of using the cache — for callers binding
      * `signerPubkey` or a delay into a covenant, where a stale snapshot could derive an address
      * the operator no longer co-signs for.
      *
-     * @see ArkadeInfo
+     * @see OperatorInfo
      */
-    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo>;
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo>;
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo>;
 
     /**
-     * Server-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);
+     * Operator-side chain reads for scripts the wallet does not own (e.g. a plugin's covenant);
      * {@link getVtxos} reads the wallet's own outputs from repositories.
      *
      * @see ArkadeReader

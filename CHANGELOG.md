@@ -18,6 +18,16 @@ style and have not been backfilled.
 
 - **The bundled delegatee templates no longer pin the service's cosigner key.** The `renew` and `board` covenants (the service's `templates/renew.json` and `board.json`, the boarding contract now its own `delegated_boarding` artifact) drop the `cosigners_public_keys` checks, so they are shorter and the default addresses no longer depend on `DelegateeInfo.cosignerPubkey`. `DEFAULT_TEMPLATE_IDS` and every default address move: a wallet re-registers under the new ids and migrates its coins, as it does for any other change of the defaults.
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
+- **`intentTapLeafScript` is renamed `proofTapLeafScript`.** SDK coins,
+  `ArkNote` and `DerivedContractTapscripts` now carry the new key. Code that
+  writes the old key keeps working: a coin that sets `intentTapLeafScript` signs
+  proofs with that leaf, and a handler that returns it has it moved to the new
+  key. A coin literal typed as `ExtendedCoin` and a handler typed as
+  `TapscriptDeriving` must add `proofTapLeafScript`.
+  Code that reads `intentTapLeafScript` from an SDK coin must move, because the
+  key is now `undefined` there. `ArkNote` keeps a deprecated getter. Stored coins
+  keep the old key on disk.
+
 - **The checkpoint exit delay floor is the BIP-68 minimum on every network.**
   The per-network floors (24h default, 86016s signet, 4096s mutinynet, 1200s
   regtest) were a second source of truth for a value the operator already
@@ -39,6 +49,15 @@ style and have not been backfilled.
   than how the wallet enforces it. Same value, same semantics, no alias (see
   `WalletBalance.available` for how the buckets add up). The service-worker
   `GET_BALANCE` payload carries the new key too.
+- **`ArkIntent` is renamed `BatchRegistration`, and its fields follow.**
+  `IntentFilter` and `IntentPageFilter` take the matching names, and the three
+  old type names stay as deprecated aliases. On the record, `intentTxId` is
+  `proofTxId`, `intentId` is `registrationId`, and `intentVtxos` is
+  `proofInputs`. Filters use `proofTxIds` and `registrationIds`. These fields
+  have no alias, so a custom repository must update. Stored data does not
+  change, and no migration runs: backends keep their column and key names on
+  disk and map them at the repository boundary.
+
 - **`WalletBalance.gated` is renamed `contractLocked`, and `pendingRecovery`
   is renamed `deprecatedSignerLocked`.** Each name now says what holds the
   funds: a contract that generic spending refuses, or a server signer past
@@ -54,6 +73,31 @@ style and have not been backfilled.
   which forbid `bigint`. `Market` is also no longer an alias of `CardMarketRef`
   but a superset: a `Market` can still be used as a ref, but a ref no longer
   assigns to `Market`, and a listed market no longer deep-equals `quote.market`.
+- **Custom onchain providers need `getMedianTimePast` to settle seconds-locked
+  boarding coins.** Seconds-based boarding expiry is judged on consensus
+  median-time-past, not the local clock, and a coin whose expiry cannot be
+  established is neither settled nor swept rather than guessed. On a provider
+  without the optional `OnchainProvider.getMedianTimePast`, such coins stay
+  where they are until it is implemented; block-locked coins and VTXO renewal
+  are unaffected. The built-in Esplora and Electrum providers implement it.
+- **`hasBoardingTxExpired` judges seconds-based delays on median-time-past.**
+  It takes two new optional arguments, `chainTipMedianTime` and
+  `confirmationParentMedianTime`, and with a seconds-based timelock returns
+  `false` unless both are given; it no longer compares `block_time` with the
+  local clock. Block-based delays need only the coin's `block_height` and
+  `chainTipHeight`, no longer a `block_time`. Callers on the three-argument
+  form must pass the median times, from `OnchainProvider.getMedianTimePast`
+  at the confirmation height minus one and at the tip, or seconds-locked
+  coins never read as expired.
+
+- **`ContractRepository` moves to v4 and the Realm schema to v6, for contract
+  `scope`.** A custom `ContractRepository` must persist and round-trip
+  `Contract.scope`, filter on it in `getContractsPage`, and read a row without
+  one as its handler's default; the version bump makes a missing
+  implementation a compile error rather than a silent gap. The bundled
+  repositories do this: SQLite adds a nullable `scope` column on open, and a
+  Realm consumer must open at a `schemaVersion` of at least
+  `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
 ### Features
 
@@ -61,7 +105,81 @@ style and have not been backfilled.
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.
 
+- **`waitForIncomingFunds` takes a `NotifiesIncomingFunds` capability instead
+  of the `Wallet` class.** The new exported interface declares only
+  `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
+  helper. Type-level only, non-breaking.
+
+### Bug Fixes
+
+- **`waitForIncomingFunds` no longer hangs when the subscription
+  breaks.** The helper calls the unsubscribe function that the caller's
+  `notifyIncomingFunds` returns. When that function threw after the funds
+  arrived, the promise was left pending forever, past its timeout and with its
+  abort listener already removed. Teardown now runs inside a guard, so the
+  promise still settles with the funds. A `notifyIncomingFunds` that throws
+  synchronously, before it returns its promise, is routed through the same
+  cancel path, so the timeout timer and the abort listener are cleared instead
+  of leaking. No breaking change.
+
 ### Added
+
+- **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize?, debug? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, debug, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, `debug` is the compiler's debug file, and `diagnostics` carries the warnings. Each covenant segment of `program` carries its `sourceMap`, so a failing opcode can be traced back to its statement and `require()` message; `{ debug: false }` leaves the file and the maps out. `programFromArtifact(artifact, debug?)` attaches an `arkadec --debug` file the same way and refuses one whose fingerprint does not match the artifact's. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.
+
+- **Identities from a passkey.** `MnemonicIdentity.createPasskey({ rp, userName })`
+  creates a passkey and derives twelve BIP39 words from its WebAuthn PRF secret;
+  `MnemonicIdentity.fromPasskey({ rpId })` derives the same words again on any device
+  the passkey syncs to. Both return the identity, the words (for the app to offer as a
+  backup) and the credential id. The derivation follows Breez's seedless-restore
+  implementation: a `label` (default `DEFAULT_PASSKEY_LABEL`, `"Default"`) is the PRF
+  salt as its UTF-8 bytes, unnormalized, and the first 16 bytes of the PRF output are
+  the BIP39 entropy for 12 words, as Breez's SDK derives them, so the same passkey and
+  label give the same words as a Breez wallet; each label is a separate wallet.
+  `words: 24` instead takes all 32 bytes, as the spec text's `BIP39(root_key)` reads.
+  Without `credentialIds`, the passkey the user picks decides the wallet. A passkey is
+  used once right after creation and refused (`PasskeyUnconfirmed`) if that use fails
+  for any reason, with the underlying error as `cause`, and refused (`PrfUnavailable`)
+  if it gives no 32-byte secret or one different from the secret it returned at
+  creation (an authenticator that returns none at creation has nothing to compare
+  against); both carry the new passkey's `credentialId`, so an app can fall back to
+  that passkey. The
+  primitives (`createPrfPasskey`, `evaluatePrf`, `mnemonicFromPrf`, `prfSupport`) are
+  exported; every call that prompts takes a `client` in place of
+  `navigator.credentials`, and `mnemonicFromPrf` refuses a secret that is not 32 bytes.
+
+- **Onchain coin spends come from the arkd indexer first.** arkd v0.9.22
+  records the onchain coins whose spend it signed or watched (boarding inputs
+  of a batch, inputs of a cosigned onchain tx, spent unrolled VTXOs), and the
+  optional `IndexerProvider.getUtxos` reads them as `IndexerUtxo`; a server
+  without the route throws `IndexerUtxosUnsupportedError` and is not asked
+  again. `syncOnchain` names a vanished coin's spender without an `outspends`
+  call, and only asks about coins whose state can change. arkd's word holds a
+  coin the explorer still lists only for the spend this wallet recorded and
+  only within the six-block pending window: an unbounded hold would let an
+  operator hide a boarding coin from its CSV exit. `syncOnchain` also takes
+  the coins a caller already fetched, so `getBoardingUtxos` fetches each
+  boarding address once.
+
+- **Onchain coins can be spent at once through arkd's cosigner.** Boarding
+  UTXOs, unrolled VTXOs and Arkade covenant UTXOs could only move by joining a
+  batch or after their exit timelock. arkd v0.9.22's `POST
+  /v1/tx/onchain/cosign` cosigns their collaborative leaf instead:
+  `wallet.sendOnchain({ outputs, inputs?, sweepTo? })` pays from the wallet's
+  onchain coins, `wallet.cosignOnchainTx(psbt)` signs the owned inputs of a
+  caller-built PSBT, and `ArkadeTransactionBuilder.buildOnchain()` and
+  `sendOnchain()` spend covenant leaves the emulator cosigns. The service worker
+  and Expo wallets expose both wallet methods. `Ramps.offboardExact` without
+  named inputs tries an onchain spend before the batch path, and boarding
+  renewal near expiry tries a cosign first. The batch fallback runs only when
+  nothing can have been broadcast (unsupported endpoint, failed preflight, or a
+  rejection arkd raises before signing); any other outcome throws
+  `OnchainCosignAmbiguousError` and keeps the inputs pending until the spend is
+  seen or six blocks pass. Contracts gain `scope` (`offchain`, `onchain`,
+  `both`), and onchain coins are stored as VTXO rows that offchain balance and
+  history leave out. Legacy boarding UTXOs are copied in once at boot and the
+  legacy table is kept, so an earlier SDK still reads them.
+  `OperatorProvider.cosignOnchainTx` is optional, and an arkd older than
+  v0.9.22 reads as unsupported, so both keep the batch path.
 
 - **Offchain sends finalize in one call on arkd v0.9.22+.** Checkpoints are
   submitted already signed, so arkd finalizes the transaction within
@@ -163,6 +281,14 @@ style and have not been backfilled.
 
 - **Compiler format v1 artifacts construct matching Taproot trees.** The artifact adapter handles fixed-width hashlocks, all native scalar/struct layouts and recursive struct arrays, preserves emulator signer order and signature metadata, and keeps covenant and leaf call inputs separate. Constructor and call declarations retain native Arkade scalar names and their byte-width and numeric-boolean constraints; server roles bind from the connected server and persist with the contract. Time-based server exit delays must be exact multiples of 512 seconds.
 
+- **`getOperatorInfo` replaces `getArkadeInfo`.** Wallets expose the new method,
+  and `GetArkadeInfoOptions` becomes `GetOperatorInfoOptions`. The old names stay
+  as deprecated aliases. A custom `IReadonlyWallet` must add the new method.
+  The worker message is now `GET_OPERATOR_INFO`, with an `OPERATOR_INFO` reply.
+  A worker still accepts `GET_ARKADE_INFO`, and a `messageTimeouts` entry under
+  that name still applies. A new page needs an updated worker.
+  Comments in the changed files now say the operator instead of the server.
+
 - **`claimCash` recovers server-swept ArkadeCash.** A swept VTXO at the
   note's key is imported into the wallet and recovered through the next
   settlement, net of intent fees; the claim result reports it under the new
@@ -179,6 +305,13 @@ style and have not been backfilled.
   decoding, and compiler artifact import recognize the emulator's variable
   assignment opcode.
 
+- **`OperatorInfo` replaces `ArkadeInfo`.** `networkFromArkadeInfo` becomes
+  `networkFromOperatorInfo`, and `liveArkadeInfo` in `@arkade-os/swap/advanced`
+  becomes `liveOperatorInfo`. The old names stay as deprecated aliases.
+  `ArkadeInfo` is now a type alias, so code that adds fields to it with
+  `declare module` must add them to `OperatorInfo` instead. Comments in the
+  changed files now say the operator instead of the server.
+
 - **`renewVtxos` can settle into several outputs.** `RenewVtxosOptions.split`
   takes a plan that returns piece amounts against the already-priced subtotal,
   per-piece output fee, per-output ceiling and dust floor. A plan that claims
@@ -186,6 +319,11 @@ style and have not been backfilled.
   asset-bearing inputs is refused rather than reshaped. Automatic renewal still
   settles into one output, and `split` is refused on the service-worker wallet.
 - **`@arkade-os/swap/nostr` shares one Nostr pool by default.** `nostrRfqTransport()` and `nostrCardFetcher()` now multiplex over a process-wide `SimplePool` (one socket per relay) instead of opening a pool per transport or fetch, and `close()` ends only the caller's subscription. Concurrent quotes and card fetches no longer race relay teardown, and `createNostrTransportFactory(pool)` plus `nostrCardFetcher({ pool })` let an app lend one pool across discovery, quotes, and its own readers. New exports: `sharedNostrPool`, `createNostrPool`, `closeSharedNostrPool`, `createNostrTransportFactory`, and `NostrPool`. nostr-tools' idle close trusts a per-relay count that every subscription close decrements, a repeated one included, so on a shared socket one double close (a relay `CLOSED` followed by ours) would kill every other live quote. The pool turns that close off and counts its own users instead, closing a relay's socket 30s after its last subscription or publish, and pings to drop a half-open one. A relay that never acknowledges a publish is evicted at once, so the next quote reconnects instead of timing out on the same dead socket until the ping notices. A destroyed pool refuses to reconnect, so a transport that outlives `closeSharedNostrPool()` fails instead of opening a socket nothing can close, and concurrent card fetches are only merged when they ask the same relays.
+
+- **The cached operator info moves to a new key.** The snapshot in wallet settings
+  is now `operatorInfoSnapshot`. The SDK still reads `arkInfoSnapshot` until the next
+  live boot saves the new key, and the old key stays in place. Comments in this
+  file now say the operator instead of the server.
 
 - **`getStoredContractsWithVtxos()` is reachable through the service
   worker.** It answers from the repository without waiting on the indexer and
@@ -204,6 +342,39 @@ style and have not been backfilled.
   another txid with a `ServerResponseMismatchError`.
   `ArkadeTransactionBuilder.send()` now spends covenants through it, so it no
   longer reports a txid it did not submit.
+
+- **`renewProgramContractOutputs` renews covenant VTXOs without an owner
+  key.** A covenant coin whose owner is offline was swept at batch expiry unless the
+  app hand-rolled the intent, the emulator packet and a batch handler that
+  still demanded a signer. The helper registers one intent for any number of
+  coins, each through a covenant function that lets proof input k+1 through
+  to output k (`renew` by default) with its assets, has the emulator sign the
+  proof, and joins the batch. `createArkadeBatchHandler` takes `undefined` as
+  its signer for this: forfeits go to the emulator unsigned, and boarding
+  inputs and inputs without an Arkade script, whose forfeits need a key, are
+  refused when the handler is built. A function whose leaf names any key but
+  the server's is refused before anything is registered, since no owner signs
+  a renewal, and so are a coin its contract does not lock and a server
+  provider lacking a method the renewal or its batch calls. The caller's `signal` ends the wait for a batch; one aborted
+  before registration registers nothing. A renewal that fails or is aborted
+  after registering deletes its intent with a delete proof the emulator signs
+  up front alongside the registration, as `Wallet.settle` does; a left intent
+  held the coins until arkd dropped it, failing retries with "duplicated
+  input". `EmulatorProvider.submitIntent` accepts a delete message for this.
+  Once the forfeits are being sent the signal is ignored and the intent kept,
+  and the renewal waits for the batch's outcome: arkd can commit it by then,
+  and an abort would report spent coins as unrenewed and lose the commitment
+  txid. It subscribes to batch events before
+  registering, as `Wallet.settle` does, so a batch that starts while the
+  intent is being registered is not missed; the new `Batch.prime` does the
+  subscribing for both. A renewal the server would charge an intent fee for
+  is refused before anything is signed: the covenant keeps each output equal
+  to its input, so no fee can be paid and arkd would reject the intent. A
+  renew leaf's condition witness goes on the proof and on the forfeits, where
+  arkd evaluates it. A leaf whose witness names a call input, which a renewal
+  cannot supply, or that has a CSV timelock, which arkd refuses as a forfeit
+  path, is refused before anything is signed. The renewal's asset packet is
+  built by `createAssetPacket`, as a wallet send's is.
 
 ### Changed
 
@@ -232,6 +403,11 @@ style and have not been backfilled.
   `AssetInput.createProof`. Every old name stays as a `@deprecated` alias. The
   `ark-intent-proof-message` tag does not change, because the operator verifies it.
 
+- **The provider source uses `Proof` and `SignedProof`.** `OperatorProvider`,
+  `CachingOperatorProvider` and the batch registration reconciliation no
+  longer name the deprecated `Intent` and `SignedIntent`. The types are the
+  same, so nothing changes for callers.
+
 - **Delegation is scheduled three operator sessions before expiry.** The
   default `delegateAt` left 10% of the remaining lifetime before expiry, floored
   at one session, so a 30-day coin renewed with 3 days to spare. It now leaves
@@ -242,7 +418,28 @@ style and have not been backfilled.
   inside the window is delegated two seconds from now; with no future expiry,
   such as only recoverable outputs, delegation stays one minute from now.
 
+- **`IntentRepository` is renamed `BatchRegistrationRepository`.** `ArkIntentState`
+  and the InMemory, IndexedDB, SQLite and Realm classes take the matching
+  `BatchRegistration` names, and so do `collectIntents`, `isTerminalIntentState`
+  and `INTENT_TERMINAL_STATES`. Every old name stays as a deprecated alias, and
+  stored data does not change.
+
 - **`@arkade-os/swap` pins nostr-tools to 2.24.1.** The optional peer moves from `^2.12.0` to exactly `2.24.1`, the only release the shared pool is tested on. The old floor never worked: 2.12's `subscribeMany` takes `Filter[]`, so every Nostr subscription failed with `filters.map is not a function`. Its neighbours differ in ways the pool depends on: 2.24.0's `relay.close()` leaves a still-connecting socket to open outside the pool, and 2.25 rejects a failed publish that 2.24 resolves.
+
+- **`IntentRepository` methods are named after batch registrations.**
+  `saveIntent` becomes `saveBatchRegistration`, and `getIntentsPage` becomes
+  `getBatchRegistrationsPage`. The SDK calls the new names, so a custom
+  repository must add them, and creating a wallet with a repository that lacks
+  them now throws. The old names stay on the interface and on the InMemory,
+  IndexedDB, SQLite and Realm classes as deprecated methods.
+  `collectIntents` now reads through `getBatchRegistrationsPage`, so a plain
+  object passed to it must have that method.
+
+- **The SDK uses the batch registration names in its own code.** Internal code
+  no longer refers to `ArkIntent`, `IntentRepository`, `collectIntents` or the
+  other deprecated batch registration names. `collectBatchRegistrations` now
+  holds the implementation, and `collectIntents` is its alias. Every deprecated
+  name stays exported and behaves as before.
 
 - **Millisecond configuration shares duration validation.** Sync budgets, cache TTLs,
   cooldowns, worker timeout overrides, and Expo foreground polling reject negative,
@@ -264,6 +461,11 @@ style and have not been backfilled.
   `CachingArkProvider` and `ExpoArkProvider` take the matching names, and
   `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
   alias. Passing both `operatorProvider` and `arkProvider` throws.
+
+- **The SDK uses `OperatorInfo` in its own code.** Internal code and the
+  published `.d.ts` name `OperatorInfo`, `GetOperatorInfoOptions` and
+  `networkFromOperatorInfo` instead of their deprecated aliases. The types are
+  the same, so nothing changes for callers.
 
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
@@ -289,6 +491,59 @@ style and have not been backfilled.
   `--experimental-eventsource`.
 
 ### Bug Fixes
+
+- **`createArkadeBatchHandler` writes an input's condition witness on its
+  forfeit.** arkd evaluates a condition leaf against the forfeit's
+  ConditionWitness field when it verifies the forfeit's signatures. The proof
+  carried it but the forfeit never did, so a batch spending a coin through a
+  condition leaf failed with `INVALID_FORFEIT_TXS`. An input's `extraWitness`
+  now goes on its forfeit too.
+
+- **Expired boarding UTXOs held under a deprecated signer are now swept.**
+  After the operator rotated its signer, deposits made to a boarding address on
+  the old key showed in history but were never recovered: the sweep fetched
+  boarding coins for the current signer only, found nothing, and its "no
+  expired boarding UTXOs" result is silenced by the poll loop, so they sat
+  unswept with no error. A boarding exit leaf is the user's key plus a CSV, so
+  a unilateral sweep needs no operator and works for any signer. The poll now
+  fetches every address history shows (current and deprecated signers) once,
+  sweeps all of it, and still settles only current-signer coins, which the
+  server would reject otherwise. A failed lookup at a deprecated-signer address
+  is bounded, skipped for that poll and retried on the next, both in boarding
+  discovery and in the deprecated-signer migration pass, so it cannot block
+  current-signer work; a current-signer failure still fails it, as before.
+  Discovery also includes index-zero baseline addresses for deprecated signers,
+  including when their persisted row coalesced onto `default`. If the signer
+  rotates during discovery, the poll rediscovers before selecting settlement
+  inputs and checks again immediately before intent registration; an abort
+  there does not count as a settle failure, so it does not lengthen the
+  backoff. Expiry is now
+  read from each coin's own CSV
+  exit leaf rather than the wallet's current boarding delay, in the sweep, the
+  periodic settle and `Wallet.settle` alike, so a rotation that changed the
+  delay can no longer leave a coin that settle skips and the sweep ignores, or
+  the reverse. Block-based expiry no longer requires a block timestamp;
+  seconds-based expiry uses the confirmation parent's and current tip's
+  consensus median-time-past values, not the local clock. A coin whose expiry
+  cannot be established (no block height, a failed chain-tip or median-time
+  lookup) is left out of settlement and the sweep, while the other coins and
+  VTXO renewal go ahead.
+
+- **The automatic cosign sweep takes boarding coins only.** `needsOnchainSweep`
+  selected coins by scope, so any contract registered with `scope: "onchain"`
+  or `"both"` had its onchain coins swept into the wallet's boarding address
+  near CSV maturity, and settled into Arkade by a later poll. It now takes only
+  `boarding` contracts and the `default` row an equal-delay boarding script
+  coalesced onto, recognized by its CSV matching the boarding CSV rather than
+  by its `both` scope, which any caller may set. Onchain sync and balances
+  still cover every onchain-scoped contract.
+
+- **Explorer transaction output values are numeric satoshis across providers.**
+  `ExplorerTransaction.vout.value` was typed as a string even though Esplora
+  REST responses and the WebSocket validator use numbers. The type and Electrum
+  adapter now match that contract; Bitcoin's full satoshi supply fits exactly
+  in a JavaScript number. Custom providers must return numbers rather than
+  strings, and Electrum consumers no longer receive string amounts.
 
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
@@ -475,6 +730,14 @@ style and have not been backfilled.
   signing, so the unsigned checkpoints the two-step flow submits carried none.
   `submitOffchainTx` now copies each ark tx input's witness onto its checkpoint
   before submitting, in both flows.
+
+### Performance
+
+- **Electrum `getCoins` avoids per-height block-header lookups.**
+  `listunspent` already supplies confirmation status and height, so balance and
+  coin-selection reads no longer fetch a header for every distinct coin height.
+  Transaction-history reads still fetch block timestamps where they are needed;
+  boarding expiry uses consensus median-time-past.
 
 ### Breaking Changes
 
@@ -1216,6 +1479,16 @@ style and have not been backfilled.
   the static descriptor and server info. Delegate info overlaps server info.
   None of these share a result, and a step that writes what the next step
   reads is unchanged.
+
+- **Boarding history stops asking the explorer for spends it already lists.**
+  On every history read, `getBoardingTxs` asked for the spend status of every
+  boarding output, although the address's own transaction list already names
+  each spender. It now asks only about outputs no listed transaction spends,
+  mostly deposits not yet settled. The Electrum provider now returns each
+  transaction's inputs (`vin`) from `getTransactions` and `watchAddresses`, so
+  it benefits too: a settled output cost three or four sequential Electrum
+  round trips, plus a fetch of every other transaction at an address that
+  received more than one deposit. Output is unchanged.
 
 ## [0.4.77] - 2026-09-30
 

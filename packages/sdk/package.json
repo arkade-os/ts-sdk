@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.5.3",
+    "version": "0.5.5",
     "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
     "repository": {
         "type": "git",
@@ -89,6 +89,16 @@
                 "types": "./dist/wallet/expo/background.d.cts",
                 "default": "./dist/wallet/expo/background.cjs"
             }
+        },
+        "./compiler": {
+            "import": {
+                "types": "./dist/compiler.d.ts",
+                "default": "./dist/compiler.js"
+            },
+            "require": {
+                "types": "./dist/compiler.d.cts",
+                "default": "./dist/compiler.cjs"
+            }
         }
     },
     "files": [
@@ -142,12 +152,14 @@
         "ws-electrumx-client": "1.0.5"
     },
     "devDependencies": {
+        "@arkade-os/compiler": "0.1.0-rc.1",
         "@vitest/coverage-v8": "3.2.7",
         "tsup": "^8.5.0",
         "typedoc": "^0.28.19",
         "typescript": "5.9.2"
     },
     "peerDependencies": {
+        "@arkade-os/compiler": "^0.1.0-rc.1",
         "@react-native-async-storage/async-storage": ">=1.0.0",
         "expo": ">=54.0.0",
         "expo-background-task": "~1.0.10 || >=55.0.0",
@@ -155,6 +167,9 @@
         "expo-task-manager": "~14.0.9 || >=55.0.0"
     },
     "peerDependenciesMeta": {
+        "@arkade-os/compiler": {
+            "optional": true
+        },
         "expo": {
             "optional": true
         },

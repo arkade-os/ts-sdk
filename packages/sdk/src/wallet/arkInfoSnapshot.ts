@@ -1,22 +1,28 @@
-import type { ArkadeInfo, OperatorProvider, FeeInfo } from "../providers/ark";
+import type { OperatorInfo, OperatorProvider, FeeInfo } from "../providers/ark";
 import { isRetryableProviderError } from "../providers/availability";
 import { ProviderUnavailableError } from "../providers/errors";
 import type { WalletRepository } from "../repositories/walletRepository";
 import { updateWalletState } from "../utils/syncCursors";
 
 /**
- * Key under {@link WalletState.settings} holding the cached server-info
+ * Key under {@link WalletState.settings} holding the cached operator info
  * snapshot. Namespaced so it coexists with unrelated settings keys
  * (`hasPendingTx`, `vtxoCursorMigrated`, …).
  *
- * The string is PERSISTED. Renaming the surrounding `ArkInfo*` symbols to
- * `Arkade*` must leave this value alone — changing it orphans every cached
- * snapshot already on disk and silently forces a live-only boot.
+ * The string is PERSISTED. Changing it without a fallback read orphans every
+ * cached snapshot already on disk and silently forces a live-only boot.
  */
-export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
+export const OPERATOR_INFO_SNAPSHOT_KEY = "operatorInfoSnapshot";
 
 /**
- * A JSON-safe, versioned cache of the operator's {@link ArkadeInfo} metadata,
+ * Where older SDKs save the snapshot. Read only until a live boot saves the new key.
+ * shortcut: a save leaves this key in place, so an older SDK sharing the store keeps
+ * its cache. Delete the key along with this fallback.
+ */
+const LEGACY_SNAPSHOT_KEY = "arkInfoSnapshot";
+
+/**
+ * A JSON-safe, versioned cache of the operator's {@link OperatorInfo} metadata,
  * persisted so a previously synced wallet can still construct — derive its
  * network, signer-dependent scripts, address parameters, dust/fee policy, and
  * delays — while the operator's live `getInfo` is unreachable.
@@ -25,7 +31,7 @@ export const ARK_INFO_SNAPSHOT_KEY = "arkInfoSnapshot";
  * and interpret locally persisted state. Cooperative operations that need the
  * operator must revalidate live metadata or fail with a typed unavailable error.
  *
- * `bigint` fields are stored as decimal strings; `ArkadeInfo.serviceStatus` is
+ * `bigint` fields are stored as decimal strings; `OperatorInfo.serviceStatus` is
  * deliberately not cached (it is live operator-health state, not static
  * construction metadata) and is rehydrated as `{}`.
  */
@@ -70,7 +76,7 @@ export type StoredArkInfoSnapshot = {
 /**
  * A stored snapshot exists but is structurally invalid (wrong version, missing
  * or wrong-typed fields, non-decimal bigint strings). This is a *terminal*
- * failure: a corrupt cache must fail the same way malformed live server-info
+ * failure: a corrupt cache must fail the same way malformed live operator info
  * does, never silently fall through as if no cache were present.
  */
 export class MalformedArkInfoSnapshotError extends Error {
@@ -82,8 +88,11 @@ export class MalformedArkInfoSnapshotError extends Error {
 
 const CURRENT_VERSION = 1 as const;
 
-/** Convert a live {@link ArkadeInfo} into its JSON-safe snapshot form. */
-export function serializeArkInfoSnapshot(info: ArkadeInfo, savedAt: number): StoredArkInfoSnapshot {
+/** Convert a live {@link OperatorInfo} into its JSON-safe snapshot form. */
+export function serializeArkInfoSnapshot(
+    info: OperatorInfo,
+    savedAt: number,
+): StoredArkInfoSnapshot {
     return {
         version: CURRENT_VERSION,
         savedAt,
@@ -126,11 +135,11 @@ export function serializeArkInfoSnapshot(info: ArkadeInfo, savedAt: number): Sto
 }
 
 /**
- * Rehydrate an {@link ArkadeInfo} from a validated snapshot. Decimal strings
+ * Rehydrate an {@link OperatorInfo} from a validated snapshot. Decimal strings
  * become `bigint`; `serviceStatus` is reset to `{}` (never cached — see
  * {@link StoredArkInfoSnapshot}).
  */
-export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): ArkadeInfo {
+export function hydrateArkInfo(snapshot: StoredArkInfoSnapshot): OperatorInfo {
     const a = snapshot.arkInfo;
     return {
         boardingExitDelay: BigInt(a.boardingExitDelay),
@@ -288,20 +297,21 @@ export async function loadArkInfoSnapshot(
     repo: WalletRepository,
 ): Promise<StoredArkInfoSnapshot | null> {
     const state = await repo.getWalletState();
-    const raw = state?.settings?.[ARK_INFO_SNAPSHOT_KEY];
+    const settings = state?.settings;
+    const raw = settings?.[OPERATOR_INFO_SNAPSHOT_KEY] ?? settings?.[LEGACY_SNAPSHOT_KEY];
     if (raw === undefined || raw === null) return null;
     return parseStoredArkInfoSnapshot(raw);
 }
 
 /**
- * Persist a fresh snapshot from live server-info, preserving all other
+ * Persist a fresh snapshot from live operator info, preserving all other
  * {@link WalletState.settings} keys. Serialized through the shared
  * {@link updateWalletState} mutex so it can't lose-update a concurrent
  * settings write.
  */
 export async function saveArkInfoSnapshot(
     repo: WalletRepository,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     savedAt: number,
 ): Promise<void> {
     const snapshot = serializeArkInfoSnapshot(info, savedAt);
@@ -309,16 +319,16 @@ export async function saveArkInfoSnapshot(
         ...state,
         settings: {
             ...(state.settings ?? {}),
-            [ARK_INFO_SNAPSHOT_KEY]: snapshot,
+            [OPERATOR_INFO_SNAPSHOT_KEY]: snapshot,
         },
     }));
 }
 
-/** Where the {@link ArkadeInfo} used to construct a wallet came from. */
+/** Where the {@link OperatorInfo} used to construct a wallet came from. */
 export type ServerInfoSource = "live" | "cache";
 
 export interface ResolvedArkInfo {
-    info: ArkadeInfo;
+    info: OperatorInfo;
     /** `live` when fetched from the operator, `cache` when hydrated offline. */
     source: ServerInfoSource;
     /**
@@ -330,7 +340,7 @@ export interface ResolvedArkInfo {
 }
 
 /**
- * Resolve the server-info needed to construct a wallet, with cache fallback.
+ * Resolve the operator info needed to construct a wallet, with cache fallback.
  * **This never writes the cache** — persistence is deferred to
  * {@link saveValidatedArkInfoSnapshot}, called only once construction has
  * validated the response, so a terminal live response can't poison the cache.
@@ -351,7 +361,7 @@ export async function resolveArkInfo(
     walletRepository: WalletRepository,
     opts?: { requireLive?: boolean },
 ): Promise<ResolvedArkInfo> {
-    let info: ArkadeInfo;
+    let info: OperatorInfo;
     try {
         info = await arkProvider.getInfo();
     } catch (err) {
@@ -364,7 +374,7 @@ export async function resolveArkInfo(
         const snapshot = await loadArkInfoSnapshot(walletRepository);
         if (!snapshot) {
             throw new ProviderUnavailableError(
-                "Arkade server info is unavailable and no cached snapshot exists",
+                "Operator info is unavailable and no cached snapshot exists",
                 { cause: err },
             );
         }
@@ -374,7 +384,7 @@ export async function resolveArkInfo(
 }
 
 /**
- * Persist a snapshot of *validated* live server-info. Call this only after
+ * Persist a snapshot of *validated* live operator info. Call this only after
  * wallet construction has accepted the response — network, signer, and (for a
  * full wallet) checkpoint/forfeit parsing — so a terminal live response can
  * never overwrite a good cache before failing. Best-effort: a storage hiccup
@@ -382,12 +392,12 @@ export async function resolveArkInfo(
  */
 export async function saveValidatedArkInfoSnapshot(
     repo: WalletRepository,
-    info: ArkadeInfo,
+    info: OperatorInfo,
     savedAt: number,
 ): Promise<void> {
     try {
         await saveArkInfoSnapshot(repo, info, savedAt);
     } catch (err) {
-        console.warn("Failed to persist Ark info snapshot", err);
+        console.warn("Failed to persist operator info snapshot", err);
     }
 }

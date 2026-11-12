@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     EventSourceUnavailableError,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     configureEventSource,
     getConfiguredEventSource,
@@ -173,9 +173,9 @@ describe("providers take a factory", () => {
         await pending.catch(() => {});
     });
 
-    it("RestArkProvider opens its event stream with the injected one", async () => {
+    it("RestOperatorProvider opens its event stream with the injected one", async () => {
         const factory = fakeFactory();
-        const provider = new RestArkProvider("http://ark", { eventSource: factory });
+        const provider = new RestOperatorProvider("http://ark", { eventSource: factory });
 
         const iterator = provider.getEventStream(new AbortController().signal, []);
         const pending = iterator.next();
@@ -187,9 +187,9 @@ describe("providers take a factory", () => {
         await pending.catch(() => {});
     });
 
-    it("RestArkProvider opens its transaction stream with the version headers", async () => {
+    it("RestOperatorProvider opens its transaction stream with the version headers", async () => {
         const factory = fakeFactory();
-        const provider = new RestArkProvider("http://ark", { eventSource: factory });
+        const provider = new RestOperatorProvider("http://ark", { eventSource: factory });
 
         const iterator = provider.getTransactionsStream(new AbortController().signal);
         const pending = iterator.next();

@@ -66,7 +66,7 @@ import {
     arkade,
     VHTLC,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
 } from "../../src";
@@ -150,7 +150,7 @@ async function matureAbsoluteLocktime(targetUnix: bigint): Promise<void> {
 
 describe("non-interactive refund without receiver (VHTLC.ScriptV2 covenant leaf)", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
 
     beforeEach(beforeEachFaucet, 20000);

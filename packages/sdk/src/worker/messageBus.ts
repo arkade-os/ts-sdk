@@ -19,7 +19,7 @@ import {
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
-import { ContractRepository, IntentRepository, WalletRepository } from "../repositories";
+import { ContractRepository, BatchRegistrationRepository, WalletRepository } from "../repositories";
 import {
     MessageBusInitializingError,
     MessageBusNotInitializedError,
@@ -136,7 +136,7 @@ type Options = {
      *
      * Ignored when `buildServices` is supplied — that override owns `storage`.
      */
-    intentRepository?: IntentRepository;
+    intentRepository?: BatchRegistrationRepository;
     /** The worker wallet's onchain provider, per network: an instance cannot cross `postMessage`.
      * Called on every init and never closed, so return one instance per network. Defaults to
      * Esplora; ignored when `buildServices` is supplied. */
@@ -232,7 +232,7 @@ export class MessageBus {
     private pendingInitCount = 0;
     private readonly buildServicesFn: (config: Initialize["config"]) => Promise<MessageBusServices>;
     private readonly boundOnMessage = this.onMessage.bind(this);
-    private readonly intentRepository?: IntentRepository;
+    private readonly intentRepository?: BatchRegistrationRepository;
     private readonly onchainProvider?: (network: NetworkName) => OnchainProvider;
     /** Pending broadcasts, drained FIFO by a single {@link drain} loop. */
     private broadcastQueue: ResponseEnvelope[] = [];

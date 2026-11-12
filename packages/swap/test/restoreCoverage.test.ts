@@ -5,7 +5,7 @@ import {
     ContractManager,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     asset,
     type Contract,
     type IndexerProvider,
@@ -56,7 +56,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     );
     return {
         ...mod,
-        RestArkProvider: class {
+        RestOperatorProvider: class {
             async getInfo() {
                 state.getInfoCalls++;
                 return {
@@ -101,7 +101,7 @@ const wallet = {
         state.managerCalls++;
         return contractManager;
     },
-    getArkadeInfo: async () => new RestArkProvider("http://ark").getInfo(),
+    getArkadeInfo: async () => new RestOperatorProvider("http://ark").getInfo(),
 } as unknown as IWallet;
 
 const testAsset = asset.AssetId.fromString("aa".repeat(32) + "0000");

@@ -1,15 +1,18 @@
 import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { hex } from "@scure/base";
 import {
     Wallet,
     MnemonicIdentity,
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    RestArkProvider,
+    RestOperatorProvider,
     toXOnlySignerHex,
 } from "../src";
 import { jsonResponse } from "./helpers/response";
+import { DefaultVtxo } from "../src/script/default";
+import { timelockToSequence } from "../src/utils/timelock";
 
 /**
  * Per-derivation boarding rotation (plan §6-II).
@@ -85,7 +88,7 @@ function makeHdWallet(
     return Wallet.create({
         identity: MnemonicIdentity.fromMnemonic(MNEMONIC, { isMainnet: false }),
         walletMode: "hd",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -100,7 +103,7 @@ describe("Wallet boarding rotation", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: walletRepo,
                     contractRepository: new InMemoryContractRepository(),
@@ -271,7 +274,7 @@ describe("Wallet boarding rotation", () => {
             const wallet = await Wallet.create({
                 identity: SingleKey.fromHex(SINGLEKEY_HEX),
                 walletMode: "static",
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: walletRepo,
                     contractRepository: new InMemoryContractRepository(),
@@ -394,7 +397,14 @@ describe("Wallet boarding rotation", () => {
                 new Set([currentSigner, depSigner]),
             );
 
-            const depGroup = groups.find((g) => g.serverPubKey === depSigner);
+            const rowScript = new DefaultVtxo.Script({
+                pubKey: hex.decode(SINGLEKEY_HEX),
+                serverPubKey: hex.decode(FOREIGN_SERVER_PUBKEY_HEX),
+                csvTimelock: { type: "blocks", value: 288n },
+            });
+            const depGroup = groups.find(
+                (g) => hexEncode(g.tapscript.pkScript) === hexEncode(rowScript.pkScript),
+            );
             expect(depGroup).toBeDefined();
             // CSV decoded from THIS row's exit leaf — the per-row delay, not the
             // wallet's current 144.
@@ -433,6 +443,43 @@ describe("Wallet boarding rotation", () => {
             // never touches the deprecated address (empty onchain stub → []).
             expect(await wallet.getBoardingUtxos()).toEqual([]);
 
+            await wallet.dispose();
+        });
+
+        it("queries a deprecated index-zero boarding script persisted as a default contract", async () => {
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(new InMemoryWalletRepository(), contractRepo);
+            const currentSigner = toXOnlySignerHex(
+                hexEncode(wallet.boardingTapscript.options.serverPubKey),
+            );
+            const depSigner = toXOnlySignerHex(FOREIGN_SERVER_PUBKEY_HEX);
+            const csvTimelock =
+                wallet.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
+            const baseline = new DefaultVtxo.Script({
+                pubKey: await wallet.identity.xOnlyPublicKey(),
+                serverPubKey: hex.decode(FOREIGN_SERVER_PUBKEY_HEX),
+                csvTimelock,
+            });
+            const address = baseline
+                .address(wallet.network.hrp, baseline.options.serverPubKey)
+                .encode();
+            await contractRepo.saveContract({
+                type: "default",
+                params: {
+                    pubKey: hexEncode(baseline.options.pubKey),
+                    serverPubKey: FOREIGN_SERVER_PUBKEY_HEX,
+                    csvTimelock: String(timelockToSequence(csvTimelock)),
+                },
+                script: hexEncode(baseline.pkScript),
+                address,
+                state: "active",
+                createdAt: 1,
+            });
+            const getCoins = vi.spyOn(wallet.onchainProvider, "getCoins");
+
+            await wallet.getBoardingUtxosForSigners(new Set([currentSigner, depSigner]));
+
+            expect(getCoins).toHaveBeenCalledWith(baseline.onchainAddress(wallet.network));
             await wallet.dispose();
         });
     });

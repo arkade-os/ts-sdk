@@ -15,7 +15,11 @@ import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
 import type { NormalizedExtendedVirtualCoin } from "../src/wallet/vtxo";
 import type { IntentFeeConfig } from "../src/arkfee";
 import { filterSnapshotVtxos, Wallet } from "../src/wallet/wallet";
-import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { CSVMultisigTapscript, type RelativeTimelock } from "../src/script/tapscript";
+import { DefaultVtxo } from "../src/script/default";
+import { extendCoinWithTapscript } from "../src/wallet/utils";
+import { getNetwork } from "../src/networks";
+import { Transaction } from "../src/utils/transaction";
 import { hex } from "@scure/base";
 
 type MockWalletOptions = {
@@ -38,6 +42,8 @@ type MockWalletOptions = {
      */
     intentFee?: IntentFeeConfig;
 };
+
+type SettleHooks = { onPhase?: (phase: "preparing" | "registration_attempt") => void };
 
 type LegacyVirtualStatus = {
     state?: "settled" | "swept" | "spent" | "preconfirmed";
@@ -142,7 +148,7 @@ const createMockVtxo = (
         createdAt: new Date(),
         isUnrolled: false,
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as any;
 };
@@ -409,7 +415,7 @@ describe("VtxoManager - Recovery", () => {
                         createdAt: new Date(),
                         isUnrolled: false,
                         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-                        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+                        proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
                         tapTree: new Uint8Array(),
                     }) as any,
             );
@@ -1942,31 +1948,35 @@ describe("SettlementConfig", () => {
 });
 
 describe("VtxoManager - Boarding UTXO Sweep", () => {
-    // Helper to create mock ExtendedCoin (boarding UTXO)
+    const userKey = new Uint8Array(32).fill(0x01);
+    const currentSigner = new Uint8Array(32).fill(0x02);
+    const deprecatedSigner = new Uint8Array(32).fill(0x03);
+    const SEVEN_DAYS: RelativeTimelock = { type: "seconds", value: 604672n }; // multiple of 512
+    const TEN_BLOCKS: RelativeTimelock = { type: "blocks", value: 10n };
+    const regtest = getNetwork("regtest");
+
+    const boardingScript = (
+        csvTimelock: RelativeTimelock = SEVEN_DAYS,
+        serverPubKey: Uint8Array = currentSigner,
+    ) => new DefaultVtxo.Script({ pubKey: userKey, serverPubKey, csvTimelock });
+
+    // Helper to create mock ExtendedCoin (boarding UTXO) sitting on `script`'s address.
     const createMockBoardingUtxo = (
         value: number,
         blockTime?: number,
         blockHeight?: number,
-    ): ExtendedCoin => {
-        return {
-            txid: `boarding-txid-${value}`,
+        script: DefaultVtxo.Script = boardingScript(),
+    ): ExtendedCoin =>
+        extendCoinWithTapscript(script, {
+            txid: value.toString(16).padStart(64, "0"),
             vout: 0,
             value,
             status: {
                 confirmed: !!blockTime,
                 block_time: blockTime,
-                block_height: blockHeight,
+                block_height: blockHeight ?? (blockTime ? 100 : undefined),
             },
-        } as ExtendedCoin;
-    };
-
-    // Build a valid exit script for mocking the boarding tapscript
-    const mockPubkey = new Uint8Array(32).fill(0x01);
-    const csvScript = CSVMultisigTapscript.encode({
-        timelock: { type: "seconds", value: 604672n }, // ~7 days, multiple of 512
-        pubkeys: [mockPubkey],
-    });
-    const exitScriptHex = hex.encode(csvScript.script);
+        });
 
     // Mock wallet with boarding UTXO support
     const createMockWalletWithBoarding = (
@@ -1975,15 +1985,23 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             boardingAddress?: string;
             feeRate?: number;
             chainTipHeight?: number;
+            /** The wallet's current boarding delay. */
+            timelock?: RelativeTimelock;
+            /** What `getSelectableBoardingUtxoGroups` answers; absent → the wallet lacks it. */
+            groups?: { serverPubKey: string; coins: ExtendedCoin[] }[];
         } = {},
     ) => {
-        const { boardingAddress = "bcrt1qtest", feeRate = 1, chainTipHeight = 1000 } = opts;
+        const {
+            boardingAddress = "bcrt1qtest",
+            feeRate = 1,
+            chainTipHeight = 1000,
+            timelock = SEVEN_DAYS,
+            groups,
+        } = opts;
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
-
-        const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]); // P2TR-like
 
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
@@ -1999,19 +2017,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             settle: vi.fn().mockResolvedValue("mock-txid"),
             dustAmount: 330n,
             getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            ...(groups && {
+                getSelectableBoardingUtxoGroups: vi.fn().mockResolvedValue(groups),
+            }),
             getBoardingAddress: vi.fn().mockResolvedValue(boardingAddress),
-            boardingTapscript: {
-                exitScript: exitScriptHex,
-                pkScript: mockPkScript,
-                exit: vi.fn().mockReturnValue([
-                    {
-                        version: 0xc0,
-                        internalKey: new Uint8Array(32),
-                        merklePath: [new Uint8Array(32)],
-                    },
-                    new Uint8Array([0xc0, 0x01, 0x02, 0x03]),
-                ]),
-            },
+            boardingTapscript: boardingScript(timelock),
             onchainProvider: {
                 getFeeRate: vi.fn().mockResolvedValue(feeRate),
                 broadcastTransaction: vi.fn().mockResolvedValue("sweep-txid"),
@@ -2020,24 +2030,29 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
                 }),
+                getMedianTimePast: vi.fn().mockImplementation(async (height: number) => {
+                    if (height === chainTipHeight) return Math.floor(Date.now() / 1000);
+                    const coin = [...boardingUtxos, ...(groups ?? []).flatMap((g) => g.coins)].find(
+                        (candidate) => candidate.status.block_height === height + 1,
+                    );
+                    return coin?.status.block_time ?? Math.floor(Date.now() / 1000) - 3600;
+                }),
             },
             arkProvider: {
                 getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
-            network: {
-                bech32: "bcrt",
-                pubKeyHash: 0x6f,
-                scriptHash: 0xc4,
-                wif: 0xef,
-            },
+            network: regtest,
             identity: {
                 sign: vi.fn().mockImplementation((tx: any) => tx),
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
             },
-            // Descriptor-aware on-chain boarding signer (plan §6-III.3). The
-            // mock mirrors the old identity-sign behaviour (returns the tx
-            // unchanged) so sweep tests still finalize a "signed" tx.
-            signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
+            // Descriptor-aware on-chain boarding signer (plan §6-III.3). Stands in for signing
+            // and hands back the unsigned tx, so a sweep can be broadcast and inspected.
+            signOnchainBoardingTx: vi.fn().mockImplementation(async (tx: any) => ({
+                finalize: () => {},
+                hex: "signed-sweep",
+                tx,
+            })),
         } as any;
     };
 
@@ -2102,7 +2117,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             const recentBlockTime = Math.floor(Date.now() / 1000) - 60;
             const utxos = [
                 createMockBoardingUtxo(50000, pastBlockTime), // expired
-                createMockBoardingUtxo(30000, recentBlockTime), // not expired
+                createMockBoardingUtxo(30000, recentBlockTime, 200), // not expired
                 createMockBoardingUtxo(20000, undefined), // unconfirmed
             ];
             const wallet = createMockWalletWithBoarding(utxos);
@@ -2203,77 +2218,16 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
     });
 
     describe("getExpiredBoardingUtxos with block-based timelocks", () => {
-        // Use a block-based timelock (value < 512 → "blocks")
-        const blockMockPubkey = new Uint8Array(32).fill(0x02);
-        const blockCsvScript = CSVMultisigTapscript.encode({
-            timelock: { type: "blocks", value: 10n },
-            pubkeys: [blockMockPubkey],
-        });
-        const blockExitScriptHex = hex.encode(blockCsvScript.script);
-
-        const createBlockBasedWallet = (boardingUtxos: ExtendedCoin[], chainTipHeight: number) => {
-            const mockPkScript = new Uint8Array([0x51, 0x20, ...new Array(32).fill(0)]);
-            const contractManager = {
-                onContractEvent: vi.fn().mockReturnValue(() => {}),
-                refreshOutpoints: vi.fn().mockResolvedValue(undefined),
-            };
-
-            return {
-                getVtxos: vi.fn().mockResolvedValue([]),
-                getSpendableVtxos: vi.fn().mockResolvedValue([]),
-                getAddress: vi
-                    .fn()
-                    .mockResolvedValue(
-                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
-                    ),
-                getDelegateManager: vi.fn().mockResolvedValue(undefined),
-                getDelegatorManager: vi.fn().mockResolvedValue(undefined),
-                getContractManager: vi.fn().mockResolvedValue(contractManager),
-                settle: vi.fn().mockResolvedValue("mock-txid"),
-                dustAmount: 330n,
-                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
-                getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
-                boardingTapscript: {
-                    exitScript: blockExitScriptHex,
-                    pkScript: mockPkScript,
-                    exit: vi.fn().mockReturnValue([
-                        {
-                            version: 0xc0,
-                            internalKey: new Uint8Array(32),
-                            merklePath: [new Uint8Array(32)],
-                        },
-                        new Uint8Array([0xc0, 0x01, 0x02, 0x03]),
-                    ]),
-                },
-                onchainProvider: {
-                    getFeeRate: vi.fn().mockResolvedValue(1),
-                    broadcastTransaction: vi.fn().mockResolvedValue("sweep-txid"),
-                    getChainTip: vi.fn().mockResolvedValue({
-                        height: chainTipHeight,
-                        time: Math.floor(Date.now() / 1000),
-                        hash: "0".repeat(64),
-                    }),
-                },
-                arkProvider: {
-                    getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
-                },
-                network: {
-                    bech32: "bcrt",
-                    pubKeyHash: 0x6f,
-                    scriptHash: 0xc4,
-                    wif: 0xef,
-                },
-                identity: {
-                    sign: vi.fn().mockImplementation((tx: any) => tx),
-                    xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
-                },
-                signOnchainBoardingTx: vi.fn().mockImplementation((tx: any) => tx),
-            } as any;
-        };
+        const blockScript = boardingScript(TEN_BLOCKS);
+        const createBlockBasedWallet = (boardingUtxos: ExtendedCoin[], chainTipHeight: number) =>
+            createMockWalletWithBoarding(boardingUtxos, {
+                chainTipHeight,
+                timelock: TEN_BLOCKS,
+            });
 
         it("should detect expired UTXOs using block-based timelock", async () => {
             // Timelock is 10 blocks, UTXO at height 100, chain tip at 110+
-            const utxos = [createMockBoardingUtxo(50000, 1000, 100)];
+            const utxos = [createMockBoardingUtxo(50000, 1000, 100, blockScript)];
             const wallet = createBlockBasedWallet(utxos, 110);
             const manager = new VtxoManager(wallet, {
                 boardingUtxoSweep: true,
@@ -2286,7 +2240,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
         it("should not detect UTXOs before block-based timelock expires", async () => {
             // Timelock is 10 blocks, UTXO at height 100, chain tip at 105 (only 5 blocks elapsed)
-            const utxos = [createMockBoardingUtxo(50000, 1000, 100)];
+            const utxos = [createMockBoardingUtxo(50000, 1000, 100, blockScript)];
             const wallet = createBlockBasedWallet(utxos, 105);
             const manager = new VtxoManager(wallet, {
                 boardingUtxoSweep: true,
@@ -2299,7 +2253,9 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
         it("should skip UTXOs without block_height for block-based timelocks", async () => {
             // UTXO confirmed but missing block_height
-            const utxos = [createMockBoardingUtxo(50000, 1000, undefined)];
+            const coin = createMockBoardingUtxo(50000, 1000, undefined, blockScript);
+            coin.status.block_height = undefined;
+            const utxos = [coin];
             const wallet = createBlockBasedWallet(utxos, 200);
             const manager = new VtxoManager(wallet, {
                 boardingUtxoSweep: true,
@@ -2308,6 +2264,227 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             const expired = await manager.getExpiredBoardingUtxos();
 
             expect(expired).toHaveLength(0);
+        });
+
+        it("detects block-based expiry when block_time is unavailable", async () => {
+            const coin = createMockBoardingUtxo(50_000, undefined, 100, blockScript);
+            coin.status.confirmed = true;
+            const wallet = createBlockBasedWallet([coin], 110);
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            expect(await manager.getExpiredBoardingUtxos()).toEqual([coin]);
+            await manager.dispose();
+        });
+
+        it("uses confirmation-parent and tip median times for seconds-based expiry", async () => {
+            const csv: RelativeTimelock = { type: "seconds", value: 512n };
+            const coin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(csv));
+            const wallet = createBlockBasedWallet([coin], 110);
+            let tipMedianTime = 2511;
+            wallet.onchainProvider.getChainTip.mockImplementation(async () => ({
+                height: 110,
+                time: tipMedianTime,
+                hash: "0".repeat(64),
+            }));
+            wallet.onchainProvider.getMedianTimePast.mockImplementation(async (height: number) =>
+                height === 99 ? 2000 : tipMedianTime,
+            );
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            expect(await manager.getExpiredBoardingUtxos()).toEqual([]);
+            tipMedianTime = 2512;
+            expect(await manager.getExpiredBoardingUtxos()).toEqual([coin]);
+            expect(wallet.onchainProvider.getMedianTimePast).toHaveBeenCalledWith(99);
+            await manager.dispose();
+        });
+
+        it("settles the other coins when the provider cannot supply median times", async () => {
+            const secondsCoin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(SEVEN_DAYS));
+            const blocksCoin = createMockBoardingUtxo(40_000, 1, 105, blockScript);
+            const wallet = createBlockBasedWallet([], 110);
+            delete wallet.onchainProvider.getMedianTimePast;
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+            (manager as any).renewalInProgress = true;
+
+            expect(await manager.getExpiredBoardingUtxos([secondsCoin, blocksCoin])).toEqual([]);
+            await (manager as any).runPeriodicSettle([secondsCoin, blocksCoin], "");
+            expect(wallet.settle.mock.calls[0][0].inputs).toEqual([blocksCoin]);
+            await manager.dispose();
+        });
+
+        it("still sweeps block-based coins when a median time lookup fails", async () => {
+            const secondsCoin = createMockBoardingUtxo(50_000, 1, 100, boardingScript(SEVEN_DAYS));
+            const blocksCoin = createMockBoardingUtxo(40_000, 1, 100, blockScript);
+            const wallet = createBlockBasedWallet([], 110);
+            wallet.onchainProvider.getMedianTimePast.mockRejectedValue(new Error("429"));
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            expect(await manager.getExpiredBoardingUtxos([secondsCoin, blocksCoin])).toEqual([
+                blocksCoin,
+            ]);
+            await manager.dispose();
+        });
+    });
+
+    describe("boarding under a deprecated signer", () => {
+        const signerHex = (key: Uint8Array) => hex.encode(key);
+        const longAgo = () => Math.floor(Date.now() / 1000) - 700_000; // past SEVEN_DAYS
+        const oldScript = () => boardingScript(SEVEN_DAYS, deprecatedSigner);
+        const currentAddress = () => boardingScript().onchainAddress(regtest);
+
+        const sweptTx = (wallet: any) => {
+            const [tx] = wallet.signOnchainBoardingTx.mock.calls[0];
+            return tx as Transaction;
+        };
+
+        it("sweeps an expired coin held under a deprecated signer", async () => {
+            const coin = createMockBoardingUtxo(50_000, longAgo(), undefined, oldScript());
+            const wallet = createMockWalletWithBoarding([], {
+                boardingAddress: currentAddress(),
+                groups: [
+                    { serverPubKey: signerHex(currentSigner), coins: [] },
+                    { serverPubKey: signerHex(deprecatedSigner), coins: [coin] },
+                ],
+            });
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            const txid = await manager.sweepExpiredBoardingUtxos();
+
+            expect(txid).toBe("sweep-txid");
+            expect(wallet.onchainProvider.broadcastTransaction).toHaveBeenCalledWith(
+                "signed-sweep",
+            );
+            const tx = sweptTx(wallet);
+            expect(tx.inputsLength).toBe(1);
+            expect(hex.encode(tx.getInput(0).txid!)).toBe(coin.txid);
+            expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(boardingScript().pkScript));
+            await manager.dispose();
+        });
+
+        it("judges each coin by the timelock of its own address", async () => {
+            const now = Math.floor(Date.now() / 1000);
+            const oneDay: RelativeTimelock = { type: "seconds", value: 86_528n };
+            const thirtyDays: RelativeTimelock = { type: "seconds", value: 2_592_256n };
+            // Both are two days old to the wallet's 7-day delay, i.e. unexpired by it.
+            const shorter = createMockBoardingUtxo(
+                1_000,
+                now - 172_800,
+                undefined,
+                boardingScript(oneDay),
+            );
+            const longer = createMockBoardingUtxo(
+                2_000,
+                now - 700_000,
+                undefined,
+                boardingScript(thirtyDays),
+            );
+            const wallet = createMockWalletWithBoarding([shorter, longer]);
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            // `longer` is past the wallet's 7 days but not its own 30.
+            expect(expired.map((c) => c.value)).toEqual([1_000]);
+            await manager.dispose();
+        });
+
+        it("never hands a deprecated-signer coin to settle, even an unexpired one", async () => {
+            const recent = Math.floor(Date.now() / 1000) - 60;
+            const mine = createMockBoardingUtxo(10_000, recent);
+            const theirs = createMockBoardingUtxo(20_000, recent, undefined, oldScript());
+            const wallet = createMockWalletWithBoarding([], {
+                groups: [
+                    { serverPubKey: signerHex(currentSigner), coins: [mine] },
+                    { serverPubKey: signerHex(deprecatedSigner), coins: [theirs] },
+                ],
+            });
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect(wallet.settle.mock.calls[0][0].inputs).toEqual([mine]);
+            await manager.dispose();
+        });
+
+        it("rediscovers boarding coins when the signer changes during discovery", async () => {
+            const nextSigner = new Uint8Array(32).fill(0x04);
+            const staleCoin = createMockBoardingUtxo(10_000, Math.floor(Date.now() / 1000) - 60);
+            const freshCoin = createMockBoardingUtxo(
+                20_000,
+                Math.floor(Date.now() / 1000) - 60,
+                undefined,
+                boardingScript(SEVEN_DAYS, nextSigner),
+            );
+            const wallet = createMockWalletWithBoarding([], { groups: [] });
+            wallet.getSelectableBoardingUtxoGroups
+                .mockImplementationOnce(async () => {
+                    wallet.boardingTapscript = boardingScript(SEVEN_DAYS, nextSigner);
+                    return [{ serverPubKey: signerHex(currentSigner), coins: [staleCoin] }];
+                })
+                .mockResolvedValueOnce([
+                    { serverPubKey: signerHex(nextSigner), coins: [freshCoin] },
+                ]);
+            wallet.settle.mockImplementation(
+                async (_params: unknown, _eventCallback: unknown, hooks?: SettleHooks) => {
+                    hooks?.onPhase?.("registration_attempt");
+                    return "mock-txid";
+                },
+            );
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(wallet.getSelectableBoardingUtxoGroups).toHaveBeenCalledTimes(2);
+            expect(wallet.settle.mock.calls[0][0].inputs).toEqual([freshCoin]);
+            await manager.dispose();
+        });
+
+        it("aborts registration if the signer changes after discovery", async () => {
+            const nextSigner = new Uint8Array(32).fill(0x04);
+            const coin = createMockBoardingUtxo(10_000, Math.floor(Date.now() / 1000) - 60);
+            const wallet = createMockWalletWithBoarding([], {
+                groups: [{ serverPubKey: signerHex(currentSigner), coins: [coin] }],
+            });
+            let registered = false;
+            wallet.settle.mockImplementation(
+                async (_params: unknown, _eventCallback: unknown, hooks?: SettleHooks) => {
+                    wallet.boardingTapscript = boardingScript(SEVEN_DAYS, nextSigner);
+                    hooks?.onPhase?.("registration_attempt");
+                    registered = true;
+                    return "mock-txid";
+                },
+            );
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect(registered).toBe(false);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
+            await manager.dispose();
+        });
+
+        it("sweeps, and never settles, a coin expired by its own timelock but not the wallet's", async () => {
+            const oneDay: RelativeTimelock = { type: "seconds", value: 86_528n };
+            const coin = createMockBoardingUtxo(
+                30_000,
+                Math.floor(Date.now() / 1000) - 172_800,
+                undefined,
+                boardingScript(oneDay),
+            );
+            const wallet = createMockWalletWithBoarding([], {
+                boardingAddress: currentAddress(),
+                groups: [{ serverPubKey: signerHex(currentSigner), coins: [coin] }],
+            });
+            const manager = new VtxoManager(wallet, { boardingUtxoSweep: true });
+
+            await (manager as any).pollBoardingUtxos();
+
+            expect(wallet.settle).not.toHaveBeenCalled();
+            expect(wallet.onchainProvider.broadcastTransaction).toHaveBeenCalledTimes(1);
+            expect(hex.encode(sweptTx(wallet).getInput(0).txid!)).toBe(coin.txid);
+            await manager.dispose();
         });
     });
 });
@@ -2595,6 +2772,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             boardingTapscript: {
                 exitScript: exitScriptHex,
                 pkScript: mockPkScript,
+                options: { serverPubKey: new Uint8Array(32).fill(2) },
             },
             onchainProvider: {
                 getFeeRate: vi.fn().mockResolvedValue(1),
@@ -2880,6 +3058,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
             boardingTapscript: {
                 exitScript: exitScriptHex,
                 pkScript: mockPkScript,
+                options: { serverPubKey: new Uint8Array(32).fill(2) },
             },
             onchainProvider: {
                 getFeeRate: vi.fn().mockResolvedValue(1),
@@ -2944,7 +3123,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
             createdAt: new Date(),
             isUnrolled: false,
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         }) as any;
 
@@ -3306,6 +3485,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
             boardingTapscript: {
                 exitScript: exitScriptHex,
                 pkScript: mockPkScript,
+                options: { serverPubKey: new Uint8Array(32).fill(2) },
             },
             onchainProvider: {
                 getFeeRate: vi.fn().mockResolvedValue(1),
@@ -3448,6 +3628,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                 boardingTapscript: {
                     exitScript: exitScriptHex,
                     pkScript: mockPkScript,
+                    options: { serverPubKey: new Uint8Array(32).fill(2) },
                 },
                 onchainProvider: {
                     getFeeRate: vi.fn().mockResolvedValue(1),
@@ -3501,7 +3682,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
             createdAt: new Date(),
             isUnrolled: false,
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         }) as any;
 
@@ -3872,7 +4053,7 @@ describe("VtxoManager - intent fee pricing", () => {
             createdAt: new Date(),
             isUnrolled: false,
             forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            proofTapLeafScript: [new Uint8Array(), new Uint8Array()],
             tapTree: new Uint8Array(),
         }) as any;
 

@@ -15,7 +15,7 @@ import {
     InMemoryWalletRepository,
     Ramps,
     REGTEST_EMULATOR_PUBKEY,
-    RestArkProvider,
+    RestOperatorProvider,
     SingleKey,
     Wallet,
 } from "@arkade-os/sdk";
@@ -146,7 +146,7 @@ const stubTransport = async (wallet: Wallet): Promise<AttestingRfqTransport> => 
 const fourCoinWallet = async (concurrentSpending: boolean) => {
     const wallet = await Wallet.create({
         identity: SingleKey.fromRandomBytes(),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,

@@ -21,7 +21,7 @@
 # a server it cannot quote against — name it `rfq*`.
 #
 # Usage: scripts/regtest.sh <sdk|sdk-executor|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
-#   up     – clean + start with the package's .env.regtest
+#   up     – start with the package's .env.regtest (no clean: run reset first to switch packages)
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
 #   setup  – run the package's test/setup waiter

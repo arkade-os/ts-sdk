@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EsploraProvider, Coin } from "../src";
+import { EsploraProvider, Coin, type ExplorerTransaction } from "../src";
 import { jsonResponse, textResponse } from "./helpers/response";
 
 const { mockFetch } = vi.hoisted(() => ({
@@ -51,6 +51,22 @@ describe("EsploraProvider", () => {
             await expect(provider.getCoins("bc1qtest")).rejects.toThrow(
                 "Failed to fetch UTXOs: Not Found",
             );
+        });
+    });
+
+    describe("getTransactions", () => {
+        it("preserves Esplora's numeric satoshi output values", async () => {
+            const tx: ExplorerTransaction = {
+                txid: "deposit",
+                vout: [{ scriptpubkey_address: "bc1qtest", value: 10000 }],
+                status: { confirmed: true, block_time: 1600000000 },
+            };
+            mockFetch.mockResolvedValueOnce(jsonResponse([tx]));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+            const txs = await provider.getTransactions("bc1qtest");
+
+            expect(txs[0].vout[0].value).toBe(10000);
         });
     });
 
@@ -210,6 +226,23 @@ describe("EsploraProvider", () => {
                 "Failed to get chain tip: Service Unavailable",
             );
             expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("getMedianTimePast", () => {
+        it("returns the median-time-past for the requested block height", async () => {
+            mockFetch
+                .mockResolvedValueOnce(textResponse("block-hash"))
+                .mockResolvedValueOnce(jsonResponse({ mediantime: 1_700_000_000 }));
+
+            const provider = new EsploraProvider("http://localhost:3000");
+
+            await expect(provider.getMedianTimePast(800_000)).resolves.toBe(1_700_000_000);
+            expect(mockFetch).toHaveBeenNthCalledWith(
+                1,
+                "http://localhost:3000/block-height/800000",
+            );
+            expect(mockFetch).toHaveBeenNthCalledWith(2, "http://localhost:3000/block/block-hash");
         });
     });
 });
