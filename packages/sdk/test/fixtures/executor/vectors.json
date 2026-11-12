@@ -1,11 +1,11 @@
 {
     "boarding": {
-        "address": "bcrt1ped3unfc6wp6zl4u0kwegvmvww625rfhr7tdq3p0c9nt2e7g8229s29ejsz",
-        "pkScript": "5120cb63c9a71a70742fd78fb3b2866d8e769541a6e3f2da0885f82cd6acf907528b",
+        "address": "bcrt1p0r4mrl0y63t6twludvrcuxugxtuuh2q4w9w8weuxld33jyrmlecsfkxptd",
+        "pkScript": "512078ebb1fde4d457a5bbfc6b078e1b8832f9cba815715c776786fb6319107bfe71",
         "tapscripts": [
             "20c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
             "03020040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac",
-            "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad206df68bd706206b91a7a43417d16cad7f1df92e918007bd786cc7da4946fff6adac"
+            "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad203de532134c4a25f7d04c6f992f953fb8c55c82bffae69f0614012c2cf0e59e68ac"
         ],
         "variables": {
             "boarding_exit_delay": "020040",
@@ -19,12 +19,12 @@
     "emulatorPubkey": "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     "owner": "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
     "renewal": {
-        "address": "tark1qpumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtes6masep0aflpzsdadkj7dacd22g5d7envvs6yfdu20cvuu9td3ccafvh3p",
-        "pkScript": "51206b7d8642fea7e1141bd6da5e6f70d529146fb336321a225bc53f0ce70ab6c718",
+        "address": "tark1qpumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqte34q663w07ee67632l8kxg3tlxr9xcd9ywfg6rswue7wz7wum7wygwf5ygk",
+        "pkScript": "5120d41ad45cff673af6a2af9ec64457f30ca6c34a47251a1c1dccf9c2f3b9bf3888",
         "tapscripts": [
             "20c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ad2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
             "03010040b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac",
-            "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad20ab744b363a090f77c273d74d4430a5c96971cdee82232f9f8ce48fcc853ce6efac"
+            "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad208c8ab0189e72f7eea33de5532f9ef08cd78e6877ce1a60461cd0641a2fd54173ac"
         ],
         "variables": {
             "exit_delay": "010040",

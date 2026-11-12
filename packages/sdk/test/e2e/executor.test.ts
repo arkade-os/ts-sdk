@@ -16,18 +16,18 @@ import { ArkAddress } from "../../src/script/address";
 import { hex } from "@scure/base";
 import { ESPLORA_API_URL, faucetOnchain, waitFor } from "./utils";
 
-// The executor of the sdk-delegatee stack (arkade-regtest `delegatee` profile), which seeds and
+// The executor of the sdk-executor stack (arkade-regtest `executor` profile), which seeds and
 // trusts its default templates at startup.
-const DELEGATEE_URL = process.env.DELEGATEE_URL ?? "http://localhost:7280";
+const EXECUTOR_URL = process.env.EXECUTOR_URL ?? "http://localhost:7280";
 const ESPLORA_URL = process.env.ESPLORA_URL ?? ESPLORA_API_URL;
-// less than the stack's batch expiry, so coins come due during the test
-const RENEWAL_WINDOW = Number(process.env.DELEGATEE_RENEWAL_WINDOW ?? 256);
+// less than the stack's VTXO lifetime, so coins come due during the test
+const RENEWAL_WINDOW = Number(process.env.EXECUTOR_RENEWAL_WINDOW ?? 256);
 
-const reachable = await fetch(`${DELEGATEE_URL}/v1/info`)
+const reachable = await fetch(`${EXECUTOR_URL}/v1/info`)
     .then((r) => r.ok)
     .catch(() => false);
-if (!reachable && process.env.CI) throw new Error(`no executor at ${DELEGATEE_URL}`);
-if (!reachable) console.warn(`executor e2e skipped: no executor at ${DELEGATEE_URL}`);
+if (!reachable && process.env.CI) throw new Error(`no executor at ${EXECUTOR_URL}`);
+if (!reachable) console.warn(`executor e2e skipped: no executor at ${EXECUTOR_URL}`);
 
 async function delegationParams(): Promise<DelegationParams> {
     const info = await (await fetch("http://localhost:7070/v1/info")).json();
@@ -61,7 +61,7 @@ const createWallet = (executor: boolean, overrides: Partial<WalletConfig> = {}) 
         settlementConfig: false,
         // the executor stack's arkd runs short regtest delays
         minBatchExpirySeconds: 1n,
-        ...(executor ? { executorProvider: new RestExecutorProvider(DELEGATEE_URL) } : {}),
+        ...(executor ? { executorProvider: new RestExecutorProvider(EXECUTOR_URL) } : {}),
         ...overrides,
     });
 
@@ -88,7 +88,7 @@ describe.skipIf(!reachable).sequential("Executor default templates", () => {
         await manager.defaultTemplates();
         const renewalWatch = await manager.registerRenewal(params);
         const boardingWatch = await manager.registerBoarding(params);
-        const daemon = new RestExecutorProvider(DELEGATEE_URL);
+        const daemon = new RestExecutorProvider(EXECUTOR_URL);
         expect((await daemon.getDelegation(renewalWatch.address)).delegation.address).toBe(
             renewalWatch.address,
         );

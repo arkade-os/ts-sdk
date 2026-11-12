@@ -17,7 +17,7 @@ want a quick one.
 ```bash
 pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:sdk          # sdk only
-pnpm run test:integration:sdk-delegatee  # sdk executor e2e, on its own stack
+pnpm run test:integration:sdk-executor  # sdk executor e2e, on its own stack
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
@@ -49,17 +49,17 @@ definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups
 
 ### Executor e2e
 
-`packages/sdk/test/e2e/delegatee.test.ts` runs on its own stack, `sdk-delegatee`: arkade-regtest's
-`delegatee` profile (the executor daemon on :7280) with seconds-typed arkd timelocks, set in
-`packages/sdk/.env.regtest.delegatee`. It skips with a message when no executor answers.
+`packages/sdk/test/e2e/executor.test.ts` runs on its own stack, `sdk-executor`: arkade-regtest's
+`executor` profile (the executor daemon on :7280) with seconds-typed arkd timelocks, set in
+`packages/sdk/.env.regtest.executor`. It skips with a message when no executor answers.
 
 ```bash
-pnpm run regtest:up:sdk-delegatee
-pnpm run regtest:test:sdk-delegatee test/e2e/delegatee.test.ts
+pnpm run regtest:up:sdk-executor
+pnpm run regtest:test:sdk-executor test/e2e/executor.test.ts
 ```
 
-`DELEGATEE_URL` (default `http://localhost:7280`), `ESPLORA_URL` and `DELEGATEE_RENEWAL_WINDOW`
-(seconds, default 256: below the stack's batch expiry, so a coin comes due during the test) adjust
+`EXECUTOR_URL` (default `http://localhost:7280`), `ESPLORA_URL` and `EXECUTOR_RENEWAL_WINDOW`
+(seconds, default 256: below the stack's VTXO lifetime, so a coin comes due during the test) adjust
 it. The renewal step waits for the daemon's next renewal, up to 14 minutes.
 
 ### The stack itself

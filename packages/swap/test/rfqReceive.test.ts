@@ -10,8 +10,8 @@
  * exactly as its receive corridors build them (`receiver` = the trader's
  * payout key, `client` = the solver).
  */
-import { describe, expect, it, vi } from "vitest";
-import { hex } from "@scure/base";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { base64, hex } from "@scure/base";
 import { claimPacketShape } from "../src/claimPacket";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -56,6 +56,9 @@ import {
     rfqSecretsProfile,
     rfqSignerOf,
 } from "../src/rfqProfileParts";
+
+const gate = vi.hoisted(() => ({ binds: false }));
+vi.mock("../src/claimAmountGate", () => ({ bindsClaimAmount: () => gate.binds }));
 
 const key = (fill: number): Uint8Array => schnorr.getPublicKey(new Uint8Array(32).fill(fill));
 const p2tr = (program: Uint8Array): Uint8Array => Uint8Array.from([0x51, 0x20, ...program]);
@@ -1317,11 +1320,77 @@ describe("a receive with no executor key to seal to", () => {
                 }),
             );
             for (const profile of [lightning, onchain]) {
+                expect(
+                    hex.encode(base64.decode(profile.claim_packet as string).subarray(-11)),
+                    amountSide,
+                ).not.toMatch(/^040008/);
                 const shape = claimPacketShape(profile.claim_packet as string);
                 expect(shape.kind, amountSide).toBe("packet");
                 if (shape.kind !== "packet") return;
                 expect(shape.encryptionPubkey).toEqual(ENCRYPTION_PK);
             }
         }
+    });
+});
+
+describe("a receive once claim packets bind the amount", () => {
+    beforeEach(() => {
+        gate.binds = true;
+    });
+    afterEach(() => {
+        gate.binds = false;
+    });
+
+    const minAmountTlv = (packet: unknown): string =>
+        hex.encode(base64.decode(packet as string).subarray(-11));
+
+    it("seals an exact-out request on both legs, bound to the amount it pins", async () => {
+        const wallet = await hdWallet();
+        const lightning = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "to",
+                encryptionPubkey: ENCRYPTION_PK,
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(minAmountTlv(lightning.claim_packet)).toBe("040008" + "0000000000001388");
+
+        const onchain = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "to",
+                refundPubkey: L1_REFUND_PUBKEY,
+                encryptionPubkey: ENCRYPTION_PK,
+            }),
+        );
+        expect(minAmountTlv(onchain.claim_packet)).toBe("040008" + "00000000000186a0");
+    });
+
+    it("sends no claim_packet for an exact-in request, even with a key configured", async () => {
+        const wallet = await hdWallet();
+        const lightning = await capturedProfile((transport) =>
+            requestLightningReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 5_000,
+                amountSide: "from",
+                encryptionPubkey: ENCRYPTION_PK,
+                decodeInvoice: decodeStub,
+            }),
+        );
+        expect(Object.keys(lightning)).not.toContain("claim_packet");
+
+        const onchain = await capturedProfile((transport) =>
+            requestOnchainReceive(wallet, transport, {
+                emulatorPubkey: EMULATOR_PUBKEY_HEX,
+                amount: 100_000,
+                amountSide: "from",
+                refundPubkey: L1_REFUND_PUBKEY,
+                encryptionPubkey: ENCRYPTION_PK,
+            }),
+        );
+        expect(Object.keys(onchain)).not.toContain("claim_packet");
     });
 });

@@ -5,7 +5,7 @@
  * Scheme (the executor's `pkg/template/ecies`):
  * - ephemeral secp256k1 key; ECDH with the executor's encryption key (x coordinate);
  * - HKDF-SHA256, info `covclaimd/preimage/v1`, salt = the ephemeral pubkey;
- * - AES-256-GCM, additional data `ephPub(33) ‖ utf8(templateId)`;
+ * - AES-256-GCM, additional data `ephPub(33) ‖ utf8(templateId)`, `‖ u64be(minAmount)` when bound;
  * - value layout `ephPub(33) ‖ nonce(12) ‖ ciphertext`, TLV `0x01`.
  */
 import { base64 } from "@scure/base";
@@ -23,7 +23,7 @@ export const EXECUTOR_CLAIM_TEMPLATE_ID =
 
 export interface SealedClaimPacket {
     /**
-     * Base64 TLV body: `0x01` ciphertext and `0x03` encryption key. **This is what
+     * Base64 TLV body: `0x01` ciphertext, `0x03` encryption key and, when bound, `0x04` amount. **This is what
      * `claim_packet` carries.** The solver stamps it as Arkade extension packet `0x04`;
      * the executor matches on `0x03`, so the client alone chooses which executor.
      *
@@ -40,6 +40,9 @@ export interface ClaimPacketInput {
     encryptionPubkey: Uint8Array;
     /** Template the packet is sealed for. Default: {@link EXECUTOR_CLAIM_TEMPLATE_ID}. */
     templateId?: string;
+    /** Sats the funded lockup must carry for executor to claim it, as TLV `0x04` and in the
+     * AEAD's additional data so a courier cannot strip it. Unset: unbound. */
+    minAmount?: bigint;
 }
 
 /**
@@ -70,15 +73,25 @@ export async function sealWithEntropy(
         throw new Error("encryption pubkey must be 33-byte compressed");
     }
     if (nonce.length !== 12) throw new Error("nonce must be 12 bytes");
+    const { minAmount } = input;
+    if (
+        minAmount !== undefined &&
+        (typeof minAmount !== "bigint" || minAmount < 1n || minAmount >= 1n << 64n)
+    ) {
+        throw new Error("minAmount must be a bigint in [1, 2^64-1]");
+    }
     const ephemeralPub = secp256k1.getPublicKey(ephemeralKey, true);
     // shared secret = x coordinate of the ECDH point
     const sharedX = secp256k1
         .getSharedSecret(ephemeralKey, input.encryptionPubkey, true)
         .subarray(1);
     const key = hkdf(sha256, sharedX, ephemeralPub, HKDF_INFO, 32);
+    const amount = new Uint8Array(8);
+    if (minAmount !== undefined) new DataView(amount.buffer).setBigUint64(0, minAmount, false);
     const additionalData = concatBytes(
         ephemeralPub,
         new TextEncoder().encode(input.templateId ?? EXECUTOR_CLAIM_TEMPLATE_ID),
+        minAmount === undefined ? new Uint8Array() : amount,
     );
     const sealed = gcm(key, nonce, additionalData).encrypt(input.preimage);
 
@@ -87,6 +100,7 @@ export async function sealWithEntropy(
             concatBytes(
                 tlv(TLV_CIPHERTEXT, concatBytes(ephemeralPub, nonce, sealed)),
                 tlv(TLV_ENCRYPTION_PUBKEY, input.encryptionPubkey),
+                minAmount === undefined ? new Uint8Array() : tlv(TLV_MIN_AMOUNT, amount),
             ),
         ),
     };
@@ -95,6 +109,7 @@ export async function sealWithEntropy(
 const TLV_CIPHERTEXT = 0x01;
 const TLV_ARKADE_SCRIPT = 0x02;
 const TLV_ENCRYPTION_PUBKEY = 0x03;
+const TLV_MIN_AMOUNT = 0x04;
 
 const COMPRESSED_PUBKEY_LENGTH = 33;
 
