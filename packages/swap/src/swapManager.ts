@@ -1400,7 +1400,12 @@ export class RfqSwapManager {
         const finalize = this.callbacks?.finalizeClaim;
         if (!finalize || !this.config.enableAutoActions) return true;
         try {
-            await finalize(swap);
+            // The callback resolves keys and `P`, possibly prompting a signer: only when owed.
+            const { vtxos } = await this.deps.indexer.getVtxos({
+                scripts: [hex.encode(swap.lockupPkScript)],
+                pendingOnly: true,
+            });
+            if (vtxos?.length) await finalize(swap);
             return true;
         } catch (error) {
             this.emitFailed(swap, error);

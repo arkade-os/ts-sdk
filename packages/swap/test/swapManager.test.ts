@@ -2525,6 +2525,29 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(swap.state).toBe("claimed");
             expect(await m.hasSwap(RFQ_ID)).toBe(true);
         });
+
+        it("settles without calling it when nothing is pending", async () => {
+            const s = spies();
+            let called = false;
+            const swap = receiveSwap({ state: "claimed", claimTxid: CLAIM_TXID });
+            const indexer = revealed();
+            const read = indexer.getVtxos.bind(indexer);
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly ? { vtxos: [] } : read();
+            const m = manager({
+                indexer,
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    called = true;
+                    return [];
+                }),
+            });
+            await pass(m, swap);
+
+            expect(called).toBe(false);
+            expect(swap.state).toBe("settled");
+        });
     });
 
     it("a claim that never lands ends refunded when the solver takes the lockup back", async () => {
