@@ -14,7 +14,7 @@ style and have not been backfilled.
 
 ### Breaking Changes
 
-- **The delegatee is now the Executor.** The service, its repo and its image were renamed, and the SDK follows. The service and its API objects say `Executor`: `ExecutorProvider`, `RestExecutorProvider`, `executorUrl`, `getExecutorManager()`, `ExecutorInfo`. What a wallet delegates to it says `Delegated`: `DelegatedContractHandler` (`type: "delegated"`), `DelegatedOutput`, `DelegatedWallet`, `watchDelegatedContracts`. `delegateVtxos` is now `delegateWalletOutputs`. The REST API and its `delegation` vocabulary are unchanged. Contracts stored as `type: "delegatee"` by an unreleased build are not migrated.
+- **The delegatee is now the Executor.** The service, its repo and its image were renamed, and the SDK follows. The service, its API objects and the contract type say `Executor`: `ExecutorProvider`, `RestExecutorProvider`, `executorUrl`, `getExecutorManager()`, `ExecutorInfo`, `ExecutorContractHandler` (`type: "executor"`), `watchExecutorContracts`. What the wallet owns and delegates to it says `Delegated`: `DelegatedOutput`, `DelegatedWallet`. `delegateVtxos` is now `delegateWalletOutputs`. The REST API and its `delegation` vocabulary are unchanged. Contracts stored as `type: "delegatee"` by an unreleased build are not migrated.
 
 - **The bundled Executor templates no longer pin the service's cosigner key.** The `renew` and `board` covenants (the service's `templates/renew.json` and `board.json`, the boarding contract now its own `delegated_boarding` artifact) drop the `cosigners_public_keys` checks, so they are shorter and the default addresses no longer depend on `ExecutorInfo.cosignerPubkey`. `DEFAULT_TEMPLATE_IDS` and every default address move: a wallet re-registers under the new ids and migrates its coins, as it does for any other change of the defaults.
 - **Arkade contracts take struct and array params whole.** Constructor bindings now accept nested values by source name; `functions` and `unlock` take one positional argument per source parameter instead of per flattened field. Same-named covenant and leaf inputs remain independent. Flat dotted constructor keys still work, compiled scripts and persisted programs are unchanged, and `ArkadeContract.args` is a flattened, null-prototype copy (as restored contracts already were), so use `Object.hasOwn` rather than `args.hasOwnProperty`. `ArkadeNestedValue` accepts struct interfaces, class instances and arrays, with runtime validation of missing, extra or duplicated fields; empty containers, sparse arrays, cycles and keyless objects such as a `Promise` or `ArrayBuffer` are rejected with the offending argument path.
@@ -693,13 +693,13 @@ style and have not been backfilled.
   wallet's generically spendable coins, assets included, to the renewal
   address and retires its own receive contracts. Both contracts derive
   locally from the owner key, the `DelegationParams` and the service's keys
-  (`watchDelegatedContracts`), so a restored wallet finds its delegated coins
+  (`watchExecutorContracts`), so a restored wallet finds its delegated coins
   without asking the service; the manager refuses a registration whose
   address the service derives differently, or whose operator key is not the
   wallet's. While an active, unexpired delegation is registered,
   `getAddress()` answers the renewal address and `getBoardingAddress()` the
   delegated boarding address; `receiveTapscript` still names the wallet's
-  own script. The new `DelegatedContractHandler` (`type: "delegated"`)
+  own script. The new `ExecutorContractHandler` (`type: "executor"`)
   offers only the owner's forfeit and CSV exit leaves, never the
   emulator-enforced leaf, and `VtxoManager`'s expiry renewal skips delegated
   coins the service is responsible for. An operator signer rotation logs

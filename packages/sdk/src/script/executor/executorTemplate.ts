@@ -4,7 +4,7 @@ import { concatBytes } from "@scure/btc-signer/utils.js";
 import { getOpcodeValue } from "../../arkade/opcodes";
 import { ArkadeScript } from "../../arkade/script";
 import { computeArkadeScriptPublicKey } from "../../arkade/tweak";
-import type { DelegatedContractKeys } from "../../providers/executor";
+import type { ExecutorContractKeys } from "../../providers/executor";
 import { VtxoScript } from "../base";
 import boardDocument from "./board.json";
 import delegatedBoarding from "./delegated_boarding.json";
@@ -100,7 +100,7 @@ export function defaultVariables(
  */
 export function defaultContract(
     kind: ExecutorDefault,
-    keys: DelegatedContractKeys,
+    keys: ExecutorContractKeys,
     owner: Uint8Array,
     params: DelegationParams,
 ): VtxoScript {
@@ -117,7 +117,7 @@ export function instantiate(
     doc: Template,
     construction: Construction,
     variables: Record<string, Value>,
-    keys: DelegatedContractKeys,
+    keys: ExecutorContractKeys,
 ): VtxoScript {
     const def = (
         "artifact" in construction.definition

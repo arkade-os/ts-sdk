@@ -1,13 +1,13 @@
 import { hex } from "@scure/base";
 import type { Asset, IWallet } from ".";
 import type {
-    DelegatedContractKeys,
+    ExecutorContractKeys,
     ExecutorDelegation,
     ExecutorInfo,
     ExecutorProvider,
 } from "../providers/executor";
 import type { Contract } from "../contracts/types";
-import { DelegatedContractHandler } from "../contracts/handlers/executor";
+import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { getNetwork, type NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import {
@@ -17,7 +17,7 @@ import {
     defaultVariables,
 } from "../script/executor/executorTemplate";
 
-export type { DelegatedContractKeys };
+export type { ExecutorContractKeys };
 
 /** A watch both sides derived: the address to fund and what restores it. */
 export interface ExecutorWatchRegistration {
@@ -27,7 +27,7 @@ export interface ExecutorWatchRegistration {
     /** The template's variables, canonical hex. */
     variables: Record<string, string>;
     /** The Executor's keys the wallet's delegated contracts are derived from. */
-    keys: DelegatedContractKeys;
+    keys: ExecutorContractKeys;
     delegation: ExecutorDelegation;
 }
 
@@ -43,9 +43,9 @@ export type DelegatedWallet = Pick<
  * params and the service's keys, so a restored wallet finds its delegated coins without asking
  * the service. Idempotent.
  */
-export async function watchDelegatedContracts(
+export async function watchExecutorContracts(
     wallet: Pick<IWallet, "identity" | "getAddress" | "getContractManager">,
-    keys: DelegatedContractKeys,
+    keys: ExecutorContractKeys,
     params: DelegationParams,
 ): Promise<Contract[]> {
     const [owner, address, manager] = await Promise.all([
@@ -59,10 +59,10 @@ export async function watchDelegatedContracts(
     const contracts: Contract[] = [];
     for (const template of templates) {
         const serialized = contractParams(template, owner, keys, params);
-        const script = DelegatedContractHandler.createScript(serialized);
+        const script = ExecutorContractHandler.createScript(serialized);
         contracts.push(
             await manager.createContract({
-                type: DelegatedContractHandler.type,
+                type: ExecutorContractHandler.type,
                 params: serialized,
                 script: hex.encode(script.pkScript),
                 address: script.address(hrp, serverPubKey).encode(),
@@ -76,10 +76,10 @@ export async function watchDelegatedContracts(
 function contractParams(
     template: ExecutorDefault,
     owner: Uint8Array,
-    keys: DelegatedContractKeys,
+    keys: ExecutorContractKeys,
     params: DelegationParams,
 ): Record<string, string> {
-    return DelegatedContractHandler.serializeParams({
+    return ExecutorContractHandler.serializeParams({
         template,
         owner,
         exitDelay: params.exitDelay,
@@ -233,7 +233,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             emulatorPubkey: info.emulatorPubkey,
         };
         const variables = defaultVariables(kind, owner, params);
-        const script = DelegatedContractHandler.createScript(
+        const script = ExecutorContractHandler.createScript(
             contractParams(kind, owner, keys, params),
         );
         const watchAddress =
@@ -257,7 +257,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 `Executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
             );
         }
-        const contracts = await watchDelegatedContracts(this.wallet, keys, params);
+        const contracts = await watchExecutorContracts(this.wallet, keys, params);
         const row = contracts.find((c) => c.params.template === kind);
         if (row) {
             const manager = await this.wallet.getContractManager();

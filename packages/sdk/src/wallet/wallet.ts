@@ -171,7 +171,7 @@ import type {
 } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { BoardingContractHandler } from "../contracts/handlers/boarding";
-import { DelegatedContractHandler } from "../contracts/handlers/executor";
+import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import {
@@ -226,7 +226,7 @@ import {
     MissingSigningDescriptorError,
 } from "./signingErrors";
 
-const WALLET_CONTRACT_TYPES: readonly string[] = ["default", "delegate", "delegated"];
+const WALLET_CONTRACT_TYPES: readonly string[] = ["default", "delegate", "executor"];
 
 // Build per-input jobs for a proof. Index 0 of the proof is a
 // synthetic BIP-322 toSpend reference whose witnessUtxo.script mirrors
@@ -962,7 +962,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const operator = toXOnlySignerHex(hex.encode(this._arkServerPublicKey));
             const nowSeconds = Math.floor(Date.now() / 1000);
             const rows = (
-                await collectContracts(this.contractRepository, { type: ["delegated"] })
+                await collectContracts(this.contractRepository, { type: ["executor"] })
             ).sort((a, b) => b.createdAt - a.createdAt);
             for (const c of rows) {
                 const { template } = c.params;
@@ -982,7 +982,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         toXOnlySignerHex(c.params.serverPubKey) !== operator
                     )
                         continue;
-                    const script = DelegatedContractHandler.createScript(c.params);
+                    const script = ExecutorContractHandler.createScript(c.params);
                     if (hex.encode(script.pkScript) !== c.script) {
                         throw new Error(
                             `delegated contract ${c.script} no longer derives from its params`,
@@ -2185,14 +2185,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
         for (const contract of contracts) {
             if (map.has(contract.script)) continue;
             // boarding deposits are onchain, not virtual outputs
-            if (contract.type === "delegated" && contract.params.template !== "renewal") continue;
+            if (contract.type === "executor" && contract.params.template !== "renewal") continue;
             const handler = contractHandlers.get(contract.type);
             if (handler) {
                 const script = handler.createScript(contract.params) as
                     | DefaultVtxo.Script
                     | DelegateVtxo.Script;
                 if (
-                    contract.type === "delegated" &&
+                    contract.type === "executor" &&
                     hex.encode(script.pkScript) !== contract.script
                 ) {
                     console.warn(

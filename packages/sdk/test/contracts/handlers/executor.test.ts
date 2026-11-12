@@ -3,11 +3,11 @@ import { hex } from "@scure/base";
 import {
     contractHandlers,
     ContractManager,
-    DelegatedContractHandler,
+    ExecutorContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     networks,
-    watchDelegatedContracts,
+    watchExecutorContracts,
     type Contract,
     type ExecutorDefault,
 } from "../../../src";
@@ -47,9 +47,9 @@ const params = (template: ExecutorDefault): Record<string, string> => ({
 });
 
 const contractOf = (template: ExecutorDefault): Contract => {
-    const script = DelegatedContractHandler.createScript(params(template));
+    const script = ExecutorContractHandler.createScript(params(template));
     return {
-        type: "delegated",
+        type: "executor",
         params: params(template),
         script: hex.encode(script.pkScript),
         address: script.address("tark", serverXOnly).encode(),
@@ -62,10 +62,10 @@ const leaves = (template: ExecutorDefault) =>
     vectors[template].tapscripts.map((s) => hex.decode(s));
 const script = (leaf: [unknown, Uint8Array]) => leaf[1].subarray(0, -1);
 
-describe("DelegatedContractHandler", () => {
-    it("is registered under type 'delegated' and counts as generic spending", () => {
-        expect(contractHandlers.get("delegated")).toBe(DelegatedContractHandler);
-        expect(DelegatedContractHandler.isGenericallySpendable?.(contractOf("renewal"))).toBe(true);
+describe("ExecutorContractHandler", () => {
+    it("is registered under type 'executor' and counts as generic spending", () => {
+        expect(contractHandlers.get("executor")).toBe(ExecutorContractHandler);
+        expect(ExecutorContractHandler.isGenericallySpendable?.(contractOf("renewal"))).toBe(true);
     });
 
     it("derives the template variables of the Go engine, boarding needing its exit delay", () => {
@@ -79,14 +79,14 @@ describe("DelegatedContractHandler", () => {
     });
 
     it("derives the renewal leaves and address of the Go engine", () => {
-        const s = DelegatedContractHandler.createScript(params("renewal"));
+        const s = ExecutorContractHandler.createScript(params("renewal"));
         expect(s.scripts.map((l) => hex.encode(l))).toEqual(vectors.renewal.tapscripts);
         expect(hex.encode(s.pkScript)).toBe(vectors.renewal.pkScript);
         expect(s.address("tark", serverXOnly).encode()).toBe(vectors.renewal.address);
     });
 
     it("derives the boarding leaves and onchain address of the Go engine", () => {
-        const s = DelegatedContractHandler.createScript(params("boarding"));
+        const s = ExecutorContractHandler.createScript(params("boarding"));
         expect(s.scripts.map((l) => hex.encode(l))).toEqual(vectors.boarding.tapscripts);
         expect(s.onchainAddress(networks.regtest)).toBe(vectors.boarding.address);
     });
@@ -135,31 +135,31 @@ describe("DelegatedContractHandler", () => {
 
     it("reads the cosigner key of params stored under its former name", () => {
         const { cosignerPubKey, ...rest } = params("renewal");
-        const typed = DelegatedContractHandler.deserializeParams({
+        const typed = ExecutorContractHandler.deserializeParams({
             ...rest,
             delegatePubKey: cosignerPubKey,
         });
-        expect(DelegatedContractHandler.serializeParams(typed)).toEqual(params("renewal"));
+        expect(ExecutorContractHandler.serializeParams(typed)).toEqual(params("renewal"));
     });
 
     it("round-trips its params and refuses unknown templates, x-only keys and bad numbers", () => {
         for (const template of ["renewal", "boarding"] as const) {
             const p = params(template);
-            const typed = DelegatedContractHandler.deserializeParams(p);
-            expect(DelegatedContractHandler.serializeParams(typed)).toEqual(p);
+            const typed = ExecutorContractHandler.deserializeParams(p);
+            expect(ExecutorContractHandler.serializeParams(typed)).toEqual(p);
         }
         const p = params("renewal");
         expect(() =>
-            DelegatedContractHandler.deserializeParams({ ...p, template: "renewal_watch" }),
+            ExecutorContractHandler.deserializeParams({ ...p, template: "renewal_watch" }),
         ).toThrow(/unknown Executor template/);
         expect(() =>
-            DelegatedContractHandler.deserializeParams({ ...p, owner: vectors.owner.slice(2) }),
+            ExecutorContractHandler.deserializeParams({ ...p, owner: vectors.owner.slice(2) }),
         ).toThrow(/compressed/);
-        expect(() => DelegatedContractHandler.deserializeParams({ ...p, maxFee: "-1" })).toThrow(
+        expect(() => ExecutorContractHandler.deserializeParams({ ...p, maxFee: "-1" })).toThrow(
             /maxFee/,
         );
         expect(() =>
-            DelegatedContractHandler.deserializeParams({
+            ExecutorContractHandler.deserializeParams({
                 ...params("boarding"),
                 boardingExitDelay: "",
             }),
@@ -170,10 +170,10 @@ describe("DelegatedContractHandler", () => {
         "spends %s through forfeit with the operator and exit alone, never the emulator-enforced leaf",
         (template) => {
             const contract = contractOf(template);
-            const s = DelegatedContractHandler.createScript(contract.params);
+            const s = ExecutorContractHandler.createScript(contract.params);
             const [forfeit, exit, covenant] = leaves(template);
             const all = (collaborative: boolean) =>
-                DelegatedContractHandler.getAllSpendingPaths(s, contract, {
+                ExecutorContractHandler.getAllSpendingPaths(s, contract, {
                     collaborative,
                     currentTime: 0,
                 }).map((p) => script(p.leaf));
@@ -181,7 +181,7 @@ describe("DelegatedContractHandler", () => {
             expect(all(true)).toEqual([forfeit, exit]);
             expect(all(false)).toEqual([exit]);
             expect([...all(true), ...all(false)]).not.toContainEqual(covenant);
-            const selected = DelegatedContractHandler.selectPath(s, contract, {
+            const selected = ExecutorContractHandler.selectPath(s, contract, {
                 collaborative: true,
                 currentTime: 0,
             });
@@ -191,7 +191,7 @@ describe("DelegatedContractHandler", () => {
 
     it("gates the exit on its CSV", () => {
         const contract = contractOf("renewal");
-        const s = DelegatedContractHandler.createScript(contract.params);
+        const s = ExecutorContractHandler.createScript(contract.params);
         const confirmedAt = 1_700_000_000;
         const at = (seconds: number) => ({
             collaborative: false,
@@ -201,8 +201,8 @@ describe("DelegatedContractHandler", () => {
                 status: { confirmed: true, block_time: confirmedAt, block_height: 100 },
             }),
         });
-        expect(DelegatedContractHandler.selectPath(s, contract, at(10))).toBeNull();
-        const path = DelegatedContractHandler.selectPath(s, contract, at(600));
+        expect(ExecutorContractHandler.selectPath(s, contract, at(10))).toBeNull();
+        const path = ExecutorContractHandler.selectPath(s, contract, at(600));
         expect(path && script(path.leaf)).toEqual(leaves("renewal")[1]);
         expect(path?.sequence).toBe(delegation.exitDelay);
     });
@@ -222,7 +222,7 @@ describe("DelegatedContractHandler", () => {
     });
 });
 
-describe("watchDelegatedContracts", () => {
+describe("watchExecutorContracts", () => {
     it("registers the wallet's renewal and boarding contracts, which then hold its virtual outputs", async () => {
         const indexerProvider = createMockIndexerProvider();
         const delegated = createMockVtxo({ script: vectors.renewal.pkScript, value: 4321 });
@@ -241,17 +241,17 @@ describe("watchDelegatedContracts", () => {
             getAddress: async () =>
                 new ArkAddress(serverXOnly, new Uint8Array(32).fill(1), "tark").encode(),
             getContractManager: async () => manager,
-        } as unknown as Parameters<typeof watchDelegatedContracts>[0];
+        } as unknown as Parameters<typeof watchExecutorContracts>[0];
 
-        const contracts = await watchDelegatedContracts(wallet, keys, delegation);
+        const contracts = await watchExecutorContracts(wallet, keys, delegation);
         expect(contracts.map((c) => c.script)).toEqual([
             vectors.renewal.pkScript,
             vectors.boarding.pkScript,
         ]);
         expect(contracts[0].address).toBe(vectors.renewal.address);
-        await expect(watchDelegatedContracts(wallet, keys, delegation)).resolves.toHaveLength(2);
+        await expect(watchExecutorContracts(wallet, keys, delegation)).resolves.toHaveLength(2);
         const { boardingExitDelay: _, ...renewalOnly } = delegation;
-        await expect(watchDelegatedContracts(wallet, keys, renewalOnly)).resolves.toHaveLength(1);
+        await expect(watchExecutorContracts(wallet, keys, renewalOnly)).resolves.toHaveLength(1);
 
         const held = await manager.getContractsWithVtxos({ script: vectors.renewal.pkScript });
         expect(held[0].vtxos.map((v) => v.value)).toEqual([4321]);

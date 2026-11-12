@@ -10,8 +10,8 @@ export type { VHTLCV2ContractParams } from "./vhtlcV2";
 export { BoardingContractHandler } from "./boarding";
 export type { BoardingContractParams } from "./boarding";
 export { ArkadeContractHandler } from "./arkade";
-export { DelegatedContractHandler } from "./executor";
-export type { DelegatedContractParams } from "./executor";
+export { ExecutorContractHandler } from "./executor";
+export type { ExecutorContractParams } from "./executor";
 
 // Register built-in handlers
 import { contractHandlers } from "./registry";
@@ -21,7 +21,7 @@ import { VHTLCContractHandler } from "./vhtlc";
 import { VHTLCV2ContractHandler } from "./vhtlcV2";
 import { BoardingContractHandler } from "./boarding";
 import { ArkadeContractHandler } from "./arkade";
-import { DelegatedContractHandler } from "./executor";
+import { ExecutorContractHandler } from "./executor";
 
 contractHandlers.register(DefaultContractHandler);
 contractHandlers.register(DelegateContractHandler);
@@ -29,4 +29,4 @@ contractHandlers.register(VHTLCContractHandler);
 contractHandlers.register(VHTLCV2ContractHandler);
 contractHandlers.register(BoardingContractHandler);
 contractHandlers.register(ArkadeContractHandler);
-contractHandlers.register(DelegatedContractHandler);
+contractHandlers.register(ExecutorContractHandler);

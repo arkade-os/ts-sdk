@@ -2,7 +2,7 @@ import { collectContracts } from "../src/repositories/contractRepository";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import {
-    DelegatedContractHandler,
+    ExecutorContractHandler,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     RestArkProvider,
@@ -39,7 +39,7 @@ const identity = SingleKey.fromHex(
 const executorProvider = {} as ExecutorProvider;
 
 async function delegatedRow(template: "renewal" | "boarding") {
-    const params = DelegatedContractHandler.serializeParams({
+    const params = ExecutorContractHandler.serializeParams({
         template,
         owner: await identity.compressedPublicKey(),
         exitDelay: 144,
@@ -50,11 +50,11 @@ async function delegatedRow(template: "renewal" | "boarding") {
         serverPubKey: hex.decode(SERVER_KEY_HEX),
         emulatorPubKey: hex.decode(vectors.emulatorPubkey),
     });
-    const script = DelegatedContractHandler.createScript(params);
+    const script = ExecutorContractHandler.createScript(params);
     return {
         script,
         contract: {
-            type: "delegated",
+            type: "executor",
             params,
             script: hex.encode(script.pkScript),
             address: script.address("tark", hex.decode(SERVER_KEY_HEX).subarray(1)).encode(),
@@ -139,7 +139,7 @@ describe("delegated default addresses", () => {
         const [row] = await collectContracts(wallet.contractRepository, {
             script: renewal.contract.script,
         });
-        expect(row?.type).toBe("delegated");
+        expect(row?.type).toBe("executor");
     });
 
     it("keeps the wallet's own addresses until delegation registers its contracts", async () => {

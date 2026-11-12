@@ -11,7 +11,7 @@ export interface ExecutorInfo {
 }
 
 /** The Executor's keys a wallet's delegated contracts are derived from. */
-export type DelegatedContractKeys = Pick<
+export type ExecutorContractKeys = Pick<
     ExecutorInfo,
     "cosignerPubkey" | "serverPubkey" | "emulatorPubkey"
 >;

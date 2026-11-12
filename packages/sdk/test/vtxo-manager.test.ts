@@ -1177,7 +1177,7 @@ describe("VtxoManager - Renewal", () => {
             const wallet = createMockWallet(vtxos, undefined, { contractManager } as never);
             const expiring = await new VtxoManager(wallet, config).getExpiringVtxos();
             expect(expiring.map((v) => v.txid)).toEqual(["own", "swept"]);
-            expect(contractManager.getContracts).toHaveBeenCalledWith({ type: ["delegated"] });
+            expect(contractManager.getContracts).toHaveBeenCalledWith({ type: ["executor"] });
         });
 
         it("should exclude an unrolled VTXO expiring within the threshold", async () => {

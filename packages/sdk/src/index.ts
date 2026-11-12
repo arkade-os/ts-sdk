@@ -488,12 +488,12 @@ import type {
 import type { ContractRepository, ContractFilter } from "./repositories/contractRepository";
 import { DelegateManagerImpl, IDelegateManager } from "./wallet/delegate";
 import {
-    DelegatedContractKeys,
+    ExecutorContractKeys,
     ExecutorManagerImpl,
     DelegatedWallet,
     ExecutorWatchRegistration,
     IExecutorManager,
-    watchDelegatedContracts,
+    watchExecutorContracts,
 } from "./wallet/executor";
 
 export * from "./arkfee";
@@ -555,8 +555,8 @@ import { isCsvSpendable, isCltvSatisfied } from "./contracts/handlers/helpers";
 import { BoardingContractHandler } from "./contracts/handlers/boarding";
 import type { BoardingContractParams } from "./contracts/handlers/boarding";
 import { ArkadeContractHandler } from "./contracts/handlers/arkade";
-import { DelegatedContractHandler } from "./contracts/handlers/executor";
-import type { DelegatedContractParams } from "./contracts/handlers/executor";
+import { ExecutorContractHandler } from "./contracts/handlers/executor";
+import type { ExecutorContractParams } from "./contracts/handlers/executor";
 import type { ArkadeService } from "./arkade/service";
 import { UnsupportedProgramVersionError, type ArkadeContractParams } from "./arkade/program";
 import {
@@ -689,7 +689,7 @@ export {
     KeyringDescriptorProvider,
     DelegateManagerImpl,
     ExecutorManagerImpl,
-    watchDelegatedContracts,
+    watchExecutorContracts,
     RestDelegateProvider,
     RestExecutorProvider,
     // Providers
@@ -903,7 +903,7 @@ export {
     VHTLCV2ContractHandler,
     BoardingContractHandler,
     ArkadeContractHandler,
-    DelegatedContractHandler,
+    ExecutorContractHandler,
     isContractGenericallySpendable,
     gatedContracts,
     gateExclusion,
@@ -1146,7 +1146,7 @@ export type {
     VHTLCContractParams,
     VHTLCV2ContractParams,
     BoardingContractParams,
-    DelegatedContractParams,
+    ExecutorContractParams,
     ArkadeContractParams,
     Discoverable,
     DiscoveryDeps,
@@ -1177,7 +1177,7 @@ export type {
     ExecutorDelegationDetails,
     ExecutorTemplate,
     DelegatedOutput,
-    DelegatedContractKeys,
+    ExecutorContractKeys,
     DelegatedWallet,
     ExecutorWatchRegistration,
     // Repositories
