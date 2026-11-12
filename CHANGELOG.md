@@ -1456,6 +1456,20 @@ style and have not been backfilled.
   round trips, plus a fetch of every other transaction at an address that
   received more than one deposit. Output is unchanged.
 
+### Internal
+
+- **Dev-tooling dependency overrides raised past every high and critical
+  advisory.** `pnpm audit` reported 3 critical and 36 high findings, all in
+  development tooling (`vitest`, `tsup`, `typedoc`) or in the `expo` and
+  `async-storage` peer installs, never in the SDK's runtime `dependencies`.
+  The `pnpm-workspace.yaml` overrides for `@xmldom/xmldom`, `node-forge`,
+  `vite`, `brace-expansion`, `shell-quote`, `js-yaml` and `markdown-it` now
+  sit at the patched floors, and new ones cover `tinypool` (prototype-pollution
+  RCE gadget, pulled in by `vitest`), `image-size`, `browserslist`,
+  `compression`, `zod`, `nanoid` and `source-map-js`. `vitest` stays on 3.2.7
+  with `tinypool` 2.x. `pnpm audit --audit-level high` now reports none.
+  Published packages are unchanged.
+
 ## [0.4.77] - 2026-09-30
 
 ### Breaking Changes
