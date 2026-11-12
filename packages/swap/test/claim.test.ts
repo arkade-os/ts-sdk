@@ -94,6 +94,9 @@ const fakeOperator = (
         /** Answer without countersigning, as a server that never signed. */
         cosign?: boolean;
         finalTx?: (signed: string) => string | undefined;
+        /** An operator that rotated: its new forfeit key, and the keys it deprecated. */
+        rotatedTo?: Uint8Array;
+        deprecated?: Uint8Array[];
     } = {},
 ): FakeOperator => {
     const submitted: { tx: string; checkpoints: string[] }[] = [];
@@ -105,7 +108,11 @@ const fakeOperator = (
         getInfo: async () => ({
             checkpointTapscript: over.checkpointTapscript ?? CHECKPOINT_TAPSCRIPT,
             network: "regtest",
-            forfeitPubkey: hex.encode(key(3)),
+            forfeitPubkey: hex.encode(over.rotatedTo ?? key(3)),
+            deprecatedSigners: (over.deprecated ?? []).map((k) => ({
+                pubkey: hex.encode(k),
+                cutoffDate: 0n,
+            })),
         }),
         submitTx: async (tx: string, checkpoints: string[]) => {
             submitted.push({ tx, checkpoints });
@@ -688,7 +695,26 @@ describe("finalizePendingClaim", () => {
         }
     });
 
-    it("refuses a pending spend whose checkpoints are not our claim's, finalizing nothing", async () => {
+    it("finalizes a claim checkpointed under a signer the operator has since deprecated", async () => {
+        const { contract, arkTxid, stored, pending } = await lostFinalize();
+        const operator = fakeOperator({
+            checkpointTapscript: checkpointTapscriptOf(
+                { type: "blocks", value: BigInt(144) },
+                key(4),
+            ),
+            rotatedTo: key(4),
+            deprecated: [key(3)],
+        });
+        await expect(
+            finalizePendingClaim(operator, indexerOf(pending, stored), {
+                contract,
+                receiver: RECEIVER,
+                preimage: PREIMAGE,
+            }),
+        ).resolves.toEqual([arkTxid]);
+    });
+
+    it("leaves a pending spend whose checkpoints are not our claim's to its submitter", async () => {
         const { contract, stored, pending } = await lostFinalize();
         const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
         const operator = fakeOperator();
@@ -698,7 +724,7 @@ describe("finalizePendingClaim", () => {
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
             }),
-        ).rejects.toThrow(/does not rebuild from our claim/);
+        ).resolves.toEqual([]);
         expect(operator.finalized).toEqual([]);
     });
 });

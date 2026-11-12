@@ -15,6 +15,7 @@
  */
 import { base64, hex } from "@scure/base";
 import {
+    CSVMultisigTapscript,
     type Identity,
     type Network,
     type VHTLC,
@@ -24,6 +25,7 @@ import {
     claimWithPreimageIdentity,
     isVtxoSpent,
     signAndSubmitOffchainTx,
+    toXOnly,
 } from "@arkade-os/sdk";
 
 import { assertPreimageMatches, gateError } from "./onchainHtlc";
@@ -156,11 +158,12 @@ export async function pushClaim(
 /**
  * Finalize every claim of ours the operator accepted but never finalized (a two-step submit whose
  * finalize was lost): it has published `P`, yet the claimed sats do not exist until finalized.
- * Ours = the claim leaf rebuilds its checkpoints. arkd replaces its stored checkpoint signatures
- * with the ones sent, so the server's are carried over from the indexer's copy.
+ * Ours = the claim leaf rebuilds its checkpoints under the current or a deprecated operator key.
+ * Any other pending spend is left to its submitter: throwing would let whoever holds `P` keep the
+ * swap unsettled. arkd replaces its stored checkpoint signatures with the ones sent, so the
+ * server's are carried over from the indexer's copy.
  *
- * @returns The ark txids finalized; empty when nothing was pending.
- * @throws After finalizing the rest, when a pending spend is not one this can finalize.
+ * @returns The ark txids finalized; empty when nothing of ours was pending.
  */
 export async function finalizePendingClaim(
     operator: SwapOperator,
@@ -186,11 +189,24 @@ export async function finalizePendingClaim(
     if (byArkTx.size === 0) return [];
 
     assertPreimageMatches(input.preimage, input.contract.options.preimageHash);
-    const serverUnrollScript = await operatorUnrollScript(operator, input.network);
+    const current = await operatorUnrollScript(operator, input.network);
+    const { deprecatedSigners } = await operator.getInfo();
+    const unrollScripts = [
+        current,
+        ...(deprecatedSigners ?? []).flatMap(({ pubkey }) =>
+            pubkey
+                ? [
+                      CSVMultisigTapscript.encode({
+                          ...current.params,
+                          pubkeys: [toXOnly(hex.decode(pubkey), "deprecated signer")],
+                      }),
+                  ]
+                : [],
+        ),
+    ];
     const signer = claimWithPreimageIdentity(input.receiver, input.preimage);
     const ours = hex.encode(await input.receiver.xOnlyPublicKey());
     const finalized: string[] = [];
-    const foreign: string[] = [];
     for (const [arkTxid, spent] of byArkTx) {
         const live = spent.map(({ txid, vout, value }) => ({
             txid,
@@ -200,15 +216,17 @@ export async function finalizePendingClaim(
         }));
         const total = live.reduce((sum, vtxo) => sum + vtxo.value, 0);
         // Only the checkpoints matter: their txids depend on the inputs alone.
-        const { checkpoints } = buildOffchainTx(
-            lockupInputs(live, input.contract, input.contract.claim()),
-            [{ script: input.contract.pkScript, amount: BigInt(total) }],
-            serverUnrollScript,
-        );
-        if (checkpoints.some((checkpoint, i) => checkpoint.id !== spent[i]!.spentBy)) {
-            foreign.push(arkTxid);
-            continue;
-        }
+        const checkpoints = unrollScripts
+            .map(
+                (unroll) =>
+                    buildOffchainTx(
+                        lockupInputs(live, input.contract, input.contract.claim()),
+                        [{ script: input.contract.pkScript, amount: BigInt(total) }],
+                        unroll,
+                    ).checkpoints,
+            )
+            .find((built) => built.every((checkpoint, i) => checkpoint.id === spent[i]!.spentBy));
+        if (!checkpoints) continue;
 
         const { txs } = await indexer.getVirtualTxs(checkpoints.map((checkpoint) => checkpoint.id));
         const stored = new Map(
@@ -237,12 +255,6 @@ export async function finalizePendingClaim(
         );
         await operator.finalizeTx(arkTxid, signed);
         finalized.push(arkTxid);
-    }
-    if (foreign.length > 0) {
-        throw new Error(
-            `pending spend ${foreign.join(", ")} of this lockup does not rebuild from our claim, so ` +
-                "it cannot be finalized here",
-        );
     }
     return finalized;
 }
