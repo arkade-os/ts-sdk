@@ -22,7 +22,7 @@ import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers
  *   that emulates Arkade Script ({@link DEFAULT_ARKADE_EMULATOR_URL}). Mainnet is the only network
  *   with a one-liner.
  * - `{ operatorUrl, emulatorUrl? }`: a specific operator. A custom operator does not imply the default
- *   emulator: without `emulatorUrl`, covenant (`arkadeScript`) paths stay disabled.
+ *   emulator: without `emulatorUrl`, only covenants on a key arkd holds can be spent.
  */
 export type ArkadeService = { network: "bitcoin" } | { operatorUrl: string; emulatorUrl?: string };
 
