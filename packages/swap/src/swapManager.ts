@@ -385,11 +385,12 @@ export interface RfqSwapManagerCallbacks {
     ) => Promise<{ txid: string; amount: number; spent?: readonly LockupVtxo[] }>;
     /**
      * Finalize a claim of ours the operator accepted but never finalized (see
-     * `finalizePendingClaim`). Called on a receive leg before its claim counts as `settled`: that
-     * claim has published `P`, yet its sats do not exist until finalized. A throw keeps the swap
-     * unsettled and is retried next pass. Omitted, a revealed `P` settles the swap as before.
+     * `finalizePendingClaim`). Called on a Lightning receive leg whenever its lockup holds a
+     * pending spend: that claim has published `P`, yet its sats do not exist until finalized. A
+     * throw ends the pass and is retried on the next one. Omitted, a revealed `P` settles the swap
+     * as before.
      */
-    finalizeClaim?: (swap: ReceiveLockupSwap) => Promise<readonly string[]>;
+    finalizeClaim?: (swap: LightningReceiveSwap) => Promise<readonly string[]>;
     /**
      * Push `refundWithoutReceiver` for every output at the lockup (see
      * `pushRefundWithoutReceiver`); return `null` for an empty lockup. Never called for a
@@ -1343,13 +1344,14 @@ export class RfqSwapManager {
         ) {
             fate = { fate: "unknown" };
         }
+        // Not `onchain_receive`: its trader also holds the L1 refund, and a refund that broadcast
+        // and then threw leaves no record, so finalizing there could take both legs.
         if (
-            (swap.kind === "lightning_receive" || swap.kind === "onchain_receive") &&
-            (fate.fate === "claimed" || fate.fate === "open")
+            swap.kind === "lightning_receive" &&
+            (fate.fate === "claimed" || fate.fate === "open") &&
+            !(await this.finalizeOwnClaim(swap))
         ) {
-            // Only a `claimed` read waits on it: an `open` lockup still has a claim to drive.
-            const finalized = await this.finalizeOwnClaim(swap);
-            if (!finalized && fate.fate === "claimed") return;
+            return;
         }
         // Before the terminal shortcut, and that order is the whole safety
         // argument: `returned` means the SOLVER took the lockup back, which is
@@ -1396,12 +1398,10 @@ export class RfqSwapManager {
         await this.driveArkadeRefund(swap);
     }
 
-    /** False when a spend at the lockup is still unfinalized, so the swap must not settle yet. */
-    private async finalizeOwnClaim(swap: ReceiveLockupSwap): Promise<boolean> {
+    /** False when our pending claim could not be finalized: the pass stops, so no deadline ends it. */
+    private async finalizeOwnClaim(swap: LightningReceiveSwap): Promise<boolean> {
         const finalize = this.callbacks?.finalizeClaim;
         if (!finalize || !this.config.enableAutoActions) return true;
-        // Finalizing after the L1 refund would take both legs; `driveOnchainReceive` refuses that too.
-        if (swap.kind === "onchain_receive" && swap.refundTxid) return true;
         try {
             // The callback resolves keys and `P`, possibly prompting a signer: only when owed.
             const { vtxos } = await this.deps.indexer.getVtxos({

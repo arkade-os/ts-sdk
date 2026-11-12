@@ -124,12 +124,16 @@ style and have not been backfilled.
   operator without one-shot), a claim whose finalize was lost has still
   published `P`: the solver can settle the payer with it, while the trader's
   sats do not exist until the claim is finalized, and only the trader can
-  finalize it. A receive leg read that `P` as `settled` and never retried the
-  finalize. `createSwapClient` now finalizes its own pending claim first (the
-  lockup's `pendingOnly` outputs, checkpoints rebuilt from the claim leaf, the
-  server's signatures carried over from the indexer's copy); a failed finalize
-  leaves the swap `claimed` and is retried each pass. `RfqSwapManagerCallbacks`
-  gains an optional `finalizeClaim`; without it the manager settles as before.
+  finalize it. A Lightning receive leg read that `P` as `settled` and never
+  retried the finalize. `createSwapClient` now finalizes its own pending claim
+  whenever the lockup holds one (the lockup's `pendingOnly` outputs, checkpoints
+  rebuilt from the claim leaf under the operator's current or a deprecated key,
+  the server's signatures carried over from the indexer's copy); a failed
+  finalize ends the pass and is retried, so no deadline closes the swap first.
+  A pending spend that is not ours is left to its submitter. `onchain_receive`
+  is left as it was: its trader also holds the L1 refund, which finalizing
+  could double. `RfqSwapManagerCallbacks` gains an optional `finalizeClaim`;
+  without it the manager settles as before.
   `readLockupFate` also reads `P` off the ark tx: arkd up to v0.9.23 stores a
   two-step claim's checkpoint without the condition witness until finalize, so
   a funder saw `unknown` for a claim whose `P` was already public. No breaking

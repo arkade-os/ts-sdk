@@ -948,11 +948,10 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
-    it("does not finalize a pending Arkade claim once the L1 funding was refunded", async () => {
+    it("never finalizes a pending Arkade claim, whose trader also holds the L1 refund", async () => {
         const s = spies();
         let finalized = false;
         await drive({
-            swap: onchainReceiveSwap({ refundTxid: "fa".repeat(32) }),
             spies: s,
             indexer: lockupClaimed(),
             chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
@@ -2565,6 +2564,32 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(swap.claimTxid).toBe(CLAIM_TXID);
             // `P` is public, so the 1,000-sat remainder is claimed past the value gate.
             expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
+        it("keeps retrying a failing finalize on an open lockup past the deadline", async () => {
+            const s = spies();
+            let attempts = 0;
+            const swap = receiveSwap({ claimFailure: "connection reset" });
+            const indexer = fundedIndexer();
+            const read = indexer.getVtxos.bind(indexer);
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly ? fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos() : read();
+            const m = manager({
+                indexer,
+                contracts: fundedContracts(1_000),
+                now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    attempts += 1;
+                    throw new Error("finalize refused");
+                }),
+            });
+            await pass(m, swap);
+            await m.poll();
+
+            expect(attempts).toBe(2);
+            expect(isRfqSwapTerminal(swap.state)).toBe(false);
+            expect(await m.hasSwap(RFQ_ID)).toBe(true);
         });
 
         it("settles without calling it when nothing is pending", async () => {
