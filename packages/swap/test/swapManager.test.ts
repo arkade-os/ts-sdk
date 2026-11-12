@@ -2566,6 +2566,30 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
         });
 
+        it("still claims the rest of an open lockup while a finalize fails before the deadline", async () => {
+            const s = spies();
+            const failures: string[] = [];
+            const swap = receiveSwap();
+            const indexer = fundedIndexer();
+            const read = indexer.getVtxos.bind(indexer);
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly ? fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos() : read();
+            const m = manager({
+                indexer,
+                contracts: fundedContracts(1_000),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    throw new Error("finalize refused");
+                }),
+            });
+            m.onSwapFailed((_swap, error) => failures.push(error.message));
+            await pass(m, swap);
+
+            expect(failures).toContain("finalize refused");
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
+        });
+
         it("keeps retrying a failing finalize on an open lockup past the deadline", async () => {
             const s = spies();
             let attempts = 0;
