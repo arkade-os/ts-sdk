@@ -14,7 +14,6 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
     Ramps,
-    REGTEST_EMULATOR_PUBKEY,
     RestArkProvider,
     SingleKey,
     Wallet,
@@ -99,7 +98,7 @@ const stubTransport = async (wallet: Wallet): Promise<AttestingRfqTransport> => 
     const operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     const claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     const hrp = ArkAddress.decode(await wallet.getAddress()).hrp;
-    const emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
+    const emulatorPubkey = operatorPubkey;
     return {
         attestedResponder: DISCOVERY_KEY,
         async requestQuote(payload) {

@@ -16,7 +16,6 @@ import {
     PrevArkTxField,
     ConditionWitness,
     PrevTxUnavailableError,
-    REGTEST_EMULATOR_PUBKEY,
     ServerResponseMismatchError,
     type EmulatorInfo,
     type EmulatorProvider,
@@ -174,6 +173,8 @@ function providers(
 describe("ArkadeContract — extended features", () => {
     const server = xOnly();
     const emulatorKey = xOnly();
+    // Not one of arkd's keys, so covenants built on it go through the emulator.
+    const emulatorPubkey = "02" + hex.encode(emulatorKey);
     const receiver = xOnly();
     const COIN = mintCoin(10_000);
 
@@ -183,6 +184,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -218,6 +220,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -250,6 +253,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -294,6 +298,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -359,6 +364,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -399,6 +405,7 @@ describe("ArkadeContract — extended features", () => {
             arkade.Arkade.connect({
                 arkade: arkProvider,
                 emulator,
+                emulatorPubkey,
                 indexer,
                 network: networks.regtest,
             });
@@ -450,6 +457,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -473,6 +481,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -515,6 +524,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -547,6 +557,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             network: networks.regtest,
         });
         const c = ark.contract(claimProgram(), {
@@ -584,6 +595,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -611,6 +623,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -687,6 +700,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -742,6 +756,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -772,6 +787,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -800,6 +816,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -859,6 +876,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -892,14 +910,9 @@ describe("ArkadeContract — extended features", () => {
         expect(hasUserSig(cp0)).toBe(true); // checkpoint 0 input 0
     });
 
-    it("sends covenants to arkd directly once arkd holds the pinned co-signer", async () => {
+    it("sends covenants on arkd's own key to arkd, bypassing a configured emulator", async () => {
         const identity = SingleKey.fromHex(hex.encode(new Uint8Array(32).fill(0x11)));
         const { arkProvider, indexer, emulator, captured } = providers(server, emulatorKey, [COIN]);
-        const info = await arkProvider.getInfo();
-        arkProvider.getInfo = async () => ({
-            ...info,
-            deprecatedSigners: [{ pubkey: REGTEST_EMULATOR_PUBKEY, cutoffDate: 0n }],
-        });
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
@@ -907,7 +920,6 @@ describe("ArkadeContract — extended features", () => {
             identity,
             network: networks.regtest,
         });
-        expect(hex.encode(ark.emulatorKey!)).toBe("02" + hex.encode(server));
 
         const c = ark.contract(claimProgram(), {
             receiver,
@@ -934,6 +946,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -965,6 +978,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             identity,
             network: networks.regtest,
@@ -1017,6 +1031,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -1061,6 +1076,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -1138,6 +1154,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -1166,6 +1183,7 @@ describe("ArkadeContract — extended features", () => {
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
+            emulatorPubkey,
             indexer,
             network: networks.regtest,
         });
@@ -1208,21 +1226,5 @@ describe("ArkadeContract — extended features", () => {
             }).script,
         ]);
         expect(c.address).toBe(raw.address(networks.regtest.hrp, server).encode());
-    });
-
-    it("throws when a covenant function is built without an emulator", async () => {
-        const { arkProvider, indexer } = providers(server, emulatorKey, [COIN]);
-        const ark = await arkade.Arkade.connect({
-            arkade: arkProvider,
-            indexer,
-            network: networks.regtest, // no emulator
-        });
-        expect(() =>
-            ark.contract(claimProgram(), {
-                receiver,
-                amount: AMOUNT,
-                h: new Uint8Array(20),
-            }),
-        ).toThrow(/emulator/i);
     });
 });

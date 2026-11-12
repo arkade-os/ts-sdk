@@ -96,19 +96,26 @@ style and have not been backfilled.
   Realm consumer must open at a `schemaVersion` of at least
   `ARK_REALM_SCHEMA_VERSION` (6). Existing rows need no migration.
 
-### Features
-
-- **Arkade covenants move to the operator's key once arkd co-signs Arkade
-  Script.** When arkd lists the network's pinned co-signer key among its
-  signer keys (`signerPubkey` or `deprecatedSigners`), `Arkade.connect` builds
-  new covenants on arkd's current `signerPubkey`. Spends of any covenant whose
-  co-signer key arkd holds then go to arkd instead of the emulator:
+- **Arkade covenants commit to arkd's signer key, and the pinned emulator
+  keys are removed.** The operator now runs Arkade Script inside arkd, so
+  `Arkade.connect` builds new covenants on arkd's current `signerPubkey`, or
+  on an explicit `emulatorPubkey`, which no longer needs an `emulator`
+  provider. `Arkade.emulatorKey` is therefore always set. A covenant whose
+  co-signer key arkd holds, current or deprecated, is spent through arkd:
   `submitTx`/`finalizeTx` (two-step), `cosignOnchainTx`, and
-  `registerIntent`/`submitSignedForfeitTxs`. Stored contracts keep their key.
-  An explicit `emulatorPubkey` still wins, and now applies without an
-  `emulator` provider too. Against an operator that has not switched, nothing
-  changes. `connect` also no longer throws for a provider whose info lacks
-  `deprecatedSigners`. `@arkade-os/swap` still derives with the pin.
+  `registerIntent`/`submitSignedForfeitTxs`. Any other covenant still goes
+  through the emulator. Stored contracts keep the key they were built with,
+  so covenants on the old emulator key keep working while arkd lists it.
+  Against an arkd that does not run Arkade Script, new covenants cannot be
+  co-signed. `BITCOIN_EMULATOR_PUBKEY`, `MUTINYNET_EMULATOR_PUBKEY`,
+  `REGTEST_EMULATOR_PUBKEY`, `defaultEmulatorPubkey` and
+  `resolveEmulatorPubkey` are removed; validate an override with
+  `arkade.validateEmulatorPubkey`. `connect` also no longer throws for a
+  provider whose info lacks `deprecatedSigners`. `@arkade-os/swap` derives on
+  the same key (an explicit `emulatorPubkey`, else arkd's `signerPubkey`), so
+  `testnet` and `signet` no longer need an override.
+
+### Features
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.

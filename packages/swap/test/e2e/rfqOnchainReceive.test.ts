@@ -15,7 +15,6 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    REGTEST_EMULATOR_PUBKEY,
     RestArkProvider,
     SingleKey,
     Wallet,
@@ -177,7 +176,7 @@ beforeAll(async () => {
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
-    emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
+    emulatorPubkey = operatorPubkey;
 }, 180_000);
 
 const chainSource = () =>

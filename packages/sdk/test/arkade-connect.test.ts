@@ -3,7 +3,6 @@ import { hex } from "@scure/base";
 import {
     arkade,
     Arkade,
-    BITCOIN_EMULATOR_PUBKEY,
     ContractManager,
     CSVMultisigTapscript,
     DEFAULT_ARKADE_EMULATOR_URL,
@@ -164,31 +163,29 @@ describe("Arkade.connect with service", () => {
         expect(Arkade).toBe(arkade.Arkade);
     });
 
-    it("network arm resolves the emulator and the pinned mainnet key", async () => {
+    it("network arm resolves the emulator, and covenants commit to arkd's key", async () => {
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(info());
         const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
         expect((ark.emulator as RestEmulatorProvider).serverUrl).toBe(DEFAULT_ARKADE_EMULATOR_URL);
-        expect(hex.encode(ark.emulatorKey!)).toBe(BITCOIN_EMULATOR_PUBKEY);
+        expect(hex.encode(ark.emulatorKey)).toBe(info().signerPubkey);
         expect(ark.contractManager).toBeUndefined();
     });
 
-    it("moves new covenants to the operator key once arkd lists the pinned co-signer", async () => {
-        const merged = {
+    it("lets arkd co-sign covenants on any key it advertises, not an override's", async () => {
+        const deprecated = "02" + "22".repeat(32);
+        vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue({
             ...info(),
-            deprecatedSigners: [{ pubkey: BITCOIN_EMULATOR_PUBKEY, cutoffDate: 0n }],
-        };
-        vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(merged);
-        const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
-        expect(hex.encode(ark.emulatorKey!)).toBe(merged.signerPubkey);
-        expect(ark.operatorCosigns(hex.decode(BITCOIN_EMULATOR_PUBKEY))).toBe(true);
-
-        const override = "02" + TEST_PUB_KEY_HEX;
-        const pinned = await arkade.Arkade.connect({
-            service: { network: "bitcoin" },
-            emulatorPubkey: override,
+            deprecatedSigners: [{ pubkey: deprecated, cutoffDate: 0n }],
         });
-        expect(hex.encode(pinned.emulatorKey!)).toBe(override);
-        expect(pinned.operatorCosigns(pinned.emulatorKey)).toBe(false);
+        const ark = await arkade.Arkade.connect({ service: { network: "bitcoin" } });
+        expect(ark.operatorCosigns(ark.emulatorKey)).toBe(true);
+        expect(ark.operatorCosigns(hex.decode(deprecated))).toBe(true);
+
+        const own = await arkade.Arkade.connect({
+            service: { network: "bitcoin" },
+            emulatorPubkey: "02" + TEST_PUB_KEY_HEX,
+        });
+        expect(own.operatorCosigns(own.emulatorKey)).toBe(false);
     });
 
     it("keeps an explicit emulatorPubkey without an emulator provider", async () => {

@@ -25,7 +25,6 @@ import {
     EsploraProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
-    REGTEST_EMULATOR_PUBKEY,
     RestArkProvider,
     RestIndexerProvider,
     SingleKey,
@@ -185,10 +184,7 @@ beforeAll(async () => {
     operatorPubkey = xOnly(hex.decode(info.signerPubkey));
     claimDelay = unilateralClaimDelay(Number(info.unilateralExitDelay));
     hrp = ArkAddress.decode(address).hrp;
-
-    // the pinned regtest key: the stub solver derives with the same default
-    // `requestLightningSend` resolves internally
-    emulatorPubkey = xOnly(hex.decode(REGTEST_EMULATOR_PUBKEY));
+    emulatorPubkey = operatorPubkey;
 }, 120_000);
 
 describe("RFQ lockup registration (regtest)", () => {

@@ -19,7 +19,7 @@
  * Trust model: from a quote the user uses only the binding fields (`solver_pubkey`,
  * `refund_locktime`, `valid_until`, the amounts, and `profile.refund_without_receiver_delay` on
  * sends). Everything else is the user's own data or a trusted constant (the emulator key
- * defaults to the SDK's per-network pin). Anything address-shaped from the solver is compare-only:
+ * defaults to arkd's signer key). Anything address-shaped from the solver is compare-only:
  * a mismatch means refuse-to-fund, never "use theirs".
  *
  * @deprecated Internal to `client.quote()` and `client.accept()`. Moved off the package root to `@arkade-os/swap/protocol`.
@@ -33,7 +33,6 @@ import {
     VHTLC,
     asset,
     networkFromOperatorInfo,
-    resolveEmulatorPubkey,
     toXOnly,
     type OperatorInfo,
     type IWallet,
@@ -69,7 +68,7 @@ import { sealClaimPacket } from "./claimPacket";
 import { registerLockupContract } from "./lockupContract";
 // Type-only: `evmRfq.ts` imports from here, so a value import would be a runtime cycle.
 import type { EvmRfqQuote } from "./evmRfq";
-import { ASSET_CARRIER_SATS, createOffer, resolveReceivePkScript } from "./offer";
+import { ASSET_CARRIER_SATS, covenantCosigner, createOffer, resolveReceivePkScript } from "./offer";
 
 /** Decode a solver-supplied hex field, blaming the solver on malformed input. */
 const solverHex = (value: string, field: string): Uint8Array => {
@@ -1177,8 +1176,6 @@ export async function requestLightningSend(
     params: {
         invoice: InvoiceFacts;
         rfqId?: string;
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
     },
 ): Promise<{
@@ -1246,10 +1243,7 @@ export async function requestLightningSend(
         senderPubkey,
         refundPkScript: secrets.pkScript,
         operatorPubkey,
-        emulatorPubkey: toXOnly(
-            hex.decode(resolveEmulatorPubkey(network, params.emulatorPubkey)),
-            "emulator signer key",
-        ),
+        emulatorPubkey: covenantCosigner(info, params.emulatorPubkey),
         claimDelay,
         hrp: network.hrp,
         now,
@@ -1534,10 +1528,7 @@ const operatorTerms = (info: OperatorInfo, emulatorPubkey: string | undefined) =
     const network = networkFromOperatorInfo(info);
     return {
         operatorPubkey: toXOnly(hex.decode(info.signerPubkey), "ark signer key"),
-        emulatorPubkey: toXOnly(
-            hex.decode(resolveEmulatorPubkey(network, emulatorPubkey)),
-            "emulator signer key",
-        ),
+        emulatorPubkey: covenantCosigner(info, emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(info.unilateralExitDelay)),
         hrp: network.hrp,
     };
@@ -1771,8 +1762,6 @@ export async function requestOnchainSend(
         /** Optional caller-owned P. Persist it with the returned secrets before funding. */
         preimage?: Uint8Array;
         rfqId?: string;
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
     },
 ): Promise<{
@@ -2235,8 +2224,6 @@ export async function requestLightningReceive(
     params: {
         amount: number;
         amountSide: "from" | "to";
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
         /** covclaimd's 33-byte compressed pubkey; the claim packet seals `P` to it. Only an
          * exact-out request (`amountSide: "to"`) is guaranteed one, bound to `amount`; an exact-in
@@ -2430,8 +2417,6 @@ export async function requestOnchainReceive(
     params: {
         amount: number;
         amountSide: "from" | "to";
-        /** Co-signer key override (33-byte compressed hex); see
-         * {@link resolveEmulatorPubkey}. */
         emulatorPubkey?: string;
         /** Trader's x-only L1 key for the HTLC's refund leaf. */
         refundPubkey: Uint8Array;

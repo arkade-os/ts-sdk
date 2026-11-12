@@ -56,13 +56,7 @@ import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 
 import type { Network, NetworkName } from "../networks";
-import {
-    DEFAULT_NETWORK,
-    getNetwork,
-    networks,
-    pinnedEmulatorPubkey,
-    resolveEmulatorPubkey,
-} from "../networks";
+import { DEFAULT_NETWORK, getNetwork, networks } from "../networks";
 import { toXOnlySignerHex } from "../wallet/signerRotation";
 import type { ArkadeInfo, OperatorProvider } from "../providers/ark";
 import type { EmulatorProvider } from "../providers/emulator";
@@ -295,14 +289,7 @@ interface ArkadeConnectCommonOptions {
      * reports on `getInfo` — or the SDK default when the operator names none.
      */
     network?: Network;
-    /**
-     * Co-sign with this emulator key (33-byte compressed hex) instead of the one pinned for
-     * `network`. Needed after a key rotation ahead of this SDK, for a self-hosted emulator, or on
-     * networks with no pinned key (signet, testnet, a hand-built `Network` — those throw without
-     * it). Setting it means trusting that operator as co-signer.
-     *
-     * @see resolveEmulatorPubkey
-     */
+    /** New covenants' co-signer key (33-byte compressed hex), instead of arkd's `signerPubkey`. */
     emulatorPubkey?: string;
     /**
      * The wallet's contract manager (`wallet.getContractManager()`). Enables
@@ -380,6 +367,16 @@ type EventHandle = {
     callback: (event: ArkadeContractEvent) => void | Promise<void>;
 };
 
+export function validateEmulatorPubkey(key: string): string {
+    if (!/^0[23][0-9a-f]{64}$/.test(key)) {
+        throw new Error(
+            `Emulator pubkey override must be 33-byte compressed secp256k1 hex ` +
+                `(66 lowercase chars, 02/03 prefix), got ${JSON.stringify(key)}.`,
+        );
+    }
+    return key;
+}
+
 /**
  * A connected Arkade client holding the providers and resolved network constants (operator key,
  * co-signer key, checkpoint closure), so creating contracts is synchronous.
@@ -387,19 +384,14 @@ type EventHandle = {
 export class Arkade {
     readonly arkProvider: ArkadeServerProvider;
     readonly onchain?: Pick<OnchainProvider, "getRawTransaction" | "broadcastTransaction">;
-    /** The co-signing service, or undefined for emulator-less (pure tapscript) usage. */
+    /** The co-signing service, needed only for covenants on a key arkd does not hold. */
     readonly emulator: EmulatorProvider | undefined;
     readonly network: Network;
     readonly serverKey: Uint8Array;
     /** Bare protocol delay (blocks below 512, seconds otherwise), resolved only when needed. */
     readonly serverExitDelay?: bigint;
-    /**
-     * The co-signer key covenants are built against (33-byte compressed), present only when an
-     * emulator is configured. Resolved from the network or `emulatorPubkey`, never the emulator's
-     * own report. If a claim is refused, compare it with the emulator's `/v1/info` `signerPubkey`:
-     * a difference means the network rotated and this SDK's pin is stale.
-     */
-    readonly emulatorKey: Uint8Array | undefined;
+    /** New covenants' co-signer key: `emulatorPubkey`, else arkd's; never the emulator's report. */
+    readonly emulatorKey: Uint8Array;
     /** Every signer key arkd advertises, current and deprecated, as x-only hex. */
     readonly operatorKeys: ReadonlySet<string>;
     readonly checkpoint: CSVMultisigTapscript.Type;
@@ -425,7 +417,7 @@ export class Arkade {
         network: Network;
         serverKey: Uint8Array;
         serverExitDelay?: bigint;
-        emulatorKey: Uint8Array | undefined;
+        emulatorKey: Uint8Array;
         operatorKeys: ReadonlySet<string>;
         checkpoint: CSVMultisigTapscript.Type;
         indexer?: Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
@@ -510,20 +502,11 @@ export class Arkade {
                 .filter(Boolean)
                 .map(toXOnlySignerHex),
         );
-        // Pinned key, NOT the emulator's own /v1/info: otherwise whatever answers that URL picks
-        // the key covenants commit to. A rotation is invisible until the pin ships;
-        // `emulatorPubkey` covers that window.
-        // arkd listing the pinned co-signer among its own keys means it now runs Arkade Script
-        // itself: new covenants move to its current key, which it signs for without the emulator.
-        const pinned = pinnedEmulatorPubkey(network);
-        let emulatorKey: Uint8Array | undefined;
-        if (opts.emulatorPubkey !== undefined) {
-            emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
-        } else if (pinned && operatorKeys.has(toXOnlySignerHex(pinned))) {
-            emulatorKey = hex.decode(info.signerPubkey);
-        } else if (emulator) {
-            emulatorKey = hex.decode(resolveEmulatorPubkey(network));
-        }
+        const emulatorKey = hex.decode(
+            opts.emulatorPubkey === undefined
+                ? info.signerPubkey
+                : validateEmulatorPubkey(opts.emulatorPubkey),
+        );
 
         // Up-front so contract instantiation stays synchronous.
         let userKey: Uint8Array | undefined;

@@ -26,7 +26,7 @@ import { deepFreeze } from "../jointGraph";
 import { bindsClaimAmount } from "../claimAmountGate";
 import { sealClaimPacket } from "../claimPacket";
 import { QUOTE_OPTIONS } from "../markets";
-import { deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
+import { covenantCosigner, deriveOffer, resolveReceivePkScript, type DerivedOffer } from "../offer";
 import { BTC_ASSET_ID } from "../store";
 import { l1ScriptForAddress } from "../onchainHtlc";
 import {
@@ -251,9 +251,7 @@ const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
     const arkade = input.corridors.get("arkade").deps;
     return {
         operatorPubkey: toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
-        // The resolved per-network pin, never operator-reported: it lands in a covenant leaf
-        // that decides who can move the funds.
-        emulatorPubkey: toXOnly(hex.decode(arkade.emulatorPubkey), "emulator signer key"),
+        emulatorPubkey: covenantCosigner(input.info, arkade.emulatorPubkey),
         claimDelay: unilateralClaimDelay(Number(input.info.unilateralExitDelay)),
         hrp: network.hrp,
     };

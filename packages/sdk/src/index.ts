@@ -354,12 +354,7 @@ import {
     networks,
     Network,
     NetworkName,
-    defaultEmulatorPubkey,
-    resolveEmulatorPubkey,
     DEFAULT_ARKADE_EMULATOR_URL,
-    BITCOIN_EMULATOR_PUBKEY,
-    MUTINYNET_EMULATOR_PUBKEY,
-    REGTEST_EMULATOR_PUBKEY,
 } from "./networks";
 import {
     RestIndexerProvider,
@@ -829,12 +824,7 @@ export {
     networkFromOperatorInfo,
     networkFromArkadeInfo,
     networks,
-    defaultEmulatorPubkey,
-    resolveEmulatorPubkey,
     DEFAULT_ARKADE_EMULATOR_URL,
-    BITCOIN_EMULATOR_PUBKEY,
-    MUTINYNET_EMULATOR_PUBKEY,
-    REGTEST_EMULATOR_PUBKEY,
     // DB
     closeDatabase,
     openDatabase,

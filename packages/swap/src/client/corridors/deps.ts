@@ -9,9 +9,8 @@
  */
 import {
     ESPLORA_URL,
-    defaultEmulatorPubkey,
+    arkade,
     getNetwork,
-    resolveEmulatorPubkey,
     signerSetFromInfo,
     type OperatorInfo,
     type IWallet,
@@ -48,7 +47,7 @@ export interface CorridorBase {
     /** The operator's signer set, for the rotation-aware recipient check. */
     readonly signerSet: SignerSet;
     /** Override for the key of the operator's cosigner that emulates Arkade Script, 33-byte
-     * compressed hex. Required on `testnet` and `signet`, which `EMULATOR_PUBKEYS` does not pin. */
+     * compressed hex. Defaults to arkd's signer key. */
     readonly emulatorPubkey?: string;
     /** For hosts without a global `fetch`, and for tests. */
     readonly fetchImpl?: typeof fetch;
@@ -124,10 +123,7 @@ export interface ArkadeCorridorDeps {
     readonly networkName: NetworkName;
     readonly network: Network;
     readonly signerSet: SignerSet;
-    /** The pinned per-network co-signer, or the caller's override. Resolved from the network NAME,
-     * never from the operator's self-report — the key lands in a covenant leaf deciding who moves
-     * the funds. */
-    readonly emulatorPubkey: string;
+    readonly emulatorPubkey: string | undefined;
     readonly repository: AssetSwapRepository | undefined;
 }
 
@@ -196,26 +192,6 @@ const refusedIfMalformed = (value: number | null | undefined, dep: string) => {
 };
 
 /**
- * The co-signer key for `base`'s network. A malformed override stays core's refusal (it would
- * otherwise surface as an unspendable contract). An absent key on an unpinned network (`testnet`,
- * `signet`) is a missing dep rather than a bare `Error`.
- */
-const emulatorPubkeyFor = (base: CorridorBase): string => {
-    if (base.emulatorPubkey !== undefined) {
-        return resolveEmulatorPubkey(base.network, base.emulatorPubkey);
-    }
-    try {
-        return defaultEmulatorPubkey(base.network);
-    } catch {
-        throw new MissingCorridorDep(
-            "arkade",
-            "key for the operator's cosigner that emulates Arkade Script " +
-                `(none is pinned for ${base.networkName}; pass emulatorPubkey)`,
-        );
-    }
-};
-
-/**
  * A corridor's deps, with `undefined` taking the default and `null` refused. Per corridor, never all
  * three at once: resolving an untouched corridor would turn its deliberate `null` into an error.
  */
@@ -242,7 +218,10 @@ export function resolveCorridorDeps(
                 networkName: base.networkName,
                 network: base.network,
                 signerSet: base.signerSet,
-                emulatorPubkey: emulatorPubkeyFor(base),
+                emulatorPubkey:
+                    base.emulatorPubkey === undefined
+                        ? undefined
+                        : arkade.validateEmulatorPubkey(base.emulatorPubkey),
                 repository,
             };
         }
