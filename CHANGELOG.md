@@ -392,17 +392,26 @@ style and have not been backfilled.
   failure returns to the caller without contacting another solver. Automatic
   routing preferences still apply to subsequent quotes.
 
-- **Arkade covenants move to the operator's key once arkd co-signs Arkade
-  Script.** When arkd lists the network's pinned co-signer key among its
-  signer keys (`signerPubkey` or `deprecatedSigners`), `Arkade.connect` builds
-  new covenants on arkd's current `signerPubkey`. Spends of any covenant whose
-  co-signer key arkd holds then go to arkd instead of the emulator:
-  `submitTx`/`finalizeTx` (two-step), `cosignOnchainTx`, and
-  `registerIntent`/`submitSignedForfeitTxs`. Stored contracts keep their key.
-  An explicit `emulatorPubkey` still wins, and now applies without an
-  `emulator` provider too. Against an operator that has not switched, nothing
-  changes. `connect` also no longer throws for a provider whose info lacks
-  `deprecatedSigners`. `@arkade-os/swap` still derives with the pin.
+- **Arkade covenants commit to arkd's signer key.** The operator now runs
+  Arkade Script inside arkd, so `Arkade.connect` builds new covenants on
+  arkd's current `signerPubkey`, or on an explicit `emulatorPubkey`, which no
+  longer needs an `emulator` provider. `Arkade.emulatorKey` is therefore
+  always set. A covenant whose co-signer key arkd holds, current or
+  deprecated, is spent through arkd: `submitTx`/`finalizeTx` (two-step),
+  `cosignOnchainTx`, and `registerIntent`/`submitSignedForfeitTxs`. Any other
+  covenant still goes through the emulator. Stored contracts keep the key they
+  were built with, so covenants on the old emulator key keep spending through
+  the standalone emulator, which `{ network: "bitcoin" }` still wires. Against
+  an arkd that does not run Arkade Script, new covenants cannot be co-signed.
+  The pinned keys (`BITCOIN_EMULATOR_PUBKEY` and the rest) stay: they name the
+  standalone emulators, and the Executor check still uses them. Validate an
+  override with `arkade.validateEmulatorPubkey`. `connect` also no longer
+  throws for a provider whose info lacks `deprecatedSigners`.
+  `@arkade-os/swap` derives on the same key (an explicit `emulatorPubkey`,
+  else arkd's `signerPubkey`), so `testnet` and `signet` no longer need an
+  override.
+
+### Features
 
 - **`@arkade-os/swap`: opt-in solver priority and quote failover.** With
   `policy.solverRouting`, a direction's solvers are ordered by saved priority,

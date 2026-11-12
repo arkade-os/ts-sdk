@@ -18,7 +18,6 @@ import {
     arkade,
     asset,
     networkFromOperatorInfo,
-    resolveEmulatorPubkey,
     toXOnlySignerHex,
     type ArkTxInput,
     type OperatorInfo,
@@ -836,8 +835,6 @@ export interface OfferParams {
     wantAmount: bigint;
     wantAsset?: asset.AssetId;
     offerAsset?: asset.AssetId;
-    /** Co-signer key override (33-byte compressed hex); see
-     * {@link resolveEmulatorPubkey}. */
     emulatorPubkey?: string;
     /** Override the exit closure's delay. Defaults to the operator's own
      * `unilateralExitDelay`, which is the delay solverd uses too. */
@@ -921,6 +918,17 @@ export function resolveReceivePkScript(
     return address.pkScript;
 }
 
+export function covenantCosigner(
+    info: Pick<OperatorInfo, "signerPubkey">,
+    override?: string,
+): Uint8Array {
+    return hex.decode(
+        toXOnlySignerHex(
+            override === undefined ? info.signerPubkey : arkade.validateEmulatorPubkey(override),
+        ),
+    );
+}
+
 /** Derive and encode an offer. Writes nothing, locally or remotely. */
 export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise<DerivedOffer> {
     if (Boolean(params.wantAsset) === Boolean(params.offerAsset)) {
@@ -944,9 +952,7 @@ export async function deriveOffer(wallet: IWallet, params: OfferParams): Promise
     ]);
     const operatorPubKey = hex.decode(toXOnlySignerHex(info.signerPubkey));
     const network = networkFromOperatorInfo(info);
-    const emuKey = hex.decode(
-        toXOnlySignerHex(resolveEmulatorPubkey(network, params.emulatorPubkey)),
-    );
+    const emuKey = covenantCosigner(info, params.emulatorPubkey);
 
     // the script derives from every other field, so build the binding first — an Offer value never
     // exists with an empty swapPkScript

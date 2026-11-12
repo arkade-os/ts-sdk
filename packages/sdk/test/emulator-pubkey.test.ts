@@ -170,34 +170,20 @@ describe("resolveEmulatorPubkey", () => {
 });
 
 describe("Arkade.connect co-signer resolution", () => {
-    // A key the emulator claims for itself, distinct from every pinned value,
-    // standing in for a rogue or misconfigured endpoint.
     const CLAIMED = "03" + "ab".repeat(32);
 
-    it("uses the network's pinned key and never asks the emulator who it is", async () => {
+    it("uses arkd's signer key and never asks the emulator who it is", async () => {
         const { arkProvider, emulator, emulatorInfoCalls } = stubProviders(CLAIMED);
         const ark = await arkade.Arkade.connect({
             arkade: arkProvider,
             emulator,
             network: networks.regtest,
         });
-        expect(hex.encode(ark.emulatorKey!)).toBe(REGTEST_EMULATOR_PUBKEY);
-        // The whole point: the service's self-report is not consulted at all,
-        // so it cannot choose the key its covenants commit to.
+        expect(hex.encode(ark.emulatorKey)).toBe("02" + SERVER_XONLY);
         expect(emulatorInfoCalls()).toBe(0);
     });
 
-    it("ignores the emulator's claimed key when it differs from the pin", async () => {
-        const { arkProvider, emulator } = stubProviders(CLAIMED);
-        const ark = await arkade.Arkade.connect({
-            arkade: arkProvider,
-            emulator,
-            network: networks.regtest,
-        });
-        expect(hex.encode(ark.emulatorKey!)).not.toBe(CLAIMED);
-    });
-
-    it("lets the override replace the pinned key", async () => {
+    it("lets the override replace arkd's key", async () => {
         const custom = "02" + "cd".repeat(32);
         const { arkProvider, emulator } = stubProviders(CLAIMED);
         const ark = await arkade.Arkade.connect({
@@ -206,41 +192,20 @@ describe("Arkade.connect co-signer resolution", () => {
             network: networks.regtest,
             emulatorPubkey: custom,
         });
-        expect(hex.encode(ark.emulatorKey!)).toBe(custom);
-        expect(hex.encode(ark.emulatorKey!)).not.toBe(REGTEST_EMULATOR_PUBKEY);
+        expect(hex.encode(ark.emulatorKey)).toBe(custom);
     });
 
-    it("refuses an emulator on an unpinned network, naming the override", async () => {
-        const { arkProvider, emulator } = stubProviders(CLAIMED);
-        await expect(
-            arkade.Arkade.connect({
-                arkade: arkProvider,
-                emulator,
-                network: networks.signet,
-            }),
-        ).rejects.toThrow(/emulatorPubkey/);
-    });
-
-    it("connects on an unpinned network once the override is supplied", async () => {
-        const custom = "02" + "cd".repeat(32);
-        const { arkProvider, emulator } = stubProviders(CLAIMED);
-        const ark = await arkade.Arkade.connect({
-            arkade: arkProvider,
-            emulator,
-            network: networks.signet,
-            emulatorPubkey: custom,
-        });
-        expect(hex.encode(ark.emulatorKey!)).toBe(custom);
-    });
-
-    it("still connects with no emulator on an unpinned network", async () => {
-        // Pure tapscript usage needs no co-signer, so the pin must not become a
-        // precondition for connecting at all.
+    it.each([
+        ["not hex", "not-hex"],
+        ["x-only", "ab".repeat(32)],
+        ["uncompressed", "04" + "ab".repeat(64)],
+        ["short", "02" + "ab".repeat(31)],
+        ["uppercase", ("02" + "ab".repeat(32)).toUpperCase()],
+        ["empty", ""],
+    ])("rejects a malformed override (%s) instead of passing it through", async (_, bad) => {
         const { arkProvider } = stubProviders(CLAIMED);
-        const ark = await arkade.Arkade.connect({
-            arkade: arkProvider,
-            network: networks.signet,
-        });
-        expect(ark.emulatorKey).toBeUndefined();
+        await expect(
+            arkade.Arkade.connect({ arkade: arkProvider, emulatorPubkey: bad }),
+        ).rejects.toThrow(/compressed/);
     });
 });

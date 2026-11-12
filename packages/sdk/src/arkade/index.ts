@@ -67,6 +67,7 @@ export {
     resolveAsm,
     parseArtifact,
     validateProgram,
+    validateEmulatorPubkey,
     SUPPORTED_PROGRAM_VERSION,
     type Program,
     type ArkadeFunction,
