@@ -107,6 +107,18 @@ style and have not been backfilled.
   `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
   helper. Type-level only, non-breaking.
 
+### Bug Fixes
+
+- **`waitForIncomingFunds` no longer hangs when the subscription
+  breaks.** The helper calls the unsubscribe function that the caller's
+  `notifyIncomingFunds` returns. When that function threw after the funds
+  arrived, the promise was left pending forever, past its timeout and with its
+  abort listener already removed. Teardown now runs inside a guard, so the
+  promise still settles with the funds. A `notifyIncomingFunds` that throws
+  synchronously, before it returns its promise, is routed through the same
+  cancel path, so the timeout timer and the abort listener are cleared instead
+  of leaking. No breaking change.
+
 ### Added
 
 - **`@arkade-os/sdk/compiler` compiles Arkade source into a `Program`.** Contracts written in Arkade had to be compiled separately and their artifact JSON read with `programFromArtifact`. `compile({ entry, files }, { optimize?, debug? })` runs the installed `@arkade-os/compiler` over an in-memory project with relative imports and resolves to `{ program, artifact, debug, diagnostics }`: the `program` goes straight to `client.contract(program, args)`, the raw `artifact` keeps the source bundle, compiler version and fingerprint, `debug` is the compiler's debug file, and `diagnostics` carries the warnings. Each covenant segment of `program` carries its `sourceMap`, so a failing opcode can be traced back to its statement and `require()` message; `{ debug: false }` leaves the file and the maps out. `programFromArtifact(artifact, debug?)` attaches an `arkadec --debug` file the same way and refuses one whose fingerprint does not match the artifact's. Source errors reject with `CompileError`, whose `diagnostics` list every located error. The compiler is an optional peer (`^0.1.0-rc.1`) loaded on the first call, so the root SDK and every other subpath load without it; calling `compile` without it rejects with the install command, while initialization and compilation errors pass through unchanged. The subpath ships ESM and CJS builds; the CJS build loads the ESM-only compiler through `import()`.

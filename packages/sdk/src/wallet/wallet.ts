@@ -6966,6 +6966,16 @@ export async function waitForIncomingFunds(
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
 
+    // The stop handle comes from the caller's implementation, so it may throw. A broken
+    // stop() must not keep the promise from settling, and it must not be silent.
+    const stopSafely = (stop: () => void) => {
+        try {
+            stop();
+        } catch (e) {
+            console.warn("waitForIncomingFunds teardown failed", e);
+        }
+    };
+
     return new Promise<IncomingFunds>((resolve, reject) => {
         // One teardown path for every exit, so nothing outlives the promise.
         const settle = (deliver: () => void) => {
@@ -6974,8 +6984,7 @@ export async function waitForIncomingFunds(
 
             if (timeoutId !== undefined) clearTimeout(timeoutId);
             if (onAbort) signal?.removeEventListener("abort", onAbort);
-            stopFunc?.();
-
+            if (stopFunc) stopSafely(stopFunc);
             deliver();
         };
 
@@ -6994,24 +7003,30 @@ export async function waitForIncomingFunds(
             );
         }
 
-        wallet
-            .notifyIncomingFunds((funds: IncomingFunds) => {
-                // Skip purely outgoing events (empty `newVtxos` / `coins`), or a self-send's spent
-                // half could resolve this before its `vtxo_received` arrives.
-                const hasFunds =
-                    funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
-                if (settled || !hasFunds) return;
+        try {
+            wallet
+                .notifyIncomingFunds((funds: IncomingFunds) => {
+                    // Skip purely outgoing events (empty `newVtxos` / `coins`), or a self-send's spent
+                    // half could resolve this before its `vtxo_received` arrives.
+                    const hasFunds =
+                        funds.type === "utxo" ? funds.coins.length > 0 : funds.newVtxos.length > 0;
+                    if (settled || !hasFunds) return;
 
-                settle(() => resolve(funds));
-            })
-            .then((stop) => {
-                stopFunc = stop;
-                // May have settled before the handle arrived; don't leak it.
-                if (settled) stop();
-            })
-            .catch((error) => {
-                // Else a caller whose providers are down hangs forever on an unhandled rejection.
-                cancel(error);
-            });
+                    settle(() => resolve(funds));
+                })
+                .then((stop) => {
+                    stopFunc = stop;
+                    // May have settled before the handle arrived; don't leak it.
+                    if (settled) stopSafely(stop);
+                })
+                .catch((error) => {
+                    // Else a caller whose providers are down hangs forever on an unhandled rejection.
+                    cancel(error);
+                });
+        } catch (error) {
+            // notifyIncomingFunds threw synchronously, before returning its promise.
+            // Route it through cancel so the timeout and abort listener are cleaned up too.
+            cancel(error);
+        }
     });
 }
