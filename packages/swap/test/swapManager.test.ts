@@ -948,6 +948,26 @@ describe("RfqSwapManager — the onchain-receive L1 half", () => {
         expect(isRfqSwapTerminal(swap.state)).toBe(false);
     });
 
+    it("does not finalize a pending Arkade claim once the L1 funding was refunded", async () => {
+        const s = spies();
+        let finalized = false;
+        await drive({
+            swap: onchainReceiveSwap({ refundTxid: "fa".repeat(32) }),
+            spies: s,
+            indexer: lockupClaimed(),
+            chain: fakeChain({ utxos: [FILL], mtp: RECEIVE_HTLC_LOCKTIME }),
+            install: {
+                ...s.callbacks,
+                finalizeClaim: async () => {
+                    finalized = true;
+                    return [CLAIM_TXID];
+                },
+            },
+        });
+
+        expect(finalized).toBe(false);
+    });
+
     it("never finalizes on the Arkade deadline while the L1 half is still funded", async () => {
         // Mainline failure: trader funded L1, solver never funded the lockup
         // (`unknown`), and this leg's refund leaf opens after that deadline.
@@ -2524,6 +2544,27 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(failures).toEqual(["finalize refused"]);
             expect(swap.state).toBe("claimed");
             expect(await m.hasSwap(RFQ_ID)).toBe(true);
+        });
+
+        it("finalizes a pending batch while the rest of the lockup is still open", async () => {
+            const s = spies();
+            const swap = receiveSwap();
+            const indexer = fundedIndexer();
+            const read = indexer.getVtxos.bind(indexer);
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) =>
+                opts?.pendingOnly ? fakeIndexer({ vtxos: spentBy(CLAIM_TXID) }).getVtxos() : read();
+            const m = manager({
+                indexer,
+                contracts: fundedContracts(1_000),
+                now: BEFORE_DEADLINE,
+                spies: s,
+                install: withFinalize(s, async () => [CLAIM_TXID]),
+            });
+            await pass(m, swap);
+
+            expect(swap.claimTxid).toBe(CLAIM_TXID);
+            // `P` is public, so the 1,000-sat remainder is claimed past the value gate.
+            expect(s.lockupClaims.map((c) => c.partiallyClaimed)).toEqual([true]);
         });
 
         it("settles without calling it when nothing is pending", async () => {

@@ -688,7 +688,7 @@ describe("finalizePendingClaim", () => {
         }
     });
 
-    it("leaves alone a pending spend whose checkpoints are not our claim's", async () => {
+    it("refuses a pending spend whose checkpoints are not our claim's, finalizing nothing", async () => {
         const { contract, stored, pending } = await lostFinalize();
         const foreign = pending.map((vtxo) => ({ ...vtxo, spentBy: "ee".repeat(32) }));
         const operator = fakeOperator();
@@ -698,7 +698,7 @@ describe("finalizePendingClaim", () => {
                 receiver: RECEIVER,
                 preimage: PREIMAGE,
             }),
-        ).resolves.toEqual([]);
+        ).rejects.toThrow(/does not rebuild from our claim/);
         expect(operator.finalized).toEqual([]);
     });
 });

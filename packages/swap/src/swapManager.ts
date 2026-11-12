@@ -1344,11 +1344,12 @@ export class RfqSwapManager {
             fate = { fate: "unknown" };
         }
         if (
-            fate.fate === "claimed" &&
             (swap.kind === "lightning_receive" || swap.kind === "onchain_receive") &&
-            !(await this.finalizeOwnClaim(swap))
+            (fate.fate === "claimed" || fate.fate === "open")
         ) {
-            return;
+            // Only a `claimed` read waits on it: an `open` lockup still has a claim to drive.
+            const finalized = await this.finalizeOwnClaim(swap);
+            if (!finalized && fate.fate === "claimed") return;
         }
         // Before the terminal shortcut, and that order is the whole safety
         // argument: `returned` means the SOLVER took the lockup back, which is
@@ -1395,17 +1396,25 @@ export class RfqSwapManager {
         await this.driveArkadeRefund(swap);
     }
 
-    /** False when finalizing our own accepted claim failed, so the swap must not settle yet. */
+    /** False when a spend at the lockup is still unfinalized, so the swap must not settle yet. */
     private async finalizeOwnClaim(swap: ReceiveLockupSwap): Promise<boolean> {
         const finalize = this.callbacks?.finalizeClaim;
         if (!finalize || !this.config.enableAutoActions) return true;
+        // Finalizing after the L1 refund would take both legs; `driveOnchainReceive` refuses that too.
+        if (swap.kind === "onchain_receive" && swap.refundTxid) return true;
         try {
             // The callback resolves keys and `P`, possibly prompting a signer: only when owed.
             const { vtxos } = await this.deps.indexer.getVtxos({
                 scripts: [hex.encode(swap.lockupPkScript)],
                 pendingOnly: true,
             });
-            if (vtxos?.length) await finalize(swap);
+            if (!vtxos?.length) return true;
+            const [finalized] = await finalize(swap);
+            if (finalized && swap.claimTxid === undefined) {
+                // `P` is public now: what is left is claimed past the value gate.
+                swap.claimTxid = finalized;
+                this.touch(swap);
+            }
             return true;
         } catch (error) {
             this.emitFailed(swap, error);

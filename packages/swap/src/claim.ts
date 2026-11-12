@@ -159,7 +159,8 @@ export async function pushClaim(
  * Ours = the claim leaf rebuilds its checkpoints. arkd replaces its stored checkpoint signatures
  * with the ones sent, so the server's are carried over from the indexer's copy.
  *
- * @returns The ark txids finalized; empty when nothing of ours was pending.
+ * @returns The ark txids finalized; empty when nothing was pending.
+ * @throws After finalizing the rest, when a pending spend is not one this can finalize.
  */
 export async function finalizePendingClaim(
     operator: SwapOperator,
@@ -189,6 +190,7 @@ export async function finalizePendingClaim(
     const signer = claimWithPreimageIdentity(input.receiver, input.preimage);
     const ours = hex.encode(await input.receiver.xOnlyPublicKey());
     const finalized: string[] = [];
+    const foreign: string[] = [];
     for (const [arkTxid, spent] of byArkTx) {
         const live = spent.map(({ txid, vout, value }) => ({
             txid,
@@ -203,7 +205,10 @@ export async function finalizePendingClaim(
             [{ script: input.contract.pkScript, amount: BigInt(total) }],
             serverUnrollScript,
         );
-        if (checkpoints.some((checkpoint, i) => checkpoint.id !== spent[i]!.spentBy)) continue;
+        if (checkpoints.some((checkpoint, i) => checkpoint.id !== spent[i]!.spentBy)) {
+            foreign.push(arkTxid);
+            continue;
+        }
 
         const { txs } = await indexer.getVirtualTxs(checkpoints.map((checkpoint) => checkpoint.id));
         const stored = new Map(
@@ -232,6 +237,12 @@ export async function finalizePendingClaim(
         );
         await operator.finalizeTx(arkTxid, signed);
         finalized.push(arkTxid);
+    }
+    if (foreign.length > 0) {
+        throw new Error(
+            `pending spend ${foreign.join(", ")} of this lockup does not rebuild from our claim, so ` +
+                "it cannot be finalized here",
+        );
     }
     return finalized;
 }
