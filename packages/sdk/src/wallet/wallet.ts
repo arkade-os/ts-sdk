@@ -1,4 +1,4 @@
-import { collectIntents } from "../repositories/intentRepository";
+import { collectBatchRegistrations } from "../repositories/intentRepository";
 import { collectContracts } from "../repositories/contractRepository";
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
@@ -124,7 +124,11 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import type { IntentRepository, ArkIntent, ArkIntentState } from "../repositories/intentRepository";
+import type {
+    BatchRegistrationRepository,
+    BatchRegistration,
+    BatchRegistrationState,
+} from "../repositories/intentRepository";
 import { isTerminalBatchRegistrationState } from "../repositories/intentRepository";
 import { isNoMatchingIntentsError, releaseIntents } from "./intentReconciliation";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
@@ -579,7 +583,7 @@ export function excludeLockedOutpoints<T extends { txid: string; vout: number }>
  */
 export async function spendableVtxosExcludingLocked<T extends { txid: string; vout: number }>(
     vtxos: T[],
-    intentRepository?: Pick<IntentRepository, "getLockedVtxoOutpoints">,
+    intentRepository?: Pick<BatchRegistrationRepository, "getLockedVtxoOutpoints">,
 ): Promise<T[]> {
     if (!intentRepository) return vtxos;
     let locked: Outpoint[];
@@ -768,7 +772,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** Opt-in intent-lifecycle repository; `undefined` ⇒ intent persistence is a no-op. */
-    public intentRepository?: IntentRepository;
+    public intentRepository?: BatchRegistrationRepository;
     /**
      * **Experimental / inert.** Opt-in virtual-tx repository, exposed so callers can pass it to
      * {@link Unroll.Session.create} as a best-effort raw-tx cache. Normal sync never writes it.
@@ -4691,17 +4695,19 @@ export class Wallet
      */
     private async persistIntentSnapshot(
         intentTxId: string,
-        state: ArkIntentState,
+        state: BatchRegistrationState,
         intent: SignedProof<Proof.RegisterMessage>,
         deleteIntent: SignedProof<Proof.DeleteMessage>,
         inputs: ExtendedCoin[],
-        patch?: Partial<ArkIntent>,
+        patch?: Partial<BatchRegistration>,
     ): Promise<void> {
         const repo = this.intentRepository;
         if (!repo) return;
         try {
             const now = Date.now();
-            const existing = (await collectIntents(repo, { proofTxIds: [intentTxId] }))[0];
+            const existing = (
+                await collectBatchRegistrations(repo, { proofTxIds: [intentTxId] })
+            )[0];
             // Terminal is sticky: a later step throwing into settle()'s catch passes "cancelled",
             // which must not clobber a `batch_succeeded` whose money already moved.
             if (existing && isTerminalBatchRegistrationState(existing.state)) {

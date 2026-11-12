@@ -1,22 +1,22 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
-    ArkIntentState,
+    BatchRegistration,
+    BatchRegistrationState,
     assertIntentIdUnique,
-    IntentPageFilter,
+    BatchRegistrationPageFilter,
     BatchRegistrationRepository,
     intentMatchesFilter,
-    isTerminalIntentState,
+    isTerminalBatchRegistrationState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 import { RealmLike } from "./types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toIntent(o: any): ArkIntent {
+function toIntent(o: any): BatchRegistration {
     return {
         proofTxId: o.intentTxId,
         registrationId: o.intentId ?? undefined,
-        state: o.state as ArkIntentState,
+        state: o.state as BatchRegistrationState,
         validFrom: o.validFrom ?? undefined,
         validUntil: o.validUntil ?? undefined,
         createdAt: o.createdAt,
@@ -44,7 +44,7 @@ export class RealmBatchRegistrationRepository implements BatchRegistrationReposi
         });
     }
 
-    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: BatchRegistration): Promise<void> {
         this.realm.write(() => {
             if (intent.registrationId != null) {
                 const clashes = [
@@ -81,13 +81,13 @@ export class RealmBatchRegistrationRepository implements BatchRegistrationReposi
     }
 
     async getBatchRegistrationsPage(
-        filter: IntentPageFilter | undefined,
+        filter: BatchRegistrationPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         let results = this.realm.objects("ArkIntent");
         if (page.after !== undefined) results = results.filtered("intentTxId > $0", page.after);
-        const rows: ArkIntent[] = [];
+        const rows: BatchRegistration[] = [];
         for (const row of results.sorted("intentTxId")) {
             const intent = toIntent(row);
             if (filter && !intentMatchesFilter(intent, filter)) continue;
@@ -100,17 +100,17 @@ export class RealmBatchRegistrationRepository implements BatchRegistrationReposi
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const o of [...this.realm.objects("ArkIntent")].map(toIntent))
-            if (!isTerminalIntentState(o.state)) out.push(...o.proofInputs);
+            if (!isTerminalBatchRegistrationState(o.state)) out.push(...o.proofInputs);
         return out;
     }
 
     /** @deprecated Use {@link saveBatchRegistration}. */
-    saveIntent(intent: ArkIntent) {
+    saveIntent(intent: BatchRegistration) {
         return this.saveBatchRegistration(intent);
     }
 
     /** @deprecated Use {@link getBatchRegistrationsPage}. */
-    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+    getIntentsPage(filter: BatchRegistrationPageFilter | undefined, page: PageRequest) {
         return this.getBatchRegistrationsPage(filter, page);
     }
 

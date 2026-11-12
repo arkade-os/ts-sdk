@@ -14,7 +14,7 @@ import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import {
     ContractRepository,
     WalletRepository,
-    IntentRepository,
+    BatchRegistrationRepository,
     VirtualTxRepository,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
@@ -286,7 +286,7 @@ export type StorageConfig = {
      * instance may settle against it: reconciliation deletes from the operator any
      * pending intent that instance is not settling itself.
      */
-    intentRepository?: IntentRepository;
+    intentRepository?: BatchRegistrationRepository;
     /**
      * Optional virtual-tx (exit-branch) repository. When set, the wallet captures each received
      * VTXO's exit branch into it and prunes it on spend (both best-effort, see

@@ -1,23 +1,23 @@
 import { Outpoint } from "../../wallet";
 import {
-    ArkIntent,
+    BatchRegistration,
     assertIntentIdUnique,
-    IntentPageFilter,
+    BatchRegistrationPageFilter,
     BatchRegistrationRepository,
     intentMatchesFilter,
-    isTerminalIntentState,
+    isTerminalBatchRegistrationState,
 } from "../intentRepository";
 import { assertPageRequest, pageResult, type PageRequest, type PageResult } from "../page";
 
 export class InMemoryBatchRegistrationRepository implements BatchRegistrationRepository {
     readonly version = 1 as const;
-    private byId = new Map<string, ArkIntent>();
+    private byId = new Map<string, BatchRegistration>();
 
     async clear(): Promise<void> {
         this.byId.clear();
     }
 
-    async saveBatchRegistration(intent: ArkIntent): Promise<void> {
+    async saveBatchRegistration(intent: BatchRegistration): Promise<void> {
         assertIntentIdUnique(intent, this.byId.values());
         this.byId.set(intent.proofTxId, {
             ...intent,
@@ -28,9 +28,9 @@ export class InMemoryBatchRegistrationRepository implements BatchRegistrationRep
     }
 
     async getBatchRegistrationsPage(
-        filter: IntentPageFilter | undefined,
+        filter: BatchRegistrationPageFilter | undefined,
         page: PageRequest,
-    ): Promise<PageResult<ArkIntent>> {
+    ): Promise<PageResult<BatchRegistration>> {
         assertPageRequest(page);
         const rows = [...this.byId.values()]
             .filter(
@@ -47,24 +47,25 @@ export class InMemoryBatchRegistrationRepository implements BatchRegistrationRep
     async getLockedVtxoOutpoints(): Promise<Outpoint[]> {
         const out: Outpoint[] = [];
         for (const i of this.byId.values())
-            if (!isTerminalIntentState(i.state)) for (const o of i.proofInputs) out.push({ ...o });
+            if (!isTerminalBatchRegistrationState(i.state))
+                for (const o of i.proofInputs) out.push({ ...o });
         return out;
     }
 
     /** @deprecated Use {@link saveBatchRegistration}. */
-    saveIntent(intent: ArkIntent) {
+    saveIntent(intent: BatchRegistration) {
         return this.saveBatchRegistration(intent);
     }
 
     /** @deprecated Use {@link getBatchRegistrationsPage}. */
-    getIntentsPage(filter: IntentPageFilter | undefined, page: PageRequest) {
+    getIntentsPage(filter: BatchRegistrationPageFilter | undefined, page: PageRequest) {
         return this.getBatchRegistrationsPage(filter, page);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {}
 }
 
-const clone = (i: ArkIntent): ArkIntent => ({
+const clone = (i: BatchRegistration): BatchRegistration => ({
     ...i,
     proofInputs: i.proofInputs.map((o) => ({ ...o })),
     partialForfeits: [...i.partialForfeits],

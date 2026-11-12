@@ -1,5 +1,9 @@
 import { SettlementEvent, SettlementEventType } from "../providers/ark";
-import { ArkIntent, ArkIntentState, isTerminalIntentState } from "../repositories/intentRepository";
+import {
+    BatchRegistration,
+    BatchRegistrationState,
+    isTerminalBatchRegistrationState,
+} from "../repositories/intentRepository";
 
 /**
  * Pure, monotonic reducer: maps a settlement event onto the next intent
@@ -11,8 +15,11 @@ import { ArkIntent, ArkIntentState, isTerminalIntentState } from "../repositorie
  *   - BatchFinalized  → batch_succeeded
  *   - BatchFailed     → batch_failed
  */
-export function reduceIntentState(current: ArkIntentState, event: SettlementEvent): ArkIntentState {
-    if (isTerminalIntentState(current)) return current;
+export function reduceIntentState(
+    current: BatchRegistrationState,
+    event: SettlementEvent,
+): BatchRegistrationState {
+    if (isTerminalBatchRegistrationState(current)) return current;
 
     switch (event.type) {
         case SettlementEventType.BatchStarted:
@@ -32,13 +39,13 @@ export function reduceIntentState(current: ArkIntentState, event: SettlementEven
  * caller can skip the persist.
  */
 export function applySettlementEventToIntent(
-    intent: ArkIntent,
+    intent: BatchRegistration,
     event: SettlementEvent,
-): ArkIntent | undefined {
+): BatchRegistration | undefined {
     const next = reduceIntentState(intent.state, event);
     if (next === intent.state) return undefined;
 
-    const updated: ArkIntent = { ...intent, state: next };
+    const updated: BatchRegistration = { ...intent, state: next };
     // Every settlement event carries the batch/round id.
     if ("id" in event && typeof event.id === "string") {
         updated.batchId = event.id;
