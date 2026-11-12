@@ -191,6 +191,16 @@ describe("Arkade.connect with service", () => {
         expect(pinned.operatorCosigns(pinned.emulatorKey)).toBe(false);
     });
 
+    it("keeps an explicit emulatorPubkey without an emulator provider", async () => {
+        const override = "02" + TEST_PUB_KEY_HEX;
+        const ark = await arkade.Arkade.connect({
+            arkade: { getInfo: async () => info("regtest") },
+            emulatorPubkey: override,
+        });
+        expect(ark.emulator).toBeUndefined();
+        expect(hex.encode(ark.emulatorKey!)).toBe(override);
+    });
+
     it("storage builds and owns a manager, which dispose() stops", async () => {
         vi.spyOn(RestOperatorProvider.prototype, "getInfo").mockResolvedValue(info("regtest"));
         const { manager, raw } = fakeManager();

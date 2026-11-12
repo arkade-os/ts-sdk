@@ -98,6 +98,18 @@ style and have not been backfilled.
 
 ### Features
 
+- **Arkade covenants move to the operator's key once arkd co-signs Arkade
+  Script.** When arkd lists the network's pinned co-signer key among its
+  signer keys (`signerPubkey` or `deprecatedSigners`), `Arkade.connect` builds
+  new covenants on arkd's current `signerPubkey`. Spends of any covenant whose
+  co-signer key arkd holds then go to arkd instead of the emulator:
+  `submitTx`/`finalizeTx` (two-step), `cosignOnchainTx`, and
+  `registerIntent`/`submitSignedForfeitTxs`. Stored contracts keep their key.
+  An explicit `emulatorPubkey` still wins, and now applies without an
+  `emulator` provider too. Against an operator that has not switched, nothing
+  changes. `connect` also no longer throws for a provider whose info lacks
+  `deprecatedSigners`. `@arkade-os/swap` still derives with the pin.
+
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
   implementations can use the existing session without an internal SDK import.
   Class and factory TSDoc cover key isolation and nonce/session lifetime.

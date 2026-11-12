@@ -517,14 +517,12 @@ export class Arkade {
         // itself: new covenants move to its current key, which it signs for without the emulator.
         const pinned = pinnedEmulatorPubkey(network);
         let emulatorKey: Uint8Array | undefined;
-        if (
-            opts.emulatorPubkey === undefined &&
-            pinned &&
-            operatorKeys.has(toXOnlySignerHex(pinned))
-        ) {
+        if (opts.emulatorPubkey !== undefined) {
+            emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
+        } else if (pinned && operatorKeys.has(toXOnlySignerHex(pinned))) {
             emulatorKey = hex.decode(info.signerPubkey);
         } else if (emulator) {
-            emulatorKey = hex.decode(resolveEmulatorPubkey(network, opts.emulatorPubkey));
+            emulatorKey = hex.decode(resolveEmulatorPubkey(network));
         }
 
         // Up-front so contract instantiation stays synchronous.
