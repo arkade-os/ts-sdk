@@ -107,6 +107,23 @@ style and have not been backfilled.
   `notifyIncomingFunds`, so a readonly wallet or a test double satisfies the
   helper. Type-level only, non-breaking.
 
+- **Arkade spends reveal the script hashes of a contract's other covenants.**
+  arkd checks that every forfeit leaf of a spent VTXO's tree names its signer
+  key, plain or tweaked by an arkade script hash it knows, and the emulator
+  packet only carries the script of the leaf being spent. A leaf that names the
+  operator key only tweaked, such as a non-interactive covenant leaf, therefore
+  needs its hash revealed whenever the coin is spent through another function.
+  When a program contract's tree has such a leaf, the offchain builder,
+  `buildOnchain` and `renewProgramContractOutputs` now set the new
+  `ArkadeTweak` PSBT input field (`0xde || "arkadetweak"`, 1 to 16 32-byte
+  hashes) on the ark tx input, the onchain input or the intent proof input,
+  listing the hashes of the contract's other covenant scripts; more than 16
+  is refused. Trees without such a leaf, swap offers included, build the same
+  PSBTs as before, and an arkd that predates the field ignores it.
+  `ArkadeTweak` and `ArkadeProgramScript.arkadeTweaks()` are exported.
+  Wallet-level spends of a generically spendable program contract (`send`,
+  `settle`, `cosignOnchainTx`) do not set it yet.
+
 ### Bug Fixes
 
 - **`waitForIncomingFunds` no longer hangs when the subscription

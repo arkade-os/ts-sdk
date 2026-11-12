@@ -81,7 +81,12 @@ import {
     type ArkTxInput,
     type OffchainTxSubmitProvider,
 } from "../utils/arkTransaction";
-import { ConditionWitness, PrevArkTxField, setArkPsbtField } from "../utils/unknownFields";
+import {
+    ArkadeTweak,
+    ConditionWitness,
+    PrevArkTxField,
+    setArkPsbtField,
+} from "../utils/unknownFields";
 import { attachPrevArkTxs, attachPrevoutTxs, PrevTxUnavailableError } from "../utils/prevoutTx";
 import { prepareOwnedInput, submitOnchainSpend } from "../contracts/onchainSpend";
 import { Transaction } from "../utils/transaction";
@@ -1069,6 +1074,11 @@ export class ArkadeTransactionBuilder {
             this.client.checkpoint,
         );
 
+        inputs.forEach(({ unlocker: { contract, fn } }, i) => {
+            const tweaks = contract.vtxoScript.arkadeTweaks(fn);
+            if (tweaks.length > 0) setArkPsbtField(arkTx, i, ArkadeTweak, tweaks);
+        });
+
         // Set first: the resolver below skips inputs already carrying the field (the emulator
         // refuses an input bearing two).
         inputs.forEach(({ coin }, i) => {
@@ -1177,6 +1187,8 @@ export class ArkadeTransactionBuilder {
             path: { leaf: fn.tapLeafScript, extraWitness: condition },
             tapTree: contract.tapTree,
         });
+        const tweaks = contract.vtxoScript.arkadeTweaks(fn);
+        if (tweaks.length > 0) setArkPsbtField(tx, 0, ArkadeTweak, tweaks);
         if (fn.arkadeScript) {
             const stack = (fn.def.arkadeScript?.witness ?? []).map((w) =>
                 witnessBytes(unlocker, w),

@@ -325,6 +325,7 @@ import {
     ConditionWitness,
     PrevArkTxField,
     PrevoutTxField,
+    ArkadeTweak,
     getArkPsbtFields,
     setArkPsbtField,
     ArkPsbtFieldCoder,
@@ -781,6 +782,7 @@ export {
     ConditionWitness,
     PrevArkTxField,
     PrevoutTxField,
+    ArkadeTweak,
     // Prevout tx resolution (emulator v0.0.7+)
     resolvePrevTxs,
     attachPrevArkTxs,

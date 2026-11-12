@@ -33,6 +33,7 @@ import {
     CLTVMultisigTapscript,
     ConditionMultisigTapscript,
     ConditionCSVMultisigTapscript,
+    decodeTapscript,
     type ArkTapscript,
     type RelativeTimelock,
     type TapscriptType,
@@ -41,7 +42,7 @@ import { VtxoScript, type TapLeafScript } from "../script/base";
 import { sequenceToCanonicalTimelock } from "../utils/timelock";
 import { ArkadeScript } from "./script";
 import { ARKADE_OP } from "./opcodes";
-import { computeArkadeScriptPublicKey } from "./tweak";
+import { arkadeScriptHash, computeArkadeScriptPublicKey } from "./tweak";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
@@ -650,6 +651,34 @@ export class ArkadeProgramScript extends VtxoScript {
     /** The compiled spending path with the given function name, if any. */
     functionByName(name: string): CompiledProgramFunction | undefined {
         return this.compiled.find((f) => f.name === name);
+    }
+
+    /**
+     * Hashes of the covenant scripts other than `spent`'s, which the emulator packet carries, for
+     * its input's `ArkadeTweak` field: arkd checks that every forfeit leaf names the server key,
+     * and recognises a tweaked key only by a script hash it knows. Empty unless some forfeit leaf
+     * names the server key only tweaked.
+     */
+    arkadeTweaks(spent: CompiledProgramFunction): Uint8Array[] {
+        const { serverKey } = this.keys;
+        const scripts = new Map<string, Uint8Array>();
+        for (const { arkadeScript } of this.compiled) {
+            if (arkadeScript) scripts.set(hex.encode(arkadeScript), arkadeScript);
+        }
+        const tweaked = [...scripts.values()].map((s) =>
+            computeArkadeScriptPublicKey(serverKey, s),
+        );
+        const tweakOnly = this.compiled.some(({ def, leafScript }) => {
+            if (def.tapscript.csv) return false;
+            const keys: Uint8Array[] = decodeTapscript(leafScript).params.pubkeys;
+            return (
+                !keys.some((k) => equalBytes(k, serverKey)) &&
+                keys.some((k) => tweaked.some((t) => equalBytes(k, t)))
+            );
+        });
+        if (!tweakOnly) return [];
+        if (spent.arkadeScript) scripts.delete(hex.encode(spent.arkadeScript));
+        return [...scripts.values()].map((s) => arkadeScriptHash(s));
     }
 }
 

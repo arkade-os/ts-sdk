@@ -1,5 +1,6 @@
 import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
+import { concatBytes } from "@scure/btc-signer/utils.js";
 import { sequenceToTimelock } from "./timelock";
 
 /**
@@ -12,6 +13,7 @@ export enum ArkPsbtFieldKey {
     ConditionWitness = "condition",
     PrevArkTx = "prevarktx",
     PrevoutTx = "prevouttx",
+    ArkadeTweak = "arkadetweak",
 }
 
 /**
@@ -159,6 +161,54 @@ export const PrevoutTxField: ArkPsbtFieldCoder<Uint8Array> = {
             if (!checkKeyMatch(value[0], ArkPsbtFieldKey.PrevoutTx)) return null;
             return value[1];
         }),
+};
+
+const ARKADE_TWEAK_LENGTH = 32;
+const MAX_ARKADE_TWEAKS = 16;
+
+/**
+ * ArkadeTweak reveals the arkade script hashes tweaking the signer key in leaves the input does
+ * not spend, so arkd validates the vtxo script without running those scripts.
+ *
+ * Key: [0xde] || "arkadetweak". Value: 1 to 16 32-byte hashes, concatenated.
+ */
+export const ArkadeTweak: ArkPsbtFieldCoder<Uint8Array[]> = {
+    key: ArkPsbtFieldKey.ArkadeTweak,
+    encode: (hashes) => {
+        if (hashes.length === 0 || hashes.length > MAX_ARKADE_TWEAKS) {
+            throw new Error(
+                `invalid arkade tweaks count: got ${hashes.length}, expected 1 to ${MAX_ARKADE_TWEAKS}`,
+            );
+        }
+        hashes.forEach((hash, i) => {
+            if (hash.length !== ARKADE_TWEAK_LENGTH) {
+                throw new Error(
+                    `invalid arkade tweak ${i} length: got ${hash.length}, expected ${ARKADE_TWEAK_LENGTH}`,
+                );
+            }
+        });
+        return [
+            {
+                type: ArkPsbtFieldKeyType,
+                key: encodedPsbtFieldKey[ArkPsbtFieldKey.ArkadeTweak],
+            },
+            concatBytes(...hashes),
+        ];
+    },
+    decode: (unknown) => {
+        if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.ArkadeTweak)) return null;
+        const value = unknown[1];
+        if (
+            value.length === 0 ||
+            value.length % ARKADE_TWEAK_LENGTH !== 0 ||
+            value.length > MAX_ARKADE_TWEAKS * ARKADE_TWEAK_LENGTH
+        ) {
+            throw new Error(`invalid arkade tweak field length ${value.length}`);
+        }
+        return Array.from({ length: value.length / ARKADE_TWEAK_LENGTH }, (_, i) =>
+            value.slice(i * ARKADE_TWEAK_LENGTH, (i + 1) * ARKADE_TWEAK_LENGTH),
+        );
+    },
 };
 
 /**

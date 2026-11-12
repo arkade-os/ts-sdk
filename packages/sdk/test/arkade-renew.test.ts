@@ -6,7 +6,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
 import { Transaction } from "../src/utils/transaction";
-import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { ArkadeTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import { Extension } from "../src/extension";
 import { AssetGroup, AssetId, AssetInput, AssetOutput, Packet } from "../src/extension/asset";
 import { SettlementEventType } from "../src/providers/ark";
@@ -365,6 +365,43 @@ describe("renewProgramContractOutputs", () => {
         const { proof } = (registerIntent.mock.calls[0] as unknown[])[0] as { proof: string };
         const tx = Transaction.fromPSBT(base64.decode(proof));
         expect(getArkPsbtFields(tx, 1, ConditionWitness)).toEqual([[PREIMAGE]]);
+    });
+
+    it("reveals the other covenants' hashes on the proof input of a tree with a tweak-only leaf", async () => {
+        const { ark, target, registerIntent } = await keeper(() =>
+            (async function* () {
+                throw new Error("stream closed");
+            })(),
+        );
+        const sweep = ["INSPECTVERSION", 2, "NUMEQUAL"] as arkade.AsmToken[];
+        const contract = ark.contract(
+            {
+                ...renewable,
+                functions: {
+                    ...renewable.functions,
+                    sweep: {
+                        tapscript: { signers: [{ tweak: "$server", fn: "sweep" }], emulator: null },
+                        arkadeScript: { asm: sweep },
+                    },
+                },
+            } as arkade.Program,
+            { owner: xOnly() },
+        );
+        const coin = {
+            ...mintCoin(5000),
+            script: hex.encode(contract.pkScript),
+            status: { confirmed: true },
+        } as unknown as VirtualCoin;
+
+        await expect(
+            arkade.renewProgramContractOutputs(ark, [target, { contract, coin }]),
+        ).rejects.toThrow(/stream closed/);
+        const { proof } = (registerIntent.mock.calls[0] as unknown[])[0] as { proof: string };
+        const tx = Transaction.fromPSBT(base64.decode(proof));
+        expect(getArkPsbtFields(tx, 1, ArkadeTweak)).toEqual([]);
+        expect(getArkPsbtFields(tx, 2, ArkadeTweak)).toEqual([
+            [arkade.arkadeScriptHash(arkade.resolveAsm(sweep, {}))],
+        ]);
     });
 
     it("refuses a renew leaf whose witness needs a call argument", async () => {
