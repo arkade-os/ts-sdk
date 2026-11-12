@@ -401,12 +401,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
         if (!row) return;
         const manager = await this.wallet.getContractManager();
         await manager.updateContract(row.script, {
-            metadata: {
-                ...row.metadata,
-                [DELEGATION_STATUS_KEY]: status,
-                ...(expiresAt !== undefined ? { [DELEGATION_EXPIRES_KEY]: expiresAt } : {}),
-                [DELEGATION_ADDRESS_KEY]: address,
-            },
+            metadata: statusMetadata(row, status, expiresAt, address),
         });
     }
 
@@ -453,14 +448,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
             try {
                 const { delegation } = await this.executorProvider.getDelegation(address);
                 await manager.updateContract(row.script, {
-                    metadata: {
-                        ...row.metadata,
-                        [DELEGATION_STATUS_KEY]: delegation.status,
-                        ...(delegation.expiresAt !== undefined
-                            ? { [DELEGATION_EXPIRES_KEY]: delegation.expiresAt }
-                            : {}),
-                        [DELEGATION_ADDRESS_KEY]: address,
-                    },
+                    metadata: statusMetadata(row, delegation.status, delegation.expiresAt, address),
                 });
                 refreshed.push({
                     script: row.script,
@@ -478,11 +466,7 @@ export class ExecutorManagerImpl implements IExecutorManager {
                 ) {
                     // The service does not know this watch: it is over, whatever it was.
                     await manager.updateContract(row.script, {
-                        metadata: {
-                            ...row.metadata,
-                            [DELEGATION_STATUS_KEY]: DELEGATION_GONE_STATUS,
-                            [DELEGATION_ADDRESS_KEY]: address,
-                        },
+                        metadata: statusMetadata(row, DELEGATION_GONE_STATUS, undefined, address),
                     });
                     refreshed.push({ script: row.script, address, status: DELEGATION_GONE_STATUS });
                     continue;
@@ -516,6 +500,22 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const info = await this.executorProvider.getInfo();
         return script.onchainAddress(getNetwork(info.network as NetworkName));
     }
+}
+
+/** `updateContract` replaces metadata, so the previous expiry must not outlive a status without one. */
+function statusMetadata(
+    row: Contract,
+    status: string,
+    expiresAt: number | undefined,
+    address: string,
+): Record<string, unknown> {
+    const { [DELEGATION_EXPIRES_KEY]: _stale, ...rest } = row.metadata ?? {};
+    return {
+        ...rest,
+        [DELEGATION_STATUS_KEY]: status,
+        ...(expiresAt !== undefined ? { [DELEGATION_EXPIRES_KEY]: expiresAt } : {}),
+        [DELEGATION_ADDRESS_KEY]: address,
+    };
 }
 
 function errorMessage(e: unknown): string {

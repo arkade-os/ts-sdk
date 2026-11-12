@@ -470,6 +470,35 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         });
     });
 
+    it("drops the persisted expiry when the service reports none", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationExpiresAt: 1_700_000_000,
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockResolvedValue({
+            delegation: {
+                id: 1,
+                address: vectors.renewal.address,
+                status: "active",
+                variables: {},
+                expiresAt: undefined,
+            },
+            vtxos: [],
+        });
+
+        await new ExecutorManagerImpl(provider, w).refreshStatus();
+
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "active",
+                delegationAddress: vectors.renewal.address,
+            },
+        });
+    });
+
     it("ends a watch the service does not know anymore", async () => {
         const row = await makeRow({
             delegationStatus: "active",

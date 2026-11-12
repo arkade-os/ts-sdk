@@ -562,6 +562,13 @@ style and have not been backfilled.
   in a JavaScript number. Custom providers must return numbers rather than
   strings, and Electrum consumers no longer receive string amounts.
 
+- **A delegation status without an expiry no longer keeps the previous one.**
+  `updateContract` replaces `metadata`, but the status writes spread the row's
+  old metadata and only wrote `delegationExpiresAt` when the new one was
+  defined. A service renewing a watch without a deadline left the old expiry
+  on the row, and once it passed `syncDelegatedDefaults` silently dropped a
+  live delegation. The expiry is now cleared before each status write.
+
 - **Expo SSE streams stop on arkd's `failure` event.** The Expo reader read
   SSE line by line and skipped `event:` lines, so `ExpoOperatorProvider`'s
   `getEventStream` and `getTransactionsStream` took a refused stream's status
