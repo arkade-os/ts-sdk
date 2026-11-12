@@ -4,13 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@scure/btc-signer/utils.js";
-import {
-    arkade,
-    CSVMultisigTapscript,
-    networks,
-    REGTEST_EMULATOR_PUBKEY,
-    type VirtualCoin,
-} from "../src";
+import { arkade, CSVMultisigTapscript, networks, type VirtualCoin } from "../src";
 import { Transaction } from "../src/utils/transaction";
 import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import { Extension } from "../src/extension";
@@ -26,6 +20,7 @@ vi.mock("../src/arkade/batch", async (importOriginal) => {
 });
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+const emulatorPubkey = "02" + hex.encode(xOnly());
 const renewable = arkade.programFromArtifact(
     JSON.parse(
         readFileSync(
@@ -88,6 +83,7 @@ async function keeper(
             submitSignedForfeitTxs: vi.fn(),
         } as any,
         emulator: { submitIntent: vi.fn(async ({ proof }) => proof) } as any,
+        emulatorPubkey,
         indexer: { getVtxos: vi.fn(), getVirtualTxs },
         network: networks.regtest,
     });
@@ -303,13 +299,13 @@ describe("renewProgramContractOutputs", () => {
         expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 
-    it("registers without the emulator once arkd holds the pinned co-signer", async () => {
+    it("registers without the emulator once arkd holds the covenant's co-signer", async () => {
         const { ark, target, registerIntent } = await keeper(
             () =>
                 (async function* () {
                     throw new Error("stream closed");
                 })(),
-            { deprecatedSigners: [{ pubkey: REGTEST_EMULATOR_PUBKEY, cutoffDate: 0n }] },
+            { deprecatedSigners: [{ pubkey: emulatorPubkey, cutoffDate: 0n }] },
         );
 
         await expect(arkade.renewProgramContractOutputs(ark, [target])).rejects.toThrow(

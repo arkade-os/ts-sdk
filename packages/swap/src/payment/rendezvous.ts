@@ -11,7 +11,7 @@ const XONLY_HEX = /^[0-9a-f]{64}$/;
 /** Where to reach a solver. Bounds are indicative — the quote binds.
  *
  *  No `emulatorPubkey`: the card's key only FILTERS here — the covenant is
- *  built from `deps.emulatorPubkey` or the pinned default, never from it.
+ *  built from `deps.emulatorPubkey` or arkd's signer key, never from it.
  *
  */
 export interface SolverRendezvous {
