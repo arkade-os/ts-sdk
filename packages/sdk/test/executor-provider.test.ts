@@ -448,9 +448,11 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
         };
     }
 
-    function makeRefreshManager(rows: unknown[]) {
+    function makeRefreshManager(rows: { script: string }[]) {
         const repo = {
-            getContracts: vi.fn(async () => rows),
+            getContracts: vi.fn(async (filter?: { script?: string }) =>
+                filter?.script ? rows.filter((r) => r.script === filter.script) : rows,
+            ),
             updateContract: vi.fn(),
         };
         return { repo, w: { ...wallet, getContractManager: async () => repo } };
@@ -512,6 +514,81 @@ describe("ExecutorManagerImpl.refreshStatus", () => {
             metadata: {
                 delegationStatus: "active",
                 delegationAddress: vectors.renewal.address,
+            },
+        });
+    });
+
+    it("does not overwrite a watch a concurrent register rewrote", async () => {
+        const row = await makeRow({
+            delegationStatus: "expired",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockImplementation(async () => {
+            // register() re-activates the watch while this answer is on the wire
+            row.metadata = {
+                delegationStatus: "active",
+                delegationExpiresAt: 1_700_000_000,
+                delegationAddress: vectors.renewal.address,
+            };
+            return {
+                delegation: {
+                    id: 1,
+                    address: vectors.renewal.address,
+                    status: "expired",
+                    variables: {},
+                    expiresAt: undefined,
+                },
+                vtxos: [],
+            };
+        });
+        const stale = { ...row, metadata: { ...row.metadata } };
+        repo.getContracts.mockResolvedValueOnce([stale]);
+
+        const got = await new ExecutorManagerImpl(provider, w).refreshStatus();
+
+        expect(repo.updateContract).not.toHaveBeenCalled();
+        expect(got).toEqual([
+            {
+                script: row.script,
+                address: vectors.renewal.address,
+                status: "active",
+                expiresAt: 1_700_000_000,
+            },
+        ]);
+    });
+
+    it("keeps the metadata keys a concurrent writer added", async () => {
+        const row = await makeRow({
+            delegationStatus: "active",
+            delegationAddress: vectors.renewal.address,
+        });
+        const { repo, w } = makeRefreshManager([row]);
+        const provider = makeProvider();
+        provider.getDelegation.mockImplementation(async () => {
+            row.metadata = { ...row.metadata, note: "added meanwhile" };
+            return {
+                delegation: {
+                    id: 1,
+                    address: vectors.renewal.address,
+                    status: "expired",
+                    variables: {},
+                    expiresAt: undefined,
+                },
+                vtxos: [],
+            };
+        });
+        const stale = { ...row, metadata: { ...row.metadata } };
+        repo.getContracts.mockResolvedValueOnce([stale]);
+
+        await new ExecutorManagerImpl(provider, w).refreshStatus();
+
+        expect(repo.updateContract).toHaveBeenCalledWith(row.script, {
+            metadata: {
+                delegationStatus: "expired",
+                delegationAddress: vectors.renewal.address,
+                note: "added meanwhile",
             },
         });
     });

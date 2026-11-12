@@ -7,6 +7,7 @@ import {
     type ExecutorInfo,
     type ExecutorProvider,
 } from "../providers/executor";
+import type { IContractManager } from "../contracts/contractManager";
 import type { Contract } from "../contracts/types";
 import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { getNetwork, type NetworkName } from "../networks";
@@ -446,17 +447,21 @@ export class ExecutorManagerImpl implements IExecutorManager {
             }
             try {
                 const { delegation } = await this.executorProvider.getDelegation(address);
-                await manager.updateContract(row.script, {
-                    metadata: statusMetadata(row, delegation.status, delegation.expiresAt, address),
-                });
-                refreshed.push({
-                    script: row.script,
-                    address,
-                    status: delegation.status,
-                    ...(delegation.expiresAt !== undefined
-                        ? { expiresAt: delegation.expiresAt }
-                        : {}),
-                });
+                const superseded = await this.writeIfUnchanged(manager, row, (fresh) =>
+                    statusMetadata(fresh, delegation.status, delegation.expiresAt, address),
+                );
+                refreshed.push(
+                    superseded
+                        ? currentStatus(superseded, address)
+                        : {
+                              script: row.script,
+                              address,
+                              status: delegation.status,
+                              ...(delegation.expiresAt !== undefined
+                                  ? { expiresAt: delegation.expiresAt }
+                                  : {}),
+                          },
+                );
             } catch (e) {
                 if (
                     e instanceof ExecutorRequestError &&
@@ -473,10 +478,14 @@ export class ExecutorManagerImpl implements IExecutorManager {
                     (await serviceAnswers())
                 ) {
                     // The service does not know this watch: it is over, whatever it was.
-                    await manager.updateContract(row.script, {
-                        metadata: statusMetadata(row, DELEGATION_GONE_STATUS, undefined, address),
-                    });
-                    refreshed.push({ script: row.script, address, status: DELEGATION_GONE_STATUS });
+                    const superseded = await this.writeIfUnchanged(manager, row, (fresh) =>
+                        statusMetadata(fresh, DELEGATION_GONE_STATUS, undefined, address),
+                    );
+                    refreshed.push(
+                        superseded
+                            ? currentStatus(superseded, address)
+                            : { script: row.script, address, status: DELEGATION_GONE_STATUS },
+                    );
                     continue;
                 }
                 refreshed.push({
@@ -488,6 +497,24 @@ export class ExecutorManagerImpl implements IExecutorManager {
             }
         }
         return refreshed;
+    }
+
+    /**
+     * Write a refreshed answer on a row unless its watch changed since `row` was read: a
+     * concurrent writer (a `register`) got there after this answer was asked for, so theirs is
+     * the newer one. Returns the row as it now stands when it was superseded, undefined once
+     * written. The metadata is built from the row as it stands, so other keys survive.
+     */
+    private async writeIfUnchanged(
+        manager: IContractManager,
+        row: Contract,
+        build: (fresh: Contract) => Record<string, unknown>,
+    ): Promise<Contract | undefined> {
+        const [fresh] = await manager.getContracts({ script: row.script });
+        if (!fresh) return row;
+        if (WATCH_KEYS.some((key) => fresh.metadata?.[key] !== row.metadata?.[key])) return fresh;
+        await manager.updateContract(row.script, { metadata: build(fresh) });
+        return undefined;
     }
 
     /**
@@ -508,6 +535,19 @@ export class ExecutorManagerImpl implements IExecutorManager {
         const info = await this.executorProvider.getInfo();
         return script.onchainAddress(getNetwork(info.network as NetworkName));
     }
+}
+
+const WATCH_KEYS = [DELEGATION_STATUS_KEY, DELEGATION_EXPIRES_KEY, DELEGATION_ADDRESS_KEY];
+
+function currentStatus(row: Contract, address: string): ExecutorStatusRefresh {
+    const status = row.metadata?.[DELEGATION_STATUS_KEY];
+    const expiresAt = row.metadata?.[DELEGATION_EXPIRES_KEY];
+    return {
+        script: row.script,
+        address,
+        status: typeof status === "string" ? status : DELEGATION_UNKNOWN_STATUS,
+        ...(typeof expiresAt === "number" ? { expiresAt } : {}),
+    };
 }
 
 /** `updateContract` replaces metadata, so the previous expiry must not outlive a status without one. */

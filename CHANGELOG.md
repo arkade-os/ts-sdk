@@ -397,6 +397,9 @@ style and have not been backfilled.
   `/v1/info` but does not route `GET /v1/delegation`: its 404 carries the same
   gRPC code as an unknown watch, so `getDelegation` tells them apart by the
   `delegation not found` message and reports any other 404 without a status.
+  A refresh writes only what a concurrent `register` has not changed since the
+  row was read: it re-reads the row before writing, keeps its other metadata,
+  and drops an answer asked for before the row's watch was rewritten.
 
 ### Changed
 
