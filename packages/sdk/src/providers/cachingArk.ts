@@ -2,7 +2,7 @@ import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { Proof } from "../proof";
 import { assertNonNegativeMs } from "../utils/time";
 import {
-    ArkadeInfo,
+    OperatorInfo,
     OperatorProvider,
     PendingTx,
     SettlementEvent,
@@ -13,7 +13,7 @@ import {
 const DEFAULT_TTL_MS = 60_000;
 
 type ServerInfoEventSource = Partial<{
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void;
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void;
 }>;
 
 /**
@@ -23,9 +23,9 @@ type ServerInfoEventSource = Partial<{
  * lives in `arkInfoSnapshot`.
  */
 export class CachingOperatorProvider implements OperatorProvider {
-    private cached?: ArkadeInfo;
+    private cached?: OperatorInfo;
     private expiresAt = 0;
-    private inflight?: Promise<ArkadeInfo>;
+    private inflight?: Promise<OperatorInfo>;
     /** Bumped on every event-driven cache write; see {@link getInfo}. */
     private generation = 0;
     private readonly unsubscribe: () => void;
@@ -56,7 +56,7 @@ export class CachingOperatorProvider implements OperatorProvider {
         return typeof url === "string" ? url : undefined;
     }
 
-    async getInfo(): Promise<ArkadeInfo> {
+    async getInfo(): Promise<OperatorInfo> {
         if (this.cached && Date.now() < this.expiresAt) return this.cached;
         if (!this.inflight) {
             // A rotation event can land while this request is in flight, making
@@ -123,7 +123,7 @@ export class CachingOperatorProvider implements OperatorProvider {
         return this.inner.getPendingTxs(intent);
     }
 
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void {
         return (this.inner as ServerInfoEventSource).onServerInfoChanged?.(listener) ?? (() => {});
     }
 }

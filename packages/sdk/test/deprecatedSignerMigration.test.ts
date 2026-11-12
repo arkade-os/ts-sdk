@@ -8,7 +8,7 @@ import {
 import type { IWallet } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import type { BoardingUtxoGroup } from "../src/wallet/wallet";
-import type { ArkadeInfo, DeprecatedSigner } from "../src/providers/ark";
+import type { OperatorInfo, DeprecatedSigner } from "../src/providers/ark";
 import type { Contract, ContractWithVtxos, ExtendedContractVtxo } from "../src/contracts/types";
 import type { RelativeTimelock } from "../src/script/tapscript";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
@@ -81,7 +81,7 @@ function makeInfo(
     deprecatedSigners: { pubkey: string; cutoffDate?: bigint }[] = [],
     intentFee: Record<string, string> = {},
     vtxoMaxAmount: bigint = -1n, // -1 = no per-output ceiling
-): ArkadeInfo {
+): OperatorInfo {
     const normalized: DeprecatedSigner[] = deprecatedSigners.map((s) => ({
         pubkey: s.pubkey,
         cutoffDate: s.cutoffDate ?? 0n,
@@ -91,7 +91,7 @@ function makeInfo(
         deprecatedSigners: normalized,
         fees: { intentFee, txFeeRate: "" },
         vtxoMaxAmount,
-    } as unknown as ArkadeInfo;
+    } as unknown as OperatorInfo;
 }
 
 let vtxoCounter = 0;
@@ -143,7 +143,7 @@ function cwv(serverPubKey: string, vtxos: ExtendedContractVtxo[]): ContractWithV
 }
 
 interface MigrationMockOptions {
-    info: ArkadeInfo;
+    info: OperatorInfo;
     contractsWithVtxos: ContractWithVtxos[];
     walletSigner?: string; // x-only hex of the wallet's own snapshot signer
     address?: string;
@@ -557,7 +557,7 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(refreshDeprecatedSigners).toHaveBeenCalledTimes(1);
         expect(refreshDeprecatedSigners.mock.calls[0][0]).toBe(info);
         // …which carries the now-EXPIRED signer that the settle() filter excludes.
-        const refreshed = refreshDeprecatedSigners.mock.calls[0][0] as ArkadeInfo;
+        const refreshed = refreshDeprecatedSigners.mock.calls[0][0] as OperatorInfo;
         expect(refreshed.deprecatedSigners.map((s) => s.pubkey)).toContain(DEP_EXPIRED);
         // The refresh lands before the migration leg builds inputs, so the whole
         // pass sees a consistent cache.
@@ -582,7 +582,7 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(report.signers).toHaveLength(0);
         // …but the cache was refreshed from fresh (now empty) info.
         expect(refreshDeprecatedSigners).toHaveBeenCalledWith(info);
-        const refreshed = refreshDeprecatedSigners.mock.calls[0][0] as ArkadeInfo;
+        const refreshed = refreshDeprecatedSigners.mock.calls[0][0] as OperatorInfo;
         expect(refreshed.deprecatedSigners).toHaveLength(0);
     });
 });
@@ -1023,7 +1023,7 @@ const DEPRECATED_ADDRESS =
     "tark1qqellv77udfmr20tun8dvju5vgudpf9vxe8jwhthrkn26fz96pawqfdy8nk05rsmrf8h94j26905e7n6sng8y059z8ykn2j5xcuw4xt846qj6x";
 
 interface RecoveryMockOptions {
-    info: ArkadeInfo;
+    info: OperatorInfo;
     /** x-only hex of the wallet's own construction-time snapshot signer. */
     walletSigner: string;
     /** Contracts (with their VTXOs) the wallet holds; also drives getVtxos. */

@@ -11,11 +11,11 @@ import {
     DEFAULT_ARKADE_SERVER_URL,
     Network,
     NetworkName,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
 } from "../networks";
 import { ESPLORA_URL, EsploraProvider, OnchainProvider } from "../providers/onchain";
 import {
-    ArkadeInfo,
+    OperatorInfo,
     OperatorProvider,
     BatchFinalizationEvent,
     BatchStartedEvent,
@@ -998,9 +998,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * before binding the answer into a covenant to fail closed instead of getting the snapshot.
      *
      * @returns The operator's info
-     * @see ArkadeInfo
+     * @see OperatorInfo
      */
-    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    async getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         const { info, source, lastOnlineAt } = await resolveArkInfo(
             this.arkProvider,
             this.walletRepository,
@@ -1017,7 +1017,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /** @deprecated Use {@link getOperatorInfo}. */
-    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<ArkadeInfo> {
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
         return this.getOperatorInfo(opts);
     }
 
@@ -1142,7 +1142,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider = resolvedService.indexerProvider;
         }
 
-        const network = networkFromArkadeInfo(info);
+        const network = networkFromOperatorInfo(info);
 
         // Identity/operator network mismatch means wrong derivation path → wrong keys → fund loss.
         if ("descriptor" in config.identity) {
@@ -2432,7 +2432,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // contracts are single-timelock at the current delay and tagged WALLET_RECEIVE_SOURCE;
             // the matrix is deliberately NOT re-registered at rotated keys (it would expand per boot).
             const baselinePubkey = await baselinePubkeyPromise;
-            // The matrix also fans the SERVER-signer axis (current + every deprecated signer), so funds
+            // The matrix also fans the OPERATOR-signer axis (current + every deprecated signer), so funds
             // on a rotated-signer contract are watched from boot, not only after restore(). Deduped
             // by scriptHex.
             const delegatePubKey =
@@ -2504,7 +2504,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // Baseline boarding rows, anchored at INDEX 0 (`baselinePubkey`, NOT the possibly-rotated
             // `boardingTapscript`) so baseline deposits stay visible regardless of rotation; the CSV
             // is index-independent. Same signer axis as above; only the signer fans, since the
-            // boarding CSV is server-wide. Idempotent (keyed by script); a script colliding with a
+            // boarding CSV is operator-wide. Idempotent (keyed by script); a script colliding with a
             // default one (degenerate equal delays) keeps that type and the manager widens its scope.
             const boardingCsvTimelock =
                 this.boardingTapscript.options.csvTimelock ?? DefaultVtxo.Script.DEFAULT_TIMELOCK;
@@ -2801,7 +2801,7 @@ export class Wallet
 
     /**
      * @internal Sole write path for `serverUnrollScript`; called by
-     * {@link Wallet._doRotateServerSigner} with the rotating `ArkadeInfo`'s checkpoint script.
+     * {@link Wallet._doRotateServerSigner} with the rotating `OperatorInfo`'s checkpoint script.
      */
     setServerUnrollScriptForRotation(script: CSVMultisigTapscript.Type): void {
         this._serverUnrollScript = script;
@@ -5251,7 +5251,7 @@ export class Wallet
      * Operator unroll scripts a pending checkpoint may have been built under: configured, current,
      * and one per deprecated signer — else a pre-rotation tx would stay pending forever.
      */
-    private checkpointUnrollCandidates(info: ArkadeInfo): CSVMultisigTapscript.Type[] {
+    private checkpointUnrollCandidates(info: OperatorInfo): CSVMultisigTapscript.Type[] {
         const current = CSVMultisigTapscript.decode(hex.decode(info.checkpointTapscript));
         const candidates = [this._serverUnrollScript, current];
         for (const deprecated of signerSetFromInfo(info).deprecated.keys()) {

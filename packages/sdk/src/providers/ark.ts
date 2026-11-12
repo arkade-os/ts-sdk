@@ -433,21 +433,21 @@ export class RestOperatorProvider implements OperatorProvider {
     private _hasServerInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
-    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
+    private _serverInfoListeners = new Set<(info: OperatorInfo) => void>();
 
     /**
      * Subscribe to operator info changes. Fired after a stale-info
      * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
      * Returns an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
         return () => {
             this._serverInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkadeInfo): void {
+    private emitServerInfoChanged(info: OperatorInfo): void {
         this._onchainCosignUnsupported = false;
         for (const listener of this._serverInfoListeners) {
             try {

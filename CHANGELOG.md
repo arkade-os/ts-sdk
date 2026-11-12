@@ -441,6 +441,11 @@ style and have not been backfilled.
   `Wallet.create` takes `operatorProvider`. Every old name stays as a deprecated
   alias. Passing both `operatorProvider` and `arkProvider` throws.
 
+- **The SDK uses `OperatorInfo` in its own code.** Internal code and the
+  published `.d.ts` name `OperatorInfo`, `GetOperatorInfoOptions` and
+  `networkFromOperatorInfo` instead of their deprecated aliases. The types are
+  the same, so nothing changes for callers.
+
 - **Worker `GET_BOARDING_UTXOS` rejects before `INIT_WALLET`.** It answered
   `[]` with no wallet, which a caller could not tell from a wallet with no
   boarding coins; it now throws `WalletNotInitializedError`, like
