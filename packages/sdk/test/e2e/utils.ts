@@ -13,13 +13,12 @@ import {
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
-    ArkadeInfo,
-    ArkProvider,
-    RestArkProvider,
+    OperatorInfo,
+    OperatorProvider,
+    RestOperatorProvider,
     WalletRepository,
     ContractRepository,
     arkade,
-    Extension,
     EmulatorPacket,
     networks,
     Transaction,
@@ -30,7 +29,7 @@ import {
     ExitDataSource,
     NormalizedExtendedVirtualCoin,
 } from "../../src";
-import { ANCHOR_PKSCRIPT } from "../../src/utils/anchor";
+import { attachExtension } from "../../src/arkade/contract";
 import type { ExtensionPacket } from "../../src/extension";
 import { hex } from "@scure/base";
 
@@ -161,7 +160,7 @@ export async function createTestArkWallet(opts?: {
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -186,7 +185,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -213,7 +212,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 
     const wallet = await Wallet.create({
         identity,
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -260,7 +259,7 @@ export async function createTestArkWalletFromMnemonic(
         identity,
         ...(walletMode !== undefined ? { walletMode } : {}),
         ...(lookAheadWindow !== undefined ? { lookAheadWindow } : {}),
-        arkProvider: new RestArkProvider(OPERATOR_URL),
+        arkProvider: new RestOperatorProvider(OPERATOR_URL),
         onchainProvider: new EsploraProvider(ESPLORA_API_URL, {
             forcePolling: true,
             pollingInterval: 2000,
@@ -411,15 +410,15 @@ export async function waitForUnrolledVtxos(wallet: {
 }
 
 /**
- * Wrap a real ArkProvider, overriding selected fields of `getInfo()` while
+ * Wrap a real OperatorProvider, overriding selected fields of `getInfo()` while
  * forwarding every other method to the underlying provider. Used to simulate
  * server-config changes (e.g. `unilateralExitDelay`) between wallet loads
  * without actually restarting arkd.
  */
 export function createOverrideInfoArkProvider(
-    real: ArkProvider,
-    overrides: Partial<ArkadeInfo>,
-): ArkProvider {
+    real: OperatorProvider,
+    overrides: Partial<OperatorInfo>,
+): OperatorProvider {
     return new Proxy(real, {
         get(target, prop, receiver) {
             if (prop === "getInfo") {
@@ -582,7 +581,7 @@ export function createSharedRepos(): SharedRepos {
 
 /**
  * Create a delegate-enabled wallet using a provided identity and repositories,
- * with an `ArkProvider` whose `getInfo()` overrides `unilateralExitDelay` to
+ * with an `OperatorProvider` whose `getInfo()` overrides `unilateralExitDelay` to
  * simulate a server-side config change without restarting arkd.
  */
 export async function createTestArkWalletWithDelegateAndOverride(opts: {
@@ -590,7 +589,7 @@ export async function createTestArkWalletWithDelegateAndOverride(opts: {
     repos: SharedRepos;
     unilateralExitDelay: bigint;
 }): Promise<TestArkWallet> {
-    const realProvider = new RestArkProvider(OPERATOR_URL);
+    const realProvider = new RestOperatorProvider(OPERATOR_URL);
     const arkProvider = createOverrideInfoArkProvider(realProvider, {
         unilateralExitDelay: opts.unilateralExitDelay,
         // This fixture exercises the current-signer exit-delay change only. Pin a
@@ -715,40 +714,7 @@ export function addEmulatorPacket(
         })),
     );
 
-    // Try to merge into an existing extension output.
-    for (let i = 0; i < tx.outputsLength; i++) {
-        const out = tx.getOutput(i);
-        if (!out?.script) continue;
-        if (!Extension.isExtension(out.script)) continue;
-        const existing = Extension.fromBytes(out.script);
-        const merged = Extension.create([...existing.getPackets(), packet as ExtensionPacket]);
-        tx.updateOutput(i, { script: merged.serialize(), amount: 0n });
-        return;
-    }
-
-    // No existing extension — insert a new one.
-    const ext = Extension.create([packet as ExtensionPacket]);
-    const newOut = ext.txOut();
-
-    // If the last output is the P2A anchor, swap it: [..., anchor] → [..., ext, anchor].
-    const lastIdx = tx.outputsLength - 1;
-    const lastOut = tx.getOutput(lastIdx);
-    if (
-        lastOut?.script &&
-        lastOut.script.length === ANCHOR_PKSCRIPT.length &&
-        lastOut.script.every((b, j) => b === ANCHOR_PKSCRIPT[j])
-    ) {
-        // @scure Transaction has no `insertOutput`. Rebuild the last two outputs:
-        // overwrite slot lastIdx with the extension and append the anchor.
-        tx.updateOutput(lastIdx, {
-            script: newOut.script,
-            amount: newOut.amount,
-        });
-        tx.addOutput({ script: lastOut.script, amount: lastOut.amount ?? 0n });
-        return;
-    }
-
-    tx.addOutput({ script: newOut.script, amount: newOut.amount });
+    attachExtension(tx, [packet as ExtensionPacket]);
 }
 
 /**

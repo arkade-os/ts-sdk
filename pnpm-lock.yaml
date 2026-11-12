@@ -100,6 +100,9 @@ importers:
         specifier: 1.0.5
         version: 1.0.5
     devDependencies:
+      '@arkade-os/compiler':
+        specifier: 0.1.0-rc.1
+        version: 0.1.0-rc.1
       '@vitest/coverage-v8':
         specifier: 3.2.7
         version: 3.2.7(vitest@3.2.7(@types/node@25.9.2)(lightningcss@1.32.0)(terser@5.48.0)(yaml@2.9.0))
@@ -152,6 +155,10 @@ packages:
   '@ampproject/remapping@2.3.0':
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
     engines: {node: '>=6.0.0'}
+
+  '@arkade-os/compiler@0.1.0-rc.1':
+    resolution: {integrity: sha512-CEdNBYpq7qcb4j1bMyOzgOHDVnFs5CcduSTbSwGLcZT1mVdF5oDv6k1E9fddnWvVExNrYWwZEV9C8UcEYgl3pg==}
+    engines: {node: '>=22.12.0'}
 
   '@arkade-os/solver-discovery@0.3.0':
     resolution: {integrity: sha512-FMAhWG3vZrKIlCP1U8E5iAgB6O1wc6O1CMk+HlQ4xUf066p/S8PuRgmHtkHcL1YrGsdWhKfP/SSFwgLIbGTQjg==}
@@ -3716,6 +3723,8 @@ snapshots:
     dependencies:
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
+
+  '@arkade-os/compiler@0.1.0-rc.1': {}
 
   '@arkade-os/solver-discovery@0.3.0':
     dependencies:

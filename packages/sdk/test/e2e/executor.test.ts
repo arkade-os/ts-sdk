@@ -16,7 +16,7 @@ import { ArkAddress } from "../../src/script/address";
 import { hex } from "@scure/base";
 import { ESPLORA_API_URL, faucetOnchain, waitFor } from "./utils";
 
-// The Executor of the sdk-executor stack (arkade-regtest `delegatee` profile), which seeds and
+// The Executor of the sdk-executor stack (arkade-regtest `executor` profile), which seeds and
 // trusts its default templates at startup.
 const EXECUTOR_URL = process.env.EXECUTOR_URL ?? "http://localhost:7280";
 const ESPLORA_URL = process.env.ESPLORA_URL ?? ESPLORA_API_URL;

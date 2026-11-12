@@ -221,10 +221,10 @@ export class ExecutorManagerImpl implements IExecutorManager {
         ]);
         // the watch address commits to the service's operator key, so it must be the wallet's
         const { hrp, serverPubKey } = ArkAddress.decode(address);
-        const operator = hex.encode(serverPubKey);
-        if (info.serverPubkey.slice(2).toLowerCase() !== operator) {
+        const server = hex.encode(serverPubKey);
+        if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
-                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${operator}`,
+                `Executor's operator key ${info.serverPubkey} is not the wallet's operator ${server}`,
             );
         }
         const keys = {

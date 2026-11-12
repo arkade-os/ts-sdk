@@ -38,7 +38,7 @@ const identity = SingleKey.fromHex(
 // an Executor is configured; the wallet never calls it for its addresses
 const executorProvider = {} as ExecutorProvider;
 
-async function delegatedRow(template: "renewal" | "boarding") {
+async function executorRow(template: "renewal" | "boarding") {
     const params = ExecutorContractHandler.serializeParams({
         template,
         owner: await identity.compressedPublicKey(),
@@ -67,8 +67,8 @@ async function delegatedRow(template: "renewal" | "boarding") {
 
 async function walletWith(options: { executor: boolean; rows: boolean }) {
     const contractRepository = new InMemoryContractRepository();
-    const renewal = await delegatedRow("renewal");
-    const boarding = await delegatedRow("boarding");
+    const renewal = await executorRow("renewal");
+    const boarding = await executorRow("boarding");
     if (options.rows) {
         await contractRepository.saveContract(renewal.contract);
         await contractRepository.saveContract(boarding.contract);

@@ -158,10 +158,10 @@ export function instantiate(
         );
         covenants.set(fn.name, script);
     }
-    const operator = hex.decode(keys.serverPubkey);
+    const server = hex.decode(keys.serverPubkey);
     const emulator = hex.decode(keys.emulatorPubkey);
     const leafValue = (name: string): Value => {
-        if (name === "SERVER_KEY") return operator.subarray(1);
+        if (name === "SERVER_KEY") return server.subarray(1);
         if (name.startsWith("EMULATOR_KEY:")) {
             const covenant = covenants.get(name.slice("EMULATOR_KEY:".length));
             if (!covenant) throw new Error(`${name} names no covenant`);

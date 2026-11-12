@@ -38,7 +38,7 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
     );
     return {
         ...mod,
-        RestArkProvider: class {
+        RestOperatorProvider: class {
             async getInfo() {
                 return {
                     signerPubkey: "02" + server,
@@ -73,12 +73,12 @@ const managed = async (rows: Contract[] = []) => {
         contractRepository: repository,
         walletRepository: new InMemoryWalletRepository(),
     });
-    const { RestArkProvider } = await import("@arkade-os/sdk");
+    const { RestOperatorProvider } = await import("@arkade-os/sdk");
     const wallet = {
         identity: { xOnlyPublicKey: async () => makerKey },
         getAddress: async () => makerAddress,
         getContractManager: async () => manager,
-        getArkadeInfo: async () => new RestArkProvider("http://ark").getInfo(),
+        getArkadeInfo: async () => new RestOperatorProvider("http://ark").getInfo(),
     } as unknown as IWallet;
     return { manager, wallet };
 };

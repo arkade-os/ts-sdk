@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ReadonlyWalletConfig, WalletConfig } from "../src/wallet";
-import type { ArkadeInfo } from "../src/providers/ark";
+import type { OperatorInfo } from "../src/providers/ark";
 import { ReadonlyWallet, Wallet } from "../src/wallet/wallet";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
@@ -10,7 +10,7 @@ import { makeMockIndexer, makeMockOnchain } from "./helpers/restoreWallet";
 const PRIVATE_KEY_HEX = "1".repeat(64);
 const SERVER_KEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-const arkInfo = (): ArkadeInfo => ({
+const arkInfo = (): OperatorInfo => ({
     boardingExitDelay: 144n,
     checkpointTapscript:
         "039d0440b2752079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",

@@ -17,7 +17,7 @@ import {
     networks,
     OnchainWallet,
     provisionClaimSecret,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     setArkPsbtField,
     SingleKey,
@@ -99,7 +99,7 @@ describe("vhtlc", () => {
             signMessage: bob.signMessage,
         };
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestOperatorProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
@@ -132,6 +132,8 @@ describe("vhtlc", () => {
         );
 
         const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
+        // arkd v0.9.24+ wants each checkpoint to carry its ark tx input's condition witness.
+        for (const c of checkpoints) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
         const { arkTxid, finalArkTx, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(signedArkTx.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
@@ -228,7 +230,7 @@ describe("vhtlc", () => {
             signMessage: (message, signatureType) => restored.signMessage(message, signatureType),
         };
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestOperatorProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
 
         const spendable = await indexerProvider.getVtxos({
@@ -255,6 +257,8 @@ describe("vhtlc", () => {
         );
 
         const signedArkTx = await claimIdentity.sign(arkTx);
+        // arkd v0.9.24+ wants each checkpoint to carry its ark tx input's condition witness.
+        for (const c of checkpoints) setArkPsbtField(c, 0, ConditionWitness, [preimage]);
         const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(signedArkTx.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT())),
@@ -437,7 +441,7 @@ describe("vhtlc", () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
-        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const arkProvider = new RestOperatorProvider("http://localhost:7070");
         const indexerProvider = new RestIndexerProvider("http://localhost:7070");
         const onchainProvider = new EsploraProvider("http://localhost:3000/api");
 

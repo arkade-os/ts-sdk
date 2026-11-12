@@ -17,7 +17,7 @@ want a quick one.
 ```bash
 pnpm run test:integration              # Every package, end-to-end
 pnpm run test:integration:sdk          # sdk only
-pnpm run test:integration:sdk-executor  # sdk Executor e2e, on its own stack
+pnpm run test:integration:sdk-executor  # sdk executor e2e, on its own stack
 pnpm run test:integration:swap         # swap only
 pnpm run test:integration:swap-rfq     # swap's RFQ corridor only
 ```
@@ -50,8 +50,8 @@ definition of the groups: `scripts/e2e-groups.mjs` reads it so the local `groups
 ### Executor e2e
 
 `packages/sdk/test/e2e/executor.test.ts` runs on its own stack, `sdk-executor`: arkade-regtest's
-`delegatee` profile (the Executor daemon on :7280) with seconds-typed arkd timelocks, set in
-`packages/sdk/.env.regtest.executor`. It skips with a message when no Executor answers.
+`executor` profile (the executor daemon on :7280) with seconds-typed arkd timelocks, set in
+`packages/sdk/.env.regtest.executor`. It skips with a message when no executor answers.
 
 ```bash
 pnpm run regtest:up:sdk-executor

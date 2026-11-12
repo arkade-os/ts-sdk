@@ -1,11 +1,12 @@
 import { hex } from "@scure/base";
 import { assertTimerMs } from "../../utils/time";
+import type { Transaction } from "@scure/btc-signer";
 import { Wallet, extractOperatorProviderUrl, type ProviderConnectionState } from "../wallet";
 import type { Activity, ActivityRegistry } from "../activity";
 import type {
     ArkadeBroadcaster,
     ArkadeReader,
-    GetArkadeInfoOptions,
+    GetOperatorInfoOptions,
     IWallet,
     IAssetManager,
     WalletBalance,
@@ -19,8 +20,9 @@ import type {
     ExtendedCoin,
     Recipient,
     SendParams,
+    SendOnchainParams,
 } from "..";
-import type { ArkadeInfo, SettlementEvent } from "../../providers/ark";
+import type { OperatorInfo, SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type {
     AddressAllocationCapable,
@@ -310,8 +312,13 @@ export class ExpoWallet
         return this.wallet.getBoardingAddress();
     }
 
-    getArkadeInfo(opts?: GetArkadeInfoOptions): Promise<ArkadeInfo> {
-        return this.wallet.getArkadeInfo(opts);
+    getOperatorInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
+        return this.wallet.getOperatorInfo(opts);
+    }
+
+    /** @deprecated Use {@link getOperatorInfo}. */
+    getArkadeInfo(opts?: GetOperatorInfoOptions): Promise<OperatorInfo> {
+        return this.getOperatorInfo(opts);
     }
 
     getArkadeReader(): Promise<ArkadeReader> {
@@ -412,6 +419,14 @@ export class ExpoWallet
 
     send(...args: [SendParams] | [Recipient, ...Recipient[]]): Promise<string> {
         return this.wallet.send(...args);
+    }
+
+    cosignOnchainTx(psbt: string | Transaction): Promise<string> {
+        return this.wallet.cosignOnchainTx(psbt);
+    }
+
+    sendOnchain(params: SendOnchainParams): Promise<string> {
+        return this.wallet.sendOnchain(params);
     }
 
     get assetManager(): IAssetManager {

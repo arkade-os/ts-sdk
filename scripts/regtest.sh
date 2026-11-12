@@ -5,7 +5,7 @@
 # .env.regtest override (packages/<pkg>/.env.regtest). This script wires the
 # right override file into the regtest Node CLI via --env.
 #
-# `sdk-executor` is a second profile of the sdk package: the Executor daemon
+# `sdk-executor` is a second profile of the sdk package: the executor daemon
 # renews coins by wall-clock time, so its stack runs seconds-typed timelocks.
 #
 # `swap-rfq` is a second PROFILE of the swap package, not a fourth package: same
@@ -21,7 +21,7 @@
 # a server it cannot quote against — name it `rfq*`.
 #
 # Usage: scripts/regtest.sh <sdk|sdk-executor|swap|swap-rfq> <up|down|reset|setup|test|cycle|groups> [test file...]
-#   up     – clean + start with the package's .env.regtest
+#   up     – start with the package's .env.regtest (no clean: run reset first to switch packages)
 #   down   – stop the stack (preserves data)
 #   reset  – clean (remove containers, volumes)
 #   setup  – run the package's test/setup waiter

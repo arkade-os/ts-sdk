@@ -1,14 +1,14 @@
-import { collectIntents } from "../repositories/intentRepository";
+import { collectBatchRegistrations } from "../repositories/intentRepository";
 import { IndexerProvider } from "../providers/indexer";
 import { ArkErrorName, isArkError } from "../providers/errors";
-import type { Intent } from "../proof";
-import type { SignedIntent } from "../providers/ark";
+import type { Proof } from "../proof";
+import type { SignedProof } from "../providers/ark";
 import {
-    ALL_INTENT_STATES,
-    ArkIntent,
-    ArkIntentState,
-    IntentRepository,
-    isTerminalIntentState,
+    ALL_BATCH_REGISTRATION_STATES,
+    BatchRegistration,
+    BatchRegistrationState,
+    BatchRegistrationRepository,
+    isTerminalBatchRegistrationState,
 } from "../repositories/intentRepository";
 import type { Outpoint, VirtualCoin } from ".";
 import { getNormalizedVtxos, isVtxoSpent } from "./vtxo";
@@ -16,26 +16,25 @@ import { getNormalizedVtxos, isVtxoSpent } from "./vtxo";
 /**
  * Intent states a persisted intent can be stuck in after a crash: none of
  * these is terminal, so on their own they hide the intent's input VTXOs from
- * spendable balance forever (see {@link IntentRepository.getLockedVtxoOutpoints}).
+ * spendable balance forever (see {@link BatchRegistrationRepository.getLockedVtxoOutpoints}).
  *
- * Derived from {@link ALL_INTENT_STATES} so a newly added state only has to be
- * classified terminal-or-not in one place ({@link isTerminalIntentState}).
+ * Derived from {@link ALL_BATCH_REGISTRATION_STATES} so a newly added state only has to be
+ * classified terminal-or-not in one place ({@link isTerminalBatchRegistrationState}).
  */
-export const NON_TERMINAL_INTENT_STATES: readonly ArkIntentState[] = ALL_INTENT_STATES.filter(
-    (s) => !isTerminalIntentState(s),
-);
+export const NON_TERMINAL_INTENT_STATES: readonly BatchRegistrationState[] =
+    ALL_BATCH_REGISTRATION_STATES.filter((s) => !isTerminalBatchRegistrationState(s));
 
 /** Minimal indexer surface the reconciler needs. */
 export type IntentReconcilerIndexer = Pick<IndexerProvider, "getVtxos">;
 
 export interface IntentReconciliationDeps {
-    intentRepository: IntentRepository;
+    intentRepository: BatchRegistrationRepository;
     indexerProvider: IntentReconcilerIndexer;
     /**
      * Replays an intent's stored delete proof against arkd. Absent ⇒ an unresolved, unexpired
      * intent stays locked, since arkd never expires a queued intent on its own.
      */
-    deleteIntent?: (intent: SignedIntent<Intent.DeleteMessage>) => Promise<void>;
+    deleteIntent?: (intent: SignedProof<Proof.DeleteMessage>) => Promise<void>;
     /**
      * Whether a live settlement in this wallet is spending the outpoint. An intent with an
      * in-flight input belongs to that settlement and is skipped.
@@ -70,13 +69,13 @@ function isConsumed(vtxo: VirtualCoin | undefined): boolean {
  *     {@link reconcileIntents} releases it from the server.
  */
 export async function classifyIntent(
-    intent: ArkIntent,
+    intent: BatchRegistration,
     vtxosByOutpoint: Map<string, VirtualCoin>,
     now: number,
-): Promise<ArkIntent | undefined> {
-    if (isTerminalIntentState(intent.state)) return undefined;
+): Promise<BatchRegistration | undefined> {
+    if (isTerminalBatchRegistrationState(intent.state)) return undefined;
 
-    const inputs = intent.intentVtxos;
+    const inputs = intent.proofInputs;
     const consumed = inputs.map((o) => vtxosByOutpoint.get(outpointKey(o)));
 
     // All inputs consumed by a completed batch: the settlement succeeded even
@@ -127,9 +126,9 @@ export async function classifyIntent(
  */
 export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<void> {
     const now = deps.now ?? Date.now;
-    let intents: ArkIntent[];
+    let intents: BatchRegistration[];
     try {
-        intents = await collectIntents(deps.intentRepository, {
+        intents = await collectBatchRegistrations(deps.intentRepository, {
             states: [...NON_TERMINAL_INTENT_STATES],
         });
     } catch (e) {
@@ -139,7 +138,7 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
     if (intents.length === 0) return;
 
     // One indexer round-trip covering every locked input across all intents.
-    const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.intentVtxos));
+    const outpoints: Outpoint[] = dedupeOutpoints(intents.flatMap((i) => i.proofInputs));
     let vtxosByOutpoint = new Map<string, VirtualCoin>();
     if (outpoints.length > 0) {
         try {
@@ -163,13 +162,13 @@ export async function reconcileIntents(deps: IntentReconciliationDeps): Promise<
             // in-flight settlements. Re-read and only persist if the intent is
             // still in the state we classified, so a live settle() that has
             // since advanced it is never overwritten.
-            const [fresh] = await collectIntents(deps.intentRepository, {
-                intentTxIds: [intent.intentTxId],
+            const [fresh] = await collectBatchRegistrations(deps.intentRepository, {
+                proofTxIds: [intent.proofTxId],
             });
             if (!fresh || fresh.state !== intent.state) continue;
-            await deps.intentRepository.saveIntent(next);
+            await deps.intentRepository.saveBatchRegistration(next);
         } catch (e) {
-            console.error(`reconcileIntents: failed to reconcile intent ${intent.intentTxId}`, e);
+            console.error(`reconcileIntents: failed to reconcile intent ${intent.proofTxId}`, e);
         }
     }
 }
@@ -185,9 +184,9 @@ type ReleaseDeps = Pick<
  * there is nothing to release.
  */
 export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
-    let intents: ArkIntent[];
+    let intents: BatchRegistration[];
     try {
-        intents = await collectIntents(deps.intentRepository, {
+        intents = await collectBatchRegistrations(deps.intentRepository, {
             states: [...NON_TERMINAL_INTENT_STATES],
         });
     } catch (e) {
@@ -202,9 +201,9 @@ export async function releaseIntents(deps: ReleaseDeps): Promise<boolean> {
     return released;
 }
 
-function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
+function isInFlight(intent: BatchRegistration, deps: ReleaseDeps): boolean {
     const inFlight = deps.isOutpointInFlight;
-    return inFlight !== undefined && intent.intentVtxos.some((o) => inFlight(o));
+    return inFlight !== undefined && intent.proofInputs.some((o) => inFlight(o));
 }
 
 /**
@@ -212,18 +211,18 @@ function isInFlight(intent: ArkIntent, deps: ReleaseDeps): boolean {
  * signer). Only a confirmed removal cancels it: any other failure leaves the inputs locked.
  */
 async function releaseFromServer(
-    intent: ArkIntent,
+    intent: BatchRegistration,
     deps: ReleaseDeps,
     now: number,
-): Promise<ArkIntent | undefined> {
+): Promise<BatchRegistration | undefined> {
     // Re-checked: a settle may have claimed these inputs since the loop's check.
     if (!deps.deleteIntent || isInFlight(intent, deps)) return undefined;
     try {
-        const message = JSON.parse(intent.deleteProofMessage) as Intent.DeleteMessage;
+        const message = JSON.parse(intent.deleteProofMessage) as Proof.DeleteMessage;
         await deps.deleteIntent({ proof: intent.deleteProof, message });
     } catch (e) {
         if (!isNoMatchingIntentsError(e)) {
-            console.warn(`failed to delete intent ${intent.intentTxId} from the server`, e);
+            console.warn(`failed to delete intent ${intent.proofTxId} from the server`, e);
             return undefined;
         }
     }
@@ -244,11 +243,11 @@ export function isNoMatchingIntentsError(e: unknown): boolean {
 }
 
 function terminal(
-    intent: ArkIntent,
-    state: ArkIntentState,
+    intent: BatchRegistration,
+    state: BatchRegistrationState,
     now: number,
-    patch: Partial<ArkIntent>,
-): ArkIntent {
+    patch: Partial<BatchRegistration>,
+): BatchRegistration {
     return { ...intent, ...patch, state, updatedAt: now };
 }
 

@@ -12,7 +12,7 @@ import {
     ArkAddress,
     EsploraProvider,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     SingleKey,
     Transaction,
@@ -321,7 +321,7 @@ const mintAssetProgram = {
 
 describe("arkade", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const explorer = new EsploraProvider(ESPLORA_URL);
 
@@ -557,7 +557,7 @@ describe("arkade", () => {
                     value: vtxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: vtxo.status,
                     script: vtxo.script,
                     createdAt: vtxo.createdAt,
@@ -730,7 +730,7 @@ describe("arkade", () => {
                     value: utxo.value,
                     tapTree,
                     forfeitTapLeafScript: arkadeLeaf,
-                    intentTapLeafScript: arkadeLeaf,
+                    proofTapLeafScript: arkadeLeaf,
                     status: {
                         confirmed: utxo.status?.confirmed ?? false,
                         block_time: 0,
@@ -1006,7 +1006,7 @@ describe("arkade", () => {
                     value: settleVtxo.value,
                     tapTree: settleTapTree,
                     forfeitTapLeafScript: settleArkadeLeaf,
-                    intentTapLeafScript: settleArkadeLeaf,
+                    proofTapLeafScript: settleArkadeLeaf,
                     status: settleVtxo.status,
                     script: settleVtxo.script,
                     createdAt: settleVtxo.createdAt,

@@ -18,23 +18,60 @@ import {
     toProviderUnavailable,
 } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
-import { Intent, Proof } from "../proof";
+import { Proof } from "../proof";
 import { DEFAULT_ARKADE_SERVER_URL } from "../networks";
 import { ARKADE_VERSION_HEADERS, fetch } from "../utils/fetch";
 import { rateGate } from "./rateGate";
 
 /**
  * Thrown by {@link RestOperatorProvider} when arkd rejects a request with
- * `DIGEST_MISMATCH` — the client's cached server info was stale (e.g. an
+ * `DIGEST_MISMATCH` — the client's cached operator info was stale (e.g. an
  * operator signer rotation). By the time this surfaces the provider has already
  * refreshed its info and fired `onServerInfoChanged`; the caller should rebuild
- * the request under the fresh server info and retry. Mirrors NArk's
+ * the request under the fresh operator info and retry. Mirrors NArk's
  * `DigestMismatchException` (dotnet-sdk #131): the SDK never silently retries.
  */
 export class DigestMismatchError extends Error {
     constructor(message: string) {
         super(message);
         this.name = "DigestMismatchError";
+    }
+}
+
+export const ONCHAIN_COSIGN_UNSUPPORTED_PREFIX = "Arkade server does not support onchain cosigning";
+export const ONCHAIN_COSIGN_REJECTED_PREFIX = "Arkade server refused to cosign onchain tx: ";
+
+export class OnchainCosignUnsupportedError extends Error {
+    constructor() {
+        super(ONCHAIN_COSIGN_UNSUPPORTED_PREFIX);
+        this.name = "OnchainCosignUnsupportedError";
+    }
+}
+
+/** arkd's structured error name is carried in the message as `[NAME] ` so it survives structured clone. */
+export class OnchainCosignRejectedError extends Error {
+    constructor(
+        readonly serverMessage: string,
+        readonly arkErrorName?: string,
+    ) {
+        super(
+            `${ONCHAIN_COSIGN_REJECTED_PREFIX}${arkErrorName ? `[${arkErrorName}] ` : ""}${serverMessage}`,
+        );
+        this.name = "OnchainCosignRejectedError";
+    }
+}
+
+export const ONCHAIN_COSIGN_AMBIGUOUS_PREFIX =
+    "Onchain cosign outcome unknown, the transaction may have been broadcast: ";
+
+/** The cosign request may have broadcast the tx: never retry the payment with other coins. */
+export class OnchainCosignAmbiguousError extends Error {
+    constructor(
+        readonly detail: string,
+        options?: { cause?: unknown },
+    ) {
+        super(`${ONCHAIN_COSIGN_AMBIGUOUS_PREFIX}${detail}`, options);
+        this.name = "OnchainCosignAmbiguousError";
     }
 }
 
@@ -154,7 +191,7 @@ export interface PendingTx {
 
 export interface DeprecatedSigner {
     /**
-     * Unix timestamp (seconds) after which the server no longer accepts this
+     * Unix timestamp (seconds) after which the operator no longer accepts this
      * signer's VTXOs as cooperative-migration inputs. arkd advertises this as a
      * non-nullable field, so it is always present: `0n` is the sentinel for "no
      * cutoff advertised" — the deprecated signer is due for migration
@@ -168,20 +205,23 @@ export interface DeprecatedSigner {
 
 export type ServiceStatus = Record<string, string>;
 
+/** @deprecated Use {@link OperatorInfo}. */
+export type ArkadeInfo = OperatorInfo;
+
 /**
- * The Arkade server's advertised configuration — the `/v1/info` response.
+ * The operator's advertised configuration, the `/v1/info` response.
  *
  * Naming/placement vs the NArk reference (AGENTS.md asks divergences to be
  * noted): NArk calls this `ArkServerInfo`, reads it via `GetServerInfoAsync`
  * on the *transport*, and caches it in a dedicated `CachingClientTransport`.
- * This SDK names it for the product (`ArkadeInfo`, per #734) and hangs the
- * read off the wallet (`getArkadeInfo()`), because here the wallet is the one
+ * This SDK names it for the operator and hangs the
+ * read off the wallet, because here the wallet is the one
  * object every consumer already holds and — in the service-worker model — the
  * only side that has a transport at all; the page has no provider to hang it
  * on. The `CachingClientTransport`-style memo lives at this layer instead, as
  * `CachingOperatorProvider`.
  */
-export interface ArkadeInfo {
+export interface OperatorInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
     deprecatedSigners: DeprecatedSigner[];
@@ -203,20 +243,20 @@ export interface ArkadeInfo {
      */
     vtxoTreeExpiry?: bigint;
     /**
-     * Weight budget an ark transaction must stay under; the server answers
+     * Weight budget a transaction must stay under; the operator answers
      * `TX_TOO_LARGE` past it.
      *
-     * `undefined` when not advertised — a server that omits the field and one
-     * that sends `0` both mean "no limit stated". Never `0n`, which would read
-     * as a server that accepts no transaction at all.
+     * `undefined` when not advertised. Omitting the field and sending `0` both
+     * mean "no limit stated". Never `0n`, which would say the operator accepts
+     * no transaction at all.
      */
     maxTxWeight?: bigint;
     /**
-     * Maximum OP_RETURN outputs the server accepts per transaction.
+     * Maximum OP_RETURN outputs the operator accepts per transaction.
      *
-     * `undefined` when not advertised — a server that omits the field and one
-     * that sends `0` both mean "no limit stated". Never `0n`, which would read
-     * as a server that forbids them outright.
+     * `undefined` when not advertised. Omitting the field and sending `0` both
+     * mean "no limit stated". Never `0n`, which would say the operator forbids
+     * them outright.
      */
     maxOpReturnOutputs?: bigint;
     /**
@@ -250,7 +290,7 @@ export interface SignedProof<T extends Proof.Message> {
 /** @deprecated Use {@link SignedProof}. */
 export type SignedIntent<T extends Proof.Message> = SignedProof<T>;
 
-/** Transaction notification emitted by the Arkade server stream. */
+/** Transaction notification emitted by the operator's stream. */
 export interface TxNotification {
     /** Transaction id. */
     txid: string;
@@ -276,7 +316,7 @@ export interface TxNotification {
 export interface SweepTxNotification extends TxNotification {
     /**
      * Outpoints the transaction swept — outpoints rather than virtual outputs,
-     * because a swept output is gone: the server has nothing left to describe
+     * because a swept output is gone: the operator has nothing left to describe
      * beyond where it was. Empty when the sweep touched none of them.
      */
     sweptVtxos: Outpoint[];
@@ -293,8 +333,11 @@ export interface TxNotificationEvent {
 }
 
 export interface OperatorProvider {
-    /** Fetch Arkade server configuration and fee settings. */
-    getInfo(): Promise<ArkadeInfo>;
+    /** Fetch the operator's configuration and fee settings. */
+    getInfo(): Promise<OperatorInfo>;
+
+    /** Cosign and broadcast an onchain tx spending server-cosigned UTXOs; returns the txid. */
+    cosignOnchainTx?(psbtB64: string): Promise<string>;
 
     /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
@@ -309,11 +352,11 @@ export interface OperatorProvider {
     /** Finalize a previously submitted Arkade transaction. */
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 
-    /** Register a signed intent with the Arkade server. */
-    registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string>;
+    /** Register a signed intent with the operator. */
+    registerIntent(intent: SignedProof<Proof.RegisterMessage>): Promise<string>;
 
     /** Delete a previously registered intent. */
-    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
+    deleteIntent(intent: SignedProof<Proof.DeleteMessage>): Promise<void>;
 
     /** Confirm an already registered intent id. */
     confirmRegistration(intentId: string): Promise<void>;
@@ -334,7 +377,7 @@ export interface OperatorProvider {
     /** Open the settlement event stream for the given topics. */
     getEventStream(signal: AbortSignal, topics: string[]): AsyncIterableIterator<SettlementEvent>;
 
-    /** Stream transaction notifications emitted by the Arkade server. */
+    /** Stream transaction notifications emitted by the operator. */
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<TxNotificationEvent>;
 
     /** Fetch pending transactions for a signed get-pending-tx intent. */
@@ -349,7 +392,7 @@ export interface OperatorProvider {
  * carrying the fields but not configuring them sends `"0"` instead of omitting
  * them. Field absent (an arkd predating them) and field zero are the same
  * statement — the operator did not advertise a limit — so both answer
- * `undefined`. `0n` would read as a server that accepts no transaction at all
+ * `undefined`. `0n` would say the operator accepts no transaction at all
  * and forbids OP_RETURN outright, which is the opposite of "did not say".
  * NArk reads the same zero as unset (`SpendingService.GetMaxOpReturnOutputs`).
  */
@@ -381,29 +424,31 @@ export class RestOperatorProvider implements OperatorProvider {
     }
 
     /**
-     * Last server-info digest seen (from {@link getInfo}). Sent as `X-Digest`
+     * Last operator info digest seen (from {@link getInfo}). Sent as `X-Digest`
      * on outgoing requests so arkd can reject a client whose cached info is
      * stale. Empty until the first {@link getInfo}.
      */
     private _digest = "";
+    private _onchainCosignUnsupported = false;
     private _hasServerInfo = false;
     private _suppressNextGetInfoChangeEmit = false;
 
-    private _serverInfoListeners = new Set<(info: ArkadeInfo) => void>();
+    private _serverInfoListeners = new Set<(info: OperatorInfo) => void>();
 
     /**
-     * Subscribe to server-info changes. Fired after a stale-info
+     * Subscribe to operator info changes. Fired after a stale-info
      * `DIGEST_MISMATCH` refresh or when {@link getInfo} observes a changed digest.
      * Returns an unsubscribe function.
      */
-    onServerInfoChanged(listener: (info: ArkadeInfo) => void): () => void {
+    onServerInfoChanged(listener: (info: OperatorInfo) => void): () => void {
         this._serverInfoListeners.add(listener);
         return () => {
             this._serverInfoListeners.delete(listener);
         };
     }
 
-    private emitServerInfoChanged(info: ArkadeInfo): void {
+    private emitServerInfoChanged(info: OperatorInfo): void {
+        this._onchainCosignUnsupported = false;
         for (const listener of this._serverInfoListeners) {
             try {
                 listener(info);
@@ -414,7 +459,7 @@ export class RestOperatorProvider implements OperatorProvider {
     }
 
     /**
-     * `fetch` wrapper for arkd requests that participates in server-info digest
+     * `fetch` wrapper for arkd requests that participates in operator info digest
      * negotiation. Sends the cached `X-Digest`; when arkd rejects a request with
      * `DIGEST_MISMATCH`, refreshes {@link getInfo} (updating the digest), fires
      * {@link onServerInfoChanged}, and THROWS {@link DigestMismatchError} — it
@@ -437,7 +482,7 @@ export class RestOperatorProvider implements OperatorProvider {
         try {
             response = await fetch(url, { ...init, headers });
         } catch (err) {
-            // Server unreachable: surface a typed retryable unavailable error so
+            // Operator unreachable: surface a typed retryable unavailable error so
             // cooperative flows fail with it rather than leaking a raw FetchError.
             throw toProviderUnavailable(err, "arkade");
         }
@@ -473,17 +518,18 @@ export class RestOperatorProvider implements OperatorProvider {
         // rejecting the request — terminal, even when grpc-gateway renders it as a
         // 5xx. Only a non-structured 429/5xx (a bare proxy/gateway failure) is a
         // retryable availability condition.
-        if (!arkError) throwIfHttpUnavailable(response, "arkade");
+        // 501 (gRPC UNIMPLEMENTED) is permanent, not an availability failure.
+        if (!arkError && response.status !== 501) throwIfHttpUnavailable(response, "arkade");
         if (!isArkError(arkError, ArkErrorName.DIGEST_MISMATCH)) return response;
-        // arkd rejected this request because our cached server info is stale
+        // arkd rejected this request because our cached operator info is stale
         // (e.g. the operator rotated its signer). Mirror NArk's BuildVersionHandler
         // (dotnet-sdk #131): clear the digest, refetch info, fire onServerInfoChanged
         // so the wallet re-derives signer-dependent state, then THROW. The SDK does
         // NOT silently retry — the in-flight request was built against the old config,
-        // so the caller must rebuild and retry it under the refreshed server info.
+        // so the caller must rebuild and retry it under the refreshed operator info.
         this._digest = "";
         this._suppressNextGetInfoChangeEmit = true;
-        let info: ArkadeInfo;
+        let info: OperatorInfo;
         try {
             info = await this.getInfo();
         } finally {
@@ -516,7 +562,7 @@ export class RestOperatorProvider implements OperatorProvider {
         return response;
     }
 
-    async getInfo(): Promise<ArkadeInfo> {
+    async getInfo(): Promise<OperatorInfo> {
         const url = `${this.serverUrl}/v1/info`;
         // Wait + report (see rateGate): shares an origin, and a limiter, with
         // the indexer. The fetch carries its own budget where the runtime
@@ -534,16 +580,16 @@ export class RestOperatorProvider implements OperatorProvider {
             // A 429 or 5xx means the operator is up but temporarily unable to
             // serve — a retryable availability failure, not a config/auth error.
             // Surface it as a typed unavailable error so wallet boot can fall
-            // back to a cached server-info snapshot. Pass the body so a 5xx that
+            // back to a cached operator info snapshot. Pass the body so a 5xx that
             // actually carries a structured arkd error (grpc-gateway maps gRPC
             // INTERNAL -> HTTP 500) stays terminal instead. `fetch` transport
-            // failures (server unreachable) are already surfaced as FetchError
+            // failures (operator unreachable) are already surfaced as FetchError
             // upstream.
             throwIfHttpUnavailable(response, "arkade", errorText);
             handleError(errorText, `Failed to get server info: ${response.statusText}`);
         }
         const fromServer = await response.json();
-        const info: ArkadeInfo = {
+        const info: OperatorInfo = {
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
@@ -594,7 +640,7 @@ export class RestOperatorProvider implements OperatorProvider {
         const hadServerInfo = this._hasServerInfo;
         this._digest = info.digest;
         this._hasServerInfo = true;
-        // A refresh can observe server-info changes before any digest-gated
+        // A refresh can observe operator info changes before any digest-gated
         // request fails. `_hasServerInfo` makes an empty previous digest count
         // as a real value; `DIGEST_MISMATCH` emits separately after its refetch.
         if (
@@ -636,6 +682,44 @@ export class RestOperatorProvider implements OperatorProvider {
         };
     }
 
+    async cosignOnchainTx(psbtB64: string): Promise<string> {
+        if (this._onchainCosignUnsupported) throw new OnchainCosignUnsupportedError();
+        let response: Response;
+        let text: string;
+        try {
+            response = await this.authedFetch(`${this.serverUrl}/v1/tx/onchain/cosign`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tx: psbtB64 }),
+            });
+            if (response.ok) {
+                // Thrown here so a malformed success reads as ambiguous: arkd may have broadcast.
+                const { txid } = await response.json();
+                if (typeof txid !== "string" || !txid)
+                    throw new Error("cosign response has no txid");
+                return txid;
+            }
+            text = await response.text();
+        } catch (e) {
+            if (e instanceof DigestMismatchError) throw e;
+            throw new OnchainCosignAmbiguousError(e instanceof Error ? e.message : String(e), {
+                cause: e,
+            });
+        }
+        const arkError = maybeArkError(new Error(text));
+        if (!arkError && (response.status === 404 || response.status === 501)) {
+            this._onchainCosignUnsupported = true;
+            throw new OnchainCosignUnsupportedError();
+        }
+        // arkd answers INTERNAL_ERROR even after a successful broadcast (failed db write).
+        if (!arkError || arkError.name === ArkErrorName.INTERNAL_ERROR) {
+            throw new OnchainCosignAmbiguousError(
+                arkError?.message ?? `${response.status} ${text}`,
+            );
+        }
+        throw new OnchainCosignRejectedError(arkError.message, arkError.name);
+    }
+
     async finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void> {
         const url = `${this.serverUrl}/v1/tx/finalize`;
         await this.postJson(
@@ -648,7 +732,7 @@ export class RestOperatorProvider implements OperatorProvider {
         );
     }
 
-    async registerIntent(intent: SignedIntent<Intent.RegisterMessage>): Promise<string> {
+    async registerIntent(intent: SignedProof<Proof.RegisterMessage>): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await this.postJson(
             url,
@@ -665,7 +749,7 @@ export class RestOperatorProvider implements OperatorProvider {
         return data.intentId;
     }
 
-    async deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void> {
+    async deleteIntent(intent: SignedProof<Proof.DeleteMessage>): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         await this.postJson(
             url,
@@ -789,7 +873,7 @@ export class RestOperatorProvider implements OperatorProvider {
                             break;
                         }
 
-                        // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                        // ignore timeout errors, they're expected when the operator is not sending anything for 5 min
                         if (isFetchTimeoutError(error)) {
                             console.debug("Timeout error ignored");
                             continue;
@@ -868,7 +952,7 @@ export class RestOperatorProvider implements OperatorProvider {
                             break;
                         }
 
-                        // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                        // ignore timeout errors, they're expected when the operator is not sending anything for 5 min
                         if (isFetchTimeoutError(error)) {
                             console.debug("Timeout error ignored");
                             continue;
@@ -1096,7 +1180,7 @@ function decodeMusig2Nonces(noncesObject: Record<string, string>): TreeNonces {
     );
 }
 
-// ProtoTypes namespace defines unexported types representing the raw data received from the server
+// ProtoTypes namespace defines unexported types representing the raw data received from the operator
 namespace ProtoTypes {
     interface BatchStartedEvent {
         id: string;
@@ -1214,7 +1298,7 @@ namespace ProtoTypes {
 
 /**
  * Budget for a single live `/v1/info` fetch. Exported so the service-worker
- * page deadline for GET_ARKADE_INFO is DERIVED from it (budget + queue
+ * page deadline for GET_OPERATOR_INFO is DERIVED from it (budget + queue
  * headroom).
  */
 export const INFO_FETCH_TIMEOUT_MS = 12_000;

@@ -18,16 +18,22 @@ export const ESPLORA_URL: Record<NetworkName, string> = {
 export type ExplorerTransaction = {
     txid: string;
     /**
-     * Spent outpoints, as returned by Esplora's `/address/:addr/txs`; the electrum provider omits
-     * them. Used to recover a boarding output's commitment tx when `/outspends` omits the spender.
+     * Spent outpoints, as returned by Esplora's `/address/:addr/txs` and built from the raw tx by
+     * the electrum provider. `getBoardingTxs` reads a boarding output's spender (commitment tx)
+     * from them and asks `getTxOutspend(s)` only when no listed tx spends it, so a provider that
+     * sets this saves one outspend request per settled boarding output. Leave it unset when
+     * unknown: the outspend request then runs as before.
      */
     vin?: {
         txid: string;
         vout: number;
+        /** Set by Esplora; the electrum provider omits it. */
+        prevout?: { scriptpubkey_address?: string };
     }[];
     vout: {
         scriptpubkey_address: string;
-        value: string;
+        /** Output amount in satoshis, matching Esplora's numeric JSON field. */
+        value: number;
     }[];
     status: {
         confirmed: boolean;
@@ -140,6 +146,12 @@ export interface OnchainProvider {
         time: number;
         hash: string;
     }>;
+
+    /**
+     * Fetch consensus median-time-past for a block at the given height. Providers that do not
+     * implement this cannot determine seconds-based relative-lock expiry from chain data.
+     */
+    getMedianTimePast?(height: number): Promise<number>;
 
     /**
      * Watch a set of addresses and invoke the callback when transactions are observed.
@@ -755,6 +767,35 @@ export class EsploraProvider implements OnchainProvider {
             time: tip[0].mediantime,
             hash,
         };
+    }
+
+    async getMedianTimePast(height: number): Promise<number> {
+        if (!Number.isInteger(height) || height < 0) {
+            throw new Error(`Invalid block height for median-time-past: ${height}`);
+        }
+        const hashResponse = await baseFetch(`${this.baseUrl}/block-height/${height}`);
+        if (!hashResponse.ok) {
+            throw new Error(
+                `Failed to get block hash at height ${height}: ${hashResponse.statusText}`,
+            );
+        }
+        const hash = (await hashResponse.text()).trim();
+        if (!hash) throw new Error(`No block hash returned at height ${height}`);
+
+        const blockResponse = await baseFetch(`${this.baseUrl}/block/${hash}`);
+        if (!blockResponse.ok) {
+            throw new Error(`Failed to get block ${hash}: ${blockResponse.statusText}`);
+        }
+        const block = await blockResponse.json();
+        if (
+            !block ||
+            typeof block !== "object" ||
+            typeof block.mediantime !== "number" ||
+            !Number.isFinite(block.mediantime)
+        ) {
+            throw new Error(`Invalid block median-time-past at height ${height}`);
+        }
+        return block.mediantime;
     }
 
     private async broadcastPackage(parent: string, child: string): Promise<string> {

@@ -11,7 +11,7 @@ import {
     InMemoryContractRepository,
     DefaultVtxo,
     MissingSigningDescriptorError,
-    RestArkProvider,
+    RestOperatorProvider,
     buildOffchainTx,
     CSVMultisigTapscript,
     type BatchSignableIdentity,
@@ -100,7 +100,7 @@ function makeHdWallet(
         // this file exercise the HD-rotation path, so they must opt
         // in explicitly.
         walletMode: "hd",
-        arkProvider: new RestArkProvider("http://localhost:7070"),
+        arkProvider: new RestOperatorProvider("http://localhost:7070"),
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
             contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -186,7 +186,7 @@ describe("Wallet HD rotation", () => {
                 identity: SingleKey.fromHex(
                     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -810,7 +810,7 @@ describe("Wallet HD rotation", () => {
                     isMainnet: false,
                 }),
                 walletMode: "static",
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -845,7 +845,7 @@ describe("Wallet HD rotation", () => {
                     isMainnet: false,
                 }),
                 // walletMode intentionally omitted → defaults to 'auto'.
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -863,7 +863,7 @@ describe("Wallet HD rotation", () => {
                         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: "hd",
-                    arkProvider: new RestArkProvider("http://localhost:7070"),
+                    arkProvider: new RestOperatorProvider("http://localhost:7070"),
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -884,7 +884,7 @@ describe("Wallet HD rotation", () => {
                     "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                 ),
                 walletMode: provider as never,
-                arkProvider: new RestArkProvider("http://localhost:7070"),
+                arkProvider: new RestOperatorProvider("http://localhost:7070"),
                 storage: {
                     walletRepository: repo,
                     contractRepository: new InMemoryContractRepository(),
@@ -918,7 +918,7 @@ describe("Wallet HD rotation", () => {
                         "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2",
                     ),
                     walletMode: provider as never,
-                    arkProvider: new RestArkProvider("http://localhost:7070"),
+                    arkProvider: new RestOperatorProvider("http://localhost:7070"),
                     storage: {
                         walletRepository: new InMemoryWalletRepository(),
                         contractRepository: new InMemoryContractRepository(),
@@ -1003,7 +1003,7 @@ describe("Wallet HD rotation", () => {
                 commitmentTxIds: [],
                 script: hex.encode(tapscript.pkScript),
                 forfeitTapLeafScript: tapscript.forfeit(),
-                intentTapLeafScript: tapscript.forfeit(),
+                proofTapLeafScript: tapscript.forfeit(),
                 tapTree: tapscript.encode(),
             };
         }
@@ -1224,7 +1224,7 @@ describe("Wallet HD rotation", () => {
                 isSpent: false,
                 script: hex.encode(cosignerScript.pkScript),
                 forfeitTapLeafScript: cosignerScript.forfeit(),
-                intentTapLeafScript: cosignerScript.forfeit(),
+                proofTapLeafScript: cosignerScript.forfeit(),
                 tapTree: cosignerScript.encode(),
             };
 
@@ -1456,7 +1456,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             : (base as unknown as ReturnType<typeof makeBatchSignable>);
         const wallet = await Wallet.create({
             identity,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: contractRepo ?? new InMemoryContractRepository(),
@@ -1492,7 +1492,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
             commitmentTxIds: [],
             script: hex.encode(tapscript.pkScript),
             forfeitTapLeafScript: tapscript.forfeit(),
-            intentTapLeafScript: tapscript.forfeit(),
+            proofTapLeafScript: tapscript.forfeit(),
             tapTree: tapscript.encode(),
         };
     }
@@ -1541,7 +1541,7 @@ describe("Wallet batch signing (BatchSignableIdentity)", () => {
         const signSpy = vi.spyOn(base, "sign");
         const wallet = await Wallet.create({
             identity: base,
-            arkProvider: new RestArkProvider("http://localhost:7070"),
+            arkProvider: new RestOperatorProvider("http://localhost:7070"),
             storage: {
                 walletRepository: new InMemoryWalletRepository(),
                 contractRepository: new InMemoryContractRepository(),

@@ -3,7 +3,7 @@ import { hex } from "@scure/base";
 import {
     arkade,
     networks,
-    RestArkProvider,
+    RestOperatorProvider,
     RestIndexerProvider,
     RestEmulatorProvider,
 } from "../../src";
@@ -74,7 +74,7 @@ const nonInteractiveHTLC = {
 
 describe("non-interactive vHTLC", () => {
     const emulator = new RestEmulatorProvider(EMULATOR_URL);
-    const arkProvider = new RestArkProvider(OPERATOR_URL);
+    const arkProvider = new RestOperatorProvider(OPERATOR_URL);
     const indexerProvider = new RestIndexerProvider(OPERATOR_URL);
     const receiverPkScript = randomP2TR();
     const funderPkScript = randomP2TR();

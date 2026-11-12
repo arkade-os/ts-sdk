@@ -11,11 +11,11 @@ import { hex } from "@scure/base";
 import {
     ArkAddress,
     asset,
-    networkFromArkadeInfo,
+    networkFromOperatorInfo,
     provisionClaimSecret,
     provisionRefundKey,
     toXOnly,
-    type ArkadeInfo,
+    type OperatorInfo,
     type IWallet,
     type ProvisionedClaimSecret,
     type ProvisionedKey,
@@ -210,7 +210,7 @@ export interface RfqQuoteInput {
     readonly amount?: PinnedAmount;
     readonly wallet: IWallet;
     /** Live, per section 6: a snapshot binds a covenant to a key that may have rotated. */
-    readonly info: ArkadeInfo;
+    readonly info: OperatorInfo;
     /**
      * The corridor modules, unresolved: resolution refuses a dep overridden to nothing, so each
      * route resolves only the corridors it uses.
@@ -249,7 +249,7 @@ const lockupOf = (derived: {
 });
 
 const covenantInputs = (input: RfqQuoteInput): CovenantInputs => {
-    const network = networkFromArkadeInfo(input.info);
+    const network = networkFromOperatorInfo(input.info);
     const arkade = input.corridors.get("arkade").deps;
     return {
         operatorPubkey: toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
@@ -355,7 +355,7 @@ const quoteArkadeAsset = async (
     const receivePkScript = resolveReceivePkScript(
         receiveAddress,
         maker.pkScript,
-        networkFromArkadeInfo(input.info).hrp,
+        networkFromOperatorInfo(input.info).hrp,
         toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
     );
     const choice = payment?.carrier;
@@ -433,7 +433,7 @@ const quoteArkadeAsset = async (
                 new ArkAddress(
                     toXOnly(hex.decode(input.info.signerPubkey), "ark signer key"),
                     maker.pkScript.slice(2),
-                    networkFromArkadeInfo(input.info).hrp,
+                    networkFromOperatorInfo(input.info).hrp,
                 ).encode(),
             validUntil,
             ...(carrier === undefined ? {} : { carrier }),

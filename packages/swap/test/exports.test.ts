@@ -311,6 +311,7 @@ const ADVANCED_ONLY: readonly string[] = [
     "resolveCorridorBase",
     "resolveCorridorDeps",
     "liveArkadeInfo",
+    "liveOperatorInfo",
     "CorridorBase",
     "CorridorDeps",
     "CorridorDepsByCorridor",

@@ -10,7 +10,7 @@ import {
     DEFAULT_ARKADE_SERVER_URL,
     type NetworkName,
 } from "../networks";
-import { type ArkadeInfo, type OperatorProvider, RestOperatorProvider } from "../providers/ark";
+import { type OperatorInfo, type OperatorProvider, RestOperatorProvider } from "../providers/ark";
 import { type EmulatorProvider, RestEmulatorProvider } from "../providers/emulator";
 import { type IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { ESPLORA_URL, EsploraProvider, type OnchainProvider } from "../providers/onchain";
@@ -34,7 +34,7 @@ export interface ResolvedArkadeService {
     /** The operator's cosigner that emulates Arkade Script; absent for an `operatorUrl` service
      * without `emulatorUrl`. */
     emulator?: EmulatorProvider;
-    info: ArkadeInfo;
+    info: OperatorInfo;
 }
 
 /** The operator URL a service names. */
@@ -51,7 +51,7 @@ export function arkadeServiceUrl(service: ArkadeService): string {
  */
 export async function resolveArkadeService(
     service: ArkadeService,
-    opts: { arkProvider?: OperatorProvider; info?: ArkadeInfo } = {},
+    opts: { arkProvider?: OperatorProvider; info?: OperatorInfo } = {},
 ): Promise<ResolvedArkadeService> {
     const operatorUrl = arkadeServiceUrl(service);
     const arkProvider = opts.arkProvider ?? new RestOperatorProvider(operatorUrl);
