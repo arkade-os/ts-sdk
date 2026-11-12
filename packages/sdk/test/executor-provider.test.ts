@@ -135,6 +135,23 @@ describe("RestExecutorProvider", () => {
             await expect(provider.getDelegation("tark1x")).rejects.toThrow(error);
         }
     });
+
+    it("tells an unknown watch from an unrouted path, both 404", async () => {
+        const provider = new RestExecutorProvider("https://executor.test");
+
+        respond({ code: 5, message: "delegation not found", details: [] }, 404);
+        await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({ status: 404 });
+
+        for (const body of [{ code: 5, message: "Not Found", details: [] }, "<html>404</html>"]) {
+            respond(body, 404);
+            const error = await provider.getDelegation("tark1x").catch((e) => e);
+            expect(error).toBeInstanceOf(ExecutorRequestError);
+            expect(error.status).toBeUndefined();
+        }
+
+        respond("boom", 500);
+        await expect(provider.getDelegation("tark1x")).rejects.toMatchObject({ status: 500 });
+    });
 });
 
 describe("ExecutorManagerImpl.register", () => {

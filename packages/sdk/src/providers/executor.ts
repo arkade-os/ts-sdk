@@ -48,7 +48,8 @@ export interface ExecutorDelegationDetails {
 
 /**
  * An executor request that failed. `status` is the HTTP status when the service answered
- * (404: it does not know the watch), and undefined when the request never reached it.
+ * (404: it does not know the watch), and undefined when the request never reached it or got
+ * an answer that is not the service's.
  */
 export class ExecutorRequestError extends Error {
     constructor(
@@ -129,7 +130,14 @@ export class RestExecutorProvider implements ExecutorProvider {
         const url = this.endpoint(`/v1/delegation?address=${encodeURIComponent(address)}`);
         const response = await rateGate.runHttp(url, () => baseFetch(url));
         if (!response.ok) {
-            throw await failure(response, "get executor delegation");
+            const body = await response.text();
+            // An unrouted path 404s with the same gRPC code as an unknown watch; only the
+            // message differs. Any other 404 is not the service saying the watch is over.
+            const unknownWatch = response.status !== 404 || isWatchNotFound(body);
+            throw new ExecutorRequestError(
+                `Failed to get executor delegation (${response.status}): ${body}`,
+                unknownWatch ? response.status : undefined,
+            );
         }
         const data: unknown = await response.json();
         if (!isObject(data)) {
@@ -147,6 +155,15 @@ async function failure(response: Response, what: string): Promise<ExecutorReques
         `Failed to ${what} (${response.status}): ${await response.text()}`,
         response.status,
     );
+}
+
+function isWatchNotFound(body: string): boolean {
+    try {
+        const data: unknown = JSON.parse(body);
+        return isObject(data) && data.message === "delegation not found";
+    } catch {
+        return false;
+    }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

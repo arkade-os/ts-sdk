@@ -391,7 +391,10 @@ style and have not been backfilled.
   derived differently is refused before anything is persisted, ended or not.
   A 404 ends a watch only when the service itself answers: a base URL or a
   proxy that 404s every path, `getInfo` included, is a failure to reach the
-  service and keeps the status the row had.
+  service and keeps the status the row had. So does a service that answers
+  `/v1/info` but does not route `GET /v1/delegation`: its 404 carries the same
+  gRPC code as an unknown watch, so `getDelegation` tells them apart by the
+  `delegation not found` message and reports any other 404 without a status.
 
 ### Changed
 
