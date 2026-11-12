@@ -167,12 +167,12 @@ describe("solverOnchainRendezvous", () => {
             ).not.toHaveProperty("emulatorPubkey");
         });
 
-        it("falls back to the pin when the card advertises none", () => {
+        it("takes a card advertising no key, requested key or not", () => {
             const bare = card("1000", "1000000", { emulator_pubkey: undefined });
             expect(solverOnchainRendezvous([bare], 100_000, pinned)?.solverPubkey).toBe(
                 SOLVER_PUBKEY,
             );
-            expect(solverOnchainRendezvous([bare], 100_000)).toBeUndefined();
+            expect(solverOnchainRendezvous([bare], 100_000)?.solverPubkey).toBe(SOLVER_PUBKEY);
         });
 
         it("fails closed on a malformed advertised key, pin or no pin", () => {
@@ -190,9 +190,10 @@ describe("solverOnchainRendezvous", () => {
             ).toBeUndefined();
         });
 
-        it("skips a card that disagrees with the pin rather than resolving it", () => {
+        it("skips a card that disagrees with a requested key, and takes it otherwise", () => {
             const other = card("1000", "1000000", { emulator_pubkey: "cc".repeat(32) });
             expect(solverOnchainRendezvous([other], 100_000, pinned)).toBeUndefined();
+            expect(solverOnchainRendezvous([other], 100_000)?.solverPubkey).toBe(SOLVER_PUBKEY);
         });
     });
 });

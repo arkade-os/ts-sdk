@@ -121,7 +121,10 @@ style and have not been backfilled.
   `profile.emulator_pubkey`, in x-only hex, and the solver's address is
   verified against that key. A solver whose strict schema predates the field
   refuses these requests. `fillOffer` no longer needs an `emulator`: a fill of
-  an offer whose co-signer key arkd holds goes to arkd.
+  an offer whose co-signer key arkd holds goes to arkd. Solver rendezvous
+  accepts any well-formed card when the payment rails are given no
+  `fallbackEmulatorPubkey`, since the request now names the key. With one
+  given, a card advertising a different key is still skipped.
 
 ### Features
 
