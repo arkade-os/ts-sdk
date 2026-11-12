@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
     vtxos: [] as unknown[],
     managed: null as unknown,
     emulatorSubmits: 0,
+    arkdFinalizes: 0,
+    deprecatedSigners: [] as { pubkey: string; cutoffDate: bigint }[],
     arkTx: undefined as string | undefined,
     prevTxs: new Map<string, string>(),
 }));
@@ -35,7 +37,19 @@ vi.mock("@arkade-os/sdk", async (importOriginal) => {
                 return {
                     signerPubkey: `02${hex.encode(SERVER_KEY)}`,
                     checkpointTapscript: CHECKPOINT,
+                    deprecatedSigners: state.deprecatedSigners,
                 };
+            }
+            async submitTx(arkTx: string, checkpointTxs: string[]) {
+                state.arkTx = arkTx;
+                return {
+                    arkTxid: mod.Transaction.fromPSBT(base64.decode(arkTx)).id,
+                    finalArkTx: arkTx,
+                    signedCheckpointTxs: checkpointTxs,
+                };
+            }
+            async finalizeTx() {
+                state.arkdFinalizes += 1;
             }
         },
         RestIndexerProvider: class {
@@ -135,6 +149,8 @@ const deposit = () => ({
 const reset = () => {
     state.managed = null;
     state.emulatorSubmits = 0;
+    state.arkdFinalizes = 0;
+    state.deprecatedSigners = [];
     state.arkTx = undefined;
     identity.sign.mockClear();
 };
@@ -151,6 +167,19 @@ describe("fillOffer against the REAL Arkade builder", () => {
             payoutScript: TAKER_PAYOUT,
         });
         expect(state.emulatorSubmits).toBe(1);
+        expect(txid).toBe(built().id);
+    });
+
+    it("goes to arkd, needing no emulator, once arkd holds the offer's co-signer key", async () => {
+        reset();
+        state.vtxos = [deposit()];
+        state.deprecatedSigners = [{ pubkey: hex.encode(offer.emulatorPubkey), cutoffDate: 0n }];
+        const txid = await fillOffer(wallet, "http://ark", offerHex, {
+            fund: [fundingCoin(80_000)] as never,
+            payoutScript: TAKER_PAYOUT,
+        });
+        expect(state.emulatorSubmits).toBe(0);
+        expect(state.arkdFinalizes).toBe(1);
         expect(txid).toBe(built().id);
     });
 
