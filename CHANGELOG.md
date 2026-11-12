@@ -115,6 +115,14 @@ style and have not been backfilled.
   the same key (an explicit `emulatorPubkey`, else arkd's `signerPubkey`), so
   `testnet` and `signet` no longer need an override.
 
+- **`@arkade-os/swap` names the covenant's co-signer key on every RFQ
+  request.** Each `rfq_request` whose quote builds a covenant (Lightning and
+  onchain sends and receives, and arkade-to-arkade swaps) carries it as
+  `profile.emulator_pubkey`, in x-only hex, and the solver's address is
+  verified against that key. A solver whose strict schema predates the field
+  refuses these requests. `fillOffer` no longer needs an `emulator`: a fill of
+  an offer whose co-signer key arkd holds goes to arkd.
+
 ### Features
 
 - **Export `TreeSignerSession` for custom identities.** External `Identity`
