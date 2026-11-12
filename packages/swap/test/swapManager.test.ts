@@ -2257,9 +2257,9 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(await m.hasSwap(RFQ_ID)).toBe(true);
     });
 
-    it("leaves a delegatee-sealed receive claimable without claiming it", async () => {
+    it("leaves a executor-sealed receive claimable without claiming it", async () => {
         const s = spies();
-        const swap = receiveSwap({ delegateeClaims: true });
+        const swap = receiveSwap({ executorClaims: true });
         const m = manager({
             indexer: fundedIndexer(),
             contracts: fundedContracts(),
@@ -2272,9 +2272,9 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
         expect(s.lockupClaims).toHaveLength(0);
     });
 
-    it("claim() pushes the claim of a delegatee-sealed receive", async () => {
+    it("claim() pushes the claim of a executor-sealed receive", async () => {
         const s = spies();
-        const swap = receiveSwap({ delegateeClaims: true });
+        const swap = receiveSwap({ executorClaims: true });
         const m = manager({
             indexer: fundedIndexer(),
             contracts: fundedContracts(),
@@ -2297,7 +2297,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             spies: spies(),
         });
         await expect(m.claim("unknown")).rejects.toThrow(/not monitored/);
-        const swap = receiveSwap({ delegateeClaims: true });
+        const swap = receiveSwap({ executorClaims: true });
         await m.addSwap(swap);
         await expect(m.claim(RFQ_ID)).rejects.toThrow(/not claimable/);
     });
@@ -2502,7 +2502,7 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
     it("settles on a hash-verified spend made by a txid that is not ours", async () => {
         // `nonInteractiveClaim` is pinned to the trader's own payout script, so
         // a claim that lands without us still pays us. Matching on the txid we
-        // submitted would turn that success into an anomaly the day delegatee
+        // submitted would turn that success into an anomaly the day executor
         // starts working.
         const spend = spendOfLockup({ script: RECEIVE_LOCKUP, conditionWitness: [PREIMAGE] });
         expect(spend.txid).not.toBe(CLAIM_TXID);

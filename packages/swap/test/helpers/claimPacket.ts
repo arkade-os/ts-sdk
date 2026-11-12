@@ -3,7 +3,7 @@
  *
  * These live here rather than in `src/claimPacket.ts` for two reasons. A full
  * ECIES *decrypt* next to production code is an invitation to misuse: nothing
- * in this package ever decrypts a packet, delegatee does. And deterministic
+ * in this package ever decrypts a packet, executor does. And deterministic
  * sealing must not be reachable from a production import path at all: AES-GCM
  * under a repeated (key, nonce) pair is a total break, so the only safe place
  * for a fixed nonce is a file that ships with the tests.
@@ -18,7 +18,7 @@ import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
 import {
-    DELEGATEE_CLAIM_TEMPLATE_ID,
+    EXECUTOR_CLAIM_TEMPLATE_ID,
     sealWithEntropy,
     type ClaimPacketInput,
     type SealedClaimPacket,
@@ -59,11 +59,11 @@ const amountBytes = (amount: bigint): Uint8Array => {
     return bytes;
 };
 
-/** delegatee's side of the scheme: recover P from a sealed packet. */
+/** executor's side of the scheme: recover P from a sealed packet. */
 export async function openClaimPacket(
     packetBase64: string,
     recipientSecretKey: Uint8Array,
-    templateId: string = DELEGATEE_CLAIM_TEMPLATE_ID,
+    templateId: string = EXECUTOR_CLAIM_TEMPLATE_ID,
     minAmount?: bigint,
 ): Promise<Uint8Array> {
     const sealedPacket = ciphertextOf(packetBase64);

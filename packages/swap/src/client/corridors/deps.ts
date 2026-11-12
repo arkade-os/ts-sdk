@@ -70,8 +70,8 @@ export interface CorridorOverrides {
         decode?: ((bolt11: string) => InvoiceFacts) | null;
         /** Default: none. Nothing is sealed and no packet is sent, so the
          * trader must claim its own lockup before `refund_locktime`. Set, `P` is
-         * sealed to delegatee's encryption key so it can claim while the trader is offline. */
-        delegatee?: { encryptionPubkey: Pubkey } | null;
+         * sealed to executor's encryption key so it can claim while the trader is offline. */
+        executor?: { encryptionPubkey: Pubkey } | null;
     };
     onchain?: {
         /** Default: Esplora at `ESPLORA_URL[network]`. `{ provider }` reads L1 through the caller's
@@ -135,9 +135,9 @@ export interface ArkadeCorridorDeps {
 export interface LightningCorridorDeps {
     readonly networkName: NetworkName;
     readonly decode: (bolt11: string) => InvoiceFacts;
-    /** `undefined` means no delegatee is configured: nothing is sealed and no
+    /** `undefined` means no executor is configured: nothing is sealed and no
      * packet is sent. Not a missing dep. */
-    readonly delegatee: { encryptionPubkey: Pubkey } | undefined;
+    readonly executor: { encryptionPubkey: Pubkey } | undefined;
 }
 
 /** The onchain corridor's deps. */
@@ -252,10 +252,10 @@ export function resolveCorridorDeps(
                 decode:
                     refusedIfNull(overrides?.lightning?.decode, "lightning", "bolt11 decoder") ??
                     decodeBolt11,
-                delegatee: refusedIfNull(
-                    overrides?.lightning?.delegatee,
+                executor: refusedIfNull(
+                    overrides?.lightning?.executor,
                     "lightning",
-                    "delegatee encryption key",
+                    "executor encryption key",
                 ),
             };
         }

@@ -1,5 +1,5 @@
 /**
- * ClaimPacket sealing to delegatee. The scheme matches delegatee's
+ * ClaimPacket sealing to executor. The scheme matches executor's
  * `pkg/template/ecies`; TLV framing is covered in `claimPacketCodec.test.ts`.
  */
 import { describe, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ import { gcm } from "@noble/ciphers/aes.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
-import { DELEGATEE_CLAIM_TEMPLATE_ID, sealClaimPacket } from "../src/claimPacket";
+import { EXECUTOR_CLAIM_TEMPLATE_ID, sealClaimPacket } from "../src/claimPacket";
 import {
     ciphertextOf,
     claimPacketHex,
@@ -63,7 +63,7 @@ describe("sealClaimPacket", () => {
         );
         const aad = new Uint8Array([
             ...ephPub,
-            ...new TextEncoder().encode(DELEGATEE_CLAIM_TEMPLATE_ID),
+            ...new TextEncoder().encode(EXECUTOR_CLAIM_TEMPLATE_ID),
         ]);
         expect(hex.encode(gcm(key, nonce, aad).decrypt(value.subarray(45)))).toBe(
             hex.encode(PREIMAGE),
@@ -178,7 +178,7 @@ describe("sealClaimPacket with minAmount", () => {
         const opened = await openClaimPacket(
             packet,
             RECIPIENT_SK,
-            DELEGATEE_CLAIM_TEMPLATE_ID,
+            EXECUTOR_CLAIM_TEMPLATE_ID,
             MIN_AMOUNT,
         );
         expect(hex.encode(opened)).toBe(hex.encode(PREIMAGE));
@@ -187,7 +187,7 @@ describe("sealClaimPacket with minAmount", () => {
     it("refuses to open with another amount, or with the amount stripped", async () => {
         const { packet } = await deterministic(MIN_AMOUNT);
         const open = (amount?: bigint) =>
-            openClaimPacket(packet, RECIPIENT_SK, DELEGATEE_CLAIM_TEMPLATE_ID, amount);
+            openClaimPacket(packet, RECIPIENT_SK, EXECUTOR_CLAIM_TEMPLATE_ID, amount);
         await expect(open(MIN_AMOUNT - 1n)).rejects.toThrow();
         await expect(open()).rejects.toThrow();
     });

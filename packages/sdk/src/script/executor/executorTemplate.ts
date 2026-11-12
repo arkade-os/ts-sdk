@@ -4,7 +4,7 @@ import { concatBytes } from "@scure/btc-signer/utils.js";
 import { getOpcodeValue } from "../../arkade/opcodes";
 import { ArkadeScript } from "../../arkade/script";
 import { computeArkadeScriptPublicKey } from "../../arkade/tweak";
-import type { DelegateeContractKeys } from "../../providers/delegatee";
+import type { ExecutorContractKeys } from "../../providers/executor";
 import { VtxoScript } from "../base";
 import boardDocument from "./board.json";
 import delegatedBoarding from "./delegated_boarding.json";
@@ -24,22 +24,22 @@ export interface DelegationParams {
 }
 
 /** A default template: renewal holds delegated VTXOs, boarding holds on-chain deposits. */
-export type DelegateeDefault = "renewal" | "boarding";
+export type ExecutorDefault = "renewal" | "boarding";
 
 /** The default templates, as the service's templates/ ships them: renew.json and board.json. */
-const DELEGATEE_DEFAULTS: Record<DelegateeDefault, object> = {
+const EXECUTOR_DEFAULTS: Record<ExecutorDefault, object> = {
     renewal: renewDocument,
     boarding: boardDocument,
 };
 
 /** The artifacts the default templates reference, by the id the service computes for them. */
-const DELEGATEE_ARTIFACTS: Record<string, object> = {
+const EXECUTOR_ARTIFACTS: Record<string, object> = {
     faa3249b8a28e999963994e4020e832285351eb7ce3b4821bcb3b4498f5b8ef3: delegatedVtxo,
     e3c0fa053fbb529a252a1025e3453a41f01949f4e49d50de7dfe5d3510470ed3: delegatedBoarding,
 };
 
 /** The ids the service computes for the bundled documents; they change with the bundle. */
-export const DEFAULT_TEMPLATE_IDS: Readonly<Record<DelegateeDefault, string>> = {
+export const DEFAULT_TEMPLATE_IDS: Readonly<Record<ExecutorDefault, string>> = {
     renewal: "81295635686b72b6983636bb2b42cff1b75f703248b13de8a2ae134ce7bd2091",
     boarding: "1358adff9283c4fe11734e4238d6d091d433dbcb2b0c852d5fea433c4314d51a",
 };
@@ -61,7 +61,7 @@ export type Value = number | Uint8Array;
 
 /** The variables of a default template for owner. */
 function variablesOf(
-    kind: DelegateeDefault,
+    kind: ExecutorDefault,
     owner: Uint8Array,
     params: DelegationParams,
 ): Record<string, Value> {
@@ -81,7 +81,7 @@ function variablesOf(
 
 /** The variables of a default template for owner, in canonical hex. */
 export function defaultVariables(
-    kind: DelegateeDefault,
+    kind: ExecutorDefault,
     owner: Uint8Array,
     params: DelegationParams,
 ): Record<string, string> {
@@ -99,12 +99,12 @@ export function defaultVariables(
  * function order: forfeit (owner + server), exit (owner after CSV), then the covenant leaf.
  */
 export function defaultContract(
-    kind: DelegateeDefault,
-    keys: DelegateeContractKeys,
+    kind: ExecutorDefault,
+    keys: ExecutorContractKeys,
     owner: Uint8Array,
     params: DelegationParams,
 ): VtxoScript {
-    const doc = DELEGATEE_DEFAULTS[kind] as Template;
+    const doc = EXECUTOR_DEFAULTS[kind] as Template;
     return instantiate(doc, doc.inputs[0].contract, variablesOf(kind, owner, params), keys);
 }
 
@@ -117,11 +117,11 @@ export function instantiate(
     doc: Template,
     construction: Construction,
     variables: Record<string, Value>,
-    keys: DelegateeContractKeys,
+    keys: ExecutorContractKeys,
 ): VtxoScript {
     const def = (
         "artifact" in construction.definition
-            ? DELEGATEE_ARTIFACTS[construction.definition.artifact]
+            ? EXECUTOR_ARTIFACTS[construction.definition.artifact]
             : construction.definition
     ) as Definition | undefined;
     if (!def)

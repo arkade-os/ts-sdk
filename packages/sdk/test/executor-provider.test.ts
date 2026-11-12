@@ -1,9 +1,9 @@
 import { hex } from "@scure/base";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RestDelegateeProvider } from "../src/providers/delegatee";
-import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/delegatee/delegateeTemplate";
-import { DelegateeManagerImpl } from "../src/wallet/delegatee";
-import vectors from "./fixtures/delegatee/vectors.json";
+import { RestExecutorProvider } from "../src/providers/executor";
+import { DEFAULT_TEMPLATE_IDS as ids } from "../src/script/executor/executorTemplate";
+import { ExecutorManagerImpl } from "../src/wallet/executor";
+import vectors from "./fixtures/executor/vectors.json";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
@@ -12,7 +12,7 @@ vi.mock("../src/utils/fetch", () => ({
     baseFetch: mockFetch,
 }));
 
-describe("RestDelegateeProvider", () => {
+describe("RestExecutorProvider", () => {
     beforeEach(() => mockFetch.mockReset());
 
     it("fetches info without a query and ignores stale covenant fields", async () => {
@@ -23,15 +23,15 @@ describe("RestDelegateeProvider", () => {
             renewalWindow: 1024,
             arkadeScript: "00",
         });
-        const provider = new RestDelegateeProvider("https://delegatee.test/");
+        const provider = new RestExecutorProvider("https://executor.test/");
 
         await expect(provider.getInfo()).resolves.toEqual(info);
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/info");
+        expect(mockFetch).toHaveBeenCalledWith("https://executor.test/v1/info");
     });
 
     it("rejects info with a non-compressed key", async () => {
         respond({ ...makeInfo(), cosignerPubkey: hex.encode(ownerKey) });
-        await expect(new RestDelegateeProvider("https://delegatee.test").getInfo()).rejects.toThrow(
+        await expect(new RestExecutorProvider("https://executor.test").getInfo()).rejects.toThrow(
             "cosignerPubkey is not compressed",
         );
     });
@@ -39,9 +39,9 @@ describe("RestDelegateeProvider", () => {
     it("lists templates", async () => {
         respond({ templates: [template] });
         await expect(
-            new RestDelegateeProvider("https://delegatee.test").listTemplates(),
+            new RestExecutorProvider("https://executor.test").listTemplates(),
         ).resolves.toEqual([template]);
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/templates");
+        expect(mockFetch).toHaveBeenCalledWith("https://executor.test/v1/templates");
     });
 
     it("posts templateId and variables and unwraps the delegation", async () => {
@@ -54,7 +54,7 @@ describe("RestDelegateeProvider", () => {
         };
         respond({ delegation });
         await expect(
-            new RestDelegateeProvider("https://delegatee.test").registerDelegation("tpl-1", {
+            new RestExecutorProvider("https://executor.test").registerDelegation("tpl-1", {
                 owner: "aa",
             }),
         ).resolves.toEqual({
@@ -65,7 +65,7 @@ describe("RestDelegateeProvider", () => {
             variables: { owner: "aa" },
             expiresAt: undefined,
         });
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegation", {
+        expect(mockFetch).toHaveBeenCalledWith("https://executor.test/v1/delegation", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ templateId: "tpl-1", variables: { owner: "aa" } }),
@@ -80,12 +80,12 @@ describe("RestDelegateeProvider", () => {
             templateId: "tpl-1",
         };
         respond({ delegation });
-        await new RestDelegateeProvider("https://delegatee.test").registerDelegation(
+        await new RestExecutorProvider("https://executor.test").registerDelegation(
             "tpl-1",
             {},
             { expiresAt: 1700000000 },
         );
-        expect(mockFetch).toHaveBeenCalledWith("https://delegatee.test/v1/delegation", {
+        expect(mockFetch).toHaveBeenCalledWith("https://executor.test/v1/delegation", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ templateId: "tpl-1", variables: {}, expiresAt: 1700000000 }),
@@ -95,12 +95,12 @@ describe("RestDelegateeProvider", () => {
     it("surfaces the daemon's error body on a failed registration", async () => {
         respond("template disabled", 412);
         await expect(
-            new RestDelegateeProvider("https://delegatee.test").registerDelegation("tpl-1", {}),
+            new RestExecutorProvider("https://executor.test").registerDelegation("tpl-1", {}),
         ).rejects.toThrow("template disabled");
     });
 
     it("parses a delegation's coins, rejecting an unknown status, bad variables and amounts", async () => {
-        const provider = new RestDelegateeProvider("https://delegatee.test");
+        const provider = new RestExecutorProvider("https://executor.test");
         const delegation = { id: "5", address: "tark1x", status: "active", templateId: "t" };
         const coin = { outpoint: "aa:0", amount: "100000", due: "1699990000", status: "present" };
         const spent = { ...coin, outpoint: "bb:0", status: "spent" };
@@ -119,7 +119,7 @@ describe("RestDelegateeProvider", () => {
             ],
         });
         expect(mockFetch).toHaveBeenCalledWith(
-            "https://delegatee.test/v1/delegation?address=tark1x",
+            "https://executor.test/v1/delegation?address=tark1x",
         );
         for (const [body, error] of [
             [{ delegation: { ...delegation, status: "paused" } }, "unknown status paused"],
@@ -135,12 +135,12 @@ describe("RestDelegateeProvider", () => {
     });
 });
 
-describe("DelegateeManagerImpl.register", () => {
+describe("ExecutorManagerImpl.register", () => {
     it("registers the boarding variables and returns the address both sides agree on", async () => {
         const provider = makeProvider({ expiresAt: 9 });
         contractManager.createContract.mockClear();
         contractManager.updateContract.mockClear();
-        const manager = new DelegateeManagerImpl(provider, wallet);
+        const manager = new ExecutorManagerImpl(provider, wallet);
 
         await expect(manager.registerBoarding(params, { expiresAt: 9 })).resolves.toEqual({
             address: vectors.boarding.address,
@@ -169,58 +169,58 @@ describe("DelegateeManagerImpl.register", () => {
     });
 
     it("refuses a watch the service returns as no longer active", async () => {
-        const manager = new DelegateeManagerImpl(makeProvider({ status: "expired" }), wallet);
+        const manager = new ExecutorManagerImpl(makeProvider({ status: "expired" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `delegatee watch ${vectors.boarding.address} is expired`,
+            `executor watch ${vectors.boarding.address} is expired`,
         );
     });
 
     it("refuses an address the service derived differently, e.g. under another delegate key", async () => {
-        const manager = new DelegateeManagerImpl(makeProvider({ address: "bcrt1pother" }), wallet);
+        const manager = new ExecutorManagerImpl(makeProvider({ address: "bcrt1pother" }), wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow(
-            `delegatee derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
+            `executor derived a different address: expected ${vectors.boarding.address}, got bcrt1pother`,
         );
     });
 
     it("refuses a service whose server key is not the wallet's", async () => {
         const provider = makeProvider();
         provider.getInfo.mockResolvedValue({ ...makeInfo(), serverPubkey: vectors.owner });
-        const manager = new DelegateeManagerImpl(provider, wallet);
+        const manager = new ExecutorManagerImpl(provider, wallet);
         await expect(manager.registerBoarding(params)).rejects.toThrow("wallet's server");
         expect(provider.registerDelegation).not.toHaveBeenCalled();
     });
 
     it("needs a boarding exit delay for boarding", async () => {
         const { boardingExitDelay: _, ...renewalOnly } = params;
-        const manager = new DelegateeManagerImpl(makeProvider(), wallet);
+        const manager = new ExecutorManagerImpl(makeProvider(), wallet);
         await expect(manager.registerBoarding(renewalOnly)).rejects.toThrow(
             "boarding needs an exit delay",
         );
     });
 });
 
-describe("DelegateeManagerImpl.defaultTemplates", () => {
+describe("ExecutorManagerImpl.defaultTemplates", () => {
     const listed = (...names: ("renewal" | "boarding")[]) =>
         names.map((n) => ({ id: ids[n], status: "active" }));
 
     it("returns the default ids when the service lists them active", async () => {
         const provider = makeProvider();
         provider.listTemplates.mockResolvedValue(listed("boarding", "renewal"));
-        await expect(
-            new DelegateeManagerImpl(provider, wallet).defaultTemplates(),
-        ).resolves.toEqual({ renewal: ids.renewal, boarding: ids.boarding });
+        await expect(new ExecutorManagerImpl(provider, wallet).defaultTemplates()).resolves.toEqual(
+            { renewal: ids.renewal, boarding: ids.boarding },
+        );
     });
 
     it("refuses a service that does not list one of them", async () => {
         const provider = makeProvider();
         provider.listTemplates.mockResolvedValue(listed("boarding"));
-        await expect(new DelegateeManagerImpl(provider, wallet).defaultTemplates()).rejects.toThrow(
+        await expect(new ExecutorManagerImpl(provider, wallet).defaultTemplates()).rejects.toThrow(
             `renewal ${ids.renewal}`,
         );
     });
 });
 
-describe("DelegateeManagerImpl.delegateVtxos", () => {
+describe("ExecutorManagerImpl.delegateVtxos", () => {
     const RENEWAL_ID = ids.renewal;
     const renewalProvider = () =>
         makeProvider({
@@ -243,7 +243,7 @@ describe("DelegateeManagerImpl.delegateVtxos", () => {
             getSpendableVtxos: vi.fn().mockResolvedValue(vtxos),
             send: vi.fn().mockResolvedValue("txid"),
         };
-        const got = await new DelegateeManagerImpl(provider, w).delegateVtxos(params);
+        const got = await new ExecutorManagerImpl(provider, w).delegateVtxos(params);
         expect(w.getSpendableVtxos).toHaveBeenCalledWith({
             withRecoverable: false,
             genericallySpendableOnly: true,
@@ -276,7 +276,7 @@ describe("DelegateeManagerImpl.delegateVtxos", () => {
 
     it("only registers when there is nothing to send", async () => {
         const w = { ...wallet, getSpendableVtxos: vi.fn().mockResolvedValue([]), send: vi.fn() };
-        const got = await new DelegateeManagerImpl(renewalProvider(), w).delegateVtxos(params);
+        const got = await new ExecutorManagerImpl(renewalProvider(), w).delegateVtxos(params);
         expect(got.txid).toBeUndefined();
         expect(w.send).not.toHaveBeenCalled();
     });
@@ -284,7 +284,7 @@ describe("DelegateeManagerImpl.delegateVtxos", () => {
     it("retires the wallet's own receive contracts, which stay watched", async () => {
         contractManager.setContractState.mockClear();
         const w = { ...wallet, getSpendableVtxos: vi.fn().mockResolvedValue([]), send: vi.fn() };
-        await new DelegateeManagerImpl(renewalProvider(), w).delegateVtxos(params);
+        await new ExecutorManagerImpl(renewalProvider(), w).delegateVtxos(params);
         expect(contractManager.getContracts).toHaveBeenCalledWith({
             type: ["default", "delegate"],
             state: "active",

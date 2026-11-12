@@ -190,7 +190,7 @@ export interface OnchainSendSwap extends RfqSwapCommon {
  * - **No trader-side refund.** Every non-claim leaf is the solver's; an unclaimed swap is
  *   lost when the solver reclaims at {@link RfqSwapCommon.refundLocktime}.
  * - **The claim is the whole swap, on a deadline**, and the trader must be online:
- *   unless `P` was sealed to delegatee.
+ *   unless `P` was sealed to executor.
  */
 export interface LightningReceiveSwap extends RfqSwapCommon {
     kind: "lightning_receive";
@@ -203,9 +203,9 @@ export interface LightningReceiveSwap extends RfqSwapCommon {
      * false, which would delete the value gate rather than fail it.
      */
     expectedAmount: number;
-    /** `P` was sealed to delegatee, which claims the lockup: this manager only claims on
+    /** `P` was sealed to executor, which claims the lockup: this manager only claims on
      * {@link RfqSwapManager.claim}. */
-    delegateeClaims?: true;
+    executorClaims?: true;
     /** Our Arkade claim's txid, once submitted. Set from the callback's return
      * and never from a chain read — the chain's answer is `settled`. */
     claimTxid?: string;
@@ -661,7 +661,7 @@ const notify = <T extends (...args: never[]) => void>(
  * `refunded` the solver reclaiming an unclaimed lockup. And on the receive arm:
  *
  * - **A claim is matched by its preimage, never by our txid**, so a claim that lands
- *   without us (e.g. delegatee) is still `settled`.
+ *   without us (e.g. executor) is still `settled`.
  * - **`LockupFate.fate === "claimed"` maps to state `settled`, never `claimed`**: the
  *   state `claimed` only means we submitted something.
  *
@@ -1086,7 +1086,7 @@ export class RfqSwapManager {
     }
 
     /**
-     * Claim a `claimable` lightning receive now, even when delegatee is the one meant to.
+     * Claim a `claimable` lightning receive now, even when executor is the one meant to.
      *
      * @throws if the swap is not monitored, or is not a claimable lightning receive.
      */
@@ -1516,7 +1516,7 @@ export class RfqSwapManager {
 
         this.setState(swap, "claimable");
         if (!this.config.enableAutoActions) return;
-        if (swap.kind === "lightning_receive" && swap.delegateeClaims && !force) return;
+        if (swap.kind === "lightning_receive" && swap.executorClaims && !force) return;
 
         try {
             const { txid, spent } = await this.callbacks.claimLockup(swap, toClaim, {
@@ -1532,7 +1532,7 @@ export class RfqSwapManager {
             this.setState(swap, "claimed");
             this.emitAction(swap, "claimLockup");
         } catch (error) {
-            // Lost the race to another holder of P (delegatee): step 1 of the next pass reads that claim and settles.
+            // Lost the race to another holder of P (executor): step 1 of the next pass reads that claim and settles.
             const ark = isArkError(error) ? error : maybeArkError(error);
             if (isArkError(ark, ArkErrorName.VTXO_ALREADY_SPENT)) {
                 if (swap.claimFailure !== undefined) {

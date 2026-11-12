@@ -180,7 +180,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState, ContractWatchState } from "../../contracts/types";
 import type { IDelegateManager } from "../delegate";
-import { DelegateeManagerImpl, type IDelegateeManager } from "../delegatee";
+import { ExecutorManagerImpl, type IExecutorManager } from "../executor";
 import type {
     IVtxoManager,
     MigrateDeprecatedSignerOptions,
@@ -191,7 +191,7 @@ import type {
 } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegate";
-import { RestDelegateeProvider } from "../../providers/delegatee";
+import { RestExecutorProvider } from "../../providers/executor";
 import { getRandomId } from "../utils";
 import { DEFAULT_ARKADE_SERVER_URL } from "../../networks";
 import type { ArkadeBroadcaster, ArkadeReader, GetArkadeInfoOptions, VirtualCoin } from "..";
@@ -459,10 +459,10 @@ interface ServiceWorkerWalletOptions {
     storage?: StorageConfig;
     /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
-    /** @deprecated Legacy pre-signed delegator URL; use delegateeUrl. */
+    /** @deprecated Legacy pre-signed delegator URL; use executorUrl. */
     delegateUrl?: string;
-    /** URL of the covenant-based delegatee service. */
-    delegateeUrl?: string;
+    /** URL of the covenant-based executor service. */
+    executorUrl?: string;
     /**
      * Override the default tag used for messages sent to and received from the service worker.
      * @see DEFAULT_MESSAGE_TAG
@@ -540,7 +540,7 @@ type MessageBusInitConfig = {
         publicKey?: string;
     };
     delegateUrl?: string;
-    delegateeUrl?: string;
+    executorUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     concurrentSpending?: boolean;
@@ -663,7 +663,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         return ServiceWorkerReadonlyWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
-            delegateeUrl: options.delegateeUrl,
+            executorUrl: options.executorUrl,
             lazyInitialization: options.lazyInitialization,
             watcherConfig: options.watcherConfig,
         });
@@ -1797,7 +1797,7 @@ export class ServiceWorkerWallet
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
     private readonly hasDelegate: boolean;
-    private readonly delegateeServiceUrl?: string;
+    private readonly executorServiceUrl?: string;
     private _restoreInFlight?: Promise<void>;
     private _concurrentSpending = false;
 
@@ -1813,7 +1813,7 @@ export class ServiceWorkerWallet
         contractRepository: ContractRepository,
         messageTag: string,
         hasDelegate: boolean,
-        delegateeUrl?: string,
+        executorUrl?: string,
         public readonly oneShotSubmit?: boolean,
     ) {
         super(serviceWorker, identity, walletRepository, contractRepository, messageTag);
@@ -1825,7 +1825,7 @@ export class ServiceWorkerWallet
             messageTag,
         );
         this.hasDelegate = hasDelegate;
-        this.delegateeServiceUrl = delegateeUrl;
+        this.executorServiceUrl = executorUrl;
     }
 
     get assetManager(): IAssetManager {
@@ -1868,14 +1868,14 @@ export class ServiceWorkerWallet
             contractRepository,
             messageTag,
             !!options.delegateUrl,
-            options.delegateeUrl,
+            options.executorUrl,
             options.oneShotSubmit,
         );
         wallet._concurrentSpending = options.concurrentSpending === true;
 
         return ServiceWorkerWallet.bootstrap(wallet, options, serializedWallet, {
             delegateUrl: options.delegateUrl,
-            delegateeUrl: options.delegateeUrl,
+            executorUrl: options.executorUrl,
             settlementConfig: options.settlementConfig,
             concurrentSpending: options.concurrentSpending,
             walletMode: options.walletMode,
@@ -2257,9 +2257,9 @@ export class ServiceWorkerWallet
     }
 
     /** Runs on the page: it talks to the service over REST and sends through this wallet. */
-    async getDelegateeManager(): Promise<IDelegateeManager | undefined> {
-        if (!this.delegateeServiceUrl) return undefined;
-        return new DelegateeManagerImpl(new RestDelegateeProvider(this.delegateeServiceUrl), this);
+    async getExecutorManager(): Promise<IExecutorManager | undefined> {
+        if (!this.executorServiceUrl) return undefined;
+        return new ExecutorManagerImpl(new RestExecutorProvider(this.executorServiceUrl), this);
     }
 
     async getVtxoManager(): Promise<IVtxoManager> {

@@ -88,7 +88,7 @@ const offchainProgram = {
 } satisfies arkade.Program;
 
 // One payment per coin: output i must pay `$receiver` at least input i's value
-// (the pattern of delegatee's claim template).
+// (the pattern of executor's claim template).
 const pairedProgram = {
     version: 1,
     params: [

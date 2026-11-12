@@ -1,38 +1,38 @@
 import { hex } from "@scure/base";
 import type { Asset, IWallet } from ".";
 import type {
-    DelegateeContractKeys,
-    DelegateeDelegation,
-    DelegateeInfo,
-    DelegateeProvider,
-} from "../providers/delegatee";
+    ExecutorContractKeys,
+    ExecutorDelegation,
+    ExecutorInfo,
+    ExecutorProvider,
+} from "../providers/executor";
 import type { Contract } from "../contracts/types";
-import { DelegateeContractHandler } from "../contracts/handlers/delegatee";
+import { ExecutorContractHandler } from "../contracts/handlers/executor";
 import { getNetwork, type NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 import {
     DEFAULT_TEMPLATE_IDS,
-    type DelegateeDefault,
+    type ExecutorDefault,
     type DelegationParams,
     defaultVariables,
-} from "../script/delegatee/delegateeTemplate";
+} from "../script/executor/executorTemplate";
 
-export type { DelegateeContractKeys };
+export type { ExecutorContractKeys };
 
 /** A watch both sides derived: the address to fund and what restores it. */
-export interface DelegateeWatchRegistration {
+export interface ExecutorWatchRegistration {
     /** An Ark address for renewal, a bitcoin address for boarding. */
     address: string;
     templateId: string;
     /** The template's variables, canonical hex. */
     variables: Record<string, string>;
-    /** The service's keys the wallet's delegatee contracts are derived from. */
-    keys: DelegateeContractKeys;
-    delegation: DelegateeDelegation;
+    /** The service's keys the wallet's executor contracts are derived from. */
+    keys: ExecutorContractKeys;
+    delegation: ExecutorDelegation;
 }
 
 /** What the manager needs of a wallet: its key, its server, its coins and a way to send. */
-export type DelegateeWallet = Pick<
+export type ExecutorWallet = Pick<
     IWallet,
     "identity" | "getAddress" | "getSpendableVtxos" | "send" | "getContractManager"
 >;
@@ -43,9 +43,9 @@ export type DelegateeWallet = Pick<
  * params and the service's keys, so a restored wallet finds its delegated coins without asking
  * the service. Idempotent.
  */
-export async function watchDelegateeContracts(
+export async function watchExecutorContracts(
     wallet: Pick<IWallet, "identity" | "getAddress" | "getContractManager">,
-    keys: DelegateeContractKeys,
+    keys: ExecutorContractKeys,
     params: DelegationParams,
 ): Promise<Contract[]> {
     const [owner, address, manager] = await Promise.all([
@@ -54,19 +54,19 @@ export async function watchDelegateeContracts(
         wallet.getContractManager(),
     ]);
     const { hrp, serverPubKey } = ArkAddress.decode(address);
-    const templates: DelegateeDefault[] =
+    const templates: ExecutorDefault[] =
         params.boardingExitDelay === undefined ? ["renewal"] : ["renewal", "boarding"];
     const contracts: Contract[] = [];
     for (const template of templates) {
         const serialized = contractParams(template, owner, keys, params);
-        const script = DelegateeContractHandler.createScript(serialized);
+        const script = ExecutorContractHandler.createScript(serialized);
         contracts.push(
             await manager.createContract({
-                type: DelegateeContractHandler.type,
+                type: ExecutorContractHandler.type,
                 params: serialized,
                 script: hex.encode(script.pkScript),
                 address: script.address(hrp, serverPubKey).encode(),
-                label: template === "renewal" ? "Delegatee renewal" : "Delegatee boarding",
+                label: template === "renewal" ? "Executor renewal" : "Executor boarding",
             }),
         );
     }
@@ -74,12 +74,12 @@ export async function watchDelegateeContracts(
 }
 
 function contractParams(
-    template: DelegateeDefault,
+    template: ExecutorDefault,
     owner: Uint8Array,
-    keys: DelegateeContractKeys,
+    keys: ExecutorContractKeys,
     params: DelegationParams,
 ): Record<string, string> {
-    return DelegateeContractHandler.serializeParams({
+    return ExecutorContractHandler.serializeParams({
         template,
         owner,
         exitDelay: params.exitDelay,
@@ -92,15 +92,15 @@ function contractParams(
     });
 }
 
-export interface IDelegateeManager {
-    getInfo(): Promise<DelegateeInfo>;
+export interface IExecutorManager {
+    getInfo(): Promise<ExecutorInfo>;
     /** The default template ids; throws unless the service lists them as active. */
-    defaultTemplates(): Promise<Record<DelegateeDefault, string>>;
+    defaultTemplates(): Promise<Record<ExecutorDefault, string>>;
     /** Watch the renewal address of this wallet's key, and make the wallet watch it too. */
     registerRenewal(
         params: DelegationParams,
         options?: { expiresAt?: number },
-    ): Promise<DelegateeWatchRegistration>;
+    ): Promise<ExecutorWatchRegistration>;
     /**
      * Watch the boarding address of this wallet's key (params needs boardingExitDelay), and make
      * the wallet watch its boarding and renewal contracts.
@@ -108,9 +108,9 @@ export interface IDelegateeManager {
     registerBoarding(
         params: DelegationParams,
         options?: { expiresAt?: number },
-    ): Promise<DelegateeWatchRegistration>;
+    ): Promise<ExecutorWatchRegistration>;
     /**
-     * Migrate the wallet to the delegatee: register the renewal watch, send its generically
+     * Migrate the wallet to the executor: register the renewal watch, send its generically
      * spendable VTXOs, with their assets, to the renewal address and retire its own receive
      * contracts (inactive, still watched). txid is absent when there was nothing to send.
      * Idempotent: run it again to move coins that reach a retired address later.
@@ -118,28 +118,28 @@ export interface IDelegateeManager {
     delegateVtxos(
         params: DelegationParams,
         options?: { expiresAt?: number },
-    ): Promise<DelegateeWatchRegistration & { txid?: string }>;
+    ): Promise<ExecutorWatchRegistration & { txid?: string }>;
 }
 
-/** Client-side watch registration with the delegatee service. */
-export class DelegateeManagerImpl implements IDelegateeManager {
+/** Client-side watch registration with the executor service. */
+export class ExecutorManagerImpl implements IExecutorManager {
     constructor(
-        readonly delegateeProvider: DelegateeProvider,
-        readonly wallet: DelegateeWallet,
+        readonly executorProvider: ExecutorProvider,
+        readonly wallet: ExecutorWallet,
     ) {}
 
-    getInfo(): Promise<DelegateeInfo> {
-        return this.delegateeProvider.getInfo();
+    getInfo(): Promise<ExecutorInfo> {
+        return this.executorProvider.getInfo();
     }
 
-    async defaultTemplates(): Promise<Record<DelegateeDefault, string>> {
+    async defaultTemplates(): Promise<Record<ExecutorDefault, string>> {
         const ids = { ...DEFAULT_TEMPLATE_IDS };
-        const templates = await this.delegateeProvider.listTemplates();
+        const templates = await this.executorProvider.listTemplates();
         const active = new Set(templates.filter((t) => t.status === "active").map((t) => t.id));
         const missing = Object.entries(ids).filter(([, id]) => !active.has(id));
         if (missing.length > 0) {
             throw new Error(
-                `delegatee does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
+                `executor does not list the default templates ${missing.map(([n, id]) => `${n} ${id}`).join(", ")}`,
             );
         }
         return ids;
@@ -148,21 +148,21 @@ export class DelegateeManagerImpl implements IDelegateeManager {
     registerRenewal(
         params: DelegationParams,
         options: { expiresAt?: number } = {},
-    ): Promise<DelegateeWatchRegistration> {
+    ): Promise<ExecutorWatchRegistration> {
         return this.register("renewal", { ...params, boardingExitDelay: undefined }, options);
     }
 
     registerBoarding(
         params: DelegationParams,
         options: { expiresAt?: number } = {},
-    ): Promise<DelegateeWatchRegistration> {
+    ): Promise<ExecutorWatchRegistration> {
         return this.register("boarding", params, options);
     }
 
     async delegateVtxos(
         params: DelegationParams,
         options: { expiresAt?: number } = {},
-    ): Promise<DelegateeWatchRegistration & { txid?: string }> {
+    ): Promise<ExecutorWatchRegistration & { txid?: string }> {
         const watch = await this.registerRenewal(params, options);
         // coins already at the renewal address stay there; gated ones (e.g. VHTLCs) are not ours
         // to move
@@ -210,12 +210,12 @@ export class DelegateeManagerImpl implements IDelegateeManager {
     }
 
     private async register(
-        kind: DelegateeDefault,
+        kind: ExecutorDefault,
         params: DelegationParams,
         options: { expiresAt?: number },
-    ): Promise<DelegateeWatchRegistration> {
+    ): Promise<ExecutorWatchRegistration> {
         const [info, address, owner] = await Promise.all([
-            this.delegateeProvider.getInfo(),
+            this.executorProvider.getInfo(),
             this.wallet.getAddress(),
             this.wallet.identity.compressedPublicKey(),
         ]);
@@ -224,7 +224,7 @@ export class DelegateeManagerImpl implements IDelegateeManager {
         const server = hex.encode(serverPubKey);
         if (info.serverPubkey.slice(2).toLowerCase() !== server) {
             throw new Error(
-                `delegatee server key ${info.serverPubkey} is not the wallet's server ${server}`,
+                `executor server key ${info.serverPubkey} is not the wallet's server ${server}`,
             );
         }
         const keys = {
@@ -233,7 +233,7 @@ export class DelegateeManagerImpl implements IDelegateeManager {
             emulatorPubkey: info.emulatorPubkey,
         };
         const variables = defaultVariables(kind, owner, params);
-        const script = DelegateeContractHandler.createScript(
+        const script = ExecutorContractHandler.createScript(
             contractParams(kind, owner, keys, params),
         );
         const watchAddress =
@@ -242,7 +242,7 @@ export class DelegateeManagerImpl implements IDelegateeManager {
                 : script.address(hrp, serverPubKey).encode();
         const templateId = DEFAULT_TEMPLATE_IDS[kind];
         // Registration is idempotent on the service: repeating it returns the existing watch.
-        const delegation = await this.delegateeProvider.registerDelegation(
+        const delegation = await this.executorProvider.registerDelegation(
             templateId,
             variables,
             options,
@@ -250,14 +250,14 @@ export class DelegateeManagerImpl implements IDelegateeManager {
         // The same address proves the service resolved the template under GetInfo's keys and
         // commits to the same tapscripts.
         if (delegation.status !== "active") {
-            throw new Error(`delegatee watch ${delegation.address} is ${delegation.status}`);
+            throw new Error(`executor watch ${delegation.address} is ${delegation.status}`);
         }
         if (delegation.address !== watchAddress) {
             throw new Error(
-                `delegatee derived a different address: expected ${watchAddress}, got ${delegation.address}`,
+                `executor derived a different address: expected ${watchAddress}, got ${delegation.address}`,
             );
         }
-        const contracts = await watchDelegateeContracts(this.wallet, keys, params);
+        const contracts = await watchExecutorContracts(this.wallet, keys, params);
         const row = contracts.find((c) => c.params.template === kind);
         if (row) {
             const manager = await this.wallet.getContractManager();

@@ -74,7 +74,7 @@ describe("Wallet.rotateServerSigner (mid-session server-signer rotation)", () =>
         }
     });
 
-    it("rotates the wallet's own receive script, not a delegatee contract standing in for it", async () => {
+    it("rotates the wallet's own receive script, not a executor contract standing in for it", async () => {
         const { wallet, contractRepository } = await makeStaticWalletForTest();
         try {
             const own = wallet.receiveTapscript as DefaultVtxo.Script;

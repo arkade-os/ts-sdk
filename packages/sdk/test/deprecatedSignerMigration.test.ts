@@ -244,8 +244,8 @@ describe("VtxoManager - deprecated-signer migration", () => {
         expect(sentInputs[0].value).toBe(5000);
     });
 
-    it("migrates VTXOs at delegatee contracts, whose server key is stored compressed", async () => {
-        const contract = makeContract("02" + DEP_DUE, "delegatee");
+    it("migrates VTXOs at executor contracts, whose server key is stored compressed", async () => {
+        const contract = makeContract("02" + DEP_DUE, "executor");
         const { wallet, sendSelectedVtxosToSelf } = createMigrationMockWallet({
             info: makeInfo(ACTIVE, [{ pubkey: DEP_DUE }]),
             contractsWithVtxos: [{ contract, vtxos: [makeVtxo(contract.script, 7000)] }],

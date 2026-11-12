@@ -339,23 +339,23 @@ describe("an onchain-send record carries its L1 half", () => {
         ).toThrow(/unknown L1 network/);
     });
 
-    it("carries delegateeClaims from the swap through the record and back", () => {
+    it("carries executorClaims from the swap through the record and back", () => {
         const swap = {
             ...swapOf(receiveOrigin),
-            delegateeClaims: true,
+            executorClaims: true,
         } as LightningReceiveSwap;
         const record = createRfqSwapRecord(receiveOrigin, swap);
-        expect(record.profile.delegateeClaims).toBe(true);
+        expect(record.profile.executorClaims).toBe(true);
 
         const rebuilt = rebuildRfqSwap(record, RECEIVE_LOCKUP.params) as LightningReceiveSwap;
-        expect(rebuilt.delegateeClaims).toBe(true);
+        expect(rebuilt.executorClaims).toBe(true);
         expect(
             (
                 rebuildRfqSwap(
                     createRfqSwapRecord(receiveOrigin, swapOf(receiveOrigin)),
                     RECEIVE_LOCKUP.params,
                 ) as LightningReceiveSwap
-            ).delegateeClaims,
+            ).executorClaims,
         ).toBeUndefined();
     });
 

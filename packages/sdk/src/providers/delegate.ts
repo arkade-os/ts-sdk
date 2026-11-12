@@ -32,7 +32,7 @@ export interface DelegateOptions {
 
 /**
  * Provider interface for remote delegation service.
- * @deprecated Use {@link import("./delegatee").DelegateeProvider} for covenant-based delegation.
+ * @deprecated Use {@link import("./executor").ExecutorProvider} for covenant-based delegation.
  */
 export interface DelegateProvider {
     /**
@@ -52,7 +52,7 @@ export interface DelegateProvider {
 
 /**
  * REST-based delegate provider implementation.
- * @deprecated Use {@link import("./delegatee").RestDelegateeProvider} for covenant-based delegation.
+ * @deprecated Use {@link import("./executor").RestExecutorProvider} for covenant-based delegation.
  * @example
  * ```typescript
  * const provider = new RestDelegateProvider('https://delegate.example.com');
