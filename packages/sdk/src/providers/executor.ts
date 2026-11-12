@@ -47,9 +47,9 @@ export interface ExecutorDelegationDetails {
 }
 
 /**
- * An executor request that failed. `status` is the HTTP status when the service answered
- * (404: it does not know the watch), and undefined when the request never reached it or got
- * an answer that is not the service's.
+ * An executor request that failed. `status` is the HTTP status when the service answered, and
+ * undefined when the request never reached it or got an answer that is not the service's. A
+ * 404 from `getDelegation` means the service does not know the watch: the wallet ends it.
  */
 export class ExecutorRequestError extends Error {
     constructor(
@@ -133,10 +133,11 @@ export class RestExecutorProvider implements ExecutorProvider {
             const body = await response.text();
             // An unrouted path 404s with the same gRPC code as an unknown watch; only the
             // message differs. Any other 404 is not the service saying the watch is over.
-            const unknownWatch = response.status !== 404 || isWatchNotFound(body);
+            const status =
+                response.status === 404 && !isWatchNotFound(body) ? undefined : response.status;
             throw new ExecutorRequestError(
                 `Failed to get executor delegation (${response.status}): ${body}`,
-                unknownWatch ? response.status : undefined,
+                status,
             );
         }
         const data: unknown = await response.json();

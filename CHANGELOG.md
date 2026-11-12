@@ -390,16 +390,16 @@ style and have not been backfilled.
   asks about them too and adopts the answer, as another device may have
   registered them. The rows a restore re-derives carry no status, so a refresh
   asks the service about them. A watch whose address the service
-  derived differently is refused before anything is persisted, ended or not.
-  A 404 ends a watch only when the service itself answers: a base URL or a
-  proxy that 404s every path, `getInfo` included, is a failure to reach the
-  service and keeps the status the row had. So does a service that answers
-  `/v1/info` but does not route `GET /v1/delegation`: its 404 carries the same
-  gRPC code as an unknown watch, so `getDelegation` tells them apart by the
-  `delegation not found` message and reports any other 404 without a status.
+  derived differently is refused before anything is persisted, ended or not,
+  and a refresh refuses an answer about another address than it asked.
+  A 404 ends a watch only when it is the service's own `delegation not found`:
+  a wrong base URL, a proxy, or a service that does not route
+  `GET /v1/delegation` 404s too, with the same gRPC code, so `getDelegation`
+  reports any other 404 without a status and the row keeps the status it had.
   A refresh writes only what a concurrent `register` has not changed since the
-  row was read: it re-reads the row before writing, keeps its other metadata,
-  and drops an answer asked for before the row's watch was rewritten.
+  row was read: status writes are serialized, a refresh re-reads the row
+  before writing, keeps its other metadata, and drops an answer asked for
+  before the row's watch was rewritten.
 
 ### Changed
 
