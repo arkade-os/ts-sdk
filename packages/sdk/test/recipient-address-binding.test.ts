@@ -499,9 +499,7 @@ describe("send automatic asset selection", () => {
             ...Array.from({ length: 500 }, (_, i) => coin(`filler-${i}`, 100)),
         ];
         vi.spyOn(wallet, "getSpendableVtxos").mockResolvedValue(inventory);
-        const submit = vi
-            .spyOn(wallet as never, "_submitOffchainSpend")
-            .mockResolvedValue("test-tx");
+        const submit = vi.spyOn(wallet as any, "_submitOffchainSpend").mockResolvedValue("test-tx");
         const address = encodeAddr(SERVER_XONLY, "tark");
         await wallet.send({
             recipients: [

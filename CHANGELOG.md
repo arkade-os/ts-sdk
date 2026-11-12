@@ -1466,9 +1466,16 @@ style and have not been backfilled.
   `vite`, `brace-expansion`, `shell-quote`, `js-yaml` and `markdown-it` now
   sit at the patched floors, and new ones cover `tinypool` (prototype-pollution
   RCE gadget, pulled in by `vitest`), `image-size`, `browserslist`,
-  `compression`, `zod`, `nanoid` and `source-map-js`. `vitest` stays on 3.2.7
-  with `tinypool` 2.x. `pnpm audit --audit-level high` now reports none.
-  Published packages are unchanged.
+  `compression`, `zod`, `nanoid` and `source-map-js`. `pnpm audit --audit-level high` now
+  reports none. Published packages are unchanged.
+- **`vitest` and `@vitest/coverage-v8` move to 4.1.12.** Two moderate
+  advisories on `vitest` and `@vitest/mocker` (path traversal and code injection
+  through an unauthenticated manual mock) are fixed only from 4.1.11 on. The
+  move also retires the `tinypool` override, since 4.x no longer depends on
+  `tinypool`. One `syncOnchain` test now searches the `console.warn` calls
+  instead of reading the first, because a background sync left over from the
+  previous test can warn into the same spy, and six test files have type
+  annotations adjusted for vitest 4's stricter mock typings. No source change.
 
 ## [0.4.77] - 2026-09-30
 

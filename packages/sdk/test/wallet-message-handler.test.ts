@@ -1,5 +1,5 @@
 import { collectScriptVtxos } from "../src/repositories/walletRepository";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 import {
     DEFAULT_MESSAGE_TAG,
@@ -3050,7 +3050,7 @@ describe("WalletMessageHandler event-push generations", () => {
 
     let updater: WalletMessageHandler;
     let repository: InMemoryWalletRepository;
-    let broadcast: ReturnType<typeof vi.fn>;
+    let broadcast: Mock<(response: any) => void>;
 
     const attach = (wallet: any) => {
         (updater as any).readonlyWallet = wallet;
