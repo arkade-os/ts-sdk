@@ -9,6 +9,7 @@ import { Proof } from "../proof";
 import type { OperatorProvider } from "../providers/ark";
 import { TreeSignerSession, type SignerSession } from "../tree/signingSession";
 import { withPrevTxs } from "../utils/prevoutTx";
+import { ArkadeTweak, setArkPsbtField } from "../utils/unknownFields";
 import type { VirtualCoin } from "../wallet";
 import { normalizeVtxo, toOffchainInputFeeParams } from "../wallet/vtxo";
 import { createAssetPacket } from "../wallet/asset";
@@ -111,7 +112,14 @@ export async function renewProgramContractOutputs(
                 `renewProgramContractOutputs: ${fn} needs call arguments, which a renewal cannot supply`,
             );
         }
-        return { contract, coin, compiled, condition, witness: RawWitness.encode(stack) };
+        return {
+            contract,
+            coin,
+            compiled,
+            condition,
+            witness: RawWitness.encode(stack),
+            tweaks: contract.vtxoScript.arkadeTweaks(compiled),
+        };
     });
 
     // Outputs must equal inputs for the covenant to pass, so a renewal cannot pay a fee. Evaluated
@@ -186,9 +194,13 @@ export async function renewProgramContractOutputs(
     // the intent. It carries the same outputs, so the emulator runs the covenant on it and signs.
     const [signedProof, deleteProof] = await Promise.all(
         [message, deleteMessage].map((m) => {
-            const proof = base64.encode(Proof.create(m, coins, outputs).toPSBT());
+            const proof = Proof.create(m, coins, outputs);
+            legs.forEach(({ tweaks }, k) => {
+                if (tweaks.length > 0) setArkPsbtField(proof, k + 1, ArkadeTweak, tweaks);
+            });
+            const psbt = base64.encode(proof.toPSBT());
             // With no emulator the proof goes unsigned: arkd signs Arkade proofs on receipt.
-            return emulator ? emulator.submitIntent({ proof, message: m }) : proof;
+            return emulator ? emulator.submitIntent({ proof: psbt, message: m }) : psbt;
         }),
     );
     // Checked last thing before registering, which an abort would otherwise have to undo.

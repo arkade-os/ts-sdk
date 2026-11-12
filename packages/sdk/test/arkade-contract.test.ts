@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { base64, hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { RawWitness, Script } from "@scure/btc-signer";
-import { ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
+import { ArkadeTweak, ConditionWitness, getArkPsbtFields } from "../src/utils/unknownFields";
 import {
     arkade,
     ConditionMultisigTapscript,
@@ -740,6 +740,90 @@ describe("arkade.Arkade / ArkadeContract", () => {
             /covenant-tweaked leaf signing/,
         );
         expect(captured.arkTx).toBeUndefined();
+    });
+
+    describe("ArkadeTweak", () => {
+        const user = xOnly();
+        const out = new Uint8Array([0x51, 0x20, ...receiver]);
+        const program = (pay: arkade.TapscriptSegment) =>
+            ({
+                version: 1,
+                params: [
+                    { name: "receiver", type: "pubkey" },
+                    { name: "amount", type: "int" },
+                    { name: "server", type: "pubkey" },
+                    { name: "user", type: "pubkey" },
+                ],
+                functions: {
+                    collab: { tapscript: { signers: ["$user", "$server"] } },
+                    pay: { tapscript: pay, arkadeScript: { asm: payTo } },
+                    refund: { tapscript: { signers: ["$server"] }, arkadeScript: { asm: [1] } },
+                },
+            }) satisfies arkade.Program;
+        const tweakOnly = program({ signers: [{ tweak: "$server", fn: "pay" }], emulator: null });
+        const payHash = arkade.arkadeScriptHash(arkade.resolveAsm(payTo, args));
+        const refundHash = arkade.arkadeScriptHash(arkade.resolveAsm([1], {}));
+
+        it("reveals the other covenants' hashes on each input of a tree with a tweak-only leaf", async () => {
+            const { ark } = await connect();
+            const contract = ark.contract(tweakOnly, { receiver, amount: AMOUNT, user });
+            const { arkTx } = await ark
+                .transaction()
+                .from(COIN, contract.unlock.collab())
+                .from(mintCoin(10_000), contract.unlock.refund())
+                .to(out, 2n * AMOUNT)
+                .build();
+
+            expect(getArkPsbtFields(arkTx, 0, ArkadeTweak)).toEqual([[payHash, refundHash]]);
+            expect(getArkPsbtFields(arkTx, 1, ArkadeTweak)).toEqual([[payHash]]);
+        });
+
+        it("adds no field when every forfeit leaf names the plain server key", async () => {
+            const { ark } = await connect();
+            const contract = ark.contract(program({ signers: ["$server"] }), {
+                receiver,
+                amount: AMOUNT,
+                user,
+            });
+            const { arkTx } = await contract.functions.collab().from(COIN).to(out, AMOUNT).build();
+
+            expect(getArkPsbtFields(arkTx, 0, ArkadeTweak)).toEqual([]);
+        });
+
+        it("reads a spliced emulator key as the server's only when the emulator is the server", async () => {
+            const { ark } = await connect();
+            const tweaks = (emulator: Uint8Array) => {
+                const { vtxoScript } = new arkade.ArkadeContract(
+                    ark,
+                    program({ signers: [] }),
+                    { receiver, amount: AMOUNT, server, user },
+                    { serverKey: server, emulatorKey: emulator },
+                );
+                return vtxoScript.arkadeTweaks(vtxoScript.functionByName("collab")!);
+            };
+
+            expect(tweaks(server)).toEqual([payHash, refundHash]);
+            expect(tweaks(emulatorKey)).toEqual([]);
+        });
+
+        it("refuses to reveal more than 16 hashes", async () => {
+            const { ark } = await connect();
+            const extra = Array.from({ length: 15 }, (_, i) => [
+                `c${i}`,
+                { tapscript: { signers: ["$server"] }, arkadeScript: { asm: [i + 2] } },
+            ]);
+            const contract = ark.contract(
+                {
+                    ...tweakOnly,
+                    functions: { ...tweakOnly.functions, ...Object.fromEntries(extra) },
+                },
+                { receiver, amount: AMOUNT, user },
+            );
+
+            await expect(
+                contract.functions.collab().from(COIN).to(out, AMOUNT).build(),
+            ).rejects.toThrow("got 17, expected 1 to 16");
+        });
     });
 
     // A client connected for derivation/registration alone — `getInfo` and

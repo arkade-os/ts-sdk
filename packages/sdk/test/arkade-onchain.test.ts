@@ -15,7 +15,7 @@ import {
     type EmulatorProvider,
 } from "../src";
 import { scriptFromTapLeafScript } from "../src/script/base";
-import { getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
+import { ArkadeTweak, getArkPsbtFields, PrevoutTxField } from "../src/utils/unknownFields";
 
 const xOnly = () => schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const COIN = { txid: "ab".repeat(32), vout: 1, value: 10_000 };
@@ -121,6 +121,7 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
         });
         const contract = ark.contract(program, { receiver, amount: AMOUNT });
         return {
+            ark,
             contract,
             submitOnchainTx,
             cosignOnchainTx,
@@ -149,6 +150,35 @@ describe("ArkadeTransactionBuilder onchain mode", () => {
             .map((i) => tx.getOutput(i).script!)
             .find((s) => Extension.isExtension(s))!;
         expect(Extension.fromBytes(ext).getEmulatorPacket()!.entries[0].vin).toBe(0);
+    });
+
+    it("reveals the de-duplicated covenant hashes on the input of a tree with a tweak-only leaf", async () => {
+        const { ark } = await setup();
+        const sweep = ["INSPECTVERSION", 2, "NUMEQUAL"] as arkade.AsmToken[];
+        const contract = ark.contract(
+            {
+                ...program,
+                functions: {
+                    ...program.functions,
+                    sweep: {
+                        tapscript: { signers: [{ tweak: "$server", fn: "sweep" }], emulator: null },
+                        arkadeScript: { asm: sweep },
+                    },
+                },
+            },
+            { receiver, amount: AMOUNT },
+        );
+        const tx = await contract.functions
+            .collab()
+            .from(COIN)
+            .to(out, AMOUNT)
+            .onchainFee(FEE)
+            .buildOnchain();
+
+        // `covenant` and `covenantServer` share one script.
+        const hash = (asm: arkade.AsmToken[]) =>
+            arkade.arkadeScriptHash(arkade.resolveAsm(asm, { receiver, amount: AMOUNT }));
+        expect(getArkPsbtFields(tx, 0, ArkadeTweak)).toEqual([[hash(payTo), hash(sweep)]]);
     });
 
     it("covenant non-server leaf: emulator cosigns, then finalize and broadcast", async () => {
