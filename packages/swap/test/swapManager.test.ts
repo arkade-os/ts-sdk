@@ -2557,6 +2557,32 @@ describe("RfqSwapManager — the lightning-receive leg", () => {
             expect(isRfqSwapTerminal(swap.state)).toBe(false);
         });
 
+        it("does not end a finalized claim on a read that learned nothing past the deadline", async () => {
+            const s = spies();
+            let finalized = false;
+            const swap = receiveSwap();
+            const pending = fakeIndexer({ vtxos: spentBy(CLAIM_TXID) });
+            const indexer = fakeIndexer();
+            indexer.getVtxos = async (opts?: { pendingOnly?: boolean }) => {
+                if (!opts?.pendingOnly) throw new Error("indexer unreachable");
+                return finalized ? { vtxos: [] } : pending.getVtxos();
+            };
+            const m = manager({
+                indexer,
+                now: REFUND_LOCKTIME + REFUND_MTP_LAG_SECONDS + 1,
+                spies: s,
+                install: withFinalize(s, async () => {
+                    finalized = true;
+                    return [CLAIM_TXID];
+                }),
+            });
+            await pass(m, swap);
+            await m.poll();
+
+            expect(swap.claimTxid).toBe(CLAIM_TXID);
+            expect(isRfqSwapTerminal(swap.state)).toBe(false);
+        });
+
         it("still treats P as public once the pending claim it saw is gone", async () => {
             const s = spies();
             let finalizedRemotely = false;

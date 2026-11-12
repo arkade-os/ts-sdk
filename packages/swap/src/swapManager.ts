@@ -1385,6 +1385,8 @@ export class RfqSwapManager {
         if (swap.kind === "lightning_receive") {
             if (fate.fate === "exited") return this.blockExitedLockup(swap, fate);
             if (fate.fate === "open") return this.driveReceiveClaim(swap);
+            // A recorded claim of ours ends on chain evidence, never on a read that learned nothing.
+            if (fate.fate === "unknown" && swap.claimTxid !== undefined) return;
             if (this.config.now() >= swap.refundLocktime) return this.driveReceiveClaim(swap);
             return;
         }
