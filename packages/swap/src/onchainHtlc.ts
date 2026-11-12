@@ -521,7 +521,8 @@ export type OnchainHtlcPhase =
 /**
  * Classify an HTLC from chain state alone. `funding` (the known outpoint from
  * the stored record) is what distinguishes "never funded" from "funded and
- * already spent": without it a spent HTLC looks unfunded.
+ * already spent": without it a spent HTLC looks unfunded. Its spend is read
+ * before anything else at the script, so an output paid there later cannot hide it.
  *
  * `claimed` carries the preimage read from the spend's witness — the receipt;
  * `swept` is a spend that reveals no matching preimage.
@@ -535,31 +536,22 @@ export async function classifyOnchainHtlc(
     },
 ): Promise<OnchainHtlcPhase> {
     const utxos = await chain.getScriptUtxos(input.htlc.pkScript);
-    // Largest at depth first, as in `awaitOnchainFill`: a larger output that never confirms
-    // must not hold back a confirmed fill until the solver's refund leaf opens.
     const deep = (u: ChainUtxo) => u.confirmations >= input.minConfirmations;
-    const best = utxos.sort((a, b) =>
+    const { funding } = input;
+    const pinned = funding && utxos.find((u) => u.txid === funding.txid && u.vout === funding.vout);
+    const best = pinned ?? utxos.sort((a, b) =>
         deep(a) !== deep(b) ? (deep(a) ? -1 : 1) : b.amount > a.amount ? 1 : -1,
     )[0];
-    const { funding } = input;
-    let spend: { txHex: string } | null = null;
-    if (funding && !utxos.some((u) => u.txid === funding.txid && u.vout === funding.vout)) {
-        try {
-            spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
-        } catch (error) {
-            // An RBF-replaced funding tx is unknown to the chain; `best` is then its replacement.
-            // Sources signal that differently, so a transient error also reads `best` for a pass:
-            // a refund needs the locktime, past which `best` is `refundable`, never `claimable`.
-            if (!best) throw error;
+    if (funding && !pinned) {
+        const spend = await chain.getSpendingTx(funding.txid, funding.vout, input.htlc.pkScript);
+        if (spend) {
+            const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
+            const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
+                allowUnknownInputs: true,
+                allowUnknownOutputs: true,
+            }).id;
+            return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
         }
-    }
-    if (spend) {
-        const preimage = extractPreimage(spend.txHex, input.htlc.paymentHash);
-        const txid = btc.Transaction.fromRaw(hex.decode(spend.txHex), {
-            allowUnknownInputs: true,
-            allowUnknownOutputs: true,
-        }).id;
-        return preimage ? { phase: "claimed", txid, preimage } : { phase: "swept", txid };
     }
     if (!best) return { phase: "unfunded" };
     if (best.confirmations < input.minConfirmations)
